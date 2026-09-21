@@ -82,6 +82,7 @@ function recorder(): Recorder {
       onUsage: () => Promise.resolve(),
       onEvidence: () => Promise.resolve(),
       persistTaint: async () => ({ kind: 'KNOWN_UNTAINTED' }) as const,
+      recoverSalt: async () => ({ salt: 'ab'.repeat(32), epoch: 1 }),
     },
   };
 }

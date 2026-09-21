@@ -66,7 +66,10 @@ describe('fail-closed security context', () => {
 
   it('denies even when the destination is the task’s own provider', () => {
     // A recognisable destination must not rescue an unknowable payload.
-    consent.pinProvider('task_1', 'openai-compatible@https://api.example.com');
+    consent.pinProvider('task_1', {
+      identity: 'openai-compatible@https://api.example.com',
+      modelId: 'm',
+    });
     expect(
       authorizeEgress(request({ taintState: unknownTaint('malformed') }), gate()).verdict,
     ).toBe('deny');
@@ -109,7 +112,10 @@ describe('credentials never leave', () => {
     ['a named secret', '{"session_token":"abcdefghijklmnop"}'],
     ['a private key', '-----BEGIN RSA PRIVATE KEY-----\nabcd\n-----END RSA PRIVATE KEY-----'],
   ])('denies %s to the task’s own provider', (_label, payload) => {
-    consent.pinProvider('task_1', 'openai-compatible@https://api.example.com');
+    consent.pinProvider('task_1', {
+      identity: 'openai-compatible@https://api.example.com',
+      modelId: 'm',
+    });
     const decision = authorizeEgress(request({ payload }), gate());
     expect(decision.verdict).toBe('deny');
     expect(decision.code).toBe('SECRET_PAYLOAD');
@@ -172,12 +178,66 @@ describe('provider binding and switching', () => {
       gate(),
     );
 
-    expect(consent.pinnedProvider('task_1')).toBe('openai-compatible@https://api.example.com');
-    expect(consent.pinnedProvider('task_2')).toBe('other@https://api.other.com');
+    expect(consent.pinnedProvider('task_1')?.identity).toBe(
+      'openai-compatible@https://api.example.com',
+    );
+    expect(consent.pinnedProvider('task_2')?.identity).toBe('other@https://api.other.com');
 
     // And task_2 switching to task_1's provider is still a switch for task_2.
     const decision = authorizeEgress(
       request({ taskId: 'task_2', taintState: addTaint(freshTaint(), [privatePage]) }),
+      gate(),
+    );
+    expect(decision.verdict).toBe('confirm');
+  });
+
+  it('re-evaluates consent when only the model changes', () => {
+    // V-1. The pin covers the model, not just the endpoint: two models at one
+    // endpoint are two different recipients, and the user was told which one
+    // they were sending to. Asserting the verdict alone would not prove the
+    // consent path was re-entered, so the store is instrumented to record it.
+    authorizeEgress(request(), gate());
+
+    const lookups: string[] = [];
+    const observed = Object.create(consent) as ConsentStore;
+    Object.defineProperty(observed, 'find', {
+      value: (lookup: Parameters<ConsentStore['find']>[0]) => {
+        lookups.push(`${lookup.key.destinationIdentity}|${lookup.modelId ?? ''}`);
+        return consent.find(lookup);
+      },
+    });
+
+    const decision = authorizeEgress(
+      request({
+        destination: providerDestination('openai-compatible', 'https://api.example.com/v1', 'm2'),
+        taintState: addTaint(freshTaint(), [privatePage]),
+      }),
+      { consent: observed },
+    );
+
+    expect(decision.verdict).toBe('confirm');
+    expect(decision.code).toBe('CONSENT_REQUIRED');
+    // The proof that authorization was actually reconsidered.
+    expect(lookups).toEqual(['openai-compatible@https://api.example.com|m2']);
+  });
+
+  it('still allows the same provider, endpoint and model', () => {
+    authorizeEgress(request(), gate());
+    const decision = authorizeEgress(
+      request({ taintState: addTaint(freshTaint(), [privatePage]) }),
+      gate(),
+    );
+    expect(decision.verdict).toBe('allow');
+    expect(decision.code).toBe('PROVIDER_BOUND');
+  });
+
+  it('treats a scheme downgrade as a different destination', () => {
+    authorizeEgress(request(), gate());
+    const decision = authorizeEgress(
+      request({
+        destination: providerDestination('openai-compatible', 'http://api.example.com/v1', 'm'),
+        taintState: addTaint(freshTaint(), [privatePage]),
+      }),
       gate(),
     );
     expect(decision.verdict).toBe('confirm');

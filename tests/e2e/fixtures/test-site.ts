@@ -14,6 +14,11 @@ export interface TestSite {
   close(): Promise<void>;
 }
 
+export interface TestSiteOptions {
+  /** Origin a cross-site form posts to, so egress has a real receiving side. */
+  readonly collectorUrl?: string;
+}
+
 const PAGES: Record<string, string> = {
   '/': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Widget Catalogue</title></head>
 <body>
@@ -49,7 +54,40 @@ const PAGES: Record<string, string> = {
   '/redirect': 'REDIRECT',
 };
 
-export async function startTestSite(): Promise<TestSite> {
+/**
+ * Pages whose markup depends on where the collector is listening.
+ *
+ * A form that posts to another origin cannot be written as a static string,
+ * and simulating one with a navigation would test something else entirely —
+ * a real `POST` with a real body is the thing that has to be blocked.
+ */
+function dynamicPages(collectorUrl: string): Record<string, string> {
+  return {
+    '/same-site-form': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Same Site Form</title></head>
+<body>
+  <h1>Feedback</h1>
+  <form id="f" method="POST" action="/collect-local">
+    <label for="note">Note</label>
+    <input id="note" name="note" type="text">
+    <button id="send" type="submit">Send</button>
+  </form>
+</body></html>`,
+
+    '/cross-site-form': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Cross Site Form</title></head>
+<body>
+  <h1>Share</h1>
+  <form id="f" method="POST" action="${collectorUrl}/submit">
+    <label for="note">Note</label>
+    <input id="note" name="note" type="text">
+    <button id="send" type="submit">Send</button>
+  </form>
+  <a id="out" href="${collectorUrl}/followed">Go to the other site</a>
+</body></html>`,
+  };
+}
+
+export async function startTestSite(options: TestSiteOptions = {}): Promise<TestSite> {
+  const extra = dynamicPages(options.collectorUrl ?? 'http://127.0.0.1:1');
   const server: Server = createServer((req, res) => {
     const path = (req.url ?? '/').split('?')[0] ?? '/';
 
@@ -59,7 +97,13 @@ export async function startTestSite(): Promise<TestSite> {
       return;
     }
 
-    const body = PAGES[path];
+    if (path === '/collect-local') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<!doctype html><title>Local</title><h1>Received locally</h1>');
+      return;
+    }
+
+    const body = PAGES[path] ?? extra[path];
     if (body === undefined) {
       res.writeHead(404, { 'Content-Type': 'text/html' });
       res.end('<!doctype html><title>Not found</title><h1>404</h1>');

@@ -179,8 +179,10 @@ export const test = base.extend<ExtensionFixtures>({
     await mock.close();
   },
 
-  site: async ({}, use) => {
-    const server = await startTestSite();
+  site: async ({ collector }, use) => {
+    // Depends on the collector so a cross-site form can point at a real
+    // receiving origin rather than a placeholder.
+    const server = await startTestSite({ collectorUrl: collector.baseUrl });
     await use(server);
     await server.close();
   },

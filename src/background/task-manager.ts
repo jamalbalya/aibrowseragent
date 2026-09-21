@@ -14,6 +14,7 @@ import type { TaskStore } from '@/tasks/task-store';
 import {
   canTransition,
   createTask,
+  generateTaintSalt,
   isTerminal,
   type AgentTask,
   type TaskState,
@@ -200,6 +201,20 @@ export class TaskManager {
     return {
       onStateChange: async (taskId, state, summary) => {
         await this.transition(taskId, state, summary);
+      },
+
+      recoverSalt: async (taskId) => {
+        try {
+          const repaired = await this.options.store.ensureSalt(taskId, generateTaintSalt());
+          if (!repaired) return undefined;
+          return { salt: repaired.taintSalt, epoch: repaired.saltEpoch };
+        } catch (error) {
+          log.error('Could not restore the task evidence key.', {
+            taskId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return undefined;
+        }
       },
 
       persistTaint: async (taskId, sources) => {

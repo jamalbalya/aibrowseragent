@@ -30,6 +30,7 @@ import type { TaintSource } from '@/security/exfiltration/exfiltration-guard';
 import type { TaintState } from '@/security/taint/taint-state';
 import { taintSignature } from '@/security/egress/consent';
 import type { EvidenceReference } from '@/evidence/evidence-model';
+import { isValidTaintSalt } from '@/tasks/task-model';
 import type { AgentTask, TaskResult, TaskState, TaskStep, TaskUsage } from '@/tasks/task-model';
 
 const log = getLogger('agent');
@@ -61,6 +62,14 @@ export interface RuntimeCallbacks {
    * state weaker than the one it just observed.
    */
   persistTaint(taskId: string, sources: readonly TaintSource[]): Promise<TaintState | undefined>;
+  /**
+   * Restores a usable evidence key when the stored one is missing or damaged.
+   *
+   * Returns the salt and epoch actually in force afterwards, or `undefined`
+   * when recovery could not be persisted — in which case the task pauses
+   * rather than proceeding with a security state it cannot record.
+   */
+  recoverSalt(taskId: string): Promise<{ salt: string; epoch: number } | undefined>;
   onTextDelta?(taskId: string, delta: string): void;
 }
 
@@ -133,6 +142,7 @@ export class AgentRuntime {
     // Task-level, not value-level: see `taint-state.ts` for why nothing finer
     // survives the model boundary.
     let taintState: TaintState = task.taintState;
+
     const evidenceIds: string[] = [...task.evidenceIds];
     const completed: string[] = [];
     const failed: string[] = [];
@@ -141,6 +151,28 @@ export class AgentRuntime {
 
     let usage: TaskUsage = { ...task.usage, elapsedMs: 0 };
     let stepIndex = task.steps.length;
+
+    // A damaged evidence key is repaired before anything is sent, not worked
+    // around. Rotation replaces the key and bumps the epoch; it never touches
+    // taint, so recovering the ability to record a transfer is not a route to
+    // recovering permission to make one.
+    let taintSalt = task.taintSalt;
+    let saltEpoch = task.saltEpoch;
+    if (!isValidTaintSalt(taintSalt)) {
+      const recovered = await this.options.callbacks.recoverSalt(task.id);
+      if (recovered === undefined) {
+        return this.terminate(
+          task,
+          'PARTIAL',
+          'Paused: the key used to record outbound transfers could not be restored, so no ' +
+            'transfer can be authorised. Resume once storage is available.',
+          evidenceIds,
+          usage,
+        );
+      }
+      taintSalt = recovered.salt;
+      saltEpoch = recovered.epoch;
+    }
 
     const tools = this.options.registry.toCanonicalSchemas();
 
@@ -185,8 +217,8 @@ export class AgentRuntime {
         egress: {
           taskId: task.id,
           taintState,
-          taintSalt: task.taintSalt,
-          saltEpoch: task.saltEpoch,
+          taintSalt,
+          saltEpoch,
           taintSignature: await taintSignature(taintState),
           providerId: task.providerId,
           modelId: task.modelId,
@@ -322,8 +354,8 @@ export class AgentRuntime {
           arguments: call.arguments,
           ...(input.tabId === undefined ? {} : { tabId: input.tabId }),
           taintState,
-          taintSalt: task.taintSalt,
-          saltEpoch: task.saltEpoch,
+          taintSalt,
+          saltEpoch,
           taintSignature: await taintSignature(taintState),
           signal,
         });

@@ -30,7 +30,7 @@ import {
 import { highestSensitivity, taintSources, type TaintState } from '@/security/taint/taint-state';
 import { assessCarrier, type CarrierClass, type CarrierInput } from './carrier';
 import { describeDestination, isExternalChannel, type EgressDestination } from './destination';
-import { exceedsCeiling, type ConsentKey, type ConsentStore } from './consent';
+import { exceedsCeiling, type ConsentKey, type ConsentStore, type ProviderPin } from './consent';
 
 const log = getLogger('security');
 
@@ -238,6 +238,10 @@ export function authorizeEgress(
   // The pin is what keeps this narrow: it is set from user configuration on
   // the first request and never from model output, so a switch to any other
   // destination mid-task falls through to consent below.
+  const pin: ProviderPin | undefined =
+    request.destination.channel === 'ai_provider' && request.destination.identity !== null
+      ? { identity: request.destination.identity, modelId: request.destination.modelId ?? '' }
+      : undefined;
   const pinned =
     request.destination.channel === 'ai_provider'
       ? options.consent.pinnedProvider(request.taskId)
@@ -246,14 +250,10 @@ export function authorizeEgress(
   // and a switch re-evaluates rather than inheriting. Recorded before the
   // allow paths below so no fast path can skip past it.
   const providerSwitched =
-    request.destination.channel === 'ai_provider' &&
-    pinned !== undefined &&
-    pinned !== request.destination.identity;
+    pin !== undefined && pinned !== undefined && !options.consent.matchesPin(request.taskId, pin);
 
-  if (request.destination.channel === 'ai_provider' && request.destination.identity !== null) {
-    if (pinned === undefined) {
-      options.consent.pinProvider(request.taskId, request.destination.identity);
-    }
+  if (pin !== undefined) {
+    if (pinned === undefined) options.consent.pinProvider(request.taskId, pin);
     if (!providerSwitched) {
       return {
         verdict: 'allow',

@@ -221,6 +221,17 @@ export interface CreateTaskInput {
   readonly taintSalt?: string;
 }
 
+/**
+ * A salt is 32 bytes, hex encoded.
+ *
+ * Validated by shape rather than trusted: a truncated or non-hex value read
+ * back from storage would silently produce a weaker key, and a short key is
+ * worse than an obviously absent one because it looks present.
+ */
+export function isValidTaintSalt(salt: unknown): salt is string {
+  return typeof salt === 'string' && /^[0-9a-f]{64}$/.test(salt);
+}
+
 /** 32 random bytes, hex encoded. */
 export function generateTaintSalt(): string {
   const bytes = new Uint8Array(32);

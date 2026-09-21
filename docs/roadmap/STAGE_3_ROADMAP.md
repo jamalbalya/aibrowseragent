@@ -349,6 +349,30 @@ peer of an API provider in the planning path. An API adapter returns
 design that parses prose into tool calls is re-creating an instruction channel
 out of untrusted content, and must not be built.
 
+### Salt recovery — actual semantics (V-2)
+
+The first implementation left `rotateSalt` unreachable: a damaged key produced
+a denial and nothing repaired it, so an implemented control was never called —
+the same shape as the original D-EG-1. Recovery is now live.
+
+`TaskStore.ensureSalt` replaces a missing or malformed key inside the
+`updateTask` mutator and bumps `saltEpoch`. It is **idempotent**: the check and
+the write share one mutator, so concurrent recoveries cannot each decide the
+key is broken and each bump the epoch. `AgentRuntime` calls it before any
+transfer is authorised; when it cannot persist, the task **pauses** rather than
+proceeding.
+
+Three properties hold by construction:
+
+- **Taint is untouched.** Recovering the ability to _record_ a transfer is
+  never a route to recovering permission to _make_ one.
+- **No unkeyed fallback.** `hmacContent` throws on an empty key, so there is no
+  path that quietly degrades to a plain digest.
+- **Old evidence is kept but not re-blessed.** Digests carry the epoch they
+  were written under, and `isVerifiableUnderCurrentSalt` reports anything from
+  an earlier epoch as unverifiable. The record survives; the claim that it can
+  be checked against the current key does not.
+
 ### Evidence provenance
 
 A DOM-sourced model reply should record: `source: MODEL_OUTPUT_WEB_UI`,
@@ -1290,9 +1314,17 @@ than read, which makes the control weaker in practice.
 A task therefore **pins** its provider destination on the first request and
 compares every later one against it. The value comes from user configuration
 and never from model output, so the model cannot steer a task elsewhere; a
-switch to any other provider, endpoint origin or port fails the comparison and
-falls through to consent. This implements "provider switching re-evaluates"
-directly. It is a deviation and is recorded as one.
+switch to any other provider, endpoint origin, port or **model** fails the
+comparison and falls through to consent. This implements "provider switching
+re-evaluates" directly. It is a deviation and is recorded as one.
+
+> **Corrected after release verification (V-1).** The first implementation
+> pinned only the endpoint identity, so a model change took the
+> `PROVIDER_BOUND` fast path and never reached the consent lookup — an
+> invariant this document stated and the code did not enforce. The model is
+> now part of the pin, and the regression test instruments `ConsentStore.find`
+> to prove the consent path is re-entered rather than only checking the
+> returned verdict.
 
 **Carrier applies only to URL-bearing channels.** A provider or connector
 request sends its payload deliberately, so grading the container says nothing.
@@ -1314,20 +1346,39 @@ content back to that same page does not prompt: the origin already holds it.
 | Consent grants are not persisted          | a restart re-asks, deliberately                                                                                                           |
 | CSP `connect-src` still unusable          | provider base URLs are user-configurable                                                                                                  |
 | Web AI channel defined but unimplemented  | D4 and D5 remain gated                                                                                                                    |
+| A click follows a page-supplied URL       | permitted by design: the model did not compose the URL, so it carries nothing the task read; a model-composed URL is the blocked case     |
 
 ### Evidence
 
-| Claim                                         | Test                                            |
-| --------------------------------------------- | ----------------------------------------------- |
-| Three-state taint, monotone, fails closed     | `tests/security/taint-state.test.ts` (29)       |
-| Persistence, concurrency, restart, damage     | `tests/security/taint-persistence.test.ts` (15) |
-| Adversarial gate, consent, carrier            | `tests/security/egress-gate.test.ts` (44)       |
-| Real-browser egress, receiving-side zero hits | `tests/e2e/egress.spec.ts` (6)                  |
+| Claim                                         | Test                                              |
+| --------------------------------------------- | ------------------------------------------------- |
+| Three-state taint, monotone, fails closed     | `tests/security/taint-state.test.ts` (29)         |
+| Persistence, concurrency, restart, damage     | `tests/security/taint-persistence.test.ts` (24)   |
+| Salt recovery, epochs, evidence verifiability | `tests/security/taint-persistence.test.ts`        |
+| Adversarial gate, consent, carrier, V-1       | `tests/security/egress-gate.test.ts` (47)         |
+| Provider transport conformance (V-5)          | `tests/security/provider-transport.test.ts` (15)  |
+| Network interception, defence in depth (V-5)  | `tests/security/network-interceptor.test.ts` (13) |
+| Real-browser egress, receiving-side zero hits | `tests/e2e/egress.spec.ts` (16)                   |
 
 The real-browser tests assert on the **receiving** side: a blocked transfer
 must leave zero requests at a collector server on its own origin. Asserting
 that a tool returned BLOCK would prove only that the extension said no, not
 that nothing left the browser.
+
+Receiving-side coverage (V-3): blocked navigation with a tainted query,
+fragment, path segment, mixed URL, percent-encoded, base64-wrapped and
+JSON-wrapped value; a blocked cross-site form `POST`; a blocked provider
+request with no retry reaching the provider; and alternate primitives
+(`XMLHttpRequest`, `WebSocket`, `EventSource`, bare `fetch`) attempted inside
+the real worker. Positive controls run beside them — a clean navigation, a
+same-site form submission and an approved transfer all really happen — so a
+suite that simply blocked everything could not pass.
+
+**A test that misdescribed itself was replaced (V-4).** One case was named for
+a cross-site form write and performed a navigation with a fragment. In a
+security suite that is worse than a gap, because it reports coverage that does
+not exist. There is now a real form, a real `POST`, and an assertion on method
+and body at the receiving end.
 
 ---
 

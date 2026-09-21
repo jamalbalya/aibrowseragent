@@ -40,6 +40,12 @@ export interface ConsentKey {
   readonly channel: EgressChannel;
 }
 
+/** The provider destination, including model, a task is bound to. */
+export interface ProviderPin {
+  readonly identity: string;
+  readonly modelId: string;
+}
+
 export interface ConsentGrant extends ConsentKey {
   readonly grantedAt: number;
   readonly expiresAt: number;
@@ -78,7 +84,7 @@ export interface ConsentLookup {
  */
 export class ConsentStore {
   private readonly grants = new Map<string, ConsentGrant>();
-  private readonly providerPins = new Map<string, string>();
+  private readonly providerPins = new Map<string, ProviderPin>();
 
   /** Default lifetime. A backstop — the key, not the clock, is the control. */
   constructor(private readonly ttlMs: number = 15 * 60_000) {}
@@ -139,12 +145,26 @@ export class ConsentStore {
    * The pinned value comes from user configuration and never from model
    * output, so the model cannot steer a task onto a destination of its own.
    */
-  pinProvider(taskId: string, identity: string): void {
-    if (!this.providerPins.has(taskId)) this.providerPins.set(taskId, identity);
+  pinProvider(taskId: string, pin: ProviderPin): void {
+    if (!this.providerPins.has(taskId)) this.providerPins.set(taskId, pin);
   }
 
-  pinnedProvider(taskId: string): string | undefined {
+  pinnedProvider(taskId: string): ProviderPin | undefined {
     return this.providerPins.get(taskId);
+  }
+
+  /**
+   * Whether a destination is the one this task is bound to.
+   *
+   * The model is part of the comparison, not just the endpoint. Two models at
+   * one endpoint are two different recipients of the data, and the user was
+   * told which one they were sending to when the task started. A switch
+   * between them is a switch, and falls through to consent like any other.
+   */
+  matchesPin(taskId: string, pin: ProviderPin): boolean {
+    const existing = this.providerPins.get(taskId);
+    if (existing === undefined) return false;
+    return existing.identity === pin.identity && existing.modelId === pin.modelId;
   }
 
   /** Explicit revocation, and the sweep used when policy or a session changes. */

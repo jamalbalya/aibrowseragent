@@ -115,6 +115,7 @@ describe('a task sustained over many turns', () => {
         onUsage: () => Promise.resolve(),
         onEvidence: () => Promise.resolve(),
         persistTaint: async () => ({ kind: 'KNOWN_UNTAINTED' }) as const,
+        recoverSalt: async () => ({ salt: 'ab'.repeat(32), epoch: 1 }),
       },
     });
 
@@ -153,6 +154,7 @@ describe('a task sustained over many turns', () => {
         onUsage: () => Promise.resolve(),
         onEvidence: () => Promise.resolve(),
         persistTaint: async () => ({ kind: 'KNOWN_UNTAINTED' }) as const,
+        recoverSalt: async () => ({ salt: 'ab'.repeat(32), epoch: 1 }),
       },
     });
 
@@ -196,6 +198,7 @@ describe('a task sustained over many turns', () => {
         onUsage: () => Promise.resolve(),
         onEvidence: () => Promise.resolve(),
         persistTaint: async () => ({ kind: 'KNOWN_UNTAINTED' }) as const,
+        recoverSalt: async () => ({ salt: 'ab'.repeat(32), epoch: 1 }),
       },
     });
 
@@ -248,6 +251,7 @@ describe('a task sustained over many turns', () => {
         onUsage: () => Promise.resolve(),
         onEvidence: () => Promise.resolve(),
         persistTaint: async () => ({ kind: 'KNOWN_UNTAINTED' }) as const,
+        recoverSalt: async () => ({ salt: 'ab'.repeat(32), epoch: 1 }),
       },
     });
 

@@ -8,7 +8,7 @@
 import { update, type StorageArea } from '@/storage/storage-area';
 import { getLogger } from '@/logging/logger';
 import type { AgentSession, AgentTask, TaskState } from './task-model';
-import { isTerminal } from './task-model';
+import { isTerminal, isValidTaintSalt } from './task-model';
 import type { TaintSource } from '@/security/exfiltration/exfiltration-guard';
 import type { TaintState } from '@/security/taint/taint-state';
 import { addTaint, parseTaintState, unknownTaint } from '@/security/taint/taint-state';
@@ -74,13 +74,22 @@ export class TaskStore {
     return updated?.taintState;
   }
 
-  /** Replaces the salt after a corrupt or missing one, and bumps the epoch. */
-  async rotateSalt(id: string, salt: string): Promise<AgentTask | undefined> {
-    return this.updateTask(id, (task) => ({
-      ...task,
-      taintSalt: salt,
-      saltEpoch: task.saltEpoch + 1,
-    }));
+  /**
+   * Guarantees the task has a usable evidence key.
+   *
+   * Idempotent, and that matters: the check and the write happen inside one
+   * mutator, so two concurrent recoveries cannot each decide the salt is
+   * broken and each bump the epoch. The second sees the first's result and
+   * leaves it alone.
+   *
+   * A rotation does not touch taint. Recovering the ability to write evidence
+   * must never be a route to recovering weaker authorization.
+   */
+  async ensureSalt(id: string, candidate: string): Promise<AgentTask | undefined> {
+    return this.updateTask(id, (task) => {
+      if (isValidTaintSalt(task.taintSalt) && task.saltEpoch > 0) return task;
+      return { ...task, taintSalt: candidate, saltEpoch: Math.max(task.saltEpoch, 0) + 1 };
+    });
   }
 
   /**
@@ -221,7 +230,10 @@ export function recoveryStateFor(state: TaskState): TaskState {
  */
 export function normaliseSecurityState(task: AgentTask): AgentTask {
   const parsed = parseTaintState((task as { taintState?: unknown }).taintState);
-  const salt = typeof task.taintSalt === 'string' ? task.taintSalt : '';
+  // A malformed salt is treated as absent rather than used: a truncated key
+  // would still produce a digest, and a digest under a weak key is worse than
+  // none because it reads as evidence.
+  const salt = isValidTaintSalt(task.taintSalt) ? task.taintSalt : '';
   const epoch = Number.isInteger(task.saltEpoch) && task.saltEpoch > 0 ? task.saltEpoch : 0;
 
   if (parsed === task.taintState && salt === task.taintSalt && epoch === task.saltEpoch) {

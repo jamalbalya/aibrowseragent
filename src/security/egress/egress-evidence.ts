@@ -80,6 +80,23 @@ function canonicalPayload(payload: unknown): string {
   return typeof payload === 'string' ? payload : JSON.stringify(payload ?? null);
 }
 
+/**
+ * Whether a stored digest can still be checked against the task's key.
+ *
+ * A rotation replaces the key, so digests written under an earlier epoch
+ * cannot be recomputed and are not verifiable any more. They are kept — a
+ * record of a decision is still a record — but they must never be presented
+ * as verified under the new key, which is what a silent epoch-blind check
+ * would do.
+ */
+export function isVerifiableUnderCurrentSalt(
+  detail: Pick<EgressEvidenceDetail, 'saltEpoch' | 'payloadDigest'>,
+  currentEpoch: number,
+): boolean {
+  if (detail.payloadDigest === undefined) return false;
+  return detail.saltEpoch === currentEpoch;
+}
+
 export interface BuiltEgressEvidence {
   readonly reference: Omit<EvidenceReference, 'byteLength' | 'hash'>;
   readonly detail: EgressEvidenceDetail;
