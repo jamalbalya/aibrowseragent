@@ -193,14 +193,15 @@ conventions to follow when adding a tool, a provider, or a connector.
 
 ## Documentation
 
-| Document                                                       | Contents                                  |
-| -------------------------------------------------------------- | ----------------------------------------- |
-| [docs/architecture.md](docs/architecture.md)                   | Runtime boundaries, data flow, module map |
-| [docs/security.md](docs/security.md)                           | Threat model, controls, known limitations |
-| [docs/testing.md](docs/testing.md)                             | Test strategy and what each suite proves  |
-| [docs/provider-architecture.md](docs/provider-architecture.md) | Adding a provider adapter                 |
-| [docs/tool-architecture.md](docs/tool-architecture.md)         | Adding a tool                             |
-| [PARITY_MATRIX.md](PARITY_MATRIX.md)                           | Per-capability implementation status      |
+| Document                                                       | Contents                                     |
+| -------------------------------------------------------------- | -------------------------------------------- |
+| [docs/architecture.md](docs/architecture.md)                   | Runtime boundaries, data flow, module map    |
+| [docs/security.md](docs/security.md)                           | Threat model, controls, known limitations    |
+| [docs/testing.md](docs/testing.md)                             | Test strategy and what each suite proves     |
+| [docs/provider-architecture.md](docs/provider-architecture.md) | Adding a provider adapter                    |
+| [docs/tool-architecture.md](docs/tool-architecture.md)         | Adding a tool                                |
+| [PARITY_MATRIX.md](PARITY_MATRIX.md)                           | Per-capability implementation status         |
+| [docs/repository-state.md](docs/repository-state.md)           | Repository-level issues that code cannot fix |
 
 ## Chrome permissions
 
