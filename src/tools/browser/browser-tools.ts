@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { ToolError } from '@/types/result';
 import { newEvidenceId } from '@/utils/ids';
 import { getLogger } from '@/logging/logger';
+import { urlDestination } from '@/security/egress/destination';
 import { checkNavigable, evaluateTransition } from '@/security/origin/origin-validator';
 import { scanForInjection, wrapUntrusted } from '@/security/prompt-injection/untrusted-content';
 import type { AgentTool, ToolExecutionContext, ToolExecutionResult } from '@/tools/core/tool-types';
@@ -240,7 +241,22 @@ export function createClickTool({ adapter }: BrowserToolDeps): AgentTool<typeof 
     sideEffects: ['Activates a page control, which may submit a form or navigate.'],
     timeoutMs: 15_000,
     idempotent: false,
-    classify: (input) => ({ summary: `Click element ${input.elementId}.` }),
+    classify: (input, context) => ({
+      summary: `Click element ${input.elementId}.`,
+      // A click can submit a form or follow a link, so it can transfer
+      // whatever was typed into the page before it. The destination is the
+      // page's own origin, which is the most that is knowable in advance.
+      egress: {
+        destination: urlDestination('page_write', context.currentUrl ?? '', {
+          ...(context.tabId === undefined ? {} : { tabId: context.tabId }),
+        }),
+        carrier: {
+          ...(context.currentUrl === undefined
+            ? {}
+            : { url: context.currentUrl, currentUrl: context.currentUrl }),
+        },
+      },
+    }),
 
     async execute(input, context): Promise<ToolExecutionResult> {
       const tab = await requireTab(adapter, context);
@@ -282,12 +298,22 @@ export function createTypeTool({ adapter }: BrowserToolDeps): AgentTool<typeof t
     sideEffects: ['Changes a form field value.', 'May submit a form when submit is set.'],
     timeoutMs: 15_000,
     idempotent: false,
-    classify: (input) => ({
+    classify: (input, context) => ({
       // Submitting a form is a state change of a different order to typing.
       ...(input.submit ? { risk: 'R2' as const } : {}),
       summary: input.submit
         ? `Type into element ${input.elementId} and submit the form.`
         : `Type into element ${input.elementId}.`,
+      // The text is model output, and after the task has read something the
+      // model has seen it. Writing it into a page is a transfer to that page's
+      // origin whether or not the form is submitted in the same call.
+      egress: {
+        destination: urlDestination('page_write', context.currentUrl ?? '', {
+          ...(context.tabId === undefined ? {} : { tabId: context.tabId }),
+        }),
+        carrier: { writesValue: true },
+        payload: input.text,
+      },
     }),
 
     async execute(input, context): Promise<ToolExecutionResult> {
@@ -362,7 +388,27 @@ export function createNavigateTool({ adapter }: BrowserToolDeps): AgentTool<type
     timeoutMs: 45_000,
     idempotent: true,
     // The destination, not the current page, is what policy must evaluate.
-    classify: (input) => ({ targetUrl: input.url, summary: `Navigate to ${input.url}.` }),
+    classify: (input, context) => ({
+      targetUrl: input.url,
+      summary: `Navigate to ${input.url}.`,
+      // A URL is a carrier: a query string or fragment can convey any amount
+      // of what the task has read. Graded rather than blanket-confirmed, so
+      // following a link the page already showed does not prompt.
+      egress: {
+        destination: urlDestination('navigation', input.url, {
+          ...(context.tabId === undefined ? {} : { tabId: context.tabId }),
+        }),
+        // `observedUrls` is deliberately not supplied yet. Without it a link
+        // the page itself displayed grades `high` rather than `none`, so the
+        // omission can only add confirmations, never remove one. Populating
+        // it from read_page results is a refinement, not a correction.
+        carrier: {
+          url: input.url,
+          ...(context.currentUrl === undefined ? {} : { currentUrl: context.currentUrl }),
+        },
+        payload: input.url,
+      },
+    }),
 
     async execute(input, context): Promise<ToolExecutionResult> {
       const check = checkNavigable(input.url);

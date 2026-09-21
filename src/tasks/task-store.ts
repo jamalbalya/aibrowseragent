@@ -9,6 +9,9 @@ import { update, type StorageArea } from '@/storage/storage-area';
 import { getLogger } from '@/logging/logger';
 import type { AgentSession, AgentTask, TaskState } from './task-model';
 import { isTerminal } from './task-model';
+import type { TaintSource } from '@/security/exfiltration/exfiltration-guard';
+import type { TaintState } from '@/security/taint/taint-state';
+import { addTaint, parseTaintState, unknownTaint } from '@/security/taint/taint-state';
 
 const log = getLogger('storage');
 
@@ -45,8 +48,39 @@ export class TaskStore {
     await this.evictOverflow();
   }
 
-  getTask(id: string): Promise<AgentTask | undefined> {
-    return this.area.get<AgentTask>(taskKey(id));
+  async getTask(id: string): Promise<AgentTask | undefined> {
+    const task = await this.area.get<AgentTask>(taskKey(id));
+    return task === undefined ? undefined : normaliseSecurityState(task);
+  }
+
+  /**
+   * Appends taint sources atomically.
+   *
+   * The append happens *inside* the mutator so the whole read-modify-write is
+   * covered by the storage mutex. Building a task object in memory and calling
+   * `saveTask` would use a blind `set`, and two tool calls finishing together
+   * would silently drop one set of sources — losing security state is the one
+   * failure mode this record exists to prevent.
+   *
+   * Returns the resulting state, or `undefined` when the task is gone. A
+   * caller that cannot persist taint must not continue with the weaker state;
+   * see `AgentRuntime`, which pauses.
+   */
+  async appendTaint(id: string, sources: readonly TaintSource[]): Promise<TaintState | undefined> {
+    const updated = await this.updateTask(id, (task) => ({
+      ...task,
+      taintState: addTaint(task.taintState, sources),
+    }));
+    return updated?.taintState;
+  }
+
+  /** Replaces the salt after a corrupt or missing one, and bumps the epoch. */
+  async rotateSalt(id: string, salt: string): Promise<AgentTask | undefined> {
+    return this.updateTask(id, (task) => ({
+      ...task,
+      taintSalt: salt,
+      saltEpoch: task.saltEpoch + 1,
+    }));
   }
 
   /**
@@ -64,7 +98,7 @@ export class TaskStore {
         missing = true;
         return null;
       }
-      return mutate(current);
+      return mutate(normaliseSecurityState(current));
     });
     if (missing || next === null) {
       log.warn('Attempted to update a task that is not stored.', { taskId: id });
@@ -81,7 +115,7 @@ export class TaskStore {
     const tasks: AgentTask[] = [];
     for (const id of index.ids.slice(0, limit)) {
       const task = await this.area.get<AgentTask>(taskKey(id));
-      if (task) tasks.push(task);
+      if (task) tasks.push(normaliseSecurityState(task));
     }
     return tasks;
   }
@@ -170,4 +204,38 @@ export function recoveryStateFor(state: TaskState): TaskState {
     case 'CANCELLED':
       return state;
   }
+}
+
+/**
+ * Repairs a record read from storage so security state is never trusted raw.
+ *
+ * A record written by an earlier version has no `taintState`, and a record
+ * that was damaged has one that does not parse. Both become `UNKNOWN`, which
+ * the egress gate denies on. The alternative — treating an absent field as an
+ * empty, and therefore clean, set — is precisely how a restart could make a
+ * task *less* restricted than it was before.
+ *
+ * A missing or malformed salt is left empty here rather than invented: the
+ * runtime rotates it and bumps the epoch, so the repair is recorded rather
+ * than hidden, and evidence never silently falls back to an unsalted digest.
+ */
+export function normaliseSecurityState(task: AgentTask): AgentTask {
+  const parsed = parseTaintState((task as { taintState?: unknown }).taintState);
+  const salt = typeof task.taintSalt === 'string' ? task.taintSalt : '';
+  const epoch = Number.isInteger(task.saltEpoch) && task.saltEpoch > 0 ? task.saltEpoch : 0;
+
+  if (parsed === task.taintState && salt === task.taintSalt && epoch === task.saltEpoch) {
+    return task;
+  }
+  return { ...task, taintState: parsed, taintSalt: salt, saltEpoch: epoch };
+}
+
+/** A task whose security state could not be established. */
+export function hasUsableSecurityState(task: AgentTask): boolean {
+  return task.taintState.kind !== 'UNKNOWN' && task.taintSalt.length > 0;
+}
+
+/** Marks a task's taint as unrecoverable after a persistence failure. */
+export function withFailedPersistence(task: AgentTask): AgentTask {
+  return { ...task, taintState: unknownTaint('persistence-failed') };
 }

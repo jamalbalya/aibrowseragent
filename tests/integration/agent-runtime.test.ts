@@ -81,6 +81,7 @@ function recorder(): Recorder {
       onActivity: (_id, activity) => activities.push(activity),
       onUsage: () => Promise.resolve(),
       onEvidence: () => Promise.resolve(),
+      persistTaint: async () => ({ kind: 'KNOWN_UNTAINTED' }) as const,
     },
   };
 }

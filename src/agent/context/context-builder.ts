@@ -10,6 +10,7 @@
  *     every turn — older tool results are trimmed first, because the most
  *     recent observation is what the model is acting on.
  */
+import type { EgressContext } from '@/security/egress/provider-transport';
 import type {
   CanonicalContent,
   CanonicalMessage,
@@ -173,6 +174,8 @@ export interface BuildRequestInput {
   readonly budget?: ContextBudget;
   readonly signal?: AbortSignal;
   readonly maxOutputTokens?: number;
+  /** Security context for the outbound request. Absent denies at the transport. */
+  readonly egress?: EgressContext;
 }
 
 export function buildRequest(input: BuildRequestInput): CanonicalRequest {
@@ -190,5 +193,6 @@ export function buildRequest(input: BuildRequestInput): CanonicalRequest {
     temperature: 0,
     ...(input.maxOutputTokens === undefined ? {} : { maxOutputTokens: input.maxOutputTokens }),
     ...(input.signal === undefined ? {} : { signal: input.signal }),
+    ...(input.egress === undefined ? {} : { egress: input.egress }),
   };
 }

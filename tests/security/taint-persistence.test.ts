@@ -1,0 +1,202 @@
+/**
+ * TEST-SECURITY-012 — taint persistence, concurrency and restart (B2 step 1).
+ *
+ * The Stage 2 defect was that accumulated taint lived only in a local array
+ * inside the runtime and died with the service worker, so a resumed task
+ * evaluated as though it had read nothing. These tests rebuild the store over
+ * the same backing storage, which is what a worker restart actually does.
+ */
+import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  MemoryStorageArea,
+  NamespacedStorageArea,
+  SerializedStorageArea,
+} from '@/storage/storage-area';
+import { TaskStore, hasUsableSecurityState } from '@/tasks/task-store';
+import { createTask, type AgentTask } from '@/tasks/task-model';
+import { taintSources } from '@/security/taint/taint-state';
+import type { TaintSource } from '@/security/exfiltration/exfiltration-guard';
+
+const page: TaintSource = {
+  sourceType: 'web_page',
+  site: 'example.com',
+  sensitivity: 'confidential',
+};
+const docs: TaintSource = {
+  sourceType: 'page_html',
+  site: 'docs.example',
+  sensitivity: 'internal',
+};
+
+let backing: MemoryStorageArea;
+
+/** A store over the same storage, as a restarted worker would build. */
+function newGeneration(): TaskStore {
+  return new TaskStore(new NamespacedStorageArea(new SerializedStorageArea(backing), 'tasks'));
+}
+
+function makeTask(): AgentTask {
+  return createTask({
+    id: 'task_1',
+    sessionId: 's1',
+    objective: 'Read the page',
+    providerId: 'fake',
+    modelId: 'm',
+    permissionMode: 'auto',
+    now: 1,
+    taintSalt: 'a'.repeat(64),
+  });
+}
+
+beforeEach(() => {
+  backing = new MemoryStorageArea();
+});
+
+describe('taint persistence', () => {
+  it('starts a new task explicitly clean and usable', async () => {
+    const store = newGeneration();
+    await store.saveTask(makeTask());
+    const stored = await store.getTask('task_1');
+    expect(stored!.taintState).toEqual({ kind: 'KNOWN_UNTAINTED' });
+    expect(hasUsableSecurityState(stored!)).toBe(true);
+  });
+
+  it('records the first taint addition', async () => {
+    const store = newGeneration();
+    await store.saveTask(makeTask());
+    const state = await store.appendTaint('task_1', [page]);
+    expect(state).toEqual({ kind: 'TAINTED', sources: [page] });
+  });
+
+  it('deduplicates a repeated addition', async () => {
+    const store = newGeneration();
+    await store.saveTask(makeTask());
+    await store.appendTaint('task_1', [page]);
+    const state = await store.appendTaint('task_1', [page]);
+    expect(taintSources(state!)).toHaveLength(1);
+  });
+
+  it('loses nothing when two tool calls finish at the same moment', async () => {
+    // The reason the append runs inside updateTask's mutator: a read-modify-
+    // write built in memory and saved blindly would drop one of these.
+    const store = newGeneration();
+    await store.saveTask(makeTask());
+
+    await Promise.all([store.appendTaint('task_1', [page]), store.appendTaint('task_1', [docs])]);
+
+    const stored = await store.getTask('task_1');
+    expect(taintSources(stored!.taintState)).toHaveLength(2);
+  });
+
+  it('loses nothing under many concurrent additions', async () => {
+    const store = newGeneration();
+    await store.saveTask(makeTask());
+
+    const sources: TaintSource[] = Array.from({ length: 20 }, (_, i) => ({
+      sourceType: 'web_page',
+      site: `site-${i}.example`,
+      sensitivity: 'internal' as const,
+    }));
+    await Promise.all(sources.map((source) => store.appendTaint('task_1', [source])));
+
+    const stored = await store.getTask('task_1');
+    expect(taintSources(stored!.taintState)).toHaveLength(20);
+  });
+
+  it('survives a worker restart', async () => {
+    const first = newGeneration();
+    await first.saveTask(makeTask());
+    await first.appendTaint('task_1', [page]);
+
+    // Every in-memory object is discarded; only storage remains.
+    const revived = newGeneration();
+    const stored = await revived.getTask('task_1');
+
+    expect(stored!.taintState).toEqual({ kind: 'TAINTED', sources: [page] });
+    expect(hasUsableSecurityState(stored!)).toBe(true);
+  });
+
+  it('keeps taint across several restarts and additions', async () => {
+    await newGeneration().saveTask(makeTask());
+    await newGeneration().appendTaint('task_1', [page]);
+    await newGeneration().appendTaint('task_1', [docs]);
+    const stored = await newGeneration().getTask('task_1');
+    expect(taintSources(stored!.taintState)).toHaveLength(2);
+  });
+
+  it('reports a missing task rather than inventing a state', async () => {
+    const store = newGeneration();
+    expect(await store.appendTaint('nope', [page])).toBeUndefined();
+  });
+});
+
+describe('damaged records fail closed', () => {
+  it('reads a record written before the field existed as UNKNOWN', async () => {
+    // A Stage 2 record: `taint: []`, no taintState. Reading that as an empty
+    // and therefore clean set is the fail-open this replaces.
+    await backing.set('tasks:task:legacy', {
+      ...makeTask(),
+      taintState: undefined,
+      taint: [],
+    });
+    const stored = await newGeneration().getTask('legacy');
+    expect(stored!.taintState).toEqual({ kind: 'UNKNOWN', reason: 'field-absent' });
+    expect(hasUsableSecurityState(stored!)).toBe(false);
+  });
+
+  it('reads a malformed taint state as UNKNOWN', async () => {
+    await backing.set('tasks:task:bad', { ...makeTask(), taintState: { kind: 'CLEAN' } });
+    const stored = await newGeneration().getTask('bad');
+    expect(stored!.taintState).toEqual({ kind: 'UNKNOWN', reason: 'malformed' });
+  });
+
+  it('reads a record with a missing salt as unusable', async () => {
+    await backing.set('tasks:task:nosalt', { ...makeTask(), taintSalt: undefined });
+    const stored = await newGeneration().getTask('nosalt');
+    expect(hasUsableSecurityState(stored!)).toBe(false);
+  });
+
+  it('does not let an addition repair an UNKNOWN state', async () => {
+    await backing.set('tasks:task:legacy', { ...makeTask(), taintState: undefined });
+    const store = newGeneration();
+    const state = await store.appendTaint('legacy', [page]);
+    expect(state!.kind).toBe('UNKNOWN');
+  });
+
+  it('rotates a salt and bumps the epoch rather than reusing a broken one', async () => {
+    const store = newGeneration();
+    await store.saveTask(makeTask());
+    const rotated = await store.rotateSalt('task_1', 'b'.repeat(64));
+    expect(rotated!.taintSalt).toBe('b'.repeat(64));
+    expect(rotated!.saltEpoch).toBe(2);
+  });
+
+  it('keeps taint intact across a salt rotation', async () => {
+    const store = newGeneration();
+    await store.saveTask(makeTask());
+    await store.appendTaint('task_1', [page]);
+    await store.rotateSalt('task_1', 'c'.repeat(64));
+    const stored = await store.getTask('task_1');
+    expect(taintSources(stored!.taintState)).toHaveLength(1);
+  });
+});
+
+describe('storage failure', () => {
+  it('surfaces a write failure instead of silently dropping taint', async () => {
+    const store = newGeneration();
+    await store.saveTask(makeTask());
+
+    const failing = new NamespacedStorageArea(new SerializedStorageArea(backing), 'tasks');
+    // A store whose backing write throws must not report success: the runtime
+    // relies on the return value to decide whether it may continue.
+    const broken = new TaskStore({
+      get: (key: string) => failing.get(key),
+      set: () => Promise.reject(new Error('quota exceeded')),
+      remove: () => Promise.resolve(),
+      keys: () => Promise.resolve([]),
+      clear: () => Promise.resolve(),
+    });
+
+    await expect(broken.appendTaint('task_1', [page])).rejects.toThrow('quota exceeded');
+  });
+});

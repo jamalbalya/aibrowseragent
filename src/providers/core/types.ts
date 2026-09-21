@@ -6,6 +6,7 @@
  * That separation is what makes the invariant hold: changing the AI brain must
  * not remove the agent body's capabilities.
  */
+import type { EgressContext, ProviderTransport } from '@/security/egress/provider-transport';
 import type { AgentError } from '@/types/result';
 
 /** Canonical content parts. */
@@ -56,6 +57,15 @@ export interface CanonicalRequest {
   readonly maxOutputTokens?: number;
   readonly temperature?: number;
   readonly signal?: AbortSignal;
+  /**
+   * Security context for the outbound request.
+   *
+   * Carried on the request rather than held ambiently because tasks can run
+   * concurrently, and an ambient "current task" would attribute one task's
+   * request to another's taint. An adapter that omits it is refused by the
+   * transport.
+   */
+  readonly egress?: EgressContext;
 }
 
 export interface TokenUsage {
@@ -186,7 +196,14 @@ export interface ProviderFactory {
   readonly displayName: string;
   readonly authKind: AuthKind;
   readonly description: string;
-  create(): AIProviderAdapter;
+  /**
+   * Builds an adapter.
+   *
+   * The transport is supplied by the registry and is the adapter's only route
+   * to the network. Omitting it yields one that refuses every request, so a
+   * provider constructed outside the registry cannot reach out unguarded.
+   */
+  create(transport: ProviderTransport): AIProviderAdapter;
 }
 
 export const textMessage = (role: CanonicalRole, text: string): CanonicalMessage => ({

@@ -5,6 +5,7 @@
  * switching is always explicit. There is no fallback path: if the configured
  * provider fails, the failure is surfaced.
  */
+import { refusingTransport, type ProviderTransport } from '@/security/egress/provider-transport';
 import { getLogger } from '@/logging/logger';
 import { createError, type AgentError } from '@/types/result';
 import type {
@@ -27,10 +28,27 @@ export interface ProviderConnection {
   readonly status: 'connected' | 'limited' | 'failed' | 'disconnected';
 }
 
+export interface ProviderRegistryOptions {
+  /**
+   * The transport every adapter is built with.
+   *
+   * Supplied here rather than by the adapter so that being guarded is a
+   * property of construction: an adapter cannot decline one, and one built
+   * outside the registry gets a transport that refuses instead of a direct
+   * network path.
+   */
+  readonly transport?: ProviderTransport;
+}
+
 export class ProviderRegistry {
   private readonly factories = new Map<string, ProviderFactory>();
   private readonly instances = new Map<string, AIProviderAdapter>();
   private activeProviderId: string | null = null;
+  private readonly transport: ProviderTransport;
+
+  constructor(options: ProviderRegistryOptions = {}) {
+    this.transport = options.transport ?? refusingTransport();
+  }
 
   register(factory: ProviderFactory): void {
     if (this.factories.has(factory.id)) {
@@ -57,7 +75,7 @@ export class ProviderRegistry {
     if (!factory) {
       throw new Error(`Provider "${id}" is not registered.`);
     }
-    const instance = factory.create();
+    const instance = factory.create(this.transport);
     this.instances.set(id, instance);
     return instance;
   }

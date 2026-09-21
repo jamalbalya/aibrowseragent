@@ -6,6 +6,8 @@
  * the specification forbids claiming Agent Ready on a model whose tool calling
  * has not been demonstrated.
  */
+import { managementContext } from '@/security/egress/provider-transport';
+import { generateTaintSalt } from '@/tasks/task-model';
 import { getLogger } from '@/logging/logger';
 import type {
   AIProviderAdapter,
@@ -88,6 +90,9 @@ async function timed(
 }
 
 export class CapabilityDoctor {
+  /** Salt for probe evidence. Probe digests stay unlinkable from task ones. */
+  private readonly managementSalt = generateTaintSalt();
+
   async run(
     adapter: AIProviderAdapter,
     modelId: string,
@@ -99,6 +104,11 @@ export class CapabilityDoctor {
       maxOutputTokens: 64,
       temperature: 0,
       ...(options.signal ? { signal: options.signal } : {}),
+      // Probe traffic still passes the egress gate. Its prompts are fixed
+      // strings written here, so no task data can reach them — the context
+      // says the state is clean because there is no task, not because one was
+      // inspected.
+      egress: managementContext(adapter.id, modelId, this.managementSalt),
     } satisfies Partial<CanonicalRequest>;
 
     // 1. Reachability + authentication.

@@ -10,6 +10,8 @@ import type { RiskLevel, ProhibitedCategory } from '@/policy/risk-classifier';
 import type { AgentError } from '@/types/result';
 import type { EvidencePayload, EvidenceReference } from '@/evidence/evidence-model';
 import type { TaintSource } from '@/security/exfiltration/exfiltration-guard';
+import type { CarrierInput } from '@/security/egress/carrier';
+import type { EgressDestination } from '@/security/egress/destination';
 
 export type ExecutionMode =
   'immediate' | 'requires_page' | 'requires_debugger' | 'requires_connector';
@@ -23,6 +25,13 @@ export interface ToolExecutionContext {
   readonly tabId?: number;
   /** URL observed when the call was authorised, for origin-drift checks. */
   readonly authorisedUrl?: string;
+  /**
+   * URL of the tab this call acts on, resolved before classification.
+   *
+   * Needed because a page write's destination is the page itself, and that
+   * has to be known before the tool runs rather than discovered inside it.
+   */
+  readonly currentUrl?: string;
   readonly signal: AbortSignal;
   /**
    * Records evidence produced during execution.
@@ -51,6 +60,14 @@ export interface ToolExecutionResult<T = unknown> {
   readonly taint?: readonly TaintSource[];
 }
 
+/** An outbound transfer a call will perform. */
+export interface EgressCall {
+  readonly destination: EgressDestination;
+  readonly carrier?: CarrierInput;
+  /** What is about to be sent. Digested for evidence, never stored raw. */
+  readonly payload?: unknown;
+}
+
 /**
  * Facts the runtime derives from a *validated* argument set so the policy
  * engine can evaluate the specific call rather than the tool in general.
@@ -64,6 +81,16 @@ export interface CallClassification {
   /** Destination when the call sends data outward. */
   readonly writeDestination?: string;
   readonly writePayload?: unknown;
+  /**
+   * Declared outbound transfer for this call.
+   *
+   * Every tool that can cause an externally observable transfer declares one,
+   * and the registry puts it through the egress gate before the tool runs.
+   * A tool that declares nothing is treated as transferring nothing — which
+   * is why the declaration is checked against the actual destination at the
+   * primitive rather than trusted on its own.
+   */
+  readonly egress?: EgressCall;
   /** One-line description shown in the permission prompt. */
   readonly summary?: string;
 }

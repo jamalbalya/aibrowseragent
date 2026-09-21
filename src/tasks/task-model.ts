@@ -4,7 +4,8 @@
 import type { RiskLevel } from '@/policy/risk-classifier';
 import type { AgentError } from '@/types/result';
 import type { PermissionMode } from '@/policy/policy-engine';
-import type { TaintSource } from '@/security/exfiltration/exfiltration-guard';
+import type { TaintState } from '@/security/taint/taint-state';
+import { freshTaint } from '@/security/taint/taint-state';
 
 export const TASK_STATES = [
   'QUEUED',
@@ -154,8 +155,28 @@ export interface AgentTask {
   readonly steps: readonly TaskStep[];
   readonly tabs: readonly AgentTabContext[];
   readonly usage: TaskUsage;
-  /** Sources this task has read from, used by the exfiltration guard. */
-  readonly taint: readonly TaintSource[];
+  /**
+   * What this task has read, as a monotone task-level property.
+   *
+   * `UNKNOWN` after a restart that could not restore it, which the egress
+   * gate treats as a denial rather than as an empty set.
+   */
+  readonly taintState: TaintState;
+  /**
+   * Per-task HMAC key for egress evidence digests.
+   *
+   * Hex-encoded 32 bytes. Evidence stores `HMAC(taskSalt, payload)` rather
+   * than a bare digest, because a bare SHA-256 of a low-entropy payload — a
+   * short code, an email address — is recoverable by brute force, and equal
+   * digests across tasks would reveal that two payloads matched.
+   */
+  readonly taintSalt: string;
+  /**
+   * Bumped when a salt has to be regenerated. Digests are comparable within
+   * an epoch and not across one, so evidence written under an earlier epoch
+   * stays readable but is not claimed to be verifiable against the new salt.
+   */
+  readonly saltEpoch: number;
   readonly evidenceIds: readonly string[];
   readonly error?: AgentError;
   /** Set when the final outcome is recorded. */
@@ -191,6 +212,20 @@ export interface CreateTaskInput {
   readonly modelId: string;
   readonly permissionMode: PermissionMode;
   readonly now: number;
+  /**
+   * Hex-encoded 32-byte HMAC key for egress evidence.
+   *
+   * Generated here when omitted. Overridable so tests are deterministic —
+   * never so a caller can supply a weak one in production.
+   */
+  readonly taintSalt?: string;
+}
+
+/** 32 random bytes, hex encoded. */
+export function generateTaintSalt(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 export function createTask(input: CreateTaskInput): AgentTask {
@@ -208,7 +243,9 @@ export function createTask(input: CreateTaskInput): AgentTask {
     steps: [],
     tabs: [],
     usage: emptyUsage(),
-    taint: [],
+    taintState: freshTaint(),
+    taintSalt: input.taintSalt ?? generateTaintSalt(),
+    saltEpoch: 1,
     evidenceIds: [],
   };
 }

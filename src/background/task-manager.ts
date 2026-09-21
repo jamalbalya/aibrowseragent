@@ -202,6 +202,22 @@ export class TaskManager {
         await this.transition(taskId, state, summary);
       },
 
+      persistTaint: async (taskId, sources) => {
+        try {
+          return await this.options.store.appendTaint(taskId, sources);
+        } catch (error) {
+          // A storage failure here is a security failure, not a nuisance: the
+          // runtime would otherwise carry on with a taint set it believes is
+          // complete and that no restart could reproduce. Report it as
+          // unpersisted and let the runtime pause.
+          log.error('Could not persist task taint.', {
+            taskId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return undefined;
+        }
+      },
+
       onComplete: async (taskId, outcome) => {
         // One atomic write: state, result, usage and error together. An
         // observer can never see a terminal task whose outcome is missing.

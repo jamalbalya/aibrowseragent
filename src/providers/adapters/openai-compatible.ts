@@ -18,6 +18,13 @@ import { getLogger } from '@/logging/logger';
 import { createError, type AgentError } from '@/types/result';
 import { delayFromRetryAfter } from '@/agent/recovery/retry-policy';
 import { ProviderRequestError } from '@/providers/core/provider-error';
+import {
+  managementContext,
+  refusingTransport,
+  type EgressContext,
+  type ProviderTransport,
+} from '@/security/egress/provider-transport';
+import { generateTaintSalt } from '@/tasks/task-model';
 import type {
   AIProviderAdapter,
   AuthResult,
@@ -35,6 +42,20 @@ import type {
 } from '@/providers/core/types';
 
 const log = getLogger('provider');
+
+/**
+ * Pulls the security context off a request, refusing when it is absent.
+ *
+ * A request with no context cannot be authorised, and guessing one — or
+ * treating "no context" as "nothing sensitive" — is the fail-open this whole
+ * mechanism exists to remove.
+ */
+function requireEgress(request: CanonicalRequest): EgressContext {
+  if (!request.egress) {
+    throw new Error('This provider request carries no egress context, so it cannot be authorised.');
+  }
+  return request.egress;
+}
 
 export const OPENAI_COMPATIBLE_PROVIDER_ID = 'openai-compatible';
 
@@ -86,7 +107,17 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
 
   private config: ProviderConfig | null = null;
 
-  constructor(private readonly fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)) {}
+  /**
+   * A transport, not a `fetch`.
+   *
+   * The registry supplies a guarded one; the default refuses. There is no
+   * constructor path that yields direct network access, which is what makes
+   * "every provider request passes the gate" a property of construction
+   * rather than of remembering.
+   */
+  private readonly managementSalt = generateTaintSalt();
+
+  constructor(private readonly transport: ProviderTransport = refusingTransport()) {}
 
   connect(config: ProviderConfig): Promise<AuthResult> {
     if (!config.baseUrl || config.baseUrl.trim().length === 0) {
@@ -163,11 +194,15 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
   async listModels(): Promise<ModelInfo[]> {
     const config = this.require();
     try {
-      const response = await this.fetchImpl(`${config.baseUrl ?? ''}/models`, {
-        method: 'GET',
-        headers: this.headers(),
-        signal: AbortSignal.timeout(20_000),
-      });
+      const response = await this.transport.request(
+        `${config.baseUrl ?? ''}/models`,
+        {
+          method: 'GET',
+          headers: this.headers(),
+          signal: AbortSignal.timeout(20_000),
+        },
+        managementContext(OPENAI_COMPATIBLE_PROVIDER_ID, config.model ?? '', this.managementSalt),
+      );
       if (!response.ok) {
         // Many compatible servers do not implement /models. That is not fatal.
         log.debug('Endpoint did not return a model list.', { status: response.status });
@@ -218,16 +253,20 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
     try {
       // A minimal completion is the only universally supported probe: some
       // gateways implement /chat/completions but not /models.
-      const response = await this.fetchImpl(`${config.baseUrl ?? ''}/chat/completions`, {
-        method: 'POST',
-        headers: this.headers(),
-        body: JSON.stringify({
-          model: config.model,
-          messages: [{ role: 'user', content: 'ping' }],
-          max_tokens: 1,
-        }),
-        signal: AbortSignal.timeout(30_000),
-      });
+      const response = await this.transport.request(
+        `${config.baseUrl ?? ''}/chat/completions`,
+        {
+          method: 'POST',
+          headers: this.headers(),
+          body: JSON.stringify({
+            model: config.model,
+            messages: [{ role: 'user', content: 'ping' }],
+            max_tokens: 1,
+          }),
+          signal: AbortSignal.timeout(30_000),
+        },
+        managementContext(OPENAI_COMPATIBLE_PROVIDER_ID, config.model ?? '', this.managementSalt),
+      );
       if (!response.ok) {
         return { reachable: false, error: await toHttpError(response) };
       }
@@ -243,12 +282,16 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
 
     let response: Response;
     try {
-      response = await this.fetchImpl(`${config.baseUrl ?? ''}/chat/completions`, {
-        method: 'POST',
-        headers: this.headers(),
-        body: JSON.stringify(body),
-        signal: request.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
-      });
+      response = await this.transport.request(
+        `${config.baseUrl ?? ''}/chat/completions`,
+        {
+          method: 'POST',
+          headers: this.headers(),
+          body: JSON.stringify(body),
+          signal: request.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+        },
+        requireEgress(request),
+      );
     } catch (error) {
       throw toThrowable(toNetworkError(error));
     }
@@ -267,12 +310,16 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
 
     let response: Response;
     try {
-      response = await this.fetchImpl(`${config.baseUrl ?? ''}/chat/completions`, {
-        method: 'POST',
-        headers: { ...this.headers(), Accept: 'text/event-stream' },
-        body: JSON.stringify(body),
-        signal: request.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
-      });
+      response = await this.transport.request(
+        `${config.baseUrl ?? ''}/chat/completions`,
+        {
+          method: 'POST',
+          headers: { ...this.headers(), Accept: 'text/event-stream' },
+          body: JSON.stringify(body),
+          signal: request.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+        },
+        requireEgress(request),
+      );
     } catch (error) {
       yield { type: 'error', error: toNetworkError(error) };
       return;
@@ -675,5 +722,5 @@ export const openAICompatibleFactory: ProviderFactory = {
   description:
     'Any endpoint implementing the OpenAI Chat Completions API: OpenAI, a self-hosted model ' +
     'server, or a compatible gateway. Supply the base URL, API key and model id.',
-  create: () => new OpenAICompatibleAdapter(),
+  create: (transport) => new OpenAICompatibleAdapter(transport),
 };

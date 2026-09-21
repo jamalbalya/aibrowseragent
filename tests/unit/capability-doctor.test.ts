@@ -91,7 +91,6 @@ function stub(options: StubOptions = {}): AIProviderAdapter {
   };
 
   if (options.supportsStream !== false) {
-    // eslint-disable-next-line @typescript-eslint/require-await
     adapter.stream = async function* (): AsyncIterable<CanonicalEvent> {
       if (options.streamFails) {
         yield {

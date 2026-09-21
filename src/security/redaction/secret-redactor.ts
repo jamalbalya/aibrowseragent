@@ -176,7 +176,7 @@ export const DEFAULT_RULES: readonly RedactionRule[] = [
     id: 'named-secret-assignment',
     pattern: new RegExp(
       String.raw`\b([A-Za-z0-9_.-]*(?:password|passwd|pwd|secret|api[_.-]?key|api[_.-]?token|access[_.-]?token|refresh[_.-]?token|id[_.-]?token|session[_.-]?token|auth[_.-]?token|private[_.-]?key)[A-Za-z0-9_.-]*)` +
-        String.raw`(\s*[:=]\s*)("([^"\r\n]*)"|'([^'\r\n]*)'|[^\s,;&}\r\n]+)`,
+        String.raw`("?\s*[:=]\s*)("([^"\r\n]*)"|'([^'\r\n]*)'|[^\s,;&}\r\n]+)`,
       'gi',
     ),
     replacement: `$1$2${REDACTED}`,

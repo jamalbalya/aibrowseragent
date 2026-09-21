@@ -52,28 +52,62 @@ export interface ExfiltrationDecision {
   readonly matchedSources: readonly string[];
 }
 
-/** Detects credential-shaped values anywhere in a payload. */
-export function payloadContainsSecret(payload: unknown, depth = 0): boolean {
-  if (depth > 8) return false;
+/**
+ * Names the rule that matched, or `null`.
+ *
+ * Reporting *which* rule fired matters: a bare boolean turns every block into
+ * an unexplainable one, and a false positive on a legitimate payload is then
+ * indistinguishable from a real credential leak.
+ */
+export function matchedSecretRule(payload: unknown, depth = 0): string | null {
+  if (depth > 8) return null;
   if (typeof payload === 'string') {
-    return DEFAULT_RULES.some((rule) => {
+    for (const rule of DEFAULT_RULES) {
       rule.pattern.lastIndex = 0;
       const hit = rule.pattern.test(payload);
       rule.pattern.lastIndex = 0;
-      return hit;
-    });
+      if (hit && (rule.confirm === undefined || matchesWithConfirm(rule, payload))) return rule.id;
+    }
+    return null;
   }
-  if (payload === null || typeof payload !== 'object') return false;
+  if (payload === null || typeof payload !== 'object') return null;
   if (Array.isArray(payload)) {
-    return payload.some((item) => payloadContainsSecret(item, depth + 1));
+    for (const item of payload) {
+      const hit = matchedSecretRule(item, depth + 1);
+      if (hit) return hit;
+    }
+    return null;
   }
   for (const [key, value] of Object.entries(payload as Record<string, unknown>)) {
     if (isSensitiveFieldName(key) && value !== undefined && value !== null && value !== '') {
-      return true;
+      return `field:${key}`;
     }
-    if (payloadContainsSecret(value, depth + 1)) return true;
+    const hit = matchedSecretRule(value, depth + 1);
+    if (hit) return hit;
   }
-  return false;
+  return null;
+}
+
+function matchesWithConfirm(rule: (typeof DEFAULT_RULES)[number], text: string): boolean {
+  rule.pattern.lastIndex = 0;
+  const matches = text.match(rule.pattern) ?? [];
+  rule.pattern.lastIndex = 0;
+  return matches.some((match) => rule.confirm!(match));
+}
+
+/**
+ * Detects credential-shaped values anywhere in a payload.
+ *
+ * Thin wrapper over `matchedSecretRule` so the two cannot disagree. They did:
+ * this used to test `rule.pattern` alone and ignore `rule.confirm`, so the
+ * card-number rule — which carries an issuer-prefix and Luhn check precisely
+ * because shape alone over-matches — blocked on any run of 13 to 19 digits.
+ * A request body carrying a timestamp or an identifier was refused as a
+ * credential, and the gate that depends on this call would have refused every
+ * provider request in the product.
+ */
+export function payloadContainsSecret(payload: unknown, depth = 0): boolean {
+  return matchedSecretRule(payload, depth) !== null;
 }
 
 function destinationSiteOf(destination: string): string | null {

@@ -187,7 +187,10 @@ describe('exfiltration integration', () => {
         risk: 'R2',
         writeDestination: 'https://attacker.test/hook',
         writePayload: { body: 'internal roadmap' },
-        taint: [{ sourceType: 'jira', site: 'atlassian.net', sensitivity: 'confidential' }],
+        taintState: {
+          kind: 'TAINTED' as const,
+          sources: [{ sourceType: 'jira', site: 'atlassian.net', sensitivity: 'confidential' }],
+        },
       }),
       context('skip'),
     );

@@ -33,6 +33,7 @@ import type {
 } from '../../../src/messaging/protocol';
 import { startMockProvider, type MockProvider } from './mock-provider';
 import { startTestSite, type TestSite } from './test-site';
+import { startCollector, type Collector } from './collector';
 
 const EXTENSION_PATH = resolve(import.meta.dirname, '../../../dist');
 /**
@@ -77,6 +78,8 @@ export interface ExtensionFixtures {
   send: SendToWorker;
   provider: MockProvider;
   site: TestSite;
+  /** A second origin that records what actually reaches it. */
+  collector: Collector;
   /** Console output from the service worker, for asserting on logs. */
   workerLogs: string[];
 }
@@ -178,6 +181,12 @@ export const test = base.extend<ExtensionFixtures>({
 
   site: async ({}, use) => {
     const server = await startTestSite();
+    await use(server);
+    await server.close();
+  },
+
+  collector: async ({}, use) => {
+    const server = await startCollector();
     await use(server);
     await server.close();
   },

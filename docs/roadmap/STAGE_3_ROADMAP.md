@@ -1239,6 +1239,98 @@ D5 only. B2 is provider-independent and proceeds.
 
 ---
 
+## 4L. B2 Implementation — delivered
+
+Implemented against the §4K contract. What follows records what was built,
+what the build discovered, and where it deviates from the frozen design.
+
+### Modules added
+
+| Module                                       | Role                                                  |
+| -------------------------------------------- | ----------------------------------------------------- |
+| `src/security/taint/taint-state.ts`          | three-state task taint, monotone, canonical signature |
+| `src/security/egress/destination.ts`         | structured destinations, canonical identity           |
+| `src/security/egress/carrier.ts`             | carrier capacity grading                              |
+| `src/security/egress/consent.ts`             | consent keys, grants, provider binding                |
+| `src/security/egress/egress-gate.ts`         | the single authorization point                        |
+| `src/security/egress/egress-evidence.ts`     | decision records with keyed digests                   |
+| `src/security/egress/provider-transport.ts`  | guarded transport, injected at `factory.create()`     |
+| `src/security/egress/network-interceptor.ts` | worker-scope defence in depth                         |
+
+### Defects the implementation uncovered
+
+**D-EG-6 — `payloadContainsSecret` ignored each rule's `confirm` predicate.**
+`VERIFIED IN CODE`, now fixed. It tested `rule.pattern` alone, so the
+card-number rule — which carries an issuer-prefix and Luhn check precisely
+because shape over-matches — fired on any run of 13 to 19 digits. A provider
+body containing a timestamp was refused as a credential, which would have
+blocked every request the product makes. Both entry points now share one
+`confirm`-aware implementation so they cannot drift apart again.
+
+**D-EG-7 — a JSON-quoted key slipped past the named-secret rule.**
+`VERIFIED IN CODE`, now fixed. `named-secret-assignment` required the key to
+be followed directly by `:` or `=`, so `"session_token":"…"` in a serialised
+body did not match while `session_token=…` did. Serialised bodies are exactly
+what the gate inspects. The separator group now tolerates a closing quote.
+
+**D-EG-8 — `javascript:` and `data:` URLs canonicalised to a destination.**
+`VERIFIED IN CODE`, now fixed. They parse as URLs, so they produced an
+identity and could have been consented to. They are execution and inlining
+vectors rather than destinations; `canonicalUrlIdentity` now returns `null`
+for every blocked scheme, and the gate denies.
+
+### Deviations from the frozen contract
+
+**Provider binding, added.** §4K said every transfer is evaluated against the
+consent key. Taken literally that prompts on every model turn — dozens of
+times per task, for the provider the user configured and chose when starting
+the task. A prompt that fires on every ordinary action is dismissed rather
+than read, which makes the control weaker in practice.
+
+A task therefore **pins** its provider destination on the first request and
+compares every later one against it. The value comes from user configuration
+and never from model output, so the model cannot steer a task elsewhere; a
+switch to any other provider, endpoint origin or port fails the comparison and
+falls through to consent. This implements "provider switching re-evaluates"
+directly. It is a deviation and is recorded as one.
+
+**Carrier applies only to URL-bearing channels.** A provider or connector
+request sends its payload deliberately, so grading the container says nothing.
+Treating `carrier === 'none'` as "cannot convey" for those channels would have
+allowed every provider request unconditionally — an adversarial test caught
+exactly that during the build.
+
+**Consent is required by the exfiltration verdict, not by carrier alone.**
+Carrier answers "can this convey?"; the exfiltration verdict answers "is there
+foreign private data?". Consent needs both. This is why writing a page's own
+content back to that same page does not prompt: the origin already holds it.
+
+### Known limitations
+
+| Limitation                                | Effect                                                                                                                                    |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `observedUrls` is not yet populated       | a link the page displayed grades `high`, not `none`, so this can only add confirmations, never remove one                                 |
+| Interception covers the worker scope only | content scripts and the page world are unreachable from it; this is intrinsic to MV3 and is why content scripts stay message-passing only |
+| Consent grants are not persisted          | a restart re-asks, deliberately                                                                                                           |
+| CSP `connect-src` still unusable          | provider base URLs are user-configurable                                                                                                  |
+| Web AI channel defined but unimplemented  | D4 and D5 remain gated                                                                                                                    |
+
+### Evidence
+
+| Claim                                         | Test                                            |
+| --------------------------------------------- | ----------------------------------------------- |
+| Three-state taint, monotone, fails closed     | `tests/security/taint-state.test.ts` (29)       |
+| Persistence, concurrency, restart, damage     | `tests/security/taint-persistence.test.ts` (15) |
+| Adversarial gate, consent, carrier            | `tests/security/egress-gate.test.ts` (44)       |
+| Real-browser egress, receiving-side zero hits | `tests/e2e/egress.spec.ts` (6)                  |
+
+The real-browser tests assert on the **receiving** side: a blocked transfer
+must leave zero requests at a collector server on its own origin. Asserting
+that a tool returned BLOCK would prove only that the extension said no, not
+that nothing left the browser.
+
+---
+
 ## 4K. B2 Final Implementation Contract — frozen
 
 The engineering contract for the B2 pass. Everything here is **ENGINEERING

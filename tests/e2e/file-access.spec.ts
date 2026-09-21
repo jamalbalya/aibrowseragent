@@ -186,9 +186,17 @@ test('every browser tool refuses a local file, and none of them attaches the deb
     expect(refused, `${tool} should have been refused`).toContain(tool);
   }
 
-  // No evidence was produced — nothing about the file was recorded.
+  // Nothing about the file was recorded.
+  //
+  // This used to assert an empty list. A task now also records an egress
+  // decision for each provider request, so the assertion states what it
+  // always meant instead of relying on the count: no evidence captured from
+  // the file, and nothing carrying a file origin.
   const { evidence } = await send('evidence.listForTask', { taskId: task.id });
-  expect(evidence).toHaveLength(0);
+  const captured = evidence.filter((item) => item.type !== 'EGRESS_DECISION');
+  expect(captured).toHaveLength(0);
+  expect(evidence.every((item) => item.sourceTool === 'provider.request')).toBe(true);
+  expect(evidence.some((item) => (item.origin ?? '').startsWith('file:'))).toBe(false);
 
   // And the extension never attached its debugger, so it never opened a CDP
   // session on a local file. This is the ordering that matters: the scheme

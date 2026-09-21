@@ -39,10 +39,51 @@ export default tseslint.config(
       eqeqeq: ['error', 'always', { null: 'ignore' }],
       // Production code must route through the structured logger (src/logging).
       'no-console': 'error',
+      // Outbound network primitives are confined to the egress module, which
+      // is where the authorization gate lives. This is defence in depth, not
+      // the boundary itself: the boundary is that adapters are constructed
+      // with a guarded transport and have no other route out. The rule exists
+      // so a future module cannot quietly acquire one.
+      'no-restricted-globals': [
+        'error',
+        { name: 'eval', message: 'Dynamic code execution is prohibited in this extension.' },
+        {
+          name: 'fetch',
+          message: 'Network access goes through the guarded transport in src/security/egress.',
+        },
+        {
+          name: 'XMLHttpRequest',
+          message: 'Use the guarded transport in src/security/egress.',
+        },
+        { name: 'WebSocket', message: 'Use the guarded transport in src/security/egress.' },
+        { name: 'EventSource', message: 'Use the guarded transport in src/security/egress.' },
+      ],
+      'no-restricted-properties': [
+        'error',
+        {
+          object: 'globalThis',
+          property: 'fetch',
+          message: 'Network access goes through the guarded transport in src/security/egress.',
+        },
+        {
+          object: 'navigator',
+          property: 'sendBeacon',
+          message: 'Beacons bypass the egress gate and are prohibited.',
+        },
+      ],
+    },
+  },
+
+  {
+    // The one module allowed to touch a network primitive: it is where the
+    // authorization gate runs, so the call it makes is the guarded one.
+    files: ['src/security/egress/**/*.ts'],
+    rules: {
       'no-restricted-globals': [
         'error',
         { name: 'eval', message: 'Dynamic code execution is prohibited in this extension.' },
       ],
+      'no-restricted-properties': 'off',
     },
   },
 
@@ -55,6 +96,11 @@ export default tseslint.config(
   {
     files: ['tests/**/*.ts', 'tests/**/*.tsx'],
     rules: {
+      // Tests drive the browser and stub transports; a `fetch` here runs in a
+      // page or a fixture, not in the extension's service worker.
+      'no-restricted-globals': 'off',
+      'no-restricted-properties': 'off',
+      '@typescript-eslint/require-await': 'off',
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-unsafe-assignment': 'off',
       '@typescript-eslint/no-unsafe-member-access': 'off',

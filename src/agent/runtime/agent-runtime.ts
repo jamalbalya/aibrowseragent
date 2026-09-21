@@ -27,6 +27,8 @@ import { LoopDetector, hashArguments } from '@/agent/loop-detection/loop-detecto
 import { checkBudget, DEFAULT_BUDGET, type ResourceBudget } from '@/agent/budget/budget';
 import { decideRetry, DEFAULT_RETRY_POLICY } from '@/agent/recovery/retry-policy';
 import type { TaintSource } from '@/security/exfiltration/exfiltration-guard';
+import type { TaintState } from '@/security/taint/taint-state';
+import { taintSignature } from '@/security/egress/consent';
 import type { EvidenceReference } from '@/evidence/evidence-model';
 import type { AgentTask, TaskResult, TaskState, TaskStep, TaskUsage } from '@/tasks/task-model';
 
@@ -51,6 +53,14 @@ export interface RuntimeCallbacks {
   onActivity(taskId: string, activity: string): void;
   onUsage(taskId: string, usage: TaskUsage): Promise<void>;
   onEvidence(taskId: string, evidence: readonly EvidenceReference[]): Promise<void>;
+  /**
+   * Persists newly acquired taint atomically and returns the resulting state.
+   *
+   * Returning `undefined` means the append could not be persisted. The runtime
+   * treats that as a security failure and pauses rather than continuing with a
+   * state weaker than the one it just observed.
+   */
+  persistTaint(taskId: string, sources: readonly TaintSource[]): Promise<TaintState | undefined>;
   onTextDelta?(taskId: string, delta: string): void;
 }
 
@@ -120,7 +130,9 @@ export class AgentRuntime {
       { role: 'user', content: [{ type: 'text', text: task.objective }] },
     ];
     const detector = new LoopDetector();
-    const taint: TaintSource[] = [...task.taint];
+    // Task-level, not value-level: see `taint-state.ts` for why nothing finer
+    // survives the model boundary.
+    let taintState: TaintState = task.taintState;
     const evidenceIds: string[] = [...task.evidenceIds];
     const completed: string[] = [];
     const failed: string[] = [];
@@ -161,6 +173,8 @@ export class AgentRuntime {
       this.options.callbacks.onActivity(task.id, 'Thinking');
       await this.options.callbacks.onStateChange(task.id, 'RUNNING');
 
+      // Built fresh on every turn, so a retry re-enters the gate with the
+      // taint the task has *now* rather than inheriting an earlier decision.
       const request = buildRequest({
         task,
         messages,
@@ -168,6 +182,15 @@ export class AgentRuntime {
         hasVision: capabilities.vision,
         ...(this.options.contextBudget === undefined ? {} : { budget: this.options.contextBudget }),
         signal,
+        egress: {
+          taskId: task.id,
+          taintState,
+          taintSalt: task.taintSalt,
+          saltEpoch: task.saltEpoch,
+          taintSignature: await taintSignature(taintState),
+          providerId: task.providerId,
+          modelId: task.modelId,
+        },
       });
 
       let response;
@@ -298,7 +321,10 @@ export class AgentRuntime {
           name: call.name,
           arguments: call.arguments,
           ...(input.tabId === undefined ? {} : { tabId: input.tabId }),
-          taint,
+          taintState,
+          taintSalt: task.taintSalt,
+          saltEpoch: task.saltEpoch,
+          taintSignature: await taintSignature(taintState),
           signal,
         });
 
@@ -314,7 +340,23 @@ export class AgentRuntime {
           evidenceIds.push(...dispatch.evidence.map((item) => item.id));
           await this.options.callbacks.onEvidence(task.id, dispatch.evidence);
         }
-        taint.push(...dispatch.taint);
+        // Persist before the next model turn. An eviction between here and
+        // the next tool call must not be able to forget what this one read.
+        if (dispatch.taint.length > 0) {
+          const persisted = await this.options.callbacks.persistTaint(task.id, dispatch.taint);
+          if (persisted === undefined) {
+            return this.terminate(
+              task,
+              'PARTIAL',
+              'Paused: the record of what this task has read could not be saved, so no ' +
+                'further action can be authorised. Resume once storage is available.',
+              evidenceIds,
+              usage,
+              { completed, failed, blocked, externalWrites },
+            );
+          }
+          taintState = persisted;
+        }
 
         const success = dispatch.envelope.status === 'success';
         const errorCode = dispatch.envelope.error?.code;

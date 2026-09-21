@@ -55,7 +55,11 @@ test('reads a real page and reports a summary with evidence', async ({
   // Evidence was stored and is retrievable.
   const { evidence } = await send('evidence.listForTask', { taskId: task.id });
   expect(evidence.length).toBeGreaterThan(0);
-  const payload = await send('evidence.getPayload', { evidenceId: evidence[0]!.id });
+  // A task now also records an egress decision per provider request, so the
+  // page capture has to be selected by what it is rather than by position.
+  const pageEvidence = evidence.find((item) => item.sourceTool === 'browser.read_page');
+  expect(pageEvidence).toBeDefined();
+  const payload = await send('evidence.getPayload', { evidenceId: pageEvidence!.id });
   expect(payload.content).toContain('widget');
 });
 

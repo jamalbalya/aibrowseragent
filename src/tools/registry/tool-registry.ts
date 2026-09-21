@@ -21,6 +21,10 @@ import { evaluatePolicy, type PolicyContext, type PolicyDecision } from '@/polic
 import type { PermissionEngine } from '@/policy/permission-engine';
 import type { EvidenceReference, EvidencePayload } from '@/evidence/evidence-model';
 import type { EvidenceStore } from '@/evidence/evidence-store';
+import { unknownTaint, type TaintState } from '@/security/taint/taint-state';
+import { authorizeEgress, type EgressDecision } from '@/security/egress/egress-gate';
+import type { ConsentStore } from '@/security/egress/consent';
+import type { EgressEvidenceInput } from '@/security/egress/egress-evidence';
 import type { TaintSource } from '@/security/exfiltration/exfiltration-guard';
 import type { CanonicalToolSchema } from '@/providers/core/types';
 import type {
@@ -43,7 +47,16 @@ export interface ToolInvocation {
   readonly tabId?: number;
   /** URL observed when the model proposed this call. */
   readonly plannedUrl?: string;
-  readonly taint?: readonly TaintSource[];
+  /**
+   * Task-level taint, carried as a state rather than a bare list so an
+   * unestablished provenance stays distinguishable from an empty one.
+   */
+  readonly taintState?: TaintState;
+  /** Per-task evidence key. Absent denies any declared egress. */
+  readonly taintSalt?: string;
+  readonly saltEpoch?: number;
+  /** Signature over the taint set, for the consent key. */
+  readonly taintSignature?: string;
   readonly signal: AbortSignal;
 }
 
@@ -69,6 +82,21 @@ export interface ToolRegistryOptions {
    * warning is logged rather than the omission passing silently.
    */
   readonly evidenceStore?: EvidenceStore;
+  /**
+   * Egress authorization.
+   *
+   * Optional so tool behaviour can be tested in isolation. A tool that
+   * declares an egress while this is absent is not silently allowed: the
+   * declaration is what makes the transfer visible, and a registry built
+   * without this simply cannot run such a tool in production — the service
+   * worker always supplies it.
+   */
+  /** Resolves a tab's current URL, so a page-write destination is knowable. */
+  readonly resolveTabUrl?: (tabId: number) => Promise<string | undefined>;
+  readonly egress?: {
+    readonly consent: ConsentStore;
+    readonly record: (input: EgressEvidenceInput) => Promise<void>;
+  };
 }
 
 export class ToolRegistry {
@@ -149,12 +177,17 @@ export class ToolRegistry {
     }
 
     const recorded: { reference: RecordedEvidence; payload: Omit<EvidencePayload, 'id'> }[] = [];
+    const currentUrl =
+      invocation.tabId !== undefined && this.options.resolveTabUrl
+        ? await this.options.resolveTabUrl(invocation.tabId)
+        : undefined;
     const context: ToolExecutionContext = {
       taskId: invocation.taskId,
       sessionId: invocation.sessionId,
       toolCallId: invocation.toolCallId,
       ...(invocation.tabId === undefined ? {} : { tabId: invocation.tabId }),
       ...(invocation.plannedUrl === undefined ? {} : { authorisedUrl: invocation.plannedUrl }),
+      ...(currentUrl === undefined ? {} : { currentUrl }),
       signal: invocation.signal,
       recordEvidence: (reference, payload) => recorded.push({ reference, payload }),
     };
@@ -182,24 +215,83 @@ export class ToolRegistry {
         ...(classification.writePayload === undefined
           ? {}
           : { writePayload: classification.writePayload }),
-        ...(invocation.taint === undefined ? {} : { taint: invocation.taint }),
+        ...(invocation.taintState === undefined ? {} : { taintState: invocation.taintState }),
       },
       policyContext,
     );
+
+    // 3b. Egress. Every declared outbound transfer passes the gate before the
+    //     tool runs, so no primitive capable of an externally observable
+    //     transfer executes ahead of the decision.
+    let egressDecision: EgressDecision | undefined;
+    let effective = decision;
+    if (classification.egress !== undefined && this.options.egress !== undefined) {
+      egressDecision = authorizeEgress(
+        {
+          taskId: invocation.taskId,
+          taintState: invocation.taintState ?? unknownTaint('field-absent'),
+          taintSalt: invocation.taintSalt ?? '',
+          destination: classification.egress.destination,
+          ...(classification.egress.payload === undefined
+            ? {}
+            : { payload: classification.egress.payload }),
+          ...(classification.egress.carrier === undefined
+            ? {}
+            : { carrierInput: classification.egress.carrier }),
+          ...(invocation.taintSignature === undefined
+            ? {}
+            : { taintSignature: invocation.taintSignature }),
+          now: Date.now(),
+        },
+        { consent: this.options.egress.consent },
+      );
+
+      await this.options.egress.record({
+        taskId: invocation.taskId,
+        toolCallId: invocation.toolCallId,
+        sourceTool: canonicalName,
+        destination: classification.egress.destination,
+        decision: egressDecision,
+        ...(classification.egress.payload === undefined
+          ? {}
+          : { payload: classification.egress.payload }),
+        taintSalt: invocation.taintSalt ?? '',
+        saltEpoch: invocation.saltEpoch ?? 0,
+        now: Date.now(),
+      });
+
+      // The stricter of the two verdicts wins. Tool risk and data egress are
+      // separate questions and neither stands in for the other.
+      if (egressDecision.verdict === 'deny') {
+        effective = {
+          verdict: 'DENY',
+          code: 'EXFILTRATION_BLOCKED',
+          reason: egressDecision.reason,
+          effectiveRisk: 'R4',
+        };
+      } else if (egressDecision.verdict === 'confirm' && decision.verdict !== 'DENY') {
+        effective = {
+          verdict: 'ALLOW_WITH_CONFIRMATION',
+          code: 'EXFILTRATION_CONFIRM',
+          reason: egressDecision.reason,
+          effectiveRisk: maxRisk(decision.effectiveRisk, 'R3'),
+        };
+      }
+    }
 
     // 4. Permission.
     const approval = await this.options.permissionEngine.requestApproval({
       taskId: invocation.taskId,
       tool: canonicalName,
-      decision,
+      decision: effective,
       summary: classification.summary ?? describeCall(tool, parsed.data),
       ...(classification.targetUrl === undefined ? {} : { targetUrl: classification.targetUrl }),
       ...(invocation.signal === undefined ? {} : { signal: invocation.signal }),
     });
 
     if (!approval.granted) {
-      const code = decision.verdict === 'DENY' ? 'POLICY_BLOCKED' : 'PERMISSION_DENIED';
-      const error = createError(code, decision.reason, { userMessage: decision.reason });
+      const code = effective.verdict === 'DENY' ? 'POLICY_BLOCKED' : 'PERMISSION_DENIED';
+      const error = createError(code, effective.reason, { userMessage: effective.reason });
       log.info('Tool call refused before execution.', {
         tool: canonicalName,
         verdict: decision.verdict,

@@ -11,6 +11,7 @@ import {
   readServerSentEvents,
 } from '@/providers/adapters/openai-compatible';
 import type { CanonicalEvent } from '@/providers/core/types';
+import { passthroughTransport, testEgressContext } from '../fixtures/egress';
 
 const CONFIG = {
   providerId: 'openai-compatible',
@@ -39,7 +40,7 @@ function sseResponse(frames: string[]): Response {
 
 describe('connect', () => {
   it('requires a base URL and an API key', async () => {
-    const adapter = new OpenAICompatibleAdapter(vi.fn());
+    const adapter = new OpenAICompatibleAdapter(passthroughTransport(vi.fn()));
     expect((await adapter.connect({ providerId: 'x' })).authenticated).toBe(false);
     expect(
       (await adapter.connect({ providerId: 'x', baseUrl: 'https://a.test' })).authenticated,
@@ -47,32 +48,32 @@ describe('connect', () => {
   });
 
   it('refuses a non-https base URL so a key is never sent in the clear', async () => {
-    const adapter = new OpenAICompatibleAdapter(vi.fn());
+    const adapter = new OpenAICompatibleAdapter(passthroughTransport(vi.fn()));
     const result = await adapter.connect({ ...CONFIG, baseUrl: 'http://api.example.com/v1' });
     expect(result.authenticated).toBe(false);
     expect(result.error?.userMessage).toContain('https');
   });
 
   it('allows http on localhost for a local model server', async () => {
-    const adapter = new OpenAICompatibleAdapter(vi.fn());
+    const adapter = new OpenAICompatibleAdapter(passthroughTransport(vi.fn()));
     const result = await adapter.connect({ ...CONFIG, baseUrl: 'http://localhost:11434/v1' });
     expect(result.authenticated).toBe(true);
   });
 
   it('reports only a masked key suffix as the account label', async () => {
-    const adapter = new OpenAICompatibleAdapter(vi.fn());
+    const adapter = new OpenAICompatibleAdapter(passthroughTransport(vi.fn()));
     const result = await adapter.connect(CONFIG);
     expect(result.accountLabel).toContain('api.example.com');
     expect(result.accountLabel).not.toContain('sk-' + 'test-abcdefghijklmnop');
   });
 
   it('does not label a third-party endpoint as OpenAI', () => {
-    const adapter = new OpenAICompatibleAdapter(vi.fn());
+    const adapter = new OpenAICompatibleAdapter(passthroughTransport(vi.fn()));
     expect(adapter.displayName).toBe('OpenAI-compatible endpoint');
   });
 
   it('throws when used before connecting rather than guessing a default', async () => {
-    const adapter = new OpenAICompatibleAdapter(vi.fn());
+    const adapter = new OpenAICompatibleAdapter(passthroughTransport(vi.fn()));
     await expect(adapter.listModels()).rejects.toThrow(/not connected/);
   });
 });
@@ -84,10 +85,11 @@ describe('generate', () => {
       .mockResolvedValue(
         jsonResponse({ choices: [{ message: { content: 'hi' }, finish_reason: 'stop' }] }),
       );
-    const adapter = new OpenAICompatibleAdapter(fetchMock);
+    const adapter = new OpenAICompatibleAdapter(passthroughTransport(fetchMock));
     await adapter.connect(CONFIG);
 
     await adapter.generate({
+      egress: testEgressContext(),
       systemInstruction: 'You are a browser agent.',
       messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
     });
@@ -121,10 +123,14 @@ describe('generate', () => {
         usage: { prompt_tokens: 12, completion_tokens: 4 },
       }),
     );
-    const adapter = new OpenAICompatibleAdapter(fetchMock);
+    const adapter = new OpenAICompatibleAdapter(passthroughTransport(fetchMock));
     await adapter.connect(CONFIG);
 
-    const response = await adapter.generate({ systemInstruction: 's', messages: [] });
+    const response = await adapter.generate({
+      egress: testEgressContext(),
+      systemInstruction: 's',
+      messages: [],
+    });
 
     expect(response.finishReason).toBe('tool_call');
     expect(response.toolCalls[0]).toEqual({
@@ -148,10 +154,14 @@ describe('generate', () => {
         ],
       }),
     );
-    const adapter = new OpenAICompatibleAdapter(fetchMock);
+    const adapter = new OpenAICompatibleAdapter(passthroughTransport(fetchMock));
     await adapter.connect(CONFIG);
 
-    const response = await adapter.generate({ systemInstruction: 's', messages: [] });
+    const response = await adapter.generate({
+      egress: testEgressContext(),
+      systemInstruction: 's',
+      messages: [],
+    });
     expect(response.toolCalls[0]?.parseError).toBeDefined();
     expect(response.toolCalls[0]?.arguments).toEqual({});
   });
@@ -164,18 +174,23 @@ describe('generate', () => {
         ],
       }),
     );
-    const adapter = new OpenAICompatibleAdapter(fetchMock);
+    const adapter = new OpenAICompatibleAdapter(passthroughTransport(fetchMock));
     await adapter.connect(CONFIG);
-    const response = await adapter.generate({ systemInstruction: 's', messages: [] });
+    const response = await adapter.generate({
+      egress: testEgressContext(),
+      systemInstruction: 's',
+      messages: [],
+    });
     expect(response.toolCalls[0]?.parseError).toContain('object');
   });
 
   it('expands tool results into separate role:tool wire messages', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ choices: [{ message: {} }] }));
-    const adapter = new OpenAICompatibleAdapter(fetchMock);
+    const adapter = new OpenAICompatibleAdapter(passthroughTransport(fetchMock));
     await adapter.connect(CONFIG);
 
     await adapter.generate({
+      egress: testEgressContext(),
       systemInstruction: 's',
       messages: [
         {
@@ -208,10 +223,11 @@ describe('generate', () => {
 
   it('encodes an image part as a data URL', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ choices: [{ message: {} }] }));
-    const adapter = new OpenAICompatibleAdapter(fetchMock);
+    const adapter = new OpenAICompatibleAdapter(passthroughTransport(fetchMock));
     await adapter.connect(CONFIG);
 
     await adapter.generate({
+      egress: testEgressContext(),
       systemInstruction: 's',
       messages: [
         {
@@ -233,10 +249,11 @@ describe('generate', () => {
 
   it('translates canonical tools into the function schema', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ choices: [{ message: {} }] }));
-    const adapter = new OpenAICompatibleAdapter(fetchMock);
+    const adapter = new OpenAICompatibleAdapter(passthroughTransport(fetchMock));
     await adapter.connect(CONFIG);
 
     await adapter.generate({
+      egress: testEgressContext(),
       systemInstruction: 's',
       messages: [],
       tools: [
@@ -268,10 +285,12 @@ describe('HTTP error mapping', () => {
   for (const [status, code] of cases) {
     it(`maps ${status} to ${code}`, async () => {
       const fetchMock = vi.fn().mockResolvedValue(new Response('{"error":"x"}', { status }));
-      const adapter = new OpenAICompatibleAdapter(fetchMock);
+      const adapter = new OpenAICompatibleAdapter(passthroughTransport(fetchMock));
       await adapter.connect(CONFIG);
 
-      await expect(adapter.generate({ systemInstruction: 's', messages: [] })).rejects.toSatisfy(
+      await expect(
+        adapter.generate({ egress: testEgressContext(), systemInstruction: 's', messages: [] }),
+      ).rejects.toSatisfy(
         (error: unknown) => error instanceof ProviderRequestError && error.agentError.code === code,
       );
     });
@@ -280,11 +299,15 @@ describe('HTTP error mapping', () => {
   it('marks a 5xx as retryable and a 400 as not', async () => {
     const make = async (status: number) => {
       const adapter = new OpenAICompatibleAdapter(
-        vi.fn().mockResolvedValue(new Response('{}', { status })),
+        passthroughTransport(vi.fn().mockResolvedValue(new Response('{}', { status }))),
       );
       await adapter.connect(CONFIG);
       try {
-        await adapter.generate({ systemInstruction: 's', messages: [] });
+        await adapter.generate({
+          egress: testEgressContext(),
+          systemInstruction: 's',
+          messages: [],
+        });
         return null;
       } catch (error) {
         return (error as ProviderRequestError).agentError;
@@ -296,12 +319,12 @@ describe('HTTP error mapping', () => {
 
   it('maps a network failure to NETWORK_ERROR without leaking the raw message', async () => {
     const adapter = new OpenAICompatibleAdapter(
-      vi.fn().mockRejectedValue(new Error('ECONNREFUSED 10.0.0.5:443')),
+      passthroughTransport(vi.fn().mockRejectedValue(new Error('ECONNREFUSED 10.0.0.5:443'))),
     );
     await adapter.connect(CONFIG);
 
     try {
-      await adapter.generate({ systemInstruction: 's', messages: [] });
+      await adapter.generate({ egress: testEgressContext(), systemInstruction: 's', messages: [] });
       expect.unreachable();
     } catch (error) {
       const agentError = (error as ProviderRequestError).agentError;
@@ -321,11 +344,17 @@ describe('streaming', () => {
       'data: {"choices":[{"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":5,"completion_tokens":3}}\n\n',
       'data: [DONE]\n\n',
     ];
-    const adapter = new OpenAICompatibleAdapter(vi.fn().mockResolvedValue(sseResponse(frames)));
+    const adapter = new OpenAICompatibleAdapter(
+      passthroughTransport(vi.fn().mockResolvedValue(sseResponse(frames))),
+    );
     await adapter.connect(CONFIG);
 
     const events: CanonicalEvent[] = [];
-    for await (const event of adapter.stream({ systemInstruction: 's', messages: [] })) {
+    for await (const event of adapter.stream({
+      egress: testEgressContext(),
+      systemInstruction: 's',
+      messages: [],
+    })) {
       events.push(event);
     }
 
@@ -353,11 +382,17 @@ describe('streaming', () => {
       'data: {"choices":[{"delta":{"content":"b"}}]}\n\n',
       'data: [DONE]\n\n',
     ];
-    const adapter = new OpenAICompatibleAdapter(vi.fn().mockResolvedValue(sseResponse(frames)));
+    const adapter = new OpenAICompatibleAdapter(
+      passthroughTransport(vi.fn().mockResolvedValue(sseResponse(frames))),
+    );
     await adapter.connect(CONFIG);
 
     const deltas: string[] = [];
-    for await (const event of adapter.stream({ systemInstruction: 's', messages: [] })) {
+    for await (const event of adapter.stream({
+      egress: testEgressContext(),
+      systemInstruction: 's',
+      messages: [],
+    })) {
       if (event.type === 'text_delta') deltas.push(event.delta);
     }
     expect(deltas.join('')).toBe('ab');
@@ -365,12 +400,16 @@ describe('streaming', () => {
 
   it('yields an error event instead of throwing on an HTTP failure', async () => {
     const adapter = new OpenAICompatibleAdapter(
-      vi.fn().mockResolvedValue(new Response('{}', { status: 401 })),
+      passthroughTransport(vi.fn().mockResolvedValue(new Response('{}', { status: 401 }))),
     );
     await adapter.connect(CONFIG);
 
     const events: CanonicalEvent[] = [];
-    for await (const event of adapter.stream({ systemInstruction: 's', messages: [] })) {
+    for await (const event of adapter.stream({
+      egress: testEgressContext(),
+      systemInstruction: 's',
+      messages: [],
+    })) {
       events.push(event);
     }
     expect(events[0]?.type).toBe('error');

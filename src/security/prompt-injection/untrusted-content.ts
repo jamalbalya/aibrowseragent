@@ -32,13 +32,76 @@ const TRUST_RANK: Record<TrustLevel, number> = {
   untrusted_external_content: 6,
 };
 
-/** Lower rank wins when two sources conflict. */
+/**
+ * Lower rank wins when two sources conflict.
+ *
+ * Advisory only. No egress or content-trust decision may be made from this
+ * ordering: it was designed for instruction authority, where
+ * `authenticated_application` deliberately outranks untrusted content, and an
+ * egress consumer reading it would treat a logged-in AI web session as more
+ * trustworthy than the page text it is relaying. Use `trustForProvenance`.
+ */
 export function higherAuthority(a: TrustLevel, b: TrustLevel): TrustLevel {
   return TRUST_RANK[a] <= TRUST_RANK[b] ? a : b;
 }
 
 export function canIssueInstructions(level: TrustLevel): boolean {
   return TRUST_RANK[level] <= TRUST_RANK.agent_runtime;
+}
+
+/**
+ * Where a piece of content came from, independent of how far it is trusted.
+ *
+ * Trust and provenance are separate dimensions because a single scalar cannot
+ * say "authenticated source, untrusted content" — which is exactly what a
+ * logged-in AI web UI is. Authenticating a channel establishes who the
+ * counterparty is; it establishes nothing about what the counterparty said.
+ *
+ * `MODEL_OUTPUT_WEB_UI` is therefore pinned to `untrusted_external_content`
+ * wherever it appears, whatever the provider's authentication state, and is
+ * never promoted because the provider is official, the user is logged in, or
+ * the reply happens to look structured.
+ */
+export const PROVENANCE_KINDS = [
+  'SYSTEM_CONTROLLED_DATA',
+  'USER_INTENT',
+  'UNTRUSTED_EXTERNAL_CONTENT',
+  'MODEL_OUTPUT_API',
+  'MODEL_OUTPUT_WEB_UI',
+  'TOOL_RESULT',
+] as const;
+
+export type ProvenanceKind = (typeof PROVENANCE_KINDS)[number];
+
+/**
+ * The trust a kind may ever carry.
+ *
+ * A lookup rather than an ordering: the value is fixed by where the content
+ * came from and cannot be raised by anything observed at runtime.
+ */
+const TRUST_FOR_KIND: Record<ProvenanceKind, TrustLevel> = {
+  SYSTEM_CONTROLLED_DATA: 'system_policy',
+  USER_INTENT: 'user_intent',
+  UNTRUSTED_EXTERNAL_CONTENT: 'untrusted_external_content',
+  MODEL_OUTPUT_API: 'untrusted_external_content',
+  MODEL_OUTPUT_WEB_UI: 'untrusted_external_content',
+  TOOL_RESULT: 'untrusted_external_content',
+};
+
+/**
+ * Trust for a provenance kind. Total, so there is no default-to-trusted path.
+ *
+ * Model output is untrusted under both kinds. A model is a transformer of
+ * whatever it was shown, and content that entered as untrusted does not become
+ * trustworthy by passing through one.
+ */
+export function trustForProvenance(kind: ProvenanceKind): TrustLevel {
+  return TRUST_FOR_KIND[kind];
+}
+
+/** Model output is data. It is never an instruction and never an authorization. */
+export function canAuthorize(kind: ProvenanceKind): boolean {
+  return kind === 'SYSTEM_CONTROLLED_DATA' || kind === 'USER_INTENT';
 }
 
 export interface Provenance {

@@ -19,9 +19,9 @@ import {
 import { checkNavigable, evaluateTransition } from '@/security/origin/origin-validator';
 import {
   evaluateExfiltration,
-  type TaintSource,
   type ExfiltrationDecision,
 } from '@/security/exfiltration/exfiltration-guard';
+import { taintSources, unknownTaint, type TaintState } from '@/security/taint/taint-state';
 import { findRule, type SitePolicyState } from './site-policy';
 
 export type PolicyVerdict = 'ALLOW' | 'ALLOW_WITH_CONFIRMATION' | 'DENY';
@@ -43,7 +43,7 @@ export interface PolicyRequest {
   /** Destination for an outbound write, if this call sends data somewhere. */
   readonly writeDestination?: string;
   readonly writePayload?: unknown;
-  readonly taint?: readonly TaintSource[];
+  readonly taintState?: TaintState;
 }
 
 export interface PolicyContext {
@@ -163,7 +163,7 @@ export function evaluatePolicy(request: PolicyRequest, context: PolicyContext): 
     exfiltration = evaluateExfiltration({
       destination: request.writeDestination,
       payload: request.writePayload,
-      taint: request.taint ?? [],
+      taint: taintSources(request.taintState ?? unknownTaint('field-absent')),
     });
     if (exfiltration.verdict === 'block') {
       return {

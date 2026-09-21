@@ -114,6 +114,7 @@ describe('a task sustained over many turns', () => {
         onActivity: () => undefined,
         onUsage: () => Promise.resolve(),
         onEvidence: () => Promise.resolve(),
+        persistTaint: async () => ({ kind: 'KNOWN_UNTAINTED' }) as const,
       },
     });
 
@@ -151,6 +152,7 @@ describe('a task sustained over many turns', () => {
         onActivity: () => undefined,
         onUsage: () => Promise.resolve(),
         onEvidence: () => Promise.resolve(),
+        persistTaint: async () => ({ kind: 'KNOWN_UNTAINTED' }) as const,
       },
     });
 
@@ -193,6 +195,7 @@ describe('a task sustained over many turns', () => {
         onActivity: () => undefined,
         onUsage: () => Promise.resolve(),
         onEvidence: () => Promise.resolve(),
+        persistTaint: async () => ({ kind: 'KNOWN_UNTAINTED' }) as const,
       },
     });
 
@@ -244,6 +247,7 @@ describe('a task sustained over many turns', () => {
         onActivity: () => undefined,
         onUsage: () => Promise.resolve(),
         onEvidence: () => Promise.resolve(),
+        persistTaint: async () => ({ kind: 'KNOWN_UNTAINTED' }) as const,
       },
     });
 

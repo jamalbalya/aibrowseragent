@@ -21,6 +21,11 @@ import { SettingsStore, CredentialStore } from '@/config/settings';
 import { TaskStore } from '@/tasks/task-store';
 import { EvidenceStore } from '@/evidence/evidence-store';
 import { ProviderRegistry, type ProviderConnection } from '@/providers/registry/provider-registry';
+import { ConsentStore } from '@/security/egress/consent';
+import { createGuardedTransport } from '@/security/egress/provider-transport';
+import { installNetworkInterceptor } from '@/security/egress/network-interceptor';
+import { buildEgressEvidence } from '@/security/egress/egress-evidence';
+import { providerDestination } from '@/security/egress/destination';
 import { CapabilityDoctor } from '@/providers/capability-doctor/capability-doctor';
 import {
   openAICompatibleFactory,
@@ -44,6 +49,11 @@ import { MessageRouter } from './message-router';
 import { broadcastEvent } from '@/messaging/bus';
 import { Notifier } from '@/notifications/notifier';
 import type { AgentSession } from '@/tasks/task-model';
+
+// Installed before anything else can capture a pristine primitive. Defence in
+// depth only: the boundary is the guarded transport and the tool-level egress
+// declarations, and this cannot see content scripts or the page world at all.
+installNetworkInterceptor();
 
 const log = getLogger('agent');
 
@@ -81,7 +91,42 @@ const loadPolicyContext = async (): Promise<PolicyContext> => {
 // Providers
 // ---------------------------------------------------------------------------
 
-const providerRegistry = new ProviderRegistry();
+/**
+ * Consent grants for this worker generation.
+ *
+ * Not persisted on purpose: a grant that outlived a restart would outlive the
+ * context the user saw when giving it, and re-asking is the safe direction.
+ */
+const consentStore = new ConsentStore();
+
+/**
+ * The transport every provider adapter is built with.
+ *
+ * Injected here so that reaching the network through the gate is a property
+ * of how an adapter is constructed rather than of what it remembers to call.
+ */
+const providerTransport = createGuardedTransport({
+  consent: consentStore,
+  onDecision: async (decision, context, url, payload) => {
+    const built = await buildEgressEvidence({
+      taskId: context.taskId,
+      sourceTool: 'provider.request',
+      destination: providerDestination(context.providerId, url, context.modelId),
+      decision,
+      ...(payload === undefined ? {} : { payload }),
+      taintSalt: context.taintSalt,
+      saltEpoch: context.saltEpoch,
+      now: Date.now(),
+    });
+    await evidenceStore.put(built.reference, {
+      content: JSON.stringify(built.detail),
+      encoding: 'utf8',
+      mimeType: 'application/json',
+    });
+  },
+});
+
+const providerRegistry = new ProviderRegistry({ transport: providerTransport });
 providerRegistry.register(openAICompatibleFactory);
 const capabilityDoctor = new CapabilityDoctor();
 
@@ -109,7 +154,32 @@ const permissionEngine = new PermissionEngine({
   saveSitePolicy,
 });
 
-const toolRegistry = new ToolRegistry({ permissionEngine, loadPolicyContext, evidenceStore });
+const toolRegistry = new ToolRegistry({
+  // A page write's destination is the page itself, so the tab's URL has to be
+  // known before the call is classified rather than found inside the tool.
+  resolveTabUrl: async (tabId) => {
+    try {
+      return (await browserAdapter.getTab(tabId))?.url;
+    } catch {
+      // Unknown means unknown: the gate denies rather than guessing an origin.
+      return undefined;
+    }
+  },
+  egress: {
+    consent: consentStore,
+    record: async (input) => {
+      const built = await buildEgressEvidence(input);
+      await evidenceStore.put(built.reference, {
+        content: JSON.stringify(built.detail),
+        encoding: 'utf8',
+        mimeType: 'application/json',
+      });
+    },
+  },
+  permissionEngine,
+  loadPolicyContext,
+  evidenceStore,
+});
 toolRegistry.registerAll(createBrowserTools({ adapter: browserAdapter, debuggerManager }));
 toolRegistry.registerAll(createTabTools({ adapter: browserAdapter, ownership: tabOwnership }));
 toolRegistry.registerAll(
