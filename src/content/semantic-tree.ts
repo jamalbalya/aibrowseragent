@@ -202,10 +202,43 @@ export function roleOf(element: Element): string {
 }
 
 /**
+ * Roles whose accessible name may be derived from their own text content
+ * (the accname "name from content" set).
+ *
+ * Form controls are deliberately absent. A `<select>` that falls through to
+ * `textContent` is named after its own options — an unlabelled dropdown came
+ * back as "AlphaBeta" in a real browser — and a contenteditable textbox is
+ * named after whatever the user typed into it. In both cases the text is the
+ * control's *value*, which is reported separately, not a label the model can
+ * usefully target.
+ */
+const NAME_FROM_CONTENT_ROLES: ReadonlySet<string> = new Set([
+  'button',
+  'cell',
+  'checkbox',
+  'columnheader',
+  'gridcell',
+  'heading',
+  'link',
+  'menuitem',
+  'menuitemcheckbox',
+  'menuitemradio',
+  'option',
+  'radio',
+  'row',
+  'rowheader',
+  'switch',
+  'tab',
+  'tooltip',
+  'treeitem',
+]);
+
+/**
  * Accessible name.
  *
  * Follows the practical precedence of the accname spec: aria-labelledby,
- * aria-label, associated <label>, then visible text, then placeholder/title.
+ * aria-label, associated <label>, then — only for roles that permit it —
+ * visible text, then placeholder and title.
  */
 export function accessibleName(element: Element): string {
   const labelledBy = element.getAttribute('aria-labelledby');
@@ -247,8 +280,11 @@ export function accessibleName(element: Element): string {
     return normaliseWhitespace(element.alt);
   }
 
-  const text = element.textContent?.trim();
-  if (text) return normaliseWhitespace(text).slice(0, 200);
+  // Only roles in the name-from-content set may be named by their own text.
+  if (NAME_FROM_CONTENT_ROLES.has(roleOf(element))) {
+    const text = element.textContent?.trim();
+    if (text) return normaliseWhitespace(text).slice(0, 200);
+  }
 
   const placeholder = element.getAttribute('placeholder');
   if (placeholder?.trim()) return normaliseWhitespace(placeholder);
@@ -377,9 +413,13 @@ function describeElement(element: Element, handle: string, frameId: string): Sem
 
   if (element.ownerDocument.activeElement === element) extras.focused = true;
 
-  const text = element.textContent?.trim();
-  if (text && text !== base.name) {
-    extras.text = normaliseWhitespace(text).slice(0, 300);
+  // Descriptive text, for roles where it is genuinely descriptive. A form
+  // control's text content is its value, already reported above.
+  if (NAME_FROM_CONTENT_ROLES.has(role)) {
+    const text = element.textContent?.trim();
+    if (text && text !== base.name) {
+      extras.text = normaliseWhitespace(text).slice(0, 300);
+    }
   }
 
   return { ...base, ...extras };

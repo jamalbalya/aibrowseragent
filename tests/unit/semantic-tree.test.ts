@@ -124,6 +124,55 @@ describe('accessibleName', () => {
     setBody('<div></div>');
     expect(accessibleName(document.querySelector('div')!)).toBe('');
   });
+
+  describe('name from content is limited to roles that permit it', () => {
+    // Found in a real browser: an unlabelled <select> was named "AlphaBeta"
+    // after its own options, and a contenteditable textbox was named after
+    // whatever had been typed into it. In both cases that text is the
+    // control's value, not a label the model can target.
+    it('does not name an unlabelled select after its options', () => {
+      setBody('<select><option value="a">Alpha</option><option value="b">Beta</option></select>');
+      expect(accessibleName(document.querySelector('select')!)).toBe('');
+    });
+
+    it('does not name a contenteditable textbox after its own value', () => {
+      setBody('<div role="textbox" contenteditable="true">typed text</div>');
+      expect(accessibleName(document.querySelector('div')!)).toBe('');
+    });
+
+    it('does not name a textarea after its content', () => {
+      setBody('<textarea>draft body</textarea>');
+      expect(accessibleName(document.querySelector('textarea')!)).toBe('');
+    });
+
+    it('still names a labelled select from its label', () => {
+      setBody('<label for="s">Choose one</label><select id="s"><option>Alpha</option></select>');
+      expect(accessibleName(document.querySelector('select')!)).toBe('Choose one');
+    });
+
+    it('still names a select from aria-label', () => {
+      setBody('<select aria-label="Sort order"><option>Alpha</option></select>');
+      expect(accessibleName(document.querySelector('select')!)).toBe('Sort order');
+    });
+
+    it('prefers a placeholder over content for a control', () => {
+      setBody('<div role="textbox" contenteditable="true" placeholder="Write here">typed</div>');
+      expect(accessibleName(document.querySelector('div')!)).toBe('Write here');
+    });
+
+    it('still names buttons, links and headings from their content', () => {
+      setBody('<button>Save</button><a href="/x">Help</a><div role="heading">Title</div>');
+      expect(accessibleName(document.querySelector('button')!)).toBe('Save');
+      expect(accessibleName(document.querySelector('a')!)).toBe('Help');
+      expect(accessibleName(document.querySelector('[role="heading"]')!)).toBe('Title');
+    });
+
+    it('names a checkbox and a tab from their content', () => {
+      setBody('<div role="checkbox">Accept terms</div><div role="tab">Details</div>');
+      expect(accessibleName(document.querySelector('[role="checkbox"]')!)).toBe('Accept terms');
+      expect(accessibleName(document.querySelector('[role="tab"]')!)).toBe('Details');
+    });
+  });
 });
 
 describe('isEnabled', () => {
@@ -288,6 +337,16 @@ describe('extractSemanticPage', () => {
     const second = extractSemanticPage(document, registry);
     expect(second.generation).toBe(first.generation + 1);
     expect(second.elements[0]?.elementId).not.toBe(first.elements[0]?.elementId);
+  });
+
+  it('does not echo a control value back as descriptive text', () => {
+    setBody('<label for="s">Choose</label><select id="s"><option>Alpha</option></select>');
+    const page = extractSemanticPage(document, new ElementRegistry());
+    const select = page.elements[0]!;
+    expect(select.name).toBe('Choose');
+    // The options are already reported in `options`; repeating them as `text`
+    // would just inflate context with the same data under a misleading key.
+    expect(select.text).toBeUndefined();
   });
 
   it('reports checkbox state', () => {
