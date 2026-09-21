@@ -75,8 +75,10 @@ Agent runtime → ProviderRegistry → WebProviderAdapter → browser tab
               → AI web application → user's existing browser session
 ```
 
-**This is the part of the Stage 3 vision that is not yet cleared to build.**
-Three findings have to be resolved by the owner before any design work starts.
+**Gate outcome: the architecture is IMPLEMENTABLE; production enablement of
+consumer-web inference is REQUIRES LEGAL/TERMS REVIEW and is additionally
+BLOCKED by §3.3 as written.** See §4A for the evidence. The three findings
+below are what the gate pass examined.
 
 ### 4.1 The specification restricts what a web session may be used for
 
@@ -123,6 +125,157 @@ consequences need design work before any code:
 
 **No web provider should be implemented until the trust boundary for model
 output read from a DOM is designed and reviewed.** This is question Q2.
+
+---
+
+## 4A. Web AI Provider Gate Analysis
+
+A dedicated gate pass was run against the committed specification and, where
+reachable, first-party provider sources. Its conclusions replace the "pending"
+framing above.
+
+### Classification
+
+| Component                                                                                          | Classification                                                                           |
+| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Web AI Provider **architecture** (registry kind, state model, detection, pause/resume, provenance) | **IMPLEMENTABLE** — none of it requires consumer-web inference                           |
+| Web AI Provider **production enablement** (using a consumer web UI to obtain model inference)      | **REQUIRES LEGAL/TERMS REVIEW**, and separately **BLOCKED** by §3.3 as currently written |
+
+The two are deliberately separated. The architecture can be built without ever
+enabling the gated workflow, which is what keeps the product goal alive without
+implementing something that may be prohibited.
+
+### Specification findings
+
+| Section       | Exact requirement                                                                                                                                                                                                                        | Implication                                                                                                                                                                                                                |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| §3.3          | "Authentication must support only provider-approved methods." The enumerated methods are API key; OAuth/account authorization _where officially supported_; provider-specific authorization mechanisms; compatible endpoint credentials. | Using a consumer web session to obtain inference is **not among the enumerated methods**. It would qualify only if a provider officially supported it. No such official support is known for any candidate.                |
+| §3.3          | "The project must never: … bypass subscription/API boundaries … claim that a consumer subscription automatically grants API access."                                                                                                     | Driving a consumer UI for inference uses a consumer entitlement to obtain model output programmatically. Whether that _is_ the boundary being bypassed is the owner's call; the wording plainly reaches it.                |
+| §3.3          | "A user identity is not the same as model/API entitlement."                                                                                                                                                                              | The clearest statement of the principle. A logged-in identity does not confer the right to automated inference.                                                                                                            |
+| §15           | "Do not assume a ChatGPT subscription provides API access." / "Do not scrape ChatGPT session cookies or undocumented endpoints."                                                                                                         | The named mechanism (cookies, undocumented endpoints) is **not** what the proposed capability does. §15 therefore does not prohibit it directly — but it does not authorise it either.                                     |
+| §42           | Distinguishes browser session from connector authentication; browser automation is for when "the API does not expose the required operation", "UI verification is required", or "the task explicitly requires UI".                       | Frames browser automation as how the agent operates **target** sites. Obtaining inference through a browser session is a role the specification never describes.                                                           |
+| §30           | "Treat all external content as untrusted", enumerating `web pages` … `screenshots`. Required defenses: "origin tagging; trust classification; instruction/data separation".                                                              | **Answers Q2.** Model output rendered into a web page is web-page content by §30's own enumeration, so it is untrusted external content. It also makes provenance labelling a specification requirement, not an invention. |
+| §83, §84, §99 | All forty capabilities mandatory; six PASS conditions including a manual acceptance test; parity claimable only when all are met.                                                                                                        | A web provider is not among P-001…P-040 and does not affect certification either way.                                                                                                                                      |
+| §85 F, §87    | Provider swap across OpenAI, Anthropic and Gemini; per-provider acceptance covering streaming, tool calling, vision, rate limits, expired auth.                                                                                          | Written entirely in API terms. A web UI cannot satisfy §87 — there is no "invalid credentials" or "rate limit" surface to assert against.                                                                                  |
+| §90, §96      | MV3 failure acceptance; Phases 0–10.                                                                                                                                                                                                     | Web providers appear in no phase.                                                                                                                                                                                          |
+
+**Net specification position:** §3.3 does not currently permit this capability,
+because it is not a provider-approved authentication method and the
+subscription-boundary clause reaches it. §15 does not prohibit the specific
+mechanism proposed. The specification is therefore **restrictive but not
+explicitly addressed to this exact case** — which is precisely the situation
+the brief says must be escalated rather than reinterpreted.
+
+### Provider terms findings
+
+This environment's egress proxy blocks direct fetches of first-party terms
+(`openai.com`, `www.anthropic.com`, `developer.chrome.com` all returned
+`EGRESS_BLOCKED`). Search-derived summaries attributed to first-party URLs were
+obtainable; a search summary is **not** the verbatim clause, and this table
+says so rather than dressing it up.
+
+| Provider           | Web UI automation                 | Automated inference                                                                                                                                          | Relevant official term             | API alternative   | Confidence                               | Gate                                                    |
+| ------------------ | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------- | ----------------- | ---------------------------------------- | ------------------------------------------------------- |
+| OpenAI / ChatGPT   | Not established by direct reading | Search-derived summary of `openai.com/policies/*` indicates the terms prohibit automatically or programmatically extracting data or Output from the services | Not read verbatim — egress blocked | Yes, official API | Low on wording, **adverse on direction** | **REQUIRES LEGAL/TERMS REVIEW** — indication is adverse |
+| Anthropic / Claude | Not established                   | Not established — search returned no clause text on automation in consumer terms                                                                             | Not read verbatim — egress blocked | Yes, official API | Low                                      | **NOT ESTABLISHED**                                     |
+| Google / Gemini    | Not established                   | Not established                                                                                                                                              | Not read verbatim                  | Yes, official API | Low                                      | **NOT ESTABLISHED**                                     |
+| Perplexity         | Not established                   | Not established                                                                                                                                              | Not read verbatim                  | Yes, official API | Low                                      | **NOT ESTABLISHED**                                     |
+
+No provider is **ALLOWED BY REVIEWED TERMS**. None is **PROHIBITED BY REVIEWED
+TERMS** either, because no term was reviewed verbatim. Ambiguity has not been
+converted in either direction.
+
+**Unblocking this row requires** reading each provider's current consumer terms
+and usage policies directly, from an environment with egress to those domains.
+
+### The four concepts, kept separate
+
+|     | Concept                                                                                    | Status                                                      |
+| --- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| A   | Browser automation — the agent drives normal browser interaction                           | Implemented and validated in Stage 2                        |
+| B   | Authenticated web session — the user logged in normally                                    | Permitted; the agent observes, never handles the credential |
+| C   | Automated model inference — the agent causes a consumer AI web UI to generate model output | **Gated.** This is the only disputed concept                |
+| D   | Credential / session extraction                                                            | **Prohibited permanently.** §3.3; never to be implemented   |
+
+A + B are available today. C is gated. D is closed. The product may ship A + B
+— session awareness, login detection, human-in-the-loop pause and resume —
+with C disabled, and that is the recommended shape while the gate is open.
+
+---
+
+## 4B. Provenance Model and the Model-Output Trust Boundary (Q2)
+
+### The answer, and where it comes from
+
+§30 enumerates untrusted external content and the list includes `web pages` and
+`screenshots`. Model output rendered into a web application's DOM **is**
+web-page content. The specification therefore already answers Q2:
+
+> Model output obtained from a web UI is untrusted external content. It is
+> data. It is never instructions.
+
+This is not a conservative choice made here; it is what §30 says. And it is
+correct on the merits: text in an AI web app's transcript may have been placed
+there by an earlier injection, by another page the agent read, by a shared
+conversation, or by the user. "It came from an AI provider" is not a property
+the DOM can attest to.
+
+### Provenance labels
+
+§30 lists "origin tagging" and "trust classification" among required defenses,
+so provenance labels are a specification requirement. The set that the
+architecture needs, and what each one licenses:
+
+| Label                     | Source                                 | May carry instructions? | Notes                                   |
+| ------------------------- | -------------------------------------- | ----------------------- | --------------------------------------- |
+| `SYSTEM_CONTROLLED_DATA`  | extension's own policy and prompts     | Yes                     | the only instruction authority          |
+| `USER_INPUT`              | the person, through the side panel     | Yes, as intent          | authorises; does not execute            |
+| `MODEL_OUTPUT_API`        | provider response over an official API | As proposals only       | tool calls still pass the policy engine |
+| `MODEL_OUTPUT_WEB_UI`     | model reply read from a DOM            | **No**                  | untrusted by §30; strictly data         |
+| `WEB_PAGE_CONTENT`        | any page read                          | **No**                  | current behaviour                       |
+| `TOOL_RESULT`             | a tool's own output                    | No                      | already carries `trust` today           |
+| `EXTENSION_INTERNAL_DATA` | storage, task records                  | Yes                     | not externally influenced               |
+
+Where provenance is created: at the boundary that first admits the bytes — the
+content script for page reads, the provider adapter for API responses, the tool
+registry for results. It must be assigned at admission, never inferred later.
+
+How it is preserved: it travels with the content into context assembly,
+evidence and logs, and it is never dropped by summarisation or trimming. The
+existing `trust: 'untrusted_external_content'` field on evidence is the seed of
+this; the model generalises it.
+
+What it affects: **planning** (a `MODEL_OUTPUT_WEB_UI` string proposing an
+action is a suggestion, not authorisation); **tool execution** (arguments
+derived from untrusted provenance get the same validation as page-derived
+arguments); **evidence** (provenance is recorded, so an audit can tell a
+DOM-scraped answer from an API response); **redaction** (already applied at
+collection; unchanged); **injection defence** (`MODEL_OUTPUT_WEB_UI` goes
+through `scanForInjection` and the untrusted envelope exactly as page text
+does).
+
+### Model output must not gain privilege
+
+If a web AI reply says _"click this button and upload this file"_, that
+sentence is not authorisation. Authorisation comes only from system policy, the
+user's intent, the tool policy and risk classification, and the permission
+model — the same chain that governs a page that says the same words. The
+existing precedent is exact: today a page cannot escalate by asserting
+anything, and `browser.type` with `submit` is R2 regardless of who suggested
+it.
+
+The architectural consequence is that a web provider cannot be wired as a
+peer of an API provider in the planning path. An API adapter returns
+`CanonicalResponse` with structured `toolCalls`; a DOM read returns prose. Any
+design that parses prose into tool calls is re-creating an instruction channel
+out of untrusted content, and must not be built.
+
+### Evidence provenance
+
+A DOM-sourced model reply should record: `source: MODEL_OUTPUT_WEB_UI`,
+provider id, origin, tab id, timestamp, extraction method (`DOM`), the content,
+and the existing `trust` classification. Never a cookie, token, session
+identifier, credential or browser profile.
 
 ---
 
@@ -294,13 +447,50 @@ an ordinary person".
 | Enterprise managed (policy-forced install) | Only for managed fleets | Not applicable to ordinary users.                                                                    |
 | Self-hosted CRX / ZIP                      | Not viable              | Chrome does not offer ordinary users a supported path for this.                                      |
 
-The `debugger` permission is the most likely review obstacle: it is powerful,
-it drives `browser.screenshot` and the four inspection tools, and it will need
-a specific, honest justification. The alternative — dropping the debugger tools
-— is a product decision, not a technical one. Review outcomes cannot be
-predicted here and must not be assumed. Current Chrome Web Store program
-policies must be read at the time of submission; nothing in this document
-should be treated as a summary of them.
+### The `debugger` permission (Q3)
+
+`debugger` is permitted in MV3 and is declared in the manifest today. Five
+capabilities depend on it: `browser.screenshot` plus `debugger.console`,
+`debugger.network`, `debugger.dom` and `debugger.page_state`.
+
+Two distinct concerns, which should not be conflated:
+
+**Store review.** Chrome Web Store program policy requires the narrowest
+permission that implements a feature, and rejects permissions requested but
+unused or broader than necessary. `debugger` is genuinely used, so the
+question is whether a narrower API could serve the same features. For the four
+inspection tools, no narrower extension API exposes console, network or the
+CDP DOM — the specification says as much (§3 "Chrome offers no lesser API for
+this"). For screenshot capture there _is_ a narrower-looking alternative,
+`chrome.tabs.captureVisibleTab` — and Stage 2 measured that it requires
+`<all_urls>`, which was shown to grant local file read. So the narrower
+permission for that one feature is the more dangerous one. That trade is worth
+stating plainly in the store justification rather than hiding.
+
+**Enterprise policy, which is a product limitation regardless of review.**
+From Chrome 155, on managed browsers `chrome.debugger.attach()` is rejected
+outright when an administrator has configured `runtime_blocked_hosts`
+(error: _"Host access is restricted by policy"_), and fails when
+`DisableScreenshots` or DLP rules apply to the target (_"Screenshot capture is
+restricted by policy"_). Unmanaged browsers are unaffected.
+
+This is not speculative: it means all five debugger-dependent capabilities can
+fail on managed devices for reasons the extension cannot influence. It belongs
+in the §99 platform-limitation table — reference capability, project
+capability, limitation, impact, workaround, acceptance status — and the tools
+must surface the policy error as a clear refusal rather than a generic failure.
+
+**Not established:** whether a listing declaring `debugger` would be approved.
+Review outcomes cannot be predicted and are not assumed here. Current program
+policies must be read directly at submission time; the above is drawn from
+Chrome developer documentation reached through search, not from a verbatim
+reading of the policy pages, which this environment's egress proxy blocked.
+
+**Separate production and diagnostic builds** are worth evaluating: a
+production build without `debugger` (losing the four inspection tools, keeping
+screenshots only if an acceptable capture path exists) and a diagnostic build
+retaining it. This is a product decision with a real capability cost and is
+question Q3 for the owner.
 
 ---
 
@@ -514,8 +704,14 @@ implied; waves are defined by what must exist first.
 | I    | architectural, security-critical            | Phase 9 MCP and plugins                                                                                            | plugin trust model           |
 | J    | certification                               | §85–§89 executed and recorded; §99 claim                                                                           | Waves C, F, G, H, I          |
 
-Waves A, B and C have no dependency on the unresolved web-provider questions
-and are the only waves that can begin without an owner decision.
+Waves A, B, C and **D1** have no dependency on the unresolved question. D1 is
+separable precisely because the architecture, the state model, session
+awareness, human-in-the-loop authentication and the provenance labels are all
+useful and permitted without consumer-web inference — and the provenance work
+(§4B) strengthens the existing injection defence whether or not D2 ever ships.
+
+Only **D2** is gated, and it is gated on a policy answer, not an engineering
+one.
 
 ---
 
@@ -579,18 +775,33 @@ providers, and store publication.
 Implementation is not authorised by this document. Three questions need owner
 decisions, and two of them gate Wave D entirely.
 
-**Q1 — policy.** Does the owner accept that driving a consumer AI web UI for
-model inference is consistent with §3.3's prohibition on bypassing
-subscription/API boundaries, and with each provider's terms? A per-provider
-answer is required; a general one is not sufficient.
+**Q1 — policy, gates D2 only.** §3.3 permits only provider-approved
+authentication methods and forbids bypassing subscription/API boundaries;
+consumer-web inference is not among the four enumerated methods. Two decisions
+follow, and neither can be made from technical evidence:
 
-**Q2 — security architecture.** What is the trust boundary for model output
-read from a DOM, given that the entire Phase 4 injection defence assumes page
-content is untrusted and model output is not?
+1. Per provider: do that provider's current consumer terms permit automated
+   interaction with the web UI for inference? This needs the terms read
+   directly, from an environment with egress to those domains. The one
+   indication obtained here — a search-derived summary of OpenAI's policies
+   reporting a prohibition on programmatically extracting Output — is adverse
+   and was not verifiable verbatim.
+2. For the specification itself, one of: **(A)** keep §3.3 as written and
+   restrict inference to official APIs; **(B)** amend §3.3 through an explicit,
+   recorded specification revision; or **(C)** define web interaction as
+   browser automation of target sites but never as a model-inference path,
+   which is the reading §42 already supports. This document does not choose.
 
-**Q3 — distribution scope.** Public or unlisted listing first, and is the
-`debugger` permission retained through store review, or are the inspection
-tools dropped to reduce review risk?
+**Q2 — answered, no longer open.** §30 enumerates `web pages` among untrusted
+external content, so model output read from a DOM is untrusted data and never
+instructions, and §30's "origin tagging" and "trust classification" make the
+provenance labels in §4B a specification requirement. Recorded here as resolved
+rather than deleted, so the reasoning survives.
 
-Until Q1 and Q2 are answered, Waves A, B and C are the available work, and
-none of them touches the web-provider design.
+**Q3 — distribution.** Public or unlisted first; and is `debugger` retained
+through review, or are the four inspection tools dropped for a production build
+with a separate diagnostic build? Note this is _not only_ a review question:
+from Chrome 155 the permission can be blocked by enterprise policy regardless
+of review outcome.
+
+Waves A, B, C and D1 are available now. D2 waits on Q1.
