@@ -7,6 +7,28 @@ against what this repository actually contains.
 are not implemented. This document exists so the gap is visible rather than
 implied.
 
+## Parity is not the same measure as a stage
+
+This file measures one thing: progress toward full capability parity across
+P-001…P-040. It is deliberately unforgiving, and it will read as "a long way
+from done" for as long as that is true.
+
+It is **not** a measure of whether a delivery stage is complete. A stage has
+its own defined scope, and a capability outside that scope does not hold the
+stage open. The two are reported separately, and the expected state for some
+time is:
+
+| Measure                   | Status                                                           |
+| ------------------------- | ---------------------------------------------------------------- |
+| Stage 2 scope             | see `docs/stage-2-status.md`                                     |
+| Overall capability parity | **PARTIAL** — the table below, and it is the only thing it means |
+
+Reading a PARTIAL or NOT-STARTED row here as a stage blocker is a mistake that
+has already been made once in this repository's history. A row's status
+answers "is this capability finished and proven?", never "does this block the
+current stage?". The second question is answered against the stage's scope,
+not against this file.
+
 ## How to read a status
 
 A capability is **PASS** only when all of these hold (specification §84):

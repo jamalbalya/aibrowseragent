@@ -122,7 +122,9 @@ no stage distinction at all.
 
 Anyone reasoning about scope or completeness should treat the statements in
 `PARITY_MATRIX.md` as derived, not authoritative, until the specification is
-committed alongside them.
+committed alongside them. `docs/stage-2-status.md` records Stage 2 against the
+scope the owner supplied directly; that scope is not in the repository either,
+which is the same gap in a different place.
 
 **REQUIRED OWNER ACTION:** commit the specification kit to the repository, or
 record where it lives, so status claims can be checked against the requirement
