@@ -237,3 +237,56 @@ test('tasks survive the side panel closing and reopening', async ({
   const found = listed.value.tasks.find((t) => t.id === task.id);
   expect(found?.state).toBe('COMPLETED');
 });
+
+test('groups real tabs through the Chrome tab-group API', async ({
+  context,
+  serviceWorker,
+  send,
+  provider,
+  site,
+}) => {
+  // The unit tests drive tabs.group through a fake adapter, which proves the
+  // tool's contract and nothing about `chrome.tabs.group` — an API gated on
+  // the `tabGroups` permission that a build can simply not have. The
+  // capability was recorded as passing on the fake alone; this closes the gap.
+  const first = await context.newPage();
+  await first.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  const second = await context.newPage();
+  await second.goto(`${site.baseUrl}/form`, { waitUntil: 'domcontentloaded' });
+  await first.bringToFront();
+
+  await connectProvider(send, provider);
+
+  const ids = await serviceWorker.evaluate(async (prefix: string) => {
+    const tabs = await chrome.tabs.query({});
+    return tabs.filter((tab) => tab.url?.startsWith(prefix)).map((tab) => tab.id!);
+  }, site.baseUrl);
+  expect(ids.length).toBeGreaterThanOrEqual(2);
+
+  provider.script([
+    {
+      kind: 'tool_calls',
+      calls: [{ name: 'tabs_group', arguments: { tabIds: ids, title: 'Research' } }],
+    },
+    { kind: 'text', text: 'Grouped the tabs.' },
+  ]);
+
+  const { task } = await send('task.create', { objective: 'Group the open tabs.' });
+  const finished = await waitForTask(send, task.id);
+
+  expect(finished.state).toBe('COMPLETED');
+
+  // Chrome really moved them: one shared group id, and not the "no group"
+  // sentinel a silently failing call would leave behind.
+  const groups = await serviceWorker.evaluate(async (tabIds: number[]) => {
+    const tabs = await Promise.all(tabIds.map((id) => chrome.tabs.get(id)));
+    return tabs.map((tab) => tab.groupId ?? -1);
+  }, ids);
+
+  expect(new Set(groups).size).toBe(1);
+  expect(groups[0]).not.toBe(-1);
+  expect(groups[0]).toBeGreaterThan(-1);
+
+  await first.close();
+  await second.close();
+});

@@ -66,8 +66,10 @@ claims were not backed by any test. The check now covers both.
 Movement in this revision: no status changed. Screenshot capture (P-008) was
 re-implemented over the DevTools protocol so the `<all_urls>` host permission
 could be removed, and gained a dedicated security suite; it was already PASS
-and remains so. The counts above are unchanged from the previous revision
-because nothing new was finished — only made safer.
+and remains so. Tab grouping (P-013) was PASS on unit tests alone, which
+exercised a fake adapter and said nothing about `chrome.tabs.group`; it now
+has an end-to-end test that groups real tabs. The counts are unchanged because
+nothing new was finished — only made safer and better evidenced.
 
 ---
 
@@ -87,7 +89,7 @@ because nothing new was finished — only made safer.
 | P-010 | File upload                          | no         | —    | —           | —        | —   | NOT-STARTED     |
 | P-011 | Download                             | no         | —    | —           | —        | —   | NOT-STARTED     |
 | P-012 | Multi-tab                            | yes        | yes  | —           | yes      | yes | PASS            |
-| P-013 | Tab grouping                         | yes        | yes  | —           | —        | —   | PASS            |
+| P-013 | Tab grouping                         | yes        | yes  | —           | —        | yes | PASS            |
 | P-014 | DOM inspection                       | yes        | yes  | —           | yes      | yes | PASS            |
 | P-015 | Console inspection                   | yes        | yes  | —           | yes      | yes | PASS            |
 | P-016 | Network inspection                   | yes        | yes  | —           | yes      | yes | PASS            |

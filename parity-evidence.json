@@ -64,7 +64,8 @@
       "e2e": ["tests/e2e/security.spec.ts"]
     },
     "P-013": {
-      "unit": ["tests/unit/tab-tools.test.ts"]
+      "unit": ["tests/unit/tab-tools.test.ts"],
+      "e2e": ["tests/e2e/agent-task.spec.ts"]
     },
     "P-014": {
       "unit": ["tests/unit/browser-tools.test.ts"],

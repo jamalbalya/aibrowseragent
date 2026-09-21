@@ -118,6 +118,23 @@ for (const row of rows) {
   }
 }
 
+// --- a PASS has to be backed by something ---------------------------------
+//
+// Nothing above stops a row reading PASS with an empty implementation column
+// and no test cited anywhere, which is the exact shape of an unearned claim.
+for (const row of rows) {
+  if (row.cells[7] !== 'PASS') continue;
+
+  if (row.cells[2] !== 'yes') {
+    errors.push(`${row.id} is PASS but its implementation column reads "${row.cells[2]}".`);
+  }
+
+  const cited = COLUMNS.filter((column) => (evidence[row.id]?.[column.key] ?? []).length > 0);
+  if (cited.length === 0) {
+    errors.push(`${row.id} is PASS but parity-evidence.json cites no test in any category.`);
+  }
+}
+
 // --- summary counts match the table ---------------------------------------
 const actual = Object.fromEntries([...VALID_STATUS].map((status) => [status, 0]));
 for (const row of rows) {
