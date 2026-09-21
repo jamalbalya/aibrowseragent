@@ -49,19 +49,28 @@ interface Recorder {
   readonly states: TaskState[];
   readonly steps: TaskStep[];
   readonly activities: string[];
+  /** Terminal outcomes, recorded atomically by `onComplete`. */
+  readonly completions: { state: TaskState; hasResult: boolean }[];
 }
 
 function recorder(): Recorder {
   const states: TaskState[] = [];
   const steps: TaskStep[] = [];
   const activities: string[] = [];
+  const completions: { state: TaskState; hasResult: boolean }[] = [];
   return {
     states,
     steps,
     activities,
+    completions,
     callbacks: {
       onStateChange: (_id, state) => {
         states.push(state);
+        return Promise.resolve();
+      },
+      onComplete: (_id, outcome) => {
+        states.push(outcome.state);
+        completions.push({ state: outcome.state, hasResult: !!outcome.result });
         return Promise.resolve();
       },
       onStep: (_id, step) => {
@@ -134,6 +143,9 @@ describe('the required first demo flow', () => {
     expect(output.result.evidenceIds.length).toBeGreaterThan(0);
     expect(rec.activities).toContain('Reading the page');
     expect(rec.states.at(-1)).toBe('COMPLETED');
+    // The terminal state and its result arrive together, so no observer can
+    // see a finished task with no outcome.
+    expect(rec.completions).toEqual([{ state: 'COMPLETED', hasResult: true }]);
 
     // The page content actually reached the model, wrapped as untrusted data.
     expect(provider.allText()).toContain('UNTRUSTED_EXTERNAL_CONTENT');

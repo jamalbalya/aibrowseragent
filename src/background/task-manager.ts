@@ -135,22 +135,15 @@ export class TaskManager {
       const started = await this.transition(taskId, 'PLANNING');
       if (!started) return;
 
-      const output = await this.requireRuntime().run({
+      // The runtime records the final state and result atomically through
+      // `onComplete`, so nothing needs writing here.
+      await this.requireRuntime().run({
         task: { ...task, startedAt: this.now() },
         provider: provider.adapter,
         capabilities: provider.capabilities,
         signal: controller.signal,
         ...(tabId === undefined ? {} : { tabId }),
       });
-
-      await this.options.store.updateTask(taskId, (current) => ({
-        ...current,
-        result: output.result,
-        usage: output.usage,
-        ...(output.error === undefined ? {} : { error: output.error }),
-        finishedAt: this.now(),
-        updatedAt: this.now(),
-      }));
     } catch (error) {
       log.error('Task failed unexpectedly.', {
         taskId,
@@ -207,6 +200,33 @@ export class TaskManager {
     return {
       onStateChange: async (taskId, state, summary) => {
         await this.transition(taskId, state, summary);
+      },
+
+      onComplete: async (taskId, outcome) => {
+        // One atomic write: state, result, usage and error together. An
+        // observer can never see a terminal task whose outcome is missing.
+        const updated = await this.options.store.updateTask(taskId, (task) => {
+          if (isTerminal(task.state)) return task;
+          if (!canTransition(task.state, outcome.state)) {
+            log.warn('Rejected an invalid terminal transition.', {
+              taskId,
+              from: task.state,
+              to: outcome.state,
+            });
+            return task;
+          }
+          return {
+            ...task,
+            state: outcome.state,
+            result: outcome.result,
+            usage: outcome.usage,
+            currentStepSummary: outcome.result.summary,
+            ...(outcome.error === undefined ? {} : { error: outcome.error }),
+            finishedAt: this.now(),
+            updatedAt: this.now(),
+          };
+        });
+        if (updated) this.emit(updated);
       },
       onStep: async (taskId, step: TaskStep) => {
         const updated = await this.options.store.updateTask(taskId, (task) => ({

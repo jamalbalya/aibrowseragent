@@ -35,6 +35,18 @@ const log = getLogger('agent');
 /** Side effects the runtime reports back to the task manager. */
 export interface RuntimeCallbacks {
   onStateChange(taskId: string, state: TaskState, summary?: string): Promise<void>;
+  /**
+   * Records the final outcome.
+   *
+   * The terminal state and the result must land in a single update. Writing
+   * the state first and the result afterwards leaves a window in which an
+   * observer — the side panel, or anything reading the store — sees a finished
+   * task with no outcome recorded.
+   */
+  onComplete(
+    taskId: string,
+    outcome: { state: TaskState; result: TaskResult; usage: TaskUsage; error?: AgentError },
+  ): Promise<void>;
   onStep(taskId: string, step: TaskStep): Promise<void>;
   onActivity(taskId: string, activity: string): void;
   onUsage(taskId: string, usage: TaskUsage): Promise<void>;
@@ -443,20 +455,26 @@ export class AgentRuntime {
     } = { completed: [], failed: [], blocked: [], externalWrites: [] },
     error?: AgentError,
   ): Promise<RunOutput> {
-    const state: TaskState = outcome;
-    await this.options.callbacks.onStateChange(task.id, state, summary);
+    const result: TaskResult = {
+      outcome,
+      summary,
+      completedActions: [...actions.completed],
+      failedActions: [...actions.failed],
+      blockedActions: [...actions.blocked],
+      externalWrites: [...actions.externalWrites],
+      evidenceIds: [...evidenceIds],
+    };
+
+    await this.options.callbacks.onComplete(task.id, {
+      state: outcome,
+      result,
+      usage,
+      ...(error === undefined ? {} : { error }),
+    });
     log.info('Task finished.', { taskId: task.id, outcome, toolCalls: usage.toolCalls });
 
     return {
-      result: {
-        outcome,
-        summary,
-        completedActions: [...actions.completed],
-        failedActions: [...actions.failed],
-        blockedActions: [...actions.blocked],
-        externalWrites: [...actions.externalWrites],
-        evidenceIds: [...evidenceIds],
-      },
+      result,
       messages: [],
       usage,
       ...(error === undefined ? {} : { error }),
