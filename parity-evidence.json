@@ -1,0 +1,157 @@
+{
+  "$comment": [
+    "Source of truth for which tests back each capability claim in PARITY_MATRIX.md.",
+    "scripts/check-parity.mjs verifies that every cited file exists and that the",
+    "matrix's yes/— columns match these citations exactly. An earlier revision of",
+    "the matrix claimed integration coverage for three capabilities that had none;",
+    "this file makes that class of claim checkable rather than a matter of trust.",
+    "Cite a file only when it genuinely exercises the capability."
+  ],
+  "capabilities": {
+    "P-001": { "e2e": ["tests/e2e/extension-load.spec.ts"] },
+    "P-002": {
+      "unit": ["tests/unit/semantic-tree.test.ts", "tests/unit/browser-tools.test.ts"],
+      "integration": ["tests/integration/agent-runtime.test.ts"],
+      "security": ["tests/security/prompt-injection.test.ts"],
+      "e2e": ["tests/e2e/agent-task.spec.ts", "tests/e2e/security.spec.ts"]
+    },
+    "P-003": {
+      "unit": ["tests/unit/interaction-engine.test.ts", "tests/unit/browser-tools.test.ts"],
+      "integration": ["tests/integration/agent-runtime.test.ts"],
+      "security": ["tests/security/origin-validation.test.ts"],
+      "e2e": ["tests/e2e/agent-task.spec.ts"]
+    },
+    "P-004": {
+      "unit": ["tests/unit/interaction-engine.test.ts", "tests/unit/browser-tools.test.ts"],
+      "integration": ["tests/integration/agent-runtime.test.ts"],
+      "security": ["tests/security/secret-redaction.test.ts"],
+      "e2e": ["tests/e2e/agent-task.spec.ts"]
+    },
+    "P-005": {
+      "unit": ["tests/unit/browser-tools.test.ts"],
+      "integration": ["tests/integration/agent-runtime.test.ts"],
+      "security": ["tests/security/origin-validation.test.ts"],
+      "e2e": ["tests/e2e/agent-task.spec.ts", "tests/e2e/security.spec.ts"]
+    },
+    "P-006": {
+      "unit": ["tests/unit/interaction-engine.test.ts"],
+      "integration": ["tests/integration/agent-runtime.test.ts"],
+      "security": ["tests/security/secret-redaction.test.ts"],
+      "e2e": ["tests/e2e/agent-task.spec.ts"]
+    },
+    "P-007": {
+      "unit": ["tests/unit/interaction-engine.test.ts", "tests/unit/browser-tools.test.ts"],
+      "integration": ["tests/integration/agent-runtime.test.ts"],
+      "e2e": ["tests/e2e/agent-task.spec.ts"]
+    },
+    "P-008": {
+      "unit": ["tests/unit/browser-tools.test.ts"],
+      "integration": ["tests/integration/evidence-pipeline.test.ts"],
+      "security": ["tests/security/secret-redaction.test.ts"],
+      "e2e": ["tests/e2e/agent-task.spec.ts", "tests/e2e/security.spec.ts"]
+    },
+    "P-009": {},
+    "P-010": {},
+    "P-011": {},
+    "P-012": {
+      "unit": ["tests/unit/tab-tools.test.ts"],
+      "security": ["tests/security/origin-validation.test.ts"],
+      "e2e": ["tests/e2e/security.spec.ts"]
+    },
+    "P-013": { "unit": ["tests/unit/tab-tools.test.ts"] },
+    "P-014": {
+      "unit": ["tests/unit/browser-tools.test.ts"],
+      "security": ["tests/security/debugger-allowlist.test.ts"],
+      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts"]
+    },
+    "P-015": {
+      "unit": ["tests/unit/browser-tools.test.ts"],
+      "security": ["tests/security/debugger-allowlist.test.ts"],
+      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts"]
+    },
+    "P-016": {
+      "unit": ["tests/unit/browser-tools.test.ts"],
+      "security": ["tests/security/debugger-allowlist.test.ts"],
+      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts"]
+    },
+    "P-017": { "integration": ["tests/integration/agent-runtime.test.ts"] },
+    "P-018": {
+      "integration": ["tests/integration/task-persistence.test.ts"],
+      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts", "tests/e2e/agent-task.spec.ts"]
+    },
+    "P-019": {},
+    "P-020": {},
+    "P-021": {},
+    "P-022": {},
+    "P-023": {},
+    "P-024": {},
+    "P-025": {},
+    "P-026": {},
+    "P-027": {
+      "unit": ["tests/unit/policy-engine.test.ts", "tests/unit/permission-engine.test.ts"],
+      "integration": ["tests/integration/agent-runtime.test.ts"],
+      "security": ["tests/security/origin-validation.test.ts"],
+      "e2e": ["tests/e2e/security.spec.ts"]
+    },
+    "P-028": {
+      "unit": ["tests/unit/policy-engine.test.ts"],
+      "security": ["tests/security/origin-validation.test.ts"],
+      "e2e": ["tests/e2e/security.spec.ts"]
+    },
+    "P-029": {
+      "unit": ["tests/unit/permission-engine.test.ts"],
+      "security": ["tests/security/origin-validation.test.ts"],
+      "e2e": ["tests/e2e/security.spec.ts"]
+    },
+    "P-030": {
+      "unit": ["tests/unit/context-builder.test.ts"],
+      "integration": ["tests/integration/agent-runtime.test.ts"],
+      "security": ["tests/security/prompt-injection.test.ts"],
+      "e2e": ["tests/e2e/security.spec.ts"]
+    },
+    "P-031": {
+      "unit": ["tests/unit/storage.test.ts"],
+      "integration": ["tests/integration/task-persistence.test.ts"],
+      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts"]
+    },
+    "P-032": {
+      "unit": ["tests/unit/task-model.test.ts"],
+      "integration": [
+        "tests/integration/task-persistence.test.ts",
+        "tests/integration/task-manager.test.ts"
+      ],
+      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts"]
+    },
+    "P-033": { "unit": ["tests/unit/openai-compatible.test.ts"] },
+    "P-034": {
+      "unit": ["tests/unit/tool-registry.test.ts"],
+      "integration": ["tests/integration/agent-runtime.test.ts"],
+      "security": ["tests/security/debugger-allowlist.test.ts"],
+      "e2e": ["tests/e2e/provider-integration.spec.ts", "tests/e2e/security.spec.ts"]
+    },
+    "P-035": {
+      "unit": ["tests/unit/capability-doctor.test.ts"],
+      "e2e": ["tests/e2e/provider-integration.spec.ts"]
+    },
+    "P-036": {
+      "unit": ["tests/unit/budget-retry.test.ts"],
+      "integration": ["tests/integration/agent-runtime.test.ts"],
+      "e2e": ["tests/e2e/provider-integration.spec.ts"]
+    },
+    "P-037": {
+      "unit": ["tests/unit/loop-detection.test.ts"],
+      "integration": ["tests/integration/agent-runtime.test.ts"]
+    },
+    "P-038": { "unit": ["tests/unit/permission-engine.test.ts"] },
+    "P-039": {
+      "unit": ["tests/unit/evidence-store.test.ts"],
+      "integration": ["tests/integration/evidence-pipeline.test.ts"],
+      "security": ["tests/security/secret-redaction.test.ts"],
+      "e2e": ["tests/e2e/agent-task.spec.ts", "tests/e2e/security.spec.ts"]
+    },
+    "P-040": {
+      "unit": ["tests/unit/capability-doctor.test.ts", "tests/unit/openai-compatible.test.ts"],
+      "e2e": ["tests/e2e/provider-integration.spec.ts"]
+    }
+  }
+}

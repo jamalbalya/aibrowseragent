@@ -1,20 +1,47 @@
 #!/usr/bin/env node
 /**
- * Verifies PARITY_MATRIX.md is internally consistent.
+ * Verifies PARITY_MATRIX.md against evidence, not against itself.
  *
- * A capability matrix whose summary contradicts its own table is worse than no
- * matrix: it reports a status nobody verified. An earlier revision claimed 17
- * PASS while the table said 23. This check makes that class of drift a build
- * failure rather than something a reader has to notice.
+ * Two classes of error have actually occurred in this repository and both are
+ * checked here:
+ *
+ *  1. The summary counts contradicted the table beneath them — it claimed 17
+ *     PASS while the table said 23.
+ *  2. Three capabilities claimed integration coverage that did not exist. The
+ *     arithmetic was consistent, so a self-consistency check could never have
+ *     caught it.
+ *
+ * The fix for (2) is that a "yes" is no longer an assertion. Every one must be
+ * backed by a file listed in parity-evidence.json, that file must exist, and
+ * it must live in the category it is cited under. A capability with no cited
+ * evidence for a column must show "—".
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const text = readFileSync(resolve(root, 'PARITY_MATRIX.md'), 'utf8');
+const evidence = JSON.parse(
+  readFileSync(resolve(root, 'parity-evidence.json'), 'utf8'),
+).capabilities;
 
-const VALID = new Set(['PASS', 'PARTIAL', 'FOUNDATION', 'NOT_STARTED']);
+const VALID_STATUS = new Set([
+  'PASS',
+  'PARTIAL',
+  'INTERFACES-ONLY',
+  'NOT-STARTED',
+  'BLOCKED',
+  'DEFERRED',
+]);
+/** Column index in the table → evidence key → directory the file must sit in. */
+const COLUMNS = [
+  { index: 3, key: 'unit', dir: 'tests/unit/' },
+  { index: 4, key: 'integration', dir: 'tests/integration/' },
+  { index: 5, key: 'security', dir: 'tests/security/' },
+  { index: 6, key: 'e2e', dir: 'tests/e2e/' },
+];
+
 const errors = [];
 
 // --- capability rows -------------------------------------------------------
@@ -26,14 +53,17 @@ for (const line of text.split('\n')) {
     .trim()
     .replace(/^\||\|$/g, '')
     .split('|')
-    .map((c) => c.trim());
+    .map((cell) => cell.trim());
   if (cells.length !== 8) {
     errors.push(`${match[1]}: expected 8 columns, found ${cells.length}.`);
     continue;
   }
-  const status = cells[7];
-  if (!VALID.has(status)) errors.push(`${match[1]}: unknown status "${status}".`);
-  rows.push({ id: match[1], status });
+  if (!VALID_STATUS.has(cells[7])) {
+    errors.push(
+      `${match[1]}: unknown status "${cells[7]}". Use one of ${[...VALID_STATUS].join(', ')}.`,
+    );
+  }
+  rows.push({ id: match[1], cells });
 }
 
 if (rows.length !== 40) {
@@ -48,47 +78,84 @@ for (const row of rows) {
 for (let i = 1; i <= 40; i += 1) {
   const id = `P-${String(i).padStart(3, '0')}`;
   if (!seen.has(id)) errors.push(`${id} is missing from the table.`);
+  if (!(id in evidence)) errors.push(`${id} is missing from parity-evidence.json.`);
 }
 
-// --- summary counts --------------------------------------------------------
-const actual = { PASS: 0, PARTIAL: 0, FOUNDATION: 0, NOT_STARTED: 0 };
+// --- every claim is backed by a file that exists ---------------------------
 for (const row of rows) {
-  if (row.status in actual) actual[row.status] += 1;
+  const cited = evidence[row.id];
+  if (!cited) continue;
+
+  for (const column of COLUMNS) {
+    const claim = row.cells[column.index];
+    const files = cited[column.key] ?? [];
+
+    for (const file of files) {
+      if (!file.startsWith(column.dir)) {
+        errors.push(
+          `${row.id}: "${file}" is cited as ${column.key} but is not under ${column.dir}.`,
+        );
+      } else if (!existsSync(resolve(root, file))) {
+        errors.push(`${row.id}: cited ${column.key} file "${file}" does not exist.`);
+      }
+    }
+
+    if (claim === 'yes' && files.length === 0) {
+      errors.push(
+        `${row.id}: claims ${column.key} coverage, but parity-evidence.json cites no ${column.key} test. ` +
+          'Either cite the test or change the claim to "—".',
+      );
+    }
+    if (claim === '—' && files.length > 0) {
+      errors.push(
+        `${row.id}: shows no ${column.key} coverage, but ${files.length} ${column.key} test(s) are cited. ` +
+          'The matrix is under-reporting what exists.',
+      );
+    }
+    if (claim !== 'yes' && claim !== '—' && claim !== 'no') {
+      errors.push(`${row.id}: ${column.key} column is "${claim}"; expected "yes", "no" or "—".`);
+    }
+  }
 }
 
-const claimed = {};
-for (const status of Object.keys(actual)) {
-  const pattern = new RegExp(`^\\|\\s*${status}\\s*\\|\\s*(\\d+)\\s*\\|`, 'm');
-  const match = pattern.exec(text);
-  if (!match) {
-    errors.push(`The summary has no row for ${status}.`);
-    continue;
-  }
-  claimed[status] = Number(match[1]);
+// --- summary counts match the table ---------------------------------------
+const actual = Object.fromEntries([...VALID_STATUS].map((status) => [status, 0]));
+for (const row of rows) {
+  if (row.cells[7] in actual) actual[row.cells[7]] += 1;
 }
 
 for (const [status, count] of Object.entries(actual)) {
-  if (claimed[status] === undefined) continue;
-  if (claimed[status] !== count) {
-    errors.push(`Summary claims ${claimed[status]} ${status}, but the table contains ${count}.`);
+  const pattern = new RegExp(`^\\|\\s*${status.replace('-', '\\-')}\\s*\\|\\s*(\\d+)\\s*\\|`, 'm');
+  const match = pattern.exec(text);
+  if (!match) {
+    // A status with no rows needs no summary line.
+    if (count > 0)
+      errors.push(`The summary has no row for ${status}, but ${count} capabilities use it.`);
+    continue;
+  }
+  if (Number(match[1]) !== count) {
+    errors.push(`Summary claims ${match[1]} ${status}, but the table contains ${count}.`);
   }
 }
 
-// --- every PARTIAL must say why -------------------------------------------
-for (const row of rows.filter((r) => r.status === 'PARTIAL')) {
+// --- every non-PASS row explains itself ------------------------------------
+for (const row of rows.filter((r) => r.cells[7] === 'PARTIAL')) {
   if (!text.includes(`**${row.id} `)) {
     errors.push(`${row.id} is PARTIAL but has no explanation of what is missing.`);
   }
 }
 
 if (errors.length > 0) {
-  console.error('✗ PARITY_MATRIX.md is inconsistent:\n');
+  console.error('✗ PARITY_MATRIX.md does not match its evidence:\n');
   for (const error of errors) console.error(`  - ${error}`);
-  console.error('\nUpdate the table and the summary together.');
+  console.error('\nUpdate the table, the summary and parity-evidence.json together.');
   process.exit(1);
 }
 
+const summary = Object.entries(actual)
+  .filter(([, count]) => count > 0)
+  .map(([status, count]) => `${count} ${status}`)
+  .join(', ');
 console.log(
-  `✓ Parity matrix consistent: ${actual.PASS} PASS, ${actual.PARTIAL} PARTIAL, ` +
-    `${actual.FOUNDATION} FOUNDATION, ${actual.NOT_STARTED} NOT_STARTED across ${rows.length} capabilities.`,
+  `✓ Parity matrix verified against evidence: ${summary} across ${rows.length} capabilities.`,
 );

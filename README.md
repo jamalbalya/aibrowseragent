@@ -15,8 +15,10 @@ control.
 ## Status
 
 **Phase 1–2 foundation, implemented and verified in a real browser.** The
-extension loads into Chromium, runs agent tasks against live pages, and talks
-to a real provider endpoint over HTTP. It is not yet at the full capability
+extension loads into Chromium, runs agent tasks against live pages, and drives
+a full provider exchange over real HTTP — against a local server implementing
+the Chat Completions protocol, not a commercial provider. It is not yet at the
+full capability
 parity described in the specification — see
 [PARITY_MATRIX.md](PARITY_MATRIX.md) for the honest per-capability status
 (25 of 40 mandatory capabilities PASS), and [docs/testing.md](docs/testing.md)

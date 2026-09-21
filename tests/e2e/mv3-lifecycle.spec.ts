@@ -3,8 +3,9 @@
  *
  * Stage 1 simulated service-worker eviction by rebuilding the stores over the
  * same storage. That proves the recovery logic, not that Chrome's real restart
- * path reaches it. `chrome.runtime.reload()` tears the extension down and
- * brings it back for real: same extension id, same storage, brand new worker.
+ * path reaches it. `killServiceWorker` below terminates the worker for real,
+ * leaving the extension installed and its storage intact — see that function
+ * for why `chrome.runtime.reload()` cannot be used here.
  */
 import { connectProvider, expect, test, waitForTask } from './fixtures/extension';
 import type { BrowserContext, Page, Worker } from '@playwright/test';
@@ -201,6 +202,7 @@ test('the debugger captures real console and network activity', async ({
   provider.script([
     { kind: 'tool_calls', calls: [{ name: 'debugger_console', arguments: {} }] },
     { kind: 'tool_calls', calls: [{ name: 'debugger_network', arguments: {} }] },
+    { kind: 'tool_calls', calls: [{ name: 'debugger_dom', arguments: {} }] },
     { kind: 'tool_calls', calls: [{ name: 'debugger_page_state', arguments: {} }] },
     { kind: 'tool_calls', calls: [{ name: 'debugger_detach', arguments: {} }] },
     { kind: 'text', text: 'Inspected the page.' },
@@ -223,12 +225,21 @@ test('the debugger captures real console and network activity', async ({
   expect(finished.state).toBe('COMPLETED');
   expect(finished.result!.completedActions).toContain('debugger.console');
   expect(finished.result!.completedActions).toContain('debugger.network');
+  expect(finished.result!.completedActions).toContain('debugger.dom');
   expect(finished.result!.completedActions).toContain('debugger.page_state');
 
-  // Console and network evidence was stored.
+  // Console, network and DOM evidence was stored.
   const { evidence } = await send('evidence.listForTask', { taskId: task.id });
-  expect(evidence.map((e) => e.type)).toContain('CONSOLE');
-  expect(evidence.map((e) => e.type)).toContain('NETWORK');
+  const types = evidence.map((item) => item.type);
+  expect(types).toContain('CONSOLE');
+  expect(types).toContain('NETWORK');
+  expect(types).toContain('DOM');
+
+  // The rendered markup really came back, wrapped as untrusted data.
+  const domItem = evidence.find((item) => item.sourceTool === 'debugger.dom');
+  expect(domItem).toBeDefined();
+  const payload = await send('evidence.getPayload', { evidenceId: domItem!.id });
+  expect(payload.content).toContain('Widget Catalogue');
 });
 
 test('a closed tab does not leave the debugger in a broken state', async ({

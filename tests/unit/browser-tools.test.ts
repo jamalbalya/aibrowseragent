@@ -268,6 +268,42 @@ describe('browser.wait', () => {
 });
 
 describe('browser.screenshot', () => {
+  it('reports a Chrome host-permission refusal in terms the user can act on', async () => {
+    // Chrome refuses captureVisibleTab without <all_urls> or an activated
+    // activeTab. This shipped as "failed unexpectedly", which told the user
+    // nothing; the manifest fix removed the cause but the branch still has to
+    // behave when Chrome refuses for any other reason.
+    adapter.captureVisibleTab = () =>
+      Promise.reject(new Error("Either the '<all_urls>' or 'activeTab' permission is required."));
+
+    const result = await dispatch('browser.screenshot', {});
+
+    expect(result.envelope.error?.code).toBe('PERMISSION_DENIED');
+    expect(result.envelope.error?.message).toContain('site access');
+    expect(result.envelope.error?.message).not.toContain('all_urls');
+  });
+
+  it('reports an unexpected capture failure without leaking its detail', async () => {
+    adapter.captureVisibleTab = () =>
+      Promise.reject(new Error('internal chrome failure at /opt/chrome/internals'));
+
+    const result = await dispatch('browser.screenshot', {});
+
+    expect(result.envelope.error?.code).toBe('INTERNAL_ERROR');
+    expect(result.envelope.error?.message).not.toContain('/opt/chrome/internals');
+  });
+
+  it('refuses a capture that is not a PNG data URL rather than storing it', async () => {
+    // A corrupt capture stored as evidence would be worse than none: it looks
+    // like a record of what the page showed.
+    adapter.captureVisibleTab = () => Promise.resolve({ dataUrl: 'not-a-data-url' });
+
+    const result = await dispatch('browser.screenshot', {});
+
+    expect(result.envelope.error?.code).toBe('INTERNAL_ERROR');
+    expect(result.evidence).toHaveLength(0);
+  });
+
   it('stores the image as evidence and returns only a reference', async () => {
     const result = await dispatch('browser.screenshot', {});
     const data = result.envelope.result as Record<string, unknown>;

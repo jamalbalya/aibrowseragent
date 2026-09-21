@@ -1,10 +1,18 @@
 /**
  * TEST-E2E-002 — Provider integration over real HTTP (REQ-PROVIDER-001).
  *
+ * MOCK PROVIDER E2E. The endpoint is a local server implementing the Chat
+ * Completions protocol, not a commercial provider.
+ *
  * Stage 1 tested the adapter against a stubbed `fetch`. That proves the wire
  * translation but not that a service worker can actually reach a provider:
  * real sockets, real headers, real CORS preflight, real SSE framing. These
  * tests make genuine HTTP requests from inside the extension.
+ *
+ * LIVE PROVIDER E2E — running this same trajectory against OpenAI, Anthropic
+ * or Gemini with real credentials — does not exist. It is what specification
+ * §87 asks for and what P-033 still needs. Nothing here should be read as
+ * evidence that a commercial provider has been exercised.
  */
 import { connectProvider, expect, test, waitForTask } from './fixtures/extension';
 

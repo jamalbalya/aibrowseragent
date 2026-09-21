@@ -3,8 +3,11 @@
  *
  * The unit suites attack each control in isolation. These run the whole stack:
  * a genuinely hostile page, served over real HTTP, read by the real content
- * script, passed through the real policy engine, and sent to a real provider
- * endpoint whose received bytes are then inspected.
+ * script, passed through the real policy engine, and sent over real HTTP to a
+ * mock provider — a local server speaking the Chat Completions protocol —
+ * whose received bytes are then inspected. It is a mock provider, not a
+ * commercial one; what is real here is the transport and the whole extension
+ * stack in front of it.
  *
  * The question each test answers is "what actually reached the model, and what
  * actually happened to the browser", not "did the function return the right
