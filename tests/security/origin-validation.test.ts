@@ -55,6 +55,22 @@ describe('checkNavigable', () => {
     });
   }
 
+  it('refuses file: and ftp: even when insecure origins are allowed', () => {
+    // The insecure-origins setting exists for http:// dev servers. If it also
+    // unlocked file:, a convenience toggle would hand the agent local
+    // filesystem reach — which matters more now that the manifest requests
+    // <all_urls> for screenshot capture.
+    for (const url of [
+      'file:///etc/passwd',
+      'file:///C:/Users/me/notes.txt',
+      'ftp://example.com/x',
+    ]) {
+      const permissive = checkNavigable(url, { allowInsecure: true });
+      expect(permissive.allowed, url).toBe(false);
+      expect(permissive.reason, url).toBe('BLOCKED_SCHEME');
+    }
+  });
+
   it('refuses the extension gallery, which could be used to install extensions', () => {
     const check = checkNavigable('https://chromewebstore.google.com/detail/abc');
     expect(check.allowed).toBe(false);

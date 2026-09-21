@@ -16,9 +16,16 @@ export interface OriginInfo {
 }
 
 /**
- * Schemes the agent must never automate. `chrome://` and friends host browser
- * settings and other extensions; `javascript:`/`data:` are script-injection
- * vectors.
+ * Schemes the agent must never automate, whatever the settings say.
+ *
+ * `chrome://` and friends host browser settings and other extensions;
+ * `javascript:` and `data:` are script-injection vectors.
+ *
+ * `file:` and `ftp:` are here for a specific reason. The "allow insecure
+ * origins" setting exists so a developer can automate an `http://` dev server,
+ * and it would otherwise also unlock `file:` — turning a convenience toggle
+ * into local filesystem reach. The agent has no legitimate need for either
+ * scheme, so neither is reachable through that setting, or any other.
  */
 export const BLOCKED_SCHEMES: readonly string[] = [
   'chrome:',
@@ -34,6 +41,8 @@ export const BLOCKED_SCHEMES: readonly string[] = [
   'edge:',
   'brave:',
   'opera:',
+  'file:',
+  'ftp:',
 ];
 
 /**

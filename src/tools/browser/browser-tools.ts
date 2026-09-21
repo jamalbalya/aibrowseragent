@@ -581,9 +581,40 @@ export function createScreenshotTool({
 
     async execute(_input, context): Promise<ToolExecutionResult> {
       const tab = await requireTab(adapter, context);
-      const { dataUrl } = await adapter.captureVisibleTab(tab.windowId);
 
-      const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+      let dataUrl: string;
+      try {
+        ({ dataUrl } = await adapter.captureVisibleTab(tab.windowId));
+      } catch (error) {
+        // Chrome refuses captureVisibleTab unless the extension holds
+        // <all_urls> or an activated activeTab. Reporting that as a generic
+        // internal error tells the user nothing they can act on.
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes('all_urls') || message.includes('activeTab')) {
+          throw new ToolError(
+            'PERMISSION_DENIED',
+            'Chrome refused the screenshot: the extension lacks the host access it requires.',
+            {
+              userMessage:
+                'Chrome would not capture this tab. Open chrome://extensions, find AI Browser ' +
+                'Agent, and make sure its site access is set to "On all sites".',
+              technicalDetails: message,
+            },
+          );
+        }
+        throw new ToolError('INTERNAL_ERROR', 'The screenshot could not be captured.', {
+          userMessage: 'Chrome could not capture this tab.',
+          technicalDetails: message,
+        });
+      }
+
+      const separator = dataUrl.indexOf(',');
+      if (!dataUrl.startsWith('data:image/') || separator === -1) {
+        throw new ToolError('INTERNAL_ERROR', 'The capture did not return a PNG data URL.', {
+          userMessage: 'Chrome returned an unexpected screenshot format.',
+        });
+      }
+      const base64 = dataUrl.slice(separator + 1);
       const evidence = {
         id: newEvidenceId(),
         type: 'SCREENSHOT' as const,

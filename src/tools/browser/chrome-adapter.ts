@@ -190,9 +190,7 @@ export class ChromeBrowserAdapter implements BrowserAdapter {
   }
 
   async captureVisibleTab(windowId: number): Promise<{ dataUrl: string }> {
-    const dataUrl = await chrome.tabs.captureVisibleTab(windowId, {
-      format: 'png',
-    });
+    const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
     return { dataUrl };
   }
 
