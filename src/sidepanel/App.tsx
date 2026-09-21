@@ -1,0 +1,103 @@
+import { useState } from 'react';
+import { useAgentState } from './state/useAgentState';
+import { Header } from './components/Header';
+import { TaskComposer } from './components/TaskComposer';
+import { TaskView } from './components/TaskView';
+import { PermissionPrompt } from './components/PermissionPrompt';
+import { SettingsView } from './components/SettingsView';
+
+export function App(): React.JSX.Element {
+  const agent = useAgentState();
+  const [showSettings, setShowSettings] = useState(false);
+
+  // A provider that has not demonstrated tool calling cannot run a task, so
+  // the composer is disabled rather than letting the task fail at the first
+  // model turn.
+  const ready = agent.connection?.capabilities?.toolCalling === true;
+  const disabledReason = !agent.connection
+    ? 'Connect an AI provider in Settings to start.'
+    : !ready
+      ? 'Run the capability check in Settings — tool calling has not been verified.'
+      : undefined;
+
+  if (showSettings) {
+    return (
+      <div className="app">
+        <SettingsView
+          connection={agent.connection}
+          onClose={() => setShowSettings(false)}
+          onChanged={() => void agent.refresh()}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="app">
+      <Header
+        connection={agent.connection}
+        permissionMode={agent.permissionMode}
+        onChangeMode={(mode) => void agent.changePermissionMode(mode)}
+        onOpenSettings={() => setShowSettings(true)}
+      />
+
+      {agent.error ? (
+        <div className="banner banner--error" role="alert">
+          <span>{agent.error.userMessage}</span>
+          <button type="button" className="button button--ghost" onClick={agent.dismissError}>
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
+      {agent.permissionRequests.map((request) => (
+        <PermissionPrompt
+          key={request.id}
+          request={request}
+          onRespond={(requestId, response) => void agent.respondToPermission(requestId, response)}
+        />
+      ))}
+
+      <main className="main">
+        {agent.loading ? (
+          <p className="empty">Loading…</p>
+        ) : (
+          <TaskView
+            task={agent.activeTask}
+            activity={agent.activity}
+            onPause={(id) => void agent.pauseTask(id)}
+            onResume={(id) => void agent.resumeTask(id)}
+            onCancel={(id) => void agent.cancelTask(id)}
+            onRetry={(id) => void agent.retryTask(id)}
+          />
+        )}
+
+        {agent.tasks.length > 1 ? (
+          <section className="history">
+            <h2 className="history__title">Recent tasks</h2>
+            <ul className="history__list">
+              {agent.tasks.slice(0, 10).map((task) => (
+                <li key={task.id}>
+                  <button
+                    type="button"
+                    className={`history__item ${task.id === agent.activeTask?.id ? 'history__item--active' : ''}`}
+                    onClick={() => agent.setActiveTaskId(task.id)}
+                  >
+                    <span className="history__objective">{task.objective}</span>
+                    <span className={`badge badge--${task.state.toLowerCase()}`}>{task.state}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+      </main>
+
+      <TaskComposer
+        disabled={!ready}
+        {...(disabledReason === undefined ? {} : { disabledReason })}
+        onSubmit={(objective) => void agent.startTask(objective)}
+      />
+    </div>
+  );
+}
