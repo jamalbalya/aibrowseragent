@@ -12,9 +12,14 @@ the calls. See "What remains" below for the exact refusals.
 ### What is wrong
 
 The repository's configured default branch is
-`claude/dreamy-shannon-tu0z6h`. The project's ownership rules require the
-primary branch to be `main` and prohibit tool-generated assistant names
-anywhere in repository metadata, which includes branch names.
+`claude/dreamy-shannon-tu0z6h`. That branch is an **obsolete temporary
+branch** created by an automation harness, not this project's development
+branch and not a branch anyone should work from. `main` is the canonical
+branch and has been since it was created; every commit since then has landed
+there. The project's ownership rules require the primary branch to be `main`
+and prohibit tool-generated assistant names anywhere in repository metadata,
+which includes branch names — so the obsolete branch also has to go, not just
+stop being the default.
 
 ### What has been done
 
@@ -96,6 +101,34 @@ git rev-list --count origin/main..origin/claude/dreamy-shannon-tu0z6h   # 0
 Once both steps are done, delete this file — it documents a problem that will
 no longer exist, and it is the only place in the repository that still names
 the obsolete branch.
+
+## Open: the authoritative specification is not in the repository
+
+**Status:** BLOCKED — needs the owner to supply the document.
+
+`PARITY_MATRIX.md` tracks forty capabilities "from the specification" and
+quotes section numbers throughout (§84 for the PASS conditions, §85–89 for the
+acceptance tests, §94 and §99 for platform limits). Source files cite dozens
+more. The document itself has never been committed here: it was supplied as a
+chat attachment during the first development session.
+
+This has a concrete cost, and it is not hypothetical. A capability's status
+cannot be checked against the requirement it claims to satisfy — only against
+this repository's own restatement of it. In particular, nothing in the
+repository maps capabilities to delivery stages, so a question of the form
+"is P-0NN required for stage N, or deferred to a later one?" has no answer
+that can be verified here. The matrix treats all forty as mandatory and makes
+no stage distinction at all.
+
+Anyone reasoning about scope or completeness should treat the statements in
+`PARITY_MATRIX.md` as derived, not authoritative, until the specification is
+committed alongside them.
+
+**REQUIRED OWNER ACTION:** commit the specification kit to the repository, or
+record where it lives, so status claims can be checked against the requirement
+rather than against a paraphrase of it.
+
+---
 
 ### Note for future sessions
 

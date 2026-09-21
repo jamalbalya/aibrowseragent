@@ -106,7 +106,7 @@ statement of what is missing.
 | P-014 | DOM inspection                       | yes        | yes  | —           | yes      | yes | PASS            |
 | P-015 | Console inspection                   | yes        | yes  | —           | yes      | yes | PASS            |
 | P-016 | Network inspection                   | yes        | yes  | —           | yes      | yes | PASS            |
-| P-017 | Long-running task                    | yes        | —    | yes         | —        | —   | PASS            |
+| P-017 | Long-running task                    | yes        | —    | yes         | —        | yes | PASS            |
 | P-018 | Background task while Chrome is open | yes        | —    | yes         | —        | yes | PASS            |
 | P-019 | Notifications                        | yes        | yes  | —           | —        | —   | PASS            |
 | P-020 | Scheduled tasks                      | no         | —    | —           | —        | —   | NOT-STARTED     |
@@ -146,7 +146,10 @@ registered providers: activation follows a successful connection, a failed
 connection leaves the working provider active, and an unregistered target
 throws rather than redirecting. PARTIAL because only one _real_ adapter
 ships, so switching between two production providers has still never run.
-Shipping a second adapter is out of Stage 2 scope. The
+The requirement is stated further down this file, under "Before claiming
+parity": _at least three provider adapters passing the same suite, proving
+P-033 rather than asserting it_. One adapter exists, so the gap is two
+adapters and a shared suite — not a missing test. The
 guarantee that switching preserves tools, policy and task state holds by
 construction — none of those modules reference the provider — but it is not
 demonstrated.
