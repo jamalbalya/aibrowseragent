@@ -125,16 +125,26 @@ for (const row of rows) {
 }
 
 for (const [status, count] of Object.entries(actual)) {
-  const pattern = new RegExp(`^\\|\\s*${status.replace('-', '\\-')}\\s*\\|\\s*(\\d+)\\s*\\|`, 'm');
-  const match = pattern.exec(text);
-  if (!match) {
+  // Every occurrence is checked, not just the first. An edit once left a
+  // second, stale summary table further down the file; reading only the first
+  // match made the document contradict itself while this check stayed green.
+  const pattern = new RegExp(`^\\|\\s*${status.replace('-', '\\-')}\\s*\\|\\s*(\\d+)\\s*\\|`, 'gm');
+  const matches = [...text.matchAll(pattern)];
+  if (matches.length === 0) {
     // A status with no rows needs no summary line.
     if (count > 0)
       errors.push(`The summary has no row for ${status}, but ${count} capabilities use it.`);
     continue;
   }
-  if (Number(match[1]) !== count) {
-    errors.push(`Summary claims ${match[1]} ${status}, but the table contains ${count}.`);
+  if (matches.length > 1) {
+    errors.push(
+      `${status} is counted ${matches.length} times. There must be exactly one summary table.`,
+    );
+  }
+  for (const match of matches) {
+    if (Number(match[1]) !== count) {
+      errors.push(`Summary claims ${match[1]} ${status}, but the table contains ${count}.`);
+    }
   }
 }
 

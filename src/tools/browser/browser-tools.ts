@@ -14,6 +14,7 @@ import { checkNavigable, evaluateTransition } from '@/security/origin/origin-val
 import { scanForInjection, wrapUntrusted } from '@/security/prompt-injection/untrusted-content';
 import type { AgentTool, ToolExecutionContext, ToolExecutionResult } from '@/tools/core/tool-types';
 import type { BrowserAdapter, TabInfo } from './chrome-adapter';
+import type { DebuggerManager } from '@/tools/debugger/debugger-manager';
 import { MessagingError } from '@/messaging/bus';
 
 const log = getLogger('browser');
@@ -89,6 +90,20 @@ function rethrowContentError(error: unknown, tabUrl: string): never {
 
 export interface BrowserToolDeps {
   readonly adapter: BrowserAdapter;
+  /**
+   * Used only by browser.screenshot, which captures through the DevTools
+   * protocol rather than `chrome.tabs.captureVisibleTab`.
+   *
+   * `captureVisibleTab` demands the literal `<all_urls>` host permission.
+   * Granting it was measured to hand the extension local filesystem reach:
+   * with `<all_urls>`, `chrome.scripting.executeScript` against a `file://`
+   * tab succeeded and returned the file's contents, and Chrome refuses that
+   * outright under `http://*` + `https://*`. `Page.captureScreenshot` is
+   * already on the DevTools allowlist and needs no host permission at all, so
+   * the narrower manifest is kept and Chrome's own boundary against local
+   * files stays in place.
+   */
+  readonly debuggerManager: DebuggerManager;
 }
 
 const readPageInput = z.object({
@@ -563,58 +578,106 @@ export function createWaitTool({ adapter }: BrowserToolDeps): AgentTool<typeof w
 
 const screenshotInput = z.object({});
 
+/**
+ * Runs `Page.captureScreenshot` and returns the raw base64 payload.
+ *
+ * Chrome's own failure text can name internal paths and profile directories,
+ * so it is logged rather than handed to the model or the user. `ToolError`s
+ * raised by the manager (the CDP allowlist, a lost attachment) already carry
+ * vetted wording and pass through untouched.
+ */
+async function captureViaDebugger(manager: DebuggerManager, tabId: number): Promise<unknown> {
+  try {
+    const shot = await manager.send<{ data?: unknown }>(tabId, 'Page.captureScreenshot', {
+      format: 'png',
+      captureBeyondViewport: false,
+    });
+    return shot?.data;
+  } catch (error) {
+    if (error instanceof ToolError) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    log.warn('Screenshot capture failed.', { tabId, error: message });
+    throw new ToolError('INTERNAL_ERROR', 'The screenshot could not be captured.', {
+      userMessage: 'Chrome could not capture this page.',
+      technicalDetails: message,
+    });
+  }
+}
+
+/** Base64 of the eight-byte PNG signature `89 50 4E 47 0D 0A 1A 0A`. */
+const PNG_BASE64_PREFIX = 'iVBORw0KGgo';
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+
+/**
+ * Refuses a capture that is not a PNG rather than storing it.
+ *
+ * A corrupt or empty payload filed as evidence is worse than no evidence: it
+ * reads as a record of what the page showed. The tool must never report
+ * success for a capture it cannot vouch for (specification section 68).
+ */
+function assertPngBase64(data: unknown): string {
+  const reject = (detail: string): never => {
+    log.error('Rejected a malformed screenshot payload.', { detail });
+    throw new ToolError('INTERNAL_ERROR', `The capture did not return a PNG image: ${detail}.`, {
+      userMessage: 'Chrome returned an unusable screenshot, so nothing was recorded.',
+    });
+  };
+
+  if (typeof data !== 'string' || data.length === 0) reject('no image data');
+  const base64 = data as string;
+  if (base64.length % 4 !== 0 || !BASE64.test(base64)) reject('not valid base64');
+  if (!base64.startsWith(PNG_BASE64_PREFIX)) reject('missing the PNG signature');
+  return base64;
+}
+
 export function createScreenshotTool({
   adapter,
+  debuggerManager,
 }: BrowserToolDeps): AgentTool<typeof screenshotInput> {
   return {
     name: 'browser.screenshot',
-    version: '1.0.0',
+    version: '2.0.0',
     description:
-      'Capture a PNG screenshot of the visible area of the current tab and record it as evidence.',
+      'Capture a PNG screenshot of the visible area of the current tab and record it as ' +
+      'evidence. Attaches the debugger briefly, so Chrome shows its debugging banner.',
     inputSchema: screenshotInput,
     risk: 'R0',
-    executionMode: 'requires_page',
-    sideEffects: [],
+    executionMode: 'requires_debugger',
+    sideEffects: ['Attaches the Chrome debugger briefly, which displays a notification bar.'],
     timeoutMs: 20_000,
     idempotent: true,
     classify: () => ({ summary: 'Capture a screenshot of the visible page.' }),
 
     async execute(_input, context): Promise<ToolExecutionResult> {
+      // requireTab enforces the scheme and origin gates: file:, ftp:,
+      // chrome-extension: and the other entries in BLOCKED_SCHEMES never reach
+      // the capture, and a tab that navigated away from the authorised origin
+      // is refused rather than photographed.
       const tab = await requireTab(adapter, context);
 
-      let dataUrl: string;
+      // Leave an existing session alone: another tool may be mid-inspection,
+      // and detaching would drop its console and network buffers.
+      const wasAttached = debuggerManager.isAttached(tab.id);
+      let base64: string;
+
       try {
-        ({ dataUrl } = await adapter.captureVisibleTab(tab.windowId));
-      } catch (error) {
-        // Chrome refuses captureVisibleTab unless the extension holds
-        // <all_urls> or an activated activeTab. Reporting that as a generic
-        // internal error tells the user nothing they can act on.
-        const message = error instanceof Error ? error.message : String(error);
-        if (message.includes('all_urls') || message.includes('activeTab')) {
-          throw new ToolError(
-            'PERMISSION_DENIED',
-            'Chrome refused the screenshot: the extension lacks the host access it requires.',
-            {
-              userMessage:
-                'Chrome would not capture this tab. Open chrome://extensions, find AI Browser ' +
-                'Agent, and make sure its site access is set to "On all sites".',
-              technicalDetails: message,
-            },
-          );
+        if (!wasAttached) await debuggerManager.attach(tab.id);
+        base64 = assertPngBase64(await captureViaDebugger(debuggerManager, tab.id));
+      } finally {
+        // Only tear down what this tool set up, and never let a teardown
+        // failure replace the error that actually stopped the capture.
+        if (!wasAttached) {
+          try {
+            await debuggerManager.detach(tab.id);
+          } catch (error) {
+            log.warn('Screenshot could not detach the debugger.', {
+              tabId: tab.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
-        throw new ToolError('INTERNAL_ERROR', 'The screenshot could not be captured.', {
-          userMessage: 'Chrome could not capture this tab.',
-          technicalDetails: message,
-        });
       }
 
-      const separator = dataUrl.indexOf(',');
-      if (!dataUrl.startsWith('data:image/') || separator === -1) {
-        throw new ToolError('INTERNAL_ERROR', 'The capture did not return a PNG data URL.', {
-          userMessage: 'Chrome returned an unexpected screenshot format.',
-        });
-      }
-      const base64 = dataUrl.slice(separator + 1);
       const evidence = {
         id: newEvidenceId(),
         type: 'SCREENSHOT' as const,
@@ -634,7 +697,7 @@ export function createScreenshotTool({
       });
 
       // The image is stored as evidence; only its reference goes to the model,
-      // so a screenshot never silently enters context (specification section 68).
+      // so a screenshot never silently enters context (specification §68).
       return {
         success: true,
         data: {

@@ -7,6 +7,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createBrowserTools } from '@/tools/browser/browser-tools';
 import { FakeBrowserAdapter } from '../fixtures/fake-browser';
+import { fakeDebugger, TINY_PNG_BASE64 } from '../fixtures/fake-debugger';
 import { createHarness, ScriptedPrompter, type Harness } from '../fixtures/policy-harness';
 import type { SemanticPage } from '@/content/semantic-tree';
 
@@ -39,6 +40,15 @@ const samplePage = (overrides: Partial<SemanticPage> = {}): SemanticPage => ({
 let adapter: FakeBrowserAdapter;
 let harness: Harness;
 
+/** Rebuilds the registry so a test can script the debugger's replies. */
+function withDebugger(options: Parameters<typeof fakeDebugger>[0] = {}) {
+  const { manager, port } = fakeDebugger(options);
+  harness = createHarness(createBrowserTools({ adapter, debuggerManager: manager }), {
+    prompter: new ScriptedPrompter({ kind: 'approve_once' }),
+  });
+  return { manager, port };
+}
+
 const dispatch = (
   name: string,
   args: Record<string, unknown>,
@@ -58,9 +68,7 @@ const dispatch = (
 beforeEach(() => {
   adapter = new FakeBrowserAdapter();
   adapter.addTab({ id: 1, url: 'https://example.com/', title: 'Example', active: true });
-  harness = createHarness(createBrowserTools({ adapter }), {
-    prompter: new ScriptedPrompter({ kind: 'approve_once' }),
-  });
+  withDebugger();
 });
 
 describe('browser.read_page', () => {
@@ -268,41 +276,11 @@ describe('browser.wait', () => {
 });
 
 describe('browser.screenshot', () => {
-  it('reports a Chrome host-permission refusal in terms the user can act on', async () => {
-    // Chrome refuses captureVisibleTab without <all_urls> or an activated
-    // activeTab. This shipped as "failed unexpectedly", which told the user
-    // nothing; the manifest fix removed the cause but the branch still has to
-    // behave when Chrome refuses for any other reason.
-    adapter.captureVisibleTab = () =>
-      Promise.reject(new Error("Either the '<all_urls>' or 'activeTab' permission is required."));
-
-    const result = await dispatch('browser.screenshot', {});
-
-    expect(result.envelope.error?.code).toBe('PERMISSION_DENIED');
-    expect(result.envelope.error?.message).toContain('site access');
-    expect(result.envelope.error?.message).not.toContain('all_urls');
-  });
-
-  it('reports an unexpected capture failure without leaking its detail', async () => {
-    adapter.captureVisibleTab = () =>
-      Promise.reject(new Error('internal chrome failure at /opt/chrome/internals'));
-
-    const result = await dispatch('browser.screenshot', {});
-
-    expect(result.envelope.error?.code).toBe('INTERNAL_ERROR');
-    expect(result.envelope.error?.message).not.toContain('/opt/chrome/internals');
-  });
-
-  it('refuses a capture that is not a PNG data URL rather than storing it', async () => {
-    // A corrupt capture stored as evidence would be worse than none: it looks
-    // like a record of what the page showed.
-    adapter.captureVisibleTab = () => Promise.resolve({ dataUrl: 'not-a-data-url' });
-
-    const result = await dispatch('browser.screenshot', {});
-
-    expect(result.envelope.error?.code).toBe('INTERNAL_ERROR');
-    expect(result.evidence).toHaveLength(0);
-  });
+  // The tool captures through the DevTools protocol, not
+  // `chrome.tabs.captureVisibleTab`. `captureVisibleTab` demands the literal
+  // `<all_urls>` host permission, and granting it was measured to also hand
+  // the extension read access to local files; `Page.captureScreenshot` needs
+  // no host permission at all, so the narrow manifest stays.
 
   it('stores the image as evidence and returns only a reference', async () => {
     const result = await dispatch('browser.screenshot', {});
@@ -311,6 +289,97 @@ describe('browser.screenshot', () => {
     expect(result.evidence[0]?.type).toBe('SCREENSHOT');
     expect(data.evidenceId).toBe(result.evidence[0]?.id);
     // The base64 image must not enter model context implicitly.
-    expect(JSON.stringify(data)).not.toContain('data:image/png');
+    expect(JSON.stringify(data)).not.toContain(TINY_PNG_BASE64);
+  });
+
+  it('captures through the allowlisted DevTools method', async () => {
+    const { port } = withDebugger();
+    await dispatch('browser.screenshot', {});
+    expect(port.sent.map((call) => call.method)).toContain('Page.captureScreenshot');
+  });
+
+  it('detaches the debugger it attached, leaving no session behind', async () => {
+    const { manager, port } = withDebugger();
+    await dispatch('browser.screenshot', {});
+    expect(manager.isAttached(1)).toBe(false);
+    expect(port.attached.has(1)).toBe(false);
+  });
+
+  it('leaves a pre-existing debugger session attached', async () => {
+    // Another tool may be mid-inspection; detaching would drop its console
+    // and network buffers.
+    const { manager, port } = withDebugger();
+    await manager.attach(1);
+    const before = port.detachCount;
+
+    await dispatch('browser.screenshot', {});
+
+    expect(manager.isAttached(1)).toBe(true);
+    expect(port.detachCount).toBe(before);
+  });
+
+  it('reports a Chrome refusal to attach in terms the user can act on', async () => {
+    withDebugger({ attachError: new Error('Cannot access contents of the page.') });
+
+    const result = await dispatch('browser.screenshot', {});
+
+    expect(result.envelope.error?.code).toBe('DEBUGGER_UNAVAILABLE');
+    expect(result.evidence).toHaveLength(0);
+  });
+
+  it('reports an unexpected capture failure without leaking its detail', async () => {
+    withDebugger({
+      respond: (method) => {
+        if (method === 'Page.captureScreenshot') {
+          throw new Error('internal chrome failure at /opt/chrome/internals');
+        }
+        return undefined;
+      },
+    });
+
+    const result = await dispatch('browser.screenshot', {});
+
+    expect(result.envelope.error?.code).toBe('INTERNAL_ERROR');
+    expect(result.envelope.error?.message).not.toContain('/opt/chrome/internals');
+    expect(result.evidence).toHaveLength(0);
+  });
+
+  it('refuses an empty capture rather than filing it as evidence', async () => {
+    withDebugger({ respond: (method) => (method === 'Page.captureScreenshot' ? {} : undefined) });
+
+    const result = await dispatch('browser.screenshot', {});
+
+    expect(result.envelope.status).toBe('error');
+    expect(result.envelope.error?.code).toBe('INTERNAL_ERROR');
+    expect(result.evidence).toHaveLength(0);
+  });
+
+  it.each([
+    ['not base64 at all', 'not-a-png!!'],
+    ['base64 of something that is not a PNG', 'aGVsbG8gd29ybGQ='],
+    ['a truncated base64 payload', 'iVBORw0KGgoAAA'],
+  ])('refuses %s rather than storing it', async (_label, payload) => {
+    // A corrupt capture stored as evidence would be worse than none: it reads
+    // as a record of what the page showed.
+    withDebugger({
+      respond: (method) => (method === 'Page.captureScreenshot' ? { data: payload } : undefined),
+    });
+
+    const result = await dispatch('browser.screenshot', {});
+
+    expect(result.envelope.status).toBe('error');
+    expect(result.envelope.error?.code).toBe('INTERNAL_ERROR');
+    expect(result.evidence).toHaveLength(0);
+  });
+
+  it('never reports success when the capture was rejected', async () => {
+    withDebugger({
+      respond: (method) => (method === 'Page.captureScreenshot' ? { data: 12345 } : undefined),
+    });
+
+    const result = await dispatch('browser.screenshot', {});
+
+    expect(result.envelope.status).toBe('error');
+    expect(result.envelope.result).toBeUndefined();
   });
 });

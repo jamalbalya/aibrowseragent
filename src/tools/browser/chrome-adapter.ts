@@ -43,7 +43,6 @@ export interface BrowserAdapter {
   goForward(tabId: number): Promise<void>;
   /** Resolves once the tab reaches `complete`, or rejects on timeout. */
   waitForLoad(tabId: number, timeoutMs: number): Promise<TabInfo>;
-  captureVisibleTab(windowId: number): Promise<{ dataUrl: string }>;
   groupTabs(tabIds: readonly number[], title?: string): Promise<number>;
   ungroupTabs(tabIds: readonly number[]): Promise<void>;
   moveTab(tabId: number, index: number): Promise<void>;
@@ -187,11 +186,6 @@ export class ChromeBrowserAdapter implements BrowserAdapter {
         () => finish(() => reject(new Error(`Tab ${tabId} does not exist.`))),
       );
     });
-  }
-
-  async captureVisibleTab(windowId: number): Promise<{ dataUrl: string }> {
-    const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
-    return { dataUrl };
   }
 
   async groupTabs(tabIds: readonly number[], title?: string): Promise<number> {

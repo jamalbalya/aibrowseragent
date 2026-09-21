@@ -86,6 +86,48 @@ for (const entry of manifest.content_scripts ?? []) {
   }
 }
 
+// Host permissions are a security boundary, not a convenience knob.
+//
+// `<all_urls>` was measured to grant this extension read access to the local
+// filesystem: with it, `chrome.scripting.executeScript` against a `file://`
+// tab returned the file's contents, and Chrome refuses that outright under
+// `http://*` + `https://*`. Nothing in the extension needs it — the one
+// feature that did, `browser.screenshot`, captures through the DevTools
+// protocol, which requires no host permission at all. The pattern must not
+// creep back in without that decision being revisited, so the build fails on
+// it rather than shipping a quietly widened package.
+const ALLOWED_HOST_PERMISSIONS = ['http://*/*', 'https://*/*'];
+const FORBIDDEN_HOST_PATTERNS = ['<all_urls>', '*://*/*', 'file:///*', 'ftp://*/*'];
+
+const hostPermissions = manifest.host_permissions ?? [];
+for (const pattern of hostPermissions) {
+  if (FORBIDDEN_HOST_PATTERNS.includes(pattern)) {
+    fail(
+      `host_permissions contains "${pattern}", which grants reach beyond http and https. ` +
+        'See docs/security.md for the evidence behind this limit.',
+    );
+  } else if (!ALLOWED_HOST_PERMISSIONS.includes(pattern)) {
+    fail(`host_permissions contains an unreviewed pattern "${pattern}".`);
+  }
+}
+
+for (const permission of [
+  ...(manifest.permissions ?? []),
+  ...(manifest.optional_permissions ?? []),
+]) {
+  if (FORBIDDEN_HOST_PATTERNS.includes(permission)) {
+    fail(`permissions contains the host pattern "${permission}", which must not be requested.`);
+  }
+}
+
+for (const entry of manifest.content_scripts ?? []) {
+  for (const pattern of entry.matches ?? []) {
+    if (!ALLOWED_HOST_PERMISSIONS.includes(pattern)) {
+      fail(`A content script matches "${pattern}", which is outside http and https.`);
+    }
+  }
+}
+
 const csp = manifest.content_security_policy?.extension_pages ?? '';
 if (csp.includes("'unsafe-eval'") || csp.includes("'unsafe-inline'")) {
   fail('The extension CSP must not allow unsafe-eval or unsafe-inline.');
@@ -102,3 +144,4 @@ console.log(`✓ Package valid: ${manifest.name} ${manifest.version}`);
 console.log(`  service worker: ${manifest.background.service_worker}`);
 console.log(`  side panel:     ${manifest.side_panel.default_path}`);
 console.log(`  permissions:    ${(manifest.permissions ?? []).join(', ')}`);
+console.log(`  host access:    ${hostPermissions.join(', ')}`);

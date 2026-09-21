@@ -139,6 +139,17 @@ already knows what it asked to type.
 screenshot entering model context implicitly would be both a privacy problem
 and an enormous context cost.
 
+The capture runs over the DevTools protocol (`Page.captureScreenshot`), not
+`chrome.tabs.captureVisibleTab`. `captureVisibleTab` demands the literal
+`<all_urls>` host permission, which was measured to also grant this extension
+read access to local files; see "Why not `<all_urls>`" in `docs/security.md`.
+`Page.captureScreenshot` is already on the DevTools allowlist and needs no host
+permission, so the tool attaches the debugger for the duration of the capture
+and detaches again — leaving a session that another tool had already opened
+untouched. A payload that is not a well-formed PNG is refused rather than
+filed: a corrupt image stored as evidence reads as a record of what the page
+showed.
+
 ## Failures
 
 Throw `ToolError` with a canonical code:
@@ -164,18 +175,18 @@ and the model all depend on a failed action being reported as failed.
 
 ### Browser — `src/tools/browser/`
 
-| Tool                             | Risk    | Notes                                          |
-| -------------------------------- | ------- | ---------------------------------------------- |
-| `browser.read_page`              | R0      | Semantic model; text wrapped as untrusted data |
-| `browser.click`                  | R1      |                                                |
-| `browser.type`                   | R1 / R2 | R2 when submitting                             |
-| `browser.select`                 | R1      | Matches by value, then by visible label        |
-| `browser.navigate`               | R1      | Classifies the **destination**                 |
-| `browser.go_back` / `go_forward` | R1      |                                                |
-| `browser.reload`                 | R1      |                                                |
-| `browser.scroll`                 | R0      |                                                |
-| `browser.wait`                   | R0      | Page load, or a CSS selector                   |
-| `browser.screenshot`             | R0      | Stored as evidence; returns an id              |
+| Tool                             | Risk    | Notes                                               |
+| -------------------------------- | ------- | --------------------------------------------------- |
+| `browser.read_page`              | R0      | Semantic model; text wrapped as untrusted data      |
+| `browser.click`                  | R1      |                                                     |
+| `browser.type`                   | R1 / R2 | R2 when submitting                                  |
+| `browser.select`                 | R1      | Matches by value, then by visible label             |
+| `browser.navigate`               | R1      | Classifies the **destination**                      |
+| `browser.go_back` / `go_forward` | R1      |                                                     |
+| `browser.reload`                 | R1      |                                                     |
+| `browser.scroll`                 | R0      |                                                     |
+| `browser.wait`                   | R0      | Page load, or a CSS selector                        |
+| `browser.screenshot`             | R0      | Debugger capture; stored as evidence, returns an id |
 
 ### Tabs — `src/tools/tabs/`
 

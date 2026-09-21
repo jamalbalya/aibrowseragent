@@ -63,19 +63,11 @@ separate classes of error have actually occurred here: a revision that claimed
 17 PASS while its own table said 23, and a revision whose per-column coverage
 claims were not backed by any test. The check now covers both.
 
-Movement in this revision: the end-to-end suite runs the built extension in a
-real Chromium, which promoted the side panel and background execution to PASS
-and gave twenty-two other capabilities genuine browser coverage. Real-browser
-testing also exposed two defects — screenshot capture was broken outright, and
-form controls were given misleading accessible names — both now fixed with
-regression tests.
-
------------ | ------ |
-| PASS | 17 |
-| PARTIAL | 6 |
-| INTERFACES-ONLY | 5 |
-| NOT-STARTED | 12 |
-| **Total** | **40** |
+Movement in this revision: no status changed. Screenshot capture (P-008) was
+re-implemented over the DevTools protocol so the `<all_urls>` host permission
+could be removed, and gained a dedicated security suite; it was already PASS
+and remains so. The counts above are unchanged from the previous revision
+because nothing new was finished — only made safer.
 
 ---
 

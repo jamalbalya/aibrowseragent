@@ -97,10 +97,6 @@ export class FakeBrowserAdapter implements BrowserAdapter {
     return tab ? Promise.resolve(tab) : Promise.reject(new Error('no such tab'));
   }
 
-  captureVisibleTab(): Promise<{ dataUrl: string }> {
-    return Promise.resolve({ dataUrl: 'data:image/png;base64,AAAA' });
-  }
-
   groupTabs(): Promise<number> {
     return Promise.resolve(99);
   }

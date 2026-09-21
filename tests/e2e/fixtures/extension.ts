@@ -7,6 +7,11 @@
  *   default ephemeral one.
  * - Playwright's bundled browser revision may not match what this image has,
  *   so the binary is taken from PLAYWRIGHT_BROWSERS_PATH explicitly.
+ * - `headless: true` alone resolves to `chrome-headless-shell`, which cannot
+ *   load extensions at all. Every test then fails identically waiting for a
+ *   service worker that never registers — which is exactly how this suite
+ *   failed in CI while passing locally, where an explicit binary was used.
+ *   `channel: 'chromium'` pins the full browser in its new headless mode.
  * - `chrome.runtime.sendMessage` sent from inside the service worker is not
  *   delivered to that worker's own listener. Messages must originate from an
  *   extension page, which is why `openPanel` exists.
@@ -40,6 +45,16 @@ const EXTENSION_PATH = resolve(import.meta.dirname, '../../../dist');
  */
 const CHROMIUM = process.env.E2E_CHROMIUM_PATH ?? '/opt/pw-browsers/chromium';
 
+/**
+ * Launch options that decide *which* Chromium runs.
+ *
+ * An explicit path wins. Otherwise the `chromium` channel is requested by
+ * name, because Playwright's default for `headless: true` is the headless
+ * shell, and the headless shell has no extension support.
+ */
+const BROWSER: { executablePath?: string; channel?: string } =
+  CHROMIUM.length > 0 ? { executablePath: CHROMIUM } : { channel: 'chromium' };
+
 /** What the message router returns across the boundary. */
 interface MessageEnvelope {
   readonly ok: boolean;
@@ -72,7 +87,7 @@ export const test = base.extend<ExtensionFixtures>({
   context: async ({}, use) => {
     const profile = mkdtempSync(join(tmpdir(), 'aiba-e2e-'));
     const context = await chromium.launchPersistentContext(profile, {
-      ...(CHROMIUM.length > 0 ? { executablePath: CHROMIUM } : {}),
+      ...BROWSER,
       headless: true,
       args: [
         `--disable-extensions-except=${EXTENSION_PATH}`,
@@ -87,9 +102,21 @@ export const test = base.extend<ExtensionFixtures>({
   },
 
   serviceWorker: async ({ context }, use) => {
+    const existing = context.serviceWorkers()[0];
     const worker =
-      context.serviceWorkers()[0] ??
-      (await context.waitForEvent('serviceworker', { timeout: 20_000 }));
+      existing ??
+      (await context.waitForEvent('serviceworker', { timeout: 20_000 }).catch(() => {
+        // Every test in the suite depends on this, so a silent 20-second
+        // timeout repeated per test says nothing about the cause. The cause
+        // that has actually happened is a browser with no extension support.
+        throw new Error(
+          `The extension's service worker never registered. Chromium loaded ` +
+            `${EXTENSION_PATH}, so either the build is broken or this browser ` +
+            `cannot load extensions — chrome-headless-shell cannot, which is ` +
+            `why the launch pins the "chromium" channel. Browser: ` +
+            `${JSON.stringify(BROWSER)}.`,
+        );
+      }));
     // Let startup() finish before a test inspects state it populates.
     await new Promise((r) => setTimeout(r, 800));
     await use(worker);

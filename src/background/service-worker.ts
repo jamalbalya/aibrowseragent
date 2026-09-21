@@ -105,7 +105,7 @@ const permissionEngine = new PermissionEngine({
 });
 
 const toolRegistry = new ToolRegistry({ permissionEngine, loadPolicyContext, evidenceStore });
-toolRegistry.registerAll(createBrowserTools({ adapter: browserAdapter }));
+toolRegistry.registerAll(createBrowserTools({ adapter: browserAdapter, debuggerManager }));
 toolRegistry.registerAll(createTabTools({ adapter: browserAdapter, ownership: tabOwnership }));
 toolRegistry.registerAll(
   createDebuggerTools({ adapter: browserAdapter, manager: debuggerManager }),

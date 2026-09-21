@@ -18,7 +18,8 @@ import { PermissionEngine } from '@/policy/permission-engine';
 import { emptySitePolicyState, type SitePolicyState } from '@/policy/site-policy';
 import { createBrowserTools } from '@/tools/browser/browser-tools';
 import { createDebuggerTools } from '@/tools/debugger/debugger-tools';
-import { DebuggerManager } from '@/tools/debugger/debugger-manager';
+import type { DebuggerManager } from '@/tools/debugger/debugger-manager';
+import { fakeDebugger, TINY_PNG_BASE64 } from '../fixtures/fake-debugger';
 import { FakeBrowserAdapter } from '../fixtures/fake-browser';
 import { ScriptedPrompter } from '../fixtures/policy-harness';
 import type { SemanticPage } from '@/content/semantic-tree';
@@ -82,20 +83,14 @@ beforeEach(() => {
   adapter.addTab({ id: 1, url: 'https://example.com/', title: 'Example', active: true });
   adapter.onContent((type) => (type === 'content.readPage' ? { page } : {}));
 
-  debuggerManager = new DebuggerManager({
-    attach: () => Promise.resolve(),
-    detach: () => Promise.resolve(),
-    sendCommand: () => Promise.resolve({}),
-    onEvent: { addListener: () => undefined, removeListener: () => undefined },
-    onDetach: { addListener: () => undefined, removeListener: () => undefined },
-  });
+  debuggerManager = fakeDebugger().manager;
 
   registry = new ToolRegistry({
     permissionEngine,
     loadPolicyContext: () => Promise.resolve({ mode: 'auto', sitePolicy }),
     evidenceStore: store,
   });
-  registry.registerAll(createBrowserTools({ adapter }));
+  registry.registerAll(createBrowserTools({ adapter, debuggerManager }));
   registry.registerAll(createDebuggerTools({ adapter, manager: debuggerManager }));
 });
 
@@ -148,8 +143,9 @@ describe('browser.screenshot evidence', () => {
 
     expect(payload?.encoding).toBe('base64');
     expect(payload?.mimeType).toBe('image/png');
-    // The FakeBrowserAdapter returns "data:image/png;base64,AAAA".
-    expect(payload?.content).toBe('AAAA');
+    // Stored as raw base64, exactly as Page.captureScreenshot returned it —
+    // no data-URL wrapper, so the bytes round-trip unchanged.
+    expect(payload?.content).toBe(TINY_PNG_BASE64);
   });
 
   it('returns the evidence id in the tool result so the model can cite it', async () => {
@@ -205,7 +201,7 @@ describe('without a configured store', () => {
       loadPolicyContext: () =>
         Promise.resolve({ mode: 'auto', sitePolicy: emptySitePolicyState() }),
     });
-    storeless.registerAll(createBrowserTools({ adapter }));
+    storeless.registerAll(createBrowserTools({ adapter, debuggerManager }));
 
     const result = await storeless.dispatch({
       toolCallId: 'tc_1',

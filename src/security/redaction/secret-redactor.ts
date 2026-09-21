@@ -25,6 +25,12 @@ export interface RedactionRule {
   readonly pattern: RegExp;
   /** Replacement, may use capture groups to retain non-secret context. */
   readonly replacement: string;
+  /**
+   * Optional second opinion on a match. Returning false leaves the text
+   * alone, for rules whose shape alone produces false positives on data the
+   * agent must not corrupt.
+   */
+  readonly confirm?: (match: string) => boolean;
 }
 
 /**
@@ -175,11 +181,21 @@ export const DEFAULT_RULES: readonly RedactionRule[] = [
     ),
     replacement: `$1$2${REDACTED}`,
   },
-  // Payment card numbers (13-19 digits, optional separators).
+  // Payment card numbers (13-19 digits, optional separators), confirmed by
+  // the Luhn checksum.
+  //
+  // Shape alone is not enough here. An evidence id such as
+  // `ev_8d66cde0-61a9-4657-9297-9680928183fd` ends in fourteen digits split by
+  // a hyphen, and the unchecked rule redacted that tail — corrupting the
+  // reference the model uses to cite the evidence, at a rate low enough
+  // (roughly one identifier in five hundred) to look like a flaky test rather
+  // than a bug. Every real card number passes Luhn, so the checksum keeps the
+  // control intact while sparing arbitrary digit strings.
   {
     id: 'credit-card',
     pattern: /\b(?:\d[ -]?){12,18}\d\b/g,
     replacement: REDACTED,
+    confirm: (match) => isLuhnValid(match),
   },
 ];
 
@@ -187,6 +203,30 @@ export interface RedactionResult {
   readonly text: string;
   /** Rule ids that fired, for audit + UI disclosure. */
   readonly appliedRules: readonly string[];
+}
+
+/**
+ * The Luhn (mod-10) checksum every payment card number satisfies.
+ *
+ * Separators are ignored; anything outside the 13-19 digit range fails, which
+ * also guards against a malformed match reaching here.
+ */
+function isLuhnValid(candidate: string): boolean {
+  const digits = candidate.replace(/[^0-9]/g, '');
+  if (digits.length < 13 || digits.length > 19) return false;
+
+  let sum = 0;
+  let double = false;
+  for (let i = digits.length - 1; i >= 0; i -= 1) {
+    let value = digits.charCodeAt(i) - 48;
+    if (double) {
+      value *= 2;
+      if (value > 9) value -= 9;
+    }
+    sum += value;
+    double = !double;
+  }
+  return sum % 10 === 0;
 }
 
 /** Redacts secret-shaped values from free text. */
@@ -202,7 +242,26 @@ export function redactText(
     rule.pattern.lastIndex = 0;
     if (!rule.pattern.test(text)) continue;
     rule.pattern.lastIndex = 0;
-    text = text.replace(rule.pattern, rule.replacement);
+
+    if (!rule.confirm) {
+      text = text.replace(rule.pattern, rule.replacement);
+      applied.push(rule.id);
+      continue;
+    }
+
+    // A confirmed rule replaces through a function, so a match the confirm
+    // step rejects is put back byte for byte. Such rules use a literal
+    // replacement, never a capture reference.
+    let fired = false;
+    const confirm = rule.confirm;
+    const next = text.replace(rule.pattern, (match: string) => {
+      if (!confirm(match)) return match;
+      fired = true;
+      return rule.replacement;
+    });
+
+    if (!fired) continue;
+    text = next;
     applied.push(rule.id);
   }
 

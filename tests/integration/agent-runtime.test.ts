@@ -10,6 +10,7 @@ import { AgentRuntime, type RuntimeCallbacks } from '@/agent/runtime/agent-runti
 import { createBrowserTools } from '@/tools/browser/browser-tools';
 import { createTask, type AgentTask, type TaskState, type TaskStep } from '@/tasks/task-model';
 import { FakeBrowserAdapter } from '../fixtures/fake-browser';
+import { fakeDebugger } from '../fixtures/fake-debugger';
 import {
   FULL_CAPABILITIES,
   FakeProvider,
@@ -111,9 +112,12 @@ beforeEach(() => {
     if (type === 'content.scroll') return { scrollY: 480, atBottom: false };
     return {};
   });
-  harness = createHarness(createBrowserTools({ adapter }), {
-    prompter: new ScriptedPrompter({ kind: 'approve_once' }),
-  });
+  harness = createHarness(
+    createBrowserTools({ adapter, debuggerManager: fakeDebugger().manager }),
+    {
+      prompter: new ScriptedPrompter({ kind: 'approve_once' }),
+    },
+  );
 });
 
 const runtimeFor = (rec: Recorder) =>
@@ -251,7 +255,10 @@ describe('multi-step execution', () => {
 
   it('records a blocked action separately from a failure', async () => {
     const prompter = new ScriptedPrompter({ kind: 'deny' });
-    harness = createHarness(createBrowserTools({ adapter }), { prompter, mode: 'manual' });
+    harness = createHarness(
+      createBrowserTools({ adapter, debuggerManager: fakeDebugger().manager }),
+      { prompter, mode: 'manual' },
+    );
 
     const provider = new FakeProvider([
       toolCallResponse('browser_click', { elementId: 'e1-0' }, 'tc_1'),

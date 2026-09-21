@@ -60,6 +60,47 @@ describe('redactText', () => {
     });
   }
 
+  describe('payment card numbers', () => {
+    // The rule is shape plus the Luhn checksum. Shape alone corrupted evidence
+    // identifiers: `ev_8d66cde0-61a9-4657-9297-9680928183fd` ends in fourteen
+    // digits split by a hyphen and had its tail replaced, breaking the
+    // reference the model cites — rarely enough to read as a flaky test.
+    it.each([
+      ['Visa', '4111 1111 1111 1111'],
+      ['Visa, hyphenated', '4111-1111-1111-1111'],
+      ['Visa, unseparated', '4111111111111111'],
+      ['Mastercard', '5555 5555 5555 4444'],
+      ['Amex, 15 digits', '378282246310005'],
+      ['Discover', '6011111111111117'],
+      ['Diners, 14 digits', '30569309025904'],
+    ])('still redacts a %s number', (_label, number) => {
+      const { text, appliedRules } = redactText(`Card ${number} expires soon`);
+      expect(text).not.toContain(number);
+      expect(text).toContain(REDACTED);
+      expect(appliedRules).toContain('credit-card');
+    });
+
+    it('leaves an evidence identifier whose tail is all digits intact', () => {
+      const id = 'ev_8d66cde0-61a9-4657-9297-9680928183fd';
+      const { text, appliedRules } = redactText(id);
+      expect(text).toBe(id);
+      expect(appliedRules).not.toContain('credit-card');
+    });
+
+    it.each([
+      ['a UUID that is digits after the prefix', 'ev_00000000-0000-4000-9297-968092818311'],
+      ['a long numeric identifier', 'order 1234567890123456'],
+      ['a grouped run of digits', 'reference 6285-7123-45671'],
+    ])('leaves %s intact when it fails the checksum', (_label, input) => {
+      expect(redact(input)).toBe(input);
+    });
+
+    it('does not report the rule as applied when every candidate is rejected', () => {
+      const { appliedRules } = redactText('order 1234567890123456');
+      expect(appliedRules).not.toContain('credit-card');
+    });
+  });
+
   it('leaves ordinary prose untouched', () => {
     const input = 'The submit button is disabled until the form is valid.';
     expect(redact(input)).toBe(input);

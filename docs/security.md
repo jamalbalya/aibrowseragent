@@ -100,8 +100,10 @@ reference to that buffer could read it.
 Redaction covers, by value shape: JWTs, PEM private keys, bearer and basic auth
 headers, URL userinfo, cookie headers, OpenAI/Anthropic/Google/GitHub/Slack/
 AWS/Stripe key formats, `name = value` assignments under a sensitive key, and
-payment card numbers. And by name: sensitive HTTP headers and object keys,
-normalised so `api_key`, `apiKey` and `API-KEY` all match.
+payment card numbers — confirmed by the Luhn checksum, so an arbitrary run of
+digits such as an identifier's tail is not mistaken for a card. And by name:
+sensitive HTTP headers and object keys, normalised so `api_key`, `apiKey` and
+`API-KEY` all match.
 
 Applied at every boundary:
 
@@ -253,40 +255,75 @@ Default posture: minimum collection, minimum retention, minimum transmission.
 
 ## Chrome permission justification
 
-| Permission                     | Why                                                                        | Could it be dropped?                             |
-| ------------------------------ | -------------------------------------------------------------------------- | ------------------------------------------------ |
-| `sidePanel`                    | The primary UI surface.                                                    | No                                               |
-| `storage`                      | Task, session, settings and evidence persistence across worker eviction.   | No                                               |
-| `unlimitedStorage`             | Screenshot evidence exceeds the default quota quickly.                     | Yes, at the cost of aggressive evidence eviction |
-| `tabs`                         | Reading tab URL and title, and multi-tab workflows.                        | No                                               |
-| `tabGroups`                    | `tabs.group` / `tabs.ungroup`.                                             | Yes, by dropping those two tools                 |
-| `scripting`                    | Injecting the content script into tabs open before the extension loaded.   | No                                               |
-| `debugger`                     | Console, network and DOM inspection. Chrome offers no lesser API for this. | Yes, by dropping all five debugger tools         |
-| `notifications`                | Telling the user a background task needs approval.                         | Yes, at the cost of silent stalls                |
-| `activeTab`                    | Acting on the current tab without broad host access in simple flows.       | No                                               |
-| `host_permissions: <all_urls>` | Content script injection, tab access, and screenshot capture. See below.   | No                                               |
+| Permission                                    | Why                                                                                                  | Could it be dropped?                             |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `sidePanel`                                   | The primary UI surface.                                                                              | No                                               |
+| `storage`                                     | Task, session, settings and evidence persistence across worker eviction.                             | No                                               |
+| `unlimitedStorage`                            | Screenshot evidence exceeds the default quota quickly.                                               | Yes, at the cost of aggressive evidence eviction |
+| `tabs`                                        | Reading tab URL and title, and multi-tab workflows.                                                  | No                                               |
+| `tabGroups`                                   | `tabs.group` / `tabs.ungroup`.                                                                       | Yes, by dropping those two tools                 |
+| `scripting`                                   | Injecting the content script into tabs open before the extension loaded.                             | No                                               |
+| `debugger`                                    | Console, network and DOM inspection, and screenshot capture. Chrome offers no lesser API for either. | No — `browser.screenshot` depends on it          |
+| `notifications`                               | Telling the user a background task needs approval.                                                   | Yes, at the cost of silent stalls                |
+| `activeTab`                                   | Acting on the current tab without broad host access in simple flows.                                 | No                                               |
+| `host_permissions: http://*/*`, `https://*/*` | Content script injection and tab access. See below.                                                  | No                                               |
 
-### Why `<all_urls>` rather than `http://*/*` + `https://*/*`
+### Why not `<all_urls>`
 
-The narrower pair was tried first and produced a real defect: `browser.screenshot`
+`<all_urls>` was held briefly and has been removed. The reasoning is recorded
+here in full, because the first version of this document argued the opposite
+and was wrong on a point of fact.
+
+**What went in.** The narrow pair produced a real defect: `browser.screenshot`
 failed on every page with _"Either the '\<all_urls\>' or 'activeTab' permission
-is required"_. Chrome's check for `tabs.captureVisibleTab` looks for that literal
-pattern or an _activated_ `activeTab`, and `activeTab` is only in effect after
-the user clicks the extension's icon — never for a background task. This was
-found by running the extension in a real browser, not by reading the docs.
+is required"_. Chrome's check for `tabs.captureVisibleTab` looks for that
+literal pattern or an _activated_ `activeTab`, and `activeTab` is only in
+effect after the user clicks the extension's icon — never for a background
+task. Widening the manifest fixed the capture.
 
-The widening is smaller than it appears:
+**What the measurement showed.** The widening was then probed side by side in a
+real Chromium, one profile per manifest:
 
-- Chrome shows the same install warning for both — _"Read and change all your
-  data on all websites"_.
-- `content_scripts.matches` is **unchanged** at `http://*/*` and `https://*/*`,
-  so the content script's reach is exactly what it was.
-- The extra schemes `<all_urls>` covers — `file:`, `ftp:` and similar — are on
-  the unconditional block list above, so the policy engine refuses them before
-  any tool runs. The manifest grant is the outer bound; the policy engine is a
-  strictly narrower inner bound, and a regression test holds that line.
-- `file:` access additionally requires the user to enable _Allow access to file
-  URLs_, which this extension never requests and could not use if granted.
+| Probe                                        | `<all_urls>`                                | `http://*/*` + `https://*/*`               |
+| -------------------------------------------- | ------------------------------------------- | ------------------------------------------ |
+| `tabs.captureVisibleTab` on an https page    | captured                                    | refused                                    |
+| `Page.captureScreenshot` over the debugger   | captured                                    | captured                                   |
+| `scripting.executeScript` on a `file://` tab | **succeeded, returned the file's contents** | refused: _"Cannot access contents of url"_ |
+| screenshot of a `file://` tab                | captured                                    | refused                                    |
+
+The third row is the decisive one. Under `<all_urls>`, Chrome let the extension
+read a local file. Under the narrow pair it refuses at the browser level,
+before any of this extension's code runs.
+
+**The claim this replaces.** An earlier version of this section stated that
+`file:` access "additionally requires the user to enable _Allow access to file
+URLs_". That is false for `scripting.executeScript`, which the probe above
+exercised directly. The toggle governs some file-URL surfaces, not all of them,
+and the extension's own block list was therefore the only thing standing
+between the model and the local filesystem — a single layer, in code we
+maintain, where Chrome was previously providing one for free.
+
+**What replaced it.** `browser.screenshot` now captures through
+`Page.captureScreenshot`, which is already on the DevTools allowlist and needs
+no host permission at all. The feature works, the manifest stays narrow, and
+Chrome's own refusal on `file://` stays in place. The cost is that a capture
+attaches the debugger briefly, so Chrome shows its debugging banner — a
+visible, conservative trade.
+
+**How the line is held.** Three independent checks fail if the pattern returns:
+
+- `scripts/validate-package.mjs` fails the build on `<all_urls>`, `*://*/*`,
+  `file:///*` or `ftp://*/*` in `host_permissions`, `permissions`,
+  `optional_permissions` or `content_scripts.matches`, and on any host pattern
+  outside the reviewed pair.
+- `tests/security/screenshot-capture.test.ts` asserts the shipped
+  `public/manifest.json` against the same rules.
+- The same suite asserts that a `file:`, `ftp:`, `chrome-extension:` or
+  otherwise blocked tab is refused _before_ the debugger attaches, so a blocked
+  page is never instrumented at all.
+
+`content_scripts.matches` is unchanged at `http://*/*` and `https://*/*`, as it
+was throughout.
 
 Requested as **optional**, not granted until a feature needs them:
 `alarms` (scheduling) and `downloads` (file handling). Neither feature is

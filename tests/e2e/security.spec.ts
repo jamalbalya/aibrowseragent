@@ -315,3 +315,45 @@ test('permission history records what was decided', async ({ context, send, prov
   expect(entry!.risk).toBe('R0');
   expect(entry!.taskId).toBe(task.id);
 });
+
+test('Chrome itself refuses the extension access to local files', async ({
+  context,
+  serviceWorker,
+}) => {
+  // This is the measurement behind the manifest's host permissions, pinned as
+  // a regression. Under `<all_urls>`, `scripting.executeScript` against a
+  // `file://` tab succeeded and returned the file's contents. Under
+  // `http://*/*` + `https://*/*` Chrome refuses at the browser level, before
+  // any of this extension's own policy runs — so the refusal below is Chrome's
+  // answer, not ours, and it disappears the moment the manifest widens again.
+  const target = 'file:///etc/hostname';
+  const page = await context.newPage();
+  await page.goto(target).catch(() => undefined);
+
+  const outcome = await serviceWorker.evaluate(async (url: string) => {
+    const [tab] = await chrome.tabs.query({ url });
+    if (!tab?.id) return { found: false, ok: false, error: '' };
+    try {
+      const [result] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => document.body.innerText,
+      });
+      return { found: true, ok: true, error: '', value: String(result?.result ?? '') };
+    } catch (error) {
+      return { found: true, ok: false, error: error instanceof Error ? error.message : '' };
+    }
+  }, target);
+
+  expect(outcome.found).toBe(true);
+  expect(outcome.ok).toBe(false);
+  expect(outcome.error).toMatch(/cannot access|permission/i);
+
+  await page.close();
+});
+
+test('the manifest Chrome loaded does not grant access to every URL', async ({ serviceWorker }) => {
+  const manifest = await serviceWorker.evaluate(() => chrome.runtime.getManifest());
+
+  expect(manifest.host_permissions).toEqual(['http://*/*', 'https://*/*']);
+  expect(JSON.stringify(manifest)).not.toContain('<all_urls>');
+});

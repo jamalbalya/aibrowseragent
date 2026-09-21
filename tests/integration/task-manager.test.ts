@@ -14,6 +14,7 @@ import { AgentRuntime } from '@/agent/runtime/agent-runtime';
 import { createBrowserTools } from '@/tools/browser/browser-tools';
 import { isTerminal } from '@/tasks/task-model';
 import { FakeBrowserAdapter } from '../fixtures/fake-browser';
+import { fakeDebugger } from '../fixtures/fake-debugger';
 import {
   FULL_CAPABILITIES,
   FakeProvider,
@@ -53,9 +54,12 @@ function build(script = [textResponse('Finished.')]) {
   adapter.addTab({ id: 1, url: 'https://example.com/', active: true });
   adapter.onContent((type) => (type === 'content.readPage' ? { page } : {}));
 
-  const harness = createHarness(createBrowserTools({ adapter }), {
-    prompter: new ScriptedPrompter({ kind: 'approve_once' }),
-  });
+  const harness = createHarness(
+    createBrowserTools({ adapter, debuggerManager: fakeDebugger().manager }),
+    {
+      prompter: new ScriptedPrompter({ kind: 'approve_once' }),
+    },
+  );
   const provider = new FakeProvider(script);
 
   const manager = new TaskManager({

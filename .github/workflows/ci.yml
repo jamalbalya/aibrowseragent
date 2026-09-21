@@ -97,8 +97,12 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
-      # Without E2E_CHROMIUM_PATH the fixtures fall back to Playwright's own
-      # resolution, which is correct once the browser above is installed.
+      # An empty E2E_CHROMIUM_PATH hands binary resolution to Playwright. The
+      # fixture then asks for the "chromium" channel explicitly, because
+      # Playwright's default for a headless launch is chrome-headless-shell,
+      # which cannot load extensions at all — every test in this suite failed
+      # that way once, timing out on a service worker that could never
+      # register. Changing either half without the other reintroduces it.
       - name: Run end-to-end suite
         run: npm run test:e2e
         env:
