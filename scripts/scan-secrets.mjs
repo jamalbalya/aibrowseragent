@@ -6,8 +6,10 @@
  * and the runtime cannot drift apart: a pattern added for one is added for
  * both.
  *
- * Test fixtures legitimately contain credential-shaped strings — that is what
- * they are for — so they are excluded and listed explicitly below.
+ * Tests are NOT excluded. Their credential-shaped fixtures are assembled at
+ * runtime from split literals precisely so that no scannable credential exists
+ * on any line — which is also what keeps GitHub push protection from blocking
+ * the repository.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join, relative, dirname, extname } from 'node:path';
