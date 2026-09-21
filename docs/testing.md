@@ -7,13 +7,19 @@ capability with no test is listed as untested in
 ## Running
 
 ```bash
-npm test                  # everything
+npm test                  # unit, integration and security
 npm run test:unit         # unit
 npm run test:integration  # integration
 npm run test:security     # security
+npm run test:e2e          # end-to-end, in a real Chromium
 npm run test:coverage     # with coverage
-npm run verify            # format, lint, typecheck, test, build, package check
+npm run verify            # everything except E2E
+npm run verify:full       # verify + E2E
 ```
+
+`npm run test:e2e` loads `dist/`, so run `npm run build` first. The fixtures use
+the Chromium at `/opt/pw-browsers/chromium`; set `E2E_CHROMIUM_PATH` to another
+binary, or to an empty string to let Playwright resolve its own.
 
 ## Layout
 
@@ -22,6 +28,7 @@ tests/
 ├── unit/          component behaviour in isolation
 ├── integration/   several real components wired together
 ├── security/      adversarial: tries to defeat a control
+├── e2e/           the built extension in a real Chromium
 └── fixtures/      fakes that model real behaviour, not convenient behaviour
 ```
 
@@ -73,6 +80,33 @@ its happy path.
 | `evidence-store.test.ts`     | Text payloads are redacted before storage; base64 is not corrupted; eviction leaves no orphaned payloads                                                                  |
 | `context-builder.test.ts`    | Oldest tool results are trimmed before turns are dropped; recent turns are never dropped                                                                                  |
 
+### `tests/e2e/`
+
+Loads the built extension into a real Chromium and drives it. Nothing is
+stubbed except the model's choice of tool call: the pages are served over real
+HTTP, the content script is really injected, and the provider is a real HTTP
+server whose received bytes are inspected.
+
+This is what proves the extension _works_, as opposed to proving its modules
+behave.
+
+| File                           | Proves                                                                                                                                                                                                                                                                                    |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `extension-load.spec.ts`       | Chrome accepts the package, the service worker starts and registers 25 tools, the side panel mounts, and the composer stays disabled until tool calling is verified                                                                                                                       |
+| `provider-integration.spec.ts` | Real HTTP to a real endpoint: the doctor's probes are genuine round trips, the API key travels only as a bearer header, HTTP status maps to the right canonical code, and a rate limit is retried while a 500 storm is not retried forever                                                |
+| `agent-task.spec.ts`           | Full trajectories against a live page — read, type, click, navigate, screenshot — plus cancellation, stale-handle refusal, and a task outliving the side panel                                                                                                                            |
+| `security.spec.ts`             | A genuinely hostile page cannot escape the data envelope; a credential on the page never reaches the provider; a password field value reaches neither the provider nor evidence; refused schemes do not navigate; unknown tools and malformed arguments are rejected before anything runs |
+| `mv3-lifecycle.spec.ts`        | A real Chrome service-worker kill, after which an interrupted task is parked, the provider configuration still works, a new task runs, and the debugger recovers from a closed tab                                                                                                        |
+
+Two things about this suite are worth knowing before changing it:
+
+- **The content script only matches `http`/`https`.** `page.setContent` produces
+  an `about:blank` document that gets no injection, so fixtures are served from
+  a local HTTP server.
+- **`chrome.runtime.sendMessage` from inside the service worker is not
+  delivered to that worker's own listener.** Messages have to originate from an
+  extension page, which is what the `panel` fixture provides.
+
 ### `tests/integration/`
 
 | File                       | Proves                                                                                                                                                                                                |
@@ -110,13 +144,18 @@ not to touch lines.
 
 Stated plainly rather than implied by omission:
 
-- **No end-to-end browser test.** Playwright is in the recommended stack but no
-  E2E suite exists yet. Content-script behaviour is tested against jsdom, which
-  has no layout engine — `getBoundingClientRect` is shimmed, so real-browser
-  layout behaviour is not exercised.
-- **No live provider test.** The OpenAI-compatible adapter is tested against a
-  stubbed `fetch`. It has not been run against a live endpoint in CI.
-- **No React component tests.** The side panel's logic is covered through the
-  hook it calls into, not through rendering.
+- **No test against a commercial provider.** The adapter is exercised over real
+  HTTP against a local server that implements the Chat Completions protocol.
+  That covers sockets, headers, CORS and SSE framing, but not a specific
+  vendor's quirks. Running the acceptance suite against OpenAI, Anthropic and
+  Gemini is what specification §87 asks for and what P-033 still needs.
+- **No React component tests.** The side panel is covered through E2E — it
+  really mounts, and its disabled states are asserted — but individual
+  components are not rendered in isolation.
+- **Notifications are untested.** `chrome.notifications` is called directly in
+  the service worker rather than behind an injectable seam, and headless
+  Chromium does not surface notifications. The seam is the fix, not an E2E test.
+- **No sustained long-running task test.** The longest trajectory under test is
+  a handful of turns.
 - Connectors, MCP, skills, workflows and scheduling are untested because they
   are unimplemented.

@@ -14,11 +14,13 @@ control.
 
 ## Status
 
-**Phase 1–2 foundation, implemented and tested.** This is a working extension
-with a real end-to-end vertical slice, not a mock-up. It is not yet at the full
-capability parity described in the specification — see
-[PARITY_MATRIX.md](PARITY_MATRIX.md) for the honest per-capability status, and
-[docs/testing.md](docs/testing.md) for what is actually verified.
+**Phase 1–2 foundation, implemented and verified in a real browser.** The
+extension loads into Chromium, runs agent tasks against live pages, and talks
+to a real provider endpoint over HTTP. It is not yet at the full capability
+parity described in the specification — see
+[PARITY_MATRIX.md](PARITY_MATRIX.md) for the honest per-capability status
+(25 of 40 mandatory capabilities PASS), and [docs/testing.md](docs/testing.md)
+for what is actually verified and what is not.
 
 What works today:
 
@@ -32,7 +34,8 @@ What works today:
   and a capability doctor that verifies rather than assumes
 - Security control plane: origin validation, prompt-injection boundary, secret
   redaction, exfiltration policy, hard prohibitions
-- Task persistence that survives side-panel close and service-worker eviction
+- Task persistence that survives side-panel close and service-worker eviction —
+  verified against a real Chrome worker restart, not a simulation
 
 Not yet implemented: connectors (Jira, Confluence, Figma, Sheets), MCP, skills,
 workflows, scheduling, file upload/download, and the OpenAI/Anthropic/Gemini
@@ -168,14 +171,20 @@ approval, and prohibited actions are refused outright.
 ## Development
 
 ```bash
-npm run dev          # rebuild on change
-npm run typecheck    # strict TypeScript
-npm run lint         # ESLint with type-aware rules
-npm test             # full test suite
+npm run dev            # rebuild on change
+npm run typecheck      # strict TypeScript
+npm run lint           # ESLint with type-aware rules
+npm test               # unit, integration and security (472 tests)
 npm run test:security  # security suite only
-npm run build        # production build into dist/
-npm run verify       # everything CI runs, in order
+npm run test:e2e       # end-to-end in a real Chromium (38 tests)
+npm run build          # production build into dist/
+npm run verify         # everything CI runs except E2E
+npm run verify:full    # verify plus the E2E suite
 ```
+
+The E2E suite loads the built extension into Chromium, drives real pages, and
+runs the agent against a local server speaking the Chat Completions protocol.
+Run `npm run build` first.
 
 See [docs/development.md](docs/development.md) for the project layout and the
 conventions to follow when adding a tool, a provider, or a connector.

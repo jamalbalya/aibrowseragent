@@ -136,9 +136,16 @@ A cross-site or same-site-different-subdomain transition forces re-evaluation.
 Read-only actions tolerate drift; anything with a side effect does not. An
 unparseable URL is treated as changed.
 
-Never automatable: `chrome:`, `chrome-extension:`, `devtools:`, `javascript:`,
-`data:`, `blob:`, `view-source:`, `about:` and the extension galleries. `http:`
-requires an explicit setting, except on localhost.
+Never automatable, under any setting: `chrome:`, `chrome-extension:`,
+`chrome-untrusted:`, `devtools:`, `javascript:`, `data:`, `blob:`,
+`filesystem:`, `view-source:`, `about:`, `file:`, `ftp:`, and the extension
+galleries.
+
+`file:` and `ftp:` are unconditionally blocked rather than merely "insecure".
+The _allow insecure origins_ setting exists so a developer can automate an
+`http://` dev server; if it also unlocked `file:`, a convenience toggle would
+hand the agent reach into the local filesystem. `http:` remains gated on that
+setting, except on localhost.
 
 ---
 
@@ -246,18 +253,40 @@ Default posture: minimum collection, minimum retention, minimum transmission.
 
 ## Chrome permission justification
 
-| Permission         | Why                                                                        | Could it be dropped?                             |
-| ------------------ | -------------------------------------------------------------------------- | ------------------------------------------------ |
-| `sidePanel`        | The primary UI surface.                                                    | No                                               |
-| `storage`          | Task, session, settings and evidence persistence across worker eviction.   | No                                               |
-| `unlimitedStorage` | Screenshot evidence exceeds the default quota quickly.                     | Yes, at the cost of aggressive evidence eviction |
-| `tabs`             | Reading tab URL and title, and multi-tab workflows.                        | No                                               |
-| `tabGroups`        | `tabs.group` / `tabs.ungroup`.                                             | Yes, by dropping those two tools                 |
-| `scripting`        | Injecting the content script into tabs open before the extension loaded.   | No                                               |
-| `debugger`         | Console, network and DOM inspection. Chrome offers no lesser API for this. | Yes, by dropping all five debugger tools         |
-| `notifications`    | Telling the user a background task needs approval.                         | Yes, at the cost of silent stalls                |
-| `activeTab`        | Acting on the current tab without broad host access in simple flows.       | No                                               |
-| `host_permissions` | Content script injection and tab access across sites.                      | No                                               |
+| Permission                     | Why                                                                        | Could it be dropped?                             |
+| ------------------------------ | -------------------------------------------------------------------------- | ------------------------------------------------ |
+| `sidePanel`                    | The primary UI surface.                                                    | No                                               |
+| `storage`                      | Task, session, settings and evidence persistence across worker eviction.   | No                                               |
+| `unlimitedStorage`             | Screenshot evidence exceeds the default quota quickly.                     | Yes, at the cost of aggressive evidence eviction |
+| `tabs`                         | Reading tab URL and title, and multi-tab workflows.                        | No                                               |
+| `tabGroups`                    | `tabs.group` / `tabs.ungroup`.                                             | Yes, by dropping those two tools                 |
+| `scripting`                    | Injecting the content script into tabs open before the extension loaded.   | No                                               |
+| `debugger`                     | Console, network and DOM inspection. Chrome offers no lesser API for this. | Yes, by dropping all five debugger tools         |
+| `notifications`                | Telling the user a background task needs approval.                         | Yes, at the cost of silent stalls                |
+| `activeTab`                    | Acting on the current tab without broad host access in simple flows.       | No                                               |
+| `host_permissions: <all_urls>` | Content script injection, tab access, and screenshot capture. See below.   | No                                               |
+
+### Why `<all_urls>` rather than `http://*/*` + `https://*/*`
+
+The narrower pair was tried first and produced a real defect: `browser.screenshot`
+failed on every page with _"Either the '\<all_urls\>' or 'activeTab' permission
+is required"_. Chrome's check for `tabs.captureVisibleTab` looks for that literal
+pattern or an _activated_ `activeTab`, and `activeTab` is only in effect after
+the user clicks the extension's icon — never for a background task. This was
+found by running the extension in a real browser, not by reading the docs.
+
+The widening is smaller than it appears:
+
+- Chrome shows the same install warning for both — _"Read and change all your
+  data on all websites"_.
+- `content_scripts.matches` is **unchanged** at `http://*/*` and `https://*/*`,
+  so the content script's reach is exactly what it was.
+- The extra schemes `<all_urls>` covers — `file:`, `ftp:` and similar — are on
+  the unconditional block list above, so the policy engine refuses them before
+  any tool runs. The manifest grant is the outer bound; the policy engine is a
+  strictly narrower inner bound, and a regression test holds that line.
+- `file:` access additionally requires the user to enable _Allow access to file
+  URLs_, which this extension never requests and could not use if granted.
 
 Requested as **optional**, not granted until a feature needs them:
 `alarms` (scheduling) and `downloads` (file handling). Neither feature is
