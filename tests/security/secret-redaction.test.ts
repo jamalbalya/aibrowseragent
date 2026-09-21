@@ -246,6 +246,98 @@ describe('redactText', () => {
   });
 });
 
+/**
+ * Deterministic regression vectors (specification §30, §86).
+ *
+ * Distinct from the sampled checks above. Sampling proves a property holds
+ * across many random draws and is how the timestamp and identifier defects
+ * were caught; these fixed vectors pin the exact values that broke, so a
+ * regression names the case rather than reporting a probability. Both are
+ * kept: neither alone is sufficient, and neither is exhaustive.
+ */
+describe('deterministic redaction vectors', () => {
+  const REDACT: [string, string][] = [
+    ['bearer token', 'Authorization: Bearer sk-abc123def456ghi789jkl012'],
+    ['api key assignment', 'api_key = "9f8e7d6c5b4a39281706"'],
+    ['password assignment', 'password: hunter2-correct-horse'],
+    ['url userinfo', 'https://admin:s3cr3t@internal.example.com/api'],
+    ['cookie header', 'Cookie: session_id=abc123; theme=dark'],
+    ['jwt', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NSJ9.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk'],
+    ['visa, issuer prefix + valid luhn', 'card 4111 1111 1111 1111'],
+    ['amex, issuer prefix + valid luhn', 'card 378282246310005'],
+    ['mastercard 2-series', 'card 2223003122003222'],
+  ];
+
+  it.each(REDACT)('redacts a %s', (_label, input) => {
+    const { text } = redactText(input);
+    expect(text).toContain(REDACTED);
+  });
+
+  const PRESERVE: [string, string][] = [
+    // Identifiers this system emits. Each is card-shaped by digit count.
+    ['the evidence id that was corrupted', 'ev_8d66cde0-61a9-4657-9297-9680928183fd'],
+    ['a task id', 'task_4f1c2b3a-5d6e-4f70-8192-334455667781'],
+    ['a tool-call id', 'tc_9a8b7c6d-5e4f-4032-9182-736455647381'],
+    ['a session id', 'session_12345678-1234-4123-9123-123456789013'],
+    ['a bare uuid', '550e8400-e29b-41d4-a716-446655440001'],
+    // The timestamp defect: 13 digits, and Luhn alone let it through.
+    ['the epoch timestamp that was corrupted', 'capturedAt 1758441192004'],
+    ['an iso timestamp', 'captured at 2026-09-21T07:53:12.004Z'],
+    // Digit runs with no issuer prefix, or a prefix but a failed checksum.
+    ['a long numeric id with no issuer prefix', 'order 1234567890123456'],
+    ['a unionpay-prefixed run that fails luhn', 'reference 6285-7123-45671'],
+    ['a grouped account number', 'account 1234-5678-9012-3457'],
+    // URLs and log lines carrying identifiers rather than secrets.
+    ['a url with an id in the path', 'GET https://example.com/tasks/1758441192004/steps'],
+    [
+      'a log line with an evidence reference',
+      '[info] stored ev_11111111-2222-4333-9444-555566667778',
+    ],
+    ['a git sha', 'commit fb1653b0bd571c0abb2b95ff524bd4d396c6a868'],
+    ['a base64 payload head', 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB'],
+  ];
+
+  it.each(PRESERVE)('leaves %s byte-for-byte intact', (_label, input) => {
+    expect(redact(input)).toBe(input);
+  });
+
+  it('preserves an identifier and redacts a card in the same line', () => {
+    const id = 'ev_8d66cde0-61a9-4657-9297-9680928183fd';
+    const { text } = redactText(`${id} paid with 4111 1111 1111 1111`);
+    expect(text).toContain(id);
+    expect(text).not.toContain('4111 1111 1111 1111');
+  });
+
+  it('keeps identifiers intact inside a redacted evidence payload', () => {
+    // Evidence text goes through redaction before storage, so an identifier
+    // embedded in a payload must survive the same path an evidence item takes.
+    const payload = [
+      'task task_4f1c2b3a-5d6e-4f70-8192-334455667781',
+      'evidence ev_8d66cde0-61a9-4657-9297-9680928183fd',
+      'capturedAt 1758441192004',
+      'Authorization: Bearer sk-abc123def456ghi789jkl012',
+    ].join('\n');
+
+    const { text } = redactText(payload);
+
+    expect(text).toContain('task_4f1c2b3a-5d6e-4f70-8192-334455667781');
+    expect(text).toContain('ev_8d66cde0-61a9-4657-9297-9680928183fd');
+    expect(text).toContain('1758441192004');
+    expect(text).not.toContain('sk-abc123def456ghi789jkl012');
+  });
+
+  it('keeps the Luhn gate: issuer prefix alone is not enough', () => {
+    // 4-prefixed (Visa range) but the checksum fails, so it is not a card.
+    expect(redact('ref 4111111111111112')).toBe('ref 4111111111111112');
+  });
+
+  it('keeps the issuer gate: a valid Luhn number alone is not enough', () => {
+    // Passes Luhn, but 1 is not an issuer prefix under any scheme.
+    const notACard = '1758441192004';
+    expect(redact(`ts ${notACard}`)).toBe(`ts ${notACard}`);
+  });
+});
+
 describe('redactHeaders', () => {
   it('removes the value of every sensitive header by name', () => {
     const output = redactHeaders({

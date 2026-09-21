@@ -5,6 +5,34 @@ scope required, what was proven, and what is blocked — separately from
 `PARITY_MATRIX.md`, which tracks progress toward full capability parity and
 means nothing else.
 
+## How Stage 2 relates to the specification
+
+The authoritative specification is committed at
+[`docs/spec/AI_Browser_Agent_Specs_Kit_v1.1_Unbranded.md`](spec/AI_Browser_Agent_Specs_Kit_v1.1_Unbranded.md).
+It is the document of record and is stored verbatim; it is excluded from
+formatting so it cannot drift.
+
+The specification contains no "Stage 2". It defines Phases 0–10 in §96, and
+"Stage 2" is the owner's delivery construct laid over them. They line up:
+
+| Specification phase (§96)       | In Stage 2?                                 |
+| ------------------------------- | ------------------------------------------- |
+| Phase 1 — Chrome shell          | Yes                                         |
+| Phase 2 — Agent runtime         | Yes                                         |
+| Phase 3 — Deep browser          | Yes                                         |
+| Phase 4 — Security              | Yes                                         |
+| Phase 5 — Providers             | Partly — the OpenAI-compatible adapter only |
+| Phase 6 — Connectors            | No                                          |
+| Phase 7 — Skills                | No                                          |
+| Phase 8 — Workflow, scheduler   | No                                          |
+| Phase 9 — MCP, plugins          | No                                          |
+| Phase 10 — Parity certification | No                                          |
+
+This is why the open parity rows do not block Stage 2: P-023 is Phase 6,
+P-024 Phase 7, P-020/021/022 Phase 8, P-025/026 Phase 9, and the §85–§89
+acceptance tests are Phase 10. Every one of them is mandatory for parity under
+§83 and §99, and every one of them sits after the phases Stage 2 covers.
+
 The distinction matters because it has already caused one wrong conclusion
 here: an audit read "overall parity is PARTIAL" and reported Stage 2 as
 PARTIAL on that basis alone. A capability outside Stage 2's scope does not
@@ -47,19 +75,21 @@ a real Chromium rather than simulated:
 
 ## Blocked by external dependencies
 
-Neither is an implementation defect, and neither can be resolved from inside
-the repository.
-
-**The authoritative specification is not here.** Stage 2 includes validating
-this repository against the specification kit. That document has never been
-committed — see `docs/repository-state.md`. Every status in this repository is
-therefore checked against a restatement of a requirement rather than against
-the requirement. The owner holds the document.
+One remains. Neither of the two reported in earlier audits is an
+implementation defect.
 
 **Live provider E2E has no credentials.** Stage 2 asks for it _when valid
 credentials are configured_; none are. No borrowed, harness, invented or
 other-project credentials were used, and the mock-provider suite is never
-described as a live one.
+described as a live one. Unblocking it needs the owner to configure project
+provider credentials.
+
+**Resolved since the last audit: the authoritative specification.** It is now
+committed verbatim at `docs/spec/` and is no longer a blocker. Validating
+against it immediately found a real defect in this repository's own
+documentation — `PARITY_MATRIX.md` had been stating five PASS conditions where
+§84 sets six — which is the clearest argument that keeping the document out of
+the repository was itself the problem.
 
 ## Explicitly outside Stage 2
 
@@ -81,9 +111,30 @@ purposes:
 Isolated React component tests are not a Stage 2 requirement; the side panel is
 validated through real-browser E2E.
 
+Notifications are a **supporting** item, not an independent Stage 2 exit
+criterion. The specification does not make them one. The seam and its tests
+exist and are described accurately in `docs/testing.md`; they were not expanded
+into a subsystem.
+
+**Terminology.** Nothing here has been soak-tested or run for hours. What
+exists is deterministic multi-turn lifecycle and recovery validation: an
+18-turn trajectory with exact usage accounting and step ordering, plus a real
+service-worker kill and restart. Calling that "long-running endurance" would
+overstate it, so this file does not.
+
+## What "parity PARTIAL" now means precisely
+
+Specification §84 requires six things for a capability to be PASS, and one of
+them is a manual acceptance test. None has been run — the §85 A–F scenarios
+need connectors and three providers, which are Phases 6 and 5, and the
+acceptance run is Phase 10. So no row in `PARITY_MATRIX.md` satisfies §84 on
+its own, and the project cannot claim parity under §99. The matrix's PASS
+column means _automated_ evidence, and it now says so.
+
+This does not change Stage 2, whose scope stops well before Phase 10.
+
 ## Repository administration
 
-`main` is the canonical branch and carries the validated history, but the
-GitHub default branch still points at an obsolete temporary branch. See
-`docs/repository-state.md`. This is a repository-administration blocker, not a
-product one, and the two are reported separately.
+Complete. The owner has set the GitHub default branch to `main` and deleted the
+obsolete temporary branch; `main` is now the only branch. Verified against the
+GitHub API rather than assumed. See `docs/repository-state.md`.

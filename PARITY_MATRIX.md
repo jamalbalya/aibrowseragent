@@ -31,13 +31,34 @@ not against this file.
 
 ## How to read a status
 
-A capability is **PASS** only when all of these hold (specification §84):
+The authoritative specification is committed at
+[`docs/spec/AI_Browser_Agent_Specs_Kit_v1.1_Unbranded.md`](docs/spec/AI_Browser_Agent_Specs_Kit_v1.1_Unbranded.md).
+Every section reference below points into it.
 
-1. an implementation exists;
-2. an automated test exists where technically possible;
-3. the failure path is tested;
-4. the security path is tested;
-5. evidence is recorded where applicable.
+Specification §84 sets **six** conditions for PASS:
+
+1. implementation exists;
+2. automated test exists where technically possible;
+3. **manual acceptance test exists;**
+4. failure path is tested;
+5. security path is tested;
+6. evidence is recorded.
+
+### What the PASS column in this file actually means
+
+It means conditions 1, 2, 4, 5 and 6 — **automated** evidence. Condition 3 is
+**not met by any row**, because the manual acceptance tests are the §85 A–F
+scenarios and none has been executed or recorded. Those scenarios span
+connectors and three providers, so they belong to Phase 10 (parity
+certification) in §96, not to the automated suites.
+
+An earlier revision of this file listed five conditions and omitted the manual
+acceptance test entirely, which quietly lowered the bar it was measuring
+against. The wording is corrected here rather than the column being relabelled,
+because the column is genuinely useful — it just does not, on its own, satisfy
+§84. **No row in this file should be read as §84 PASS**, and the project
+cannot claim parity under §99 until the §85–§89 acceptance tests are run and
+recorded.
 
 | Status            | Meaning                                                                    |
 | ----------------- | -------------------------------------------------------------------------- |
@@ -97,10 +118,14 @@ Headless Chromium surfaces no notifications, so the seam is the evidence and
 an end-to-end test is not possible.
 
 Long-running task (P-017) was PARTIAL because the longest tested trajectory was
-a handful of turns. An 18-turn run now asserts exact usage accounting, step
-ordering with no duplicates, and that a model which never finishes is stopped
-by the budget. Duration itself stays on an injected clock; a test that slept
-would be slower, flakier and prove less.
+a handful of turns. What exists now is **deterministic multi-turn lifecycle and
+recovery validation**: an 18-turn run asserting exact usage accounting, step
+ordering with no duplicates, and budget termination for a model that never
+finishes, alongside a real service-worker kill and restart. It is not a
+wall-clock endurance or soak test and is not described as one — duration is
+enforced against an injected clock, because a test that slept would be slower,
+flakier and prove less. The capability name below is the specification's
+(§83); the evidence is what this paragraph says it is.
 
 Provider switching (P-033) stays PARTIAL, but its central claim is no longer
 unverified — see below. Audit trail (P-038) stays PARTIAL with a sharper

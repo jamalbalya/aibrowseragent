@@ -3,138 +3,75 @@
 A short, factual record of repository-level issues that code cannot fix.
 Delete a section once its issue is resolved.
 
-## Open: the default branch is a machine-generated branch name
+There are currently no open issues. The two that were open are recorded below
+as resolved, because both were reported as blockers in Stage 2 audits and a
+reader of those reports should be able to find out what happened to them.
 
-**Status:** BLOCKED — needs the owner to act from outside this environment.
-The account already holds the rights; the network policy here does not allow
-the calls. See "What remains" below for the exact refusals.
+## Resolved: the default branch was a machine-generated branch name
 
-### What is wrong
+The repository's default branch was once an obsolete temporary branch created
+by an automation harness, whose generated name carried an assistant's name and
+therefore breached this project's ownership rules. It was never this project's
+development branch, and it no longer exists, so it is not named here.
 
-The repository's configured default branch is
-`claude/dreamy-shannon-tu0z6h`. That branch is an **obsolete temporary
-branch** created by an automation harness, not this project's development
-branch and not a branch anyone should work from. `main` is the canonical
-branch and has been since it was created; every commit since then has landed
-there. The project's ownership rules require the primary branch to be `main`
-and prohibit tool-generated assistant names anywhere in repository metadata,
-which includes branch names — so the obsolete branch also has to go, not just
-stop being the default.
-
-### What has been done
-
-`main` now exists on the remote and carries the complete, validated history.
-It was created by pointing a new branch at the already-published commit, so
-no history was rewritten and nothing was force-pushed:
-
-```
-git rev-list --count origin/main..origin/claude/dreamy-shannon-tu0z6h
-0
-```
-
-Zero commits exist on the old branch that are not on `main`. Deleting it
-cannot lose work.
-
-CI triggers on `main` and has since been observed passing there in full —
-Verify, Dependency audit and the real-Chromium end-to-end job — on run
-`35574637544`. Before `main` existed, the `push` trigger matched nothing and
-CI never ran on a push at all; the first run after it was created failed its
-end-to-end job outright, so "CI is configured" and "CI passes" were separate
-facts and had to be checked separately.
-
-### What remains, and why it is blocked
-
-Two steps are left, in this order, and neither can be performed from this
-environment. The reason is narrower than an earlier version of this note
-claimed, and the distinction matters to whoever finishes it.
-
-**The account is not the problem.** The authenticated GitHub account is
-`jamalbalya`, and the repository reports its permissions as:
+The owner has since set the default branch to `main` and deleted the obsolete
+branch. Verified against the GitHub API:
 
 ```json
-{ "admin": true, "maintain": true, "push": true, "triage": true, "pull": true }
+{ "default_branch": "main" }
 ```
 
-Administration rights exist. What blocks the work is the network policy of the
-agent proxy this session runs behind, which refuses write traffic to the
-GitHub API paths involved:
+with `main` the only branch in the repository. No history was rewritten and
+nothing was force-pushed at any point; `main` was created by pointing a new
+branch at an already-published commit, and the obsolete branch was a strict
+ancestor of it with zero unique commits.
 
-| Attempted call                                         | Result                                                                                |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| `PATCH /repos/jamalbalya/aibrowseragent`               | `403` — _"Repository settings writes are not permitted through this proxy."_          |
-| `DELETE /repos/jamalbalya/aibrowseragent/git/refs/...` | `403` — _"Write access to this GitHub API path is not permitted through this proxy."_ |
+Sessions working here must not recreate a branch named after an assistant,
+vendor or model. `main` is the canonical branch.
 
-Pushing commits is unaffected and continues to work, so this is a restriction
-on repository administration specifically, not on the credential's rights.
-
-1. **Set the default branch to `main`.** Blocked as above. It has to happen
-   first regardless, because GitHub refuses to delete a branch while it is the
-   default.
-2. **Delete `claude/dreamy-shannon-tu0z6h`.** Blocked today as a consequence
-   of step 1, not independently: deleting a ref over `git push` is _not_
-   refused by the proxy (a probe against a non-existent ref returned GitHub's
-   own "remote ref does not exist", not a 403), so once the default branch
-   moves, the deletion below should succeed from anywhere with push access.
-
-### How to finish it
-
-In the GitHub web UI, from any ordinary network:
-
-1. **Settings → General → Default branch**, switch it to `main`.
-2. **Branches**, delete `claude/dreamy-shannon-tu0z6h`.
-
-Or from a shell outside this proxy, authenticated as `jamalbalya`:
-
-```bash
-gh repo edit jamalbalya/aibrowseragent --default-branch main
-git push origin --delete claude/dreamy-shannon-tu0z6h
-```
-
-Afterwards, confirm the repository reports `"default_branch": "main"` and that
-`main` is the only branch. Deleting the old branch loses nothing: it is a
-strict ancestor of `main`, verified with
-
-```bash
-git rev-list --count origin/main..origin/claude/dreamy-shannon-tu0z6h   # 0
-```
-
-Once both steps are done, delete this file — it documents a problem that will
-no longer exist, and it is the only place in the repository that still names
-the obsolete branch.
-
-## Open: the authoritative specification is not in the repository
-
-**Status:** BLOCKED — needs the owner to supply the document.
+## Resolved: the authoritative specification was not in the repository
 
 `PARITY_MATRIX.md` tracks forty capabilities "from the specification" and
-quotes section numbers throughout (§84 for the PASS conditions, §85–89 for the
-acceptance tests, §94 and §99 for platform limits). Source files cite dozens
-more. The document itself has never been committed here: it was supplied as a
-chat attachment during the first development session.
+quotes section numbers throughout; source files cite dozens more. For most of
+the project's life that document existed only outside the repository, so every
+status could be checked against a restatement of a requirement and never
+against the requirement.
 
-This has a concrete cost, and it is not hypothetical. A capability's status
-cannot be checked against the requirement it claims to satisfy — only against
-this repository's own restatement of it. In particular, nothing in the
-repository maps capabilities to delivery stages, so a question of the form
-"is P-0NN required for stage N, or deferred to a later one?" has no answer
-that can be verified here. The matrix treats all forty as mandatory and makes
-no stage distinction at all.
+It is now committed verbatim at
+[`docs/spec/AI_Browser_Agent_Specs_Kit_v1.1_Unbranded.md`](spec/AI_Browser_Agent_Specs_Kit_v1.1_Unbranded.md)
+and excluded from formatting in `.prettierignore` so it cannot drift. It is
+**authoritative**, not reference-only: where this repository's documentation
+disagrees with it, the specification wins.
 
-Anyone reasoning about scope or completeness should treat the statements in
-`PARITY_MATRIX.md` as derived, not authoritative, until the specification is
-committed alongside them. `docs/stage-2-status.md` records Stage 2 against the
-scope the owner supplied directly; that scope is not in the repository either,
-which is the same gap in a different place.
+Committing it immediately surfaced one such disagreement. `PARITY_MATRIX.md`
+had been listing five conditions for a capability to be PASS; specification
+§84 sets six, and the one that had gone missing was "manual acceptance test
+exists". That is corrected in `PARITY_MATRIX.md`, which now also states
+plainly that no row satisfies §84 on its own.
 
-**REQUIRED OWNER ACTION:** commit the specification kit to the repository, or
-record where it lives, so status claims can be checked against the requirement
-rather than against a paraphrase of it.
+## Open: manual acceptance tests have not been run
 
----
+Not a blocker for Stage 2, and recorded here so it is not mistaken for one.
 
-### Note for future sessions
+Specification §84 requires a manual acceptance test for a capability to be
+PASS, and §85–§89 define them: six end-to-end scenarios (§85 A–F) plus
+security, provider, connector and browser-failure suites. None has been
+executed or recorded.
 
-An automation harness may instruct a session to develop on a branch whose name
-it generates. When that name carries an assistant name, it conflicts with this
-project's ownership rules. Push the work, then land it on `main` and remove the
-generated branch rather than leaving it as the project's branch.
+They cannot be run from the current scope: §85 D and E require Jira,
+Confluence, Figma and Google Sheets connectors, and §85 F and §87 require
+OpenAI, Anthropic and Gemini adapters. Those are Phases 6 and 5 of §96, and
+the acceptance run itself is Phase 10. Stage 2 covers Phases 1–4 plus the
+OpenAI-compatible adapter.
+
+**REQUIRED FOR PARITY, NOT FOR STAGE 2:** execute §85–§89 once the relevant
+phases exist, and record the results here.
+
+## Open: no provider credentials are configured
+
+Live provider end-to-end testing has never run because no legitimate project
+credentials are configured. None were borrowed, invented, or taken from a
+harness or another project. The mock-provider suite exercises real HTTP against
+a local Chat Completions server and is never described as a live one.
+
+**REQUIRED OWNER ACTION, WHEN WANTED:** configure project provider credentials.

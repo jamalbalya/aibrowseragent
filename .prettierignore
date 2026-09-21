@@ -2,3 +2,7 @@ dist
 coverage
 node_modules
 package-lock.json
+
+# The authoritative specification is committed verbatim. Formatting it would
+# modify the document of record.
+docs/spec/
