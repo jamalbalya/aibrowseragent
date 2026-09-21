@@ -1,0 +1,374 @@
+/**
+ * Tool registry and execution envelope (specification sections 13, 17, 24, 46).
+ *
+ * This module is the single choke point between model output and any real
+ * effect. The order below is fixed and every stage can only make the outcome
+ * stricter:
+ *
+ *   lookup → schema validation → classification → policy → permission
+ *          → execution (timeout + cancellation) → sanitisation → evidence
+ *
+ * A tool cannot be invoked any other way: the runtime holds no direct
+ * references to tool implementations.
+ */
+import { z } from 'zod';
+import { getLogger } from '@/logging/logger';
+import { createError, ToolError, type AgentError } from '@/types/result';
+import { withTimeout } from '@/utils/time';
+import { redactValue } from '@/security/redaction/secret-redactor';
+import { maxRisk, type RiskLevel } from '@/policy/risk-classifier';
+import { evaluatePolicy, type PolicyContext, type PolicyDecision } from '@/policy/policy-engine';
+import type { PermissionEngine } from '@/policy/permission-engine';
+import type { EvidenceReference, EvidencePayload } from '@/evidence/evidence-model';
+import type { EvidenceStore } from '@/evidence/evidence-store';
+import type { TaintSource } from '@/security/exfiltration/exfiltration-guard';
+import type { CanonicalToolSchema } from '@/providers/core/types';
+import type {
+  AgentTool,
+  RecordedEvidence,
+  ToolExecutionContext,
+  ToolExecutionResult,
+  ToolResultEnvelope,
+} from '@/tools/core/tool-types';
+import { errorEnvelope, successEnvelope } from '@/tools/core/tool-types';
+
+const log = getLogger('tool');
+
+export interface ToolInvocation {
+  readonly toolCallId: string;
+  readonly taskId: string;
+  readonly sessionId: string;
+  readonly name: string;
+  readonly arguments: Record<string, unknown>;
+  readonly tabId?: number;
+  /** URL observed when the model proposed this call. */
+  readonly plannedUrl?: string;
+  readonly taint?: readonly TaintSource[];
+  readonly signal: AbortSignal;
+}
+
+export interface ToolDispatchResult {
+  readonly envelope: ToolResultEnvelope;
+  readonly evidence: readonly EvidenceReference[];
+  /** Risk actually applied, after argument-aware escalation. */
+  readonly risk: RiskLevel;
+  readonly policy?: PolicyDecision;
+  readonly taint: readonly TaintSource[];
+  /** True when the call reached the tool implementation. */
+  readonly executed: boolean;
+}
+
+export interface ToolRegistryOptions {
+  readonly permissionEngine: PermissionEngine;
+  readonly loadPolicyContext: () => Promise<PolicyContext>;
+  /**
+   * Where evidence payloads are persisted.
+   *
+   * Optional so tool behaviour can be tested without a store; when it is
+   * absent the references are still returned, but nothing is written and a
+   * warning is logged rather than the omission passing silently.
+   */
+  readonly evidenceStore?: EvidenceStore;
+}
+
+export class ToolRegistry {
+  private readonly tools = new Map<string, AgentTool>();
+
+  constructor(private readonly options: ToolRegistryOptions) {}
+
+  register(tool: AgentTool): void {
+    if (this.tools.has(tool.name)) {
+      throw new Error(`Tool "${tool.name}" is already registered.`);
+    }
+    this.tools.set(tool.name, tool);
+  }
+
+  registerAll(tools: readonly AgentTool[]): void {
+    for (const tool of tools) this.register(tool);
+  }
+
+  has(name: string): boolean {
+    return this.tools.has(name);
+  }
+
+  get(name: string): AgentTool | undefined {
+    return this.tools.get(name);
+  }
+
+  list(): AgentTool[] {
+    return [...this.tools.values()];
+  }
+
+  /**
+   * Provider-neutral tool declarations (specification section 71).
+   *
+   * `allowed` restricts the exposed set — a skill or shortcut can narrow the
+   * surface without the tools themselves knowing about it.
+   */
+  toCanonicalSchemas(allowed?: readonly string[]): CanonicalToolSchema[] {
+    return this.list()
+      .filter((tool) => !allowed || allowed.includes(tool.name))
+      .map((tool) => ({
+        type: 'function' as const,
+        // Provider function names must be identifier-safe; canonical names use
+        // dots (`browser.click`) so they are translated here and back on the
+        // way in.
+        name: toWireName(tool.name),
+        description: tool.description,
+        parameters: z.toJSONSchema(tool.inputSchema, { io: 'input' }),
+      }));
+  }
+
+  /**
+   * Validates, authorises and executes one tool call.
+   *
+   * Never throws: every failure path returns an envelope, because an
+   * unhandled exception here would become untrusted text in model context.
+   */
+  async dispatch(invocation: ToolInvocation): Promise<ToolDispatchResult> {
+    const canonicalName = fromWireName(invocation.name);
+    const tool = this.tools.get(canonicalName);
+
+    if (!tool) {
+      const error = createError('TOOL_NOT_FOUND', `No tool named "${canonicalName}".`, {
+        userMessage: `The model asked for a tool that does not exist: ${canonicalName}.`,
+      });
+      return this.refuse(invocation, error, 'R0');
+    }
+
+    // 1. Schema validation. Model output never reaches an implementation raw.
+    const parsed = tool.inputSchema.safeParse(invocation.arguments);
+    if (!parsed.success) {
+      const issues = parsed.error.issues
+        .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+        .join('; ');
+      const error = createError('INVALID_ARGUMENT', `Invalid arguments for ${canonicalName}.`, {
+        userMessage: `Arguments for ${canonicalName} did not match its schema. ${issues}`,
+      });
+      return this.refuse(invocation, error, tool.risk);
+    }
+
+    const recorded: { reference: RecordedEvidence; payload: Omit<EvidencePayload, 'id'> }[] = [];
+    const context: ToolExecutionContext = {
+      taskId: invocation.taskId,
+      sessionId: invocation.sessionId,
+      toolCallId: invocation.toolCallId,
+      ...(invocation.tabId === undefined ? {} : { tabId: invocation.tabId }),
+      ...(invocation.plannedUrl === undefined ? {} : { authorisedUrl: invocation.plannedUrl }),
+      signal: invocation.signal,
+      recordEvidence: (reference, payload) => recorded.push({ reference, payload }),
+    };
+
+    // 2. Argument-aware classification. A tool may raise its own risk but the
+    //    declared floor always applies.
+    const classification = tool.classify?.(parsed.data, context) ?? {};
+    const risk = maxRisk(tool.risk, classification.risk ?? tool.risk);
+
+    // 3. Policy.
+    const policyContext = await this.options.loadPolicyContext();
+    const decision = evaluatePolicy(
+      {
+        tool: canonicalName,
+        taskId: invocation.taskId,
+        risk,
+        ...(classification.prohibited === undefined
+          ? {}
+          : { prohibited: classification.prohibited }),
+        ...(classification.targetUrl === undefined ? {} : { targetUrl: classification.targetUrl }),
+        ...(invocation.plannedUrl === undefined ? {} : { plannedUrl: invocation.plannedUrl }),
+        ...(classification.writeDestination === undefined
+          ? {}
+          : { writeDestination: classification.writeDestination }),
+        ...(classification.writePayload === undefined
+          ? {}
+          : { writePayload: classification.writePayload }),
+        ...(invocation.taint === undefined ? {} : { taint: invocation.taint }),
+      },
+      policyContext,
+    );
+
+    // 4. Permission.
+    const approval = await this.options.permissionEngine.requestApproval({
+      taskId: invocation.taskId,
+      tool: canonicalName,
+      decision,
+      summary: classification.summary ?? describeCall(tool, parsed.data),
+      ...(classification.targetUrl === undefined ? {} : { targetUrl: classification.targetUrl }),
+      ...(invocation.signal === undefined ? {} : { signal: invocation.signal }),
+    });
+
+    if (!approval.granted) {
+      const code = decision.verdict === 'DENY' ? 'POLICY_BLOCKED' : 'PERMISSION_DENIED';
+      const error = createError(code, decision.reason, { userMessage: decision.reason });
+      log.info('Tool call refused before execution.', {
+        tool: canonicalName,
+        verdict: decision.verdict,
+        code: decision.code,
+      });
+      return {
+        envelope: errorEnvelope(invocation.toolCallId, error),
+        evidence: [],
+        risk: decision.effectiveRisk,
+        policy: decision,
+        taint: [],
+        executed: false,
+      };
+    }
+
+    // 5. Execution, bounded by the tool's timeout and the task's abort signal.
+    if (invocation.signal.aborted) {
+      return this.refuse(
+        invocation,
+        createError('USER_CANCELLED', 'The task was cancelled before this tool ran.'),
+        risk,
+      );
+    }
+
+    let result: ToolExecutionResult;
+    try {
+      result = await withTimeout(tool.execute(parsed.data, context), tool.timeoutMs, canonicalName);
+    } catch (caught) {
+      const error = toAgentError(caught, canonicalName);
+      log.warn('Tool execution failed.', { tool: canonicalName, code: error.code });
+      // Evidence captured before the failure is still worth keeping: it is
+      // often exactly what explains the failure.
+      return {
+        envelope: errorEnvelope(invocation.toolCallId, error),
+        evidence: await this.persistEvidence(recorded),
+        risk,
+        policy: decision,
+        taint: [],
+        executed: true,
+      };
+    }
+
+    if (!result.success) {
+      const error =
+        result.error ??
+        createError('INTERNAL_ERROR', `${canonicalName} reported failure without an error.`);
+      return {
+        envelope: errorEnvelope(invocation.toolCallId, error),
+        evidence: await this.persistEvidence(recorded),
+        risk,
+        policy: decision,
+        taint: result.taint ?? [],
+        executed: true,
+      };
+    }
+
+    // 6. Sanitisation before the result enters model context, and persistence
+    //    of anything the tool recorded as evidence.
+    const sanitised = redactValue(result.data);
+    const allEvidence = await this.persistEvidence(recorded);
+
+    log.debug('Tool call completed.', { tool: canonicalName, risk });
+
+    return {
+      envelope: successEnvelope(
+        invocation.toolCallId,
+        sanitised,
+        allEvidence.map((item) => item.id),
+      ),
+      evidence: allEvidence,
+      risk,
+      policy: decision,
+      taint: result.taint ?? [],
+      executed: true,
+    };
+  }
+
+  /**
+   * Writes each recorded item to the evidence store.
+   *
+   * The store redacts and hashes the payload and returns the completed
+   * reference, so a reference the caller receives always has a payload behind
+   * it. A single failed write does not fail the tool call.
+   */
+  private async persistEvidence(
+    recorded: readonly { reference: RecordedEvidence; payload: Omit<EvidencePayload, 'id'> }[],
+  ): Promise<EvidenceReference[]> {
+    if (recorded.length === 0) return [];
+
+    const store = this.options.evidenceStore;
+    if (!store) {
+      log.warn('No evidence store is configured; evidence was not persisted.', {
+        count: recorded.length,
+      });
+      return recorded.map((item) => ({
+        ...item.reference,
+        byteLength: item.payload.content.length,
+      }));
+    }
+
+    const stored: EvidenceReference[] = [];
+    for (const item of recorded) {
+      try {
+        stored.push(await store.put(item.reference, item.payload));
+      } catch (error) {
+        log.warn('Could not persist an evidence item.', {
+          evidenceId: item.reference.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return stored;
+  }
+
+  private refuse(
+    invocation: ToolInvocation,
+    error: AgentError,
+    risk: RiskLevel,
+  ): ToolDispatchResult {
+    return {
+      envelope: errorEnvelope(invocation.toolCallId, error),
+      evidence: [],
+      risk,
+      taint: [],
+      executed: false,
+    };
+  }
+}
+
+/** `browser.click` → `browser_click`. */
+export function toWireName(name: string): string {
+  return name.replace(/\./g, '_');
+}
+
+/** `browser_click` → `browser.click`, restoring only the first separator. */
+export function fromWireName(name: string): string {
+  if (name.includes('.')) return name;
+  const index = name.indexOf('_');
+  return index === -1 ? name : `${name.slice(0, index)}.${name.slice(index + 1)}`;
+}
+
+function toAgentError(caught: unknown, tool: string): AgentError {
+  if (caught instanceof ToolError) return caught.toAgentError();
+  if (caught instanceof DOMException && caught.name === 'TimeoutError') {
+    return createError('TASK_TIMEOUT', `${tool} timed out.`, {
+      userMessage: `${tool} did not finish in time.`,
+      retryable: true,
+    });
+  }
+  if (caught instanceof DOMException && caught.name === 'AbortError') {
+    return createError('USER_CANCELLED', `${tool} was cancelled.`);
+  }
+  // Unexpected exception: the message may contain page data, so it is kept in
+  // technicalDetails and withheld from the model-facing userMessage.
+  return createError('INTERNAL_ERROR', `${tool} threw an unexpected error.`, {
+    userMessage: `${tool} failed unexpectedly.`,
+    technicalDetails: caught instanceof Error ? caught.message : String(caught),
+  });
+}
+
+/** One-line human summary of a call, used in permission prompts. */
+function describeCall(tool: AgentTool, input: unknown): string {
+  const redacted = redactValue(input);
+  let rendered: string;
+  try {
+    rendered = JSON.stringify(redacted) ?? '{}';
+  } catch {
+    rendered = '{…}';
+  }
+  if (rendered.length > 200) rendered = `${rendered.slice(0, 200)}…`;
+  return `${tool.name} ${rendered}`;
+}
