@@ -181,21 +181,37 @@ export const DEFAULT_RULES: readonly RedactionRule[] = [
     ),
     replacement: `$1$2${REDACTED}`,
   },
-  // Payment card numbers (13-19 digits, optional separators), confirmed by
-  // the Luhn checksum.
+  // Payment card numbers: 13-19 digits, optionally grouped, that stand alone
+  // as a token, carry a real issuer prefix, and satisfy the Luhn checksum.
   //
-  // Shape alone is not enough here. An evidence id such as
+  // Shape alone matched far too much. An evidence id such as
   // `ev_8d66cde0-61a9-4657-9297-9680928183fd` ends in fourteen digits split by
-  // a hyphen, and the unchecked rule redacted that tail — corrupting the
-  // reference the model uses to cite the evidence, at a rate low enough
-  // (roughly one identifier in five hundred) to look like a flaky test rather
-  // than a bug. Every real card number passes Luhn, so the checksum keeps the
-  // control intact while sparing arbitrary digit strings.
+  // a hyphen and had that tail replaced, corrupting the reference the model
+  // uses to cite the evidence. Adding Luhn cut the rate but did not fix it:
+  // roughly one digit string in ten passes Luhn by chance, and a 13-digit
+  // epoch-millisecond timestamp is 13 digits — so `capturedAt 1758441192004`,
+  // a field on every task and evidence record this system writes, was being
+  // redacted outright.
+  //
+  // All three constraints below hold for every genuine card number, so none
+  // of them weakens the control:
+  //
+  //   1. Token isolation — a card is not a fragment of a longer identifier,
+  //      so a run glued to `-`, `_` or an alphanumeric is not one. `\b` alone
+  //      treats `-` as a boundary, which is how UUID tails got matched.
+  //   2. Issuer prefix — every network's numbers start in a defined range.
+  //      A timestamp beginning `1` is not a card under any scheme.
+  //   3. Luhn — the mod-10 checksum every card satisfies.
+  //
+  // The trade is explicit: a closed-loop card outside the published issuer
+  // ranges would not be caught by *this* rule. It is still caught whenever it
+  // appears under a sensitive key name, and the alternative was corrupting
+  // every identifier and timestamp the agent reports.
   {
     id: 'credit-card',
-    pattern: /\b(?:\d[ -]?){12,18}\d\b/g,
+    pattern: /(?<![0-9A-Za-z_-])(?:\d[ -]?){12,18}\d(?![0-9A-Za-z_-])/g,
     replacement: REDACTED,
-    confirm: (match) => isLuhnValid(match),
+    confirm: (match) => hasIssuerPrefix(match) && isLuhnValid(match),
   },
 ];
 
@@ -203,6 +219,31 @@ export interface RedactionResult {
   readonly text: string;
   /** Rule ids that fired, for audit + UI disclosure. */
   readonly appliedRules: readonly string[];
+}
+
+/**
+ * Issuer identification ranges for the card networks in general circulation.
+ *
+ * Each entry is a prefix a real card number begins with. Nothing outside these
+ * ranges is treated as a card by the shape rule — see the note on the
+ * `credit-card` rule for what that deliberately gives up.
+ */
+const CARD_ISSUER_PREFIXES: readonly RegExp[] = [
+  /^4/, // Visa
+  /^5[1-5]/, // Mastercard
+  /^2(?:2[2-9]|[3-6]|7[01]|720)/, // Mastercard, 2-series
+  /^3[47]/, // American Express
+  /^3(?:0[0-5]|095|[689])/, // Diners Club
+  /^6(?:011|5|4[4-9]|22)/, // Discover
+  /^35(?:2[89]|[3-8])/, // JCB
+  /^62/, // UnionPay
+  /^(?:50|5[6-9]|6[07]|63)/, // Maestro and other co-branded ranges
+];
+
+/** Whether a candidate begins like a card number from a known network. */
+function hasIssuerPrefix(candidate: string): boolean {
+  const digits = candidate.replace(/[^0-9]/g, '');
+  return CARD_ISSUER_PREFIXES.some((prefix) => prefix.test(digits));
 }
 
 /**

@@ -100,10 +100,18 @@ reference to that buffer could read it.
 Redaction covers, by value shape: JWTs, PEM private keys, bearer and basic auth
 headers, URL userinfo, cookie headers, OpenAI/Anthropic/Google/GitHub/Slack/
 AWS/Stripe key formats, `name = value` assignments under a sensitive key, and
-payment card numbers — confirmed by the Luhn checksum, so an arbitrary run of
-digits such as an identifier's tail is not mistaken for a card. And by name:
-sensitive HTTP headers and object keys, normalised so `api_key`, `apiKey` and
-`API-KEY` all match.
+payment card numbers. And by name: sensitive HTTP headers and object keys,
+normalised so `api_key`, `apiKey` and `API-KEY` all match.
+
+The card rule is the one that needs three constraints rather than one. A run
+of digits is treated as a card only when it stands alone as a token, begins
+with a published issuer prefix, and satisfies the Luhn checksum. Every genuine
+card number meets all three, and the narrowing is what stops the rule
+corrupting the identifiers and timestamps the agent reports — shape alone ate
+evidence-id tails, and shape plus Luhn still ate 13-digit epoch-millisecond
+timestamps, which sit on every record this system writes. A closed-loop card
+outside the published issuer ranges is not caught by this rule; it is still
+caught whenever it appears under a sensitive key name.
 
 Applied at every boundary:
 

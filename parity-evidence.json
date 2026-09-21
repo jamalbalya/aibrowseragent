@@ -15,7 +15,11 @@
       "unit": ["tests/unit/semantic-tree.test.ts", "tests/unit/browser-tools.test.ts"],
       "integration": ["tests/integration/agent-runtime.test.ts"],
       "security": ["tests/security/prompt-injection.test.ts"],
-      "e2e": ["tests/e2e/agent-task.spec.ts", "tests/e2e/security.spec.ts"]
+      "e2e": [
+        "tests/e2e/agent-task.spec.ts",
+        "tests/e2e/security.spec.ts",
+        "tests/e2e/file-access.spec.ts"
+      ]
     },
     "P-003": {
       "unit": ["tests/unit/interaction-engine.test.ts", "tests/unit/browser-tools.test.ts"],
@@ -33,7 +37,11 @@
       "unit": ["tests/unit/browser-tools.test.ts"],
       "integration": ["tests/integration/agent-runtime.test.ts"],
       "security": ["tests/security/origin-validation.test.ts"],
-      "e2e": ["tests/e2e/agent-task.spec.ts", "tests/e2e/security.spec.ts"]
+      "e2e": [
+        "tests/e2e/agent-task.spec.ts",
+        "tests/e2e/security.spec.ts",
+        "tests/e2e/file-access.spec.ts"
+      ]
     },
     "P-006": {
       "unit": ["tests/unit/interaction-engine.test.ts"],
@@ -53,7 +61,11 @@
         "tests/security/screenshot-capture.test.ts",
         "tests/security/secret-redaction.test.ts"
       ],
-      "e2e": ["tests/e2e/agent-task.spec.ts", "tests/e2e/security.spec.ts"]
+      "e2e": [
+        "tests/e2e/agent-task.spec.ts",
+        "tests/e2e/security.spec.ts",
+        "tests/e2e/file-access.spec.ts"
+      ]
     },
     "P-009": {},
     "P-010": {},
@@ -61,7 +73,11 @@
     "P-012": {
       "unit": ["tests/unit/tab-tools.test.ts"],
       "security": ["tests/security/origin-validation.test.ts"],
-      "e2e": ["tests/e2e/security.spec.ts"]
+      "e2e": [
+        "tests/e2e/security.spec.ts",
+        "tests/e2e/file-access.spec.ts",
+        "tests/e2e/extension-load.spec.ts"
+      ]
     },
     "P-013": {
       "unit": ["tests/unit/tab-tools.test.ts"],
@@ -70,12 +86,12 @@
     "P-014": {
       "unit": ["tests/unit/browser-tools.test.ts"],
       "security": ["tests/security/debugger-allowlist.test.ts"],
-      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts"]
+      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts", "tests/e2e/file-access.spec.ts"]
     },
     "P-015": {
       "unit": ["tests/unit/browser-tools.test.ts"],
       "security": ["tests/security/debugger-allowlist.test.ts"],
-      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts"]
+      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts", "tests/e2e/file-access.spec.ts"]
     },
     "P-016": {
       "unit": ["tests/unit/browser-tools.test.ts"],

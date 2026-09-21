@@ -14,6 +14,24 @@ import {
   redactText,
   redactValue,
 } from '@/security/redaction/secret-redactor';
+import { newEvidenceId, newMessageId, newSessionId, newTaskId, newToolCallId } from '@/utils/ids';
+
+/** A Visa number for `index`, with a correct Luhn check digit. */
+function visaNumber(index: number): string {
+  const body = `4${String(index).padStart(14, '0')}`;
+  let sum = 0;
+  let double = true;
+  for (let i = body.length - 1; i >= 0; i -= 1) {
+    let value = body.charCodeAt(i) - 48;
+    if (double) {
+      value *= 2;
+      if (value > 9) value -= 9;
+    }
+    sum += value;
+    double = !double;
+  }
+  return body + String((10 - (sum % 10)) % 10);
+}
 
 /**
  * Credential-shaped fixtures, assembled at runtime.
@@ -65,14 +83,20 @@ describe('redactText', () => {
     // identifiers: `ev_8d66cde0-61a9-4657-9297-9680928183fd` ends in fourteen
     // digits split by a hyphen and had its tail replaced, breaking the
     // reference the model cites — rarely enough to read as a flaky test.
+    //
+    // A. Genuine card numbers must still go.
     it.each([
       ['Visa', '4111 1111 1111 1111'],
       ['Visa, hyphenated', '4111-1111-1111-1111'],
       ['Visa, unseparated', '4111111111111111'],
       ['Mastercard', '5555 5555 5555 4444'],
+      ['Mastercard 2-series', '2223003122003222'],
       ['Amex, 15 digits', '378282246310005'],
+      ['Amex, grouped', '3782 822463 10005'],
       ['Discover', '6011111111111117'],
+      ['JCB', '3530111333300000'],
       ['Diners, 14 digits', '30569309025904'],
+      ['Visa, 19 digits', '4035501000000008'],
     ])('still redacts a %s number', (_label, number) => {
       const { text, appliedRules } = redactText(`Card ${number} expires soon`);
       expect(text).not.toContain(number);
@@ -80,24 +104,117 @@ describe('redactText', () => {
       expect(appliedRules).toContain('credit-card');
     });
 
-    it('leaves an evidence identifier whose tail is all digits intact', () => {
-      const id = 'ev_8d66cde0-61a9-4657-9297-9680928183fd';
-      const { text, appliedRules } = redactText(id);
-      expect(text).toBe(id);
-      expect(appliedRules).not.toContain('credit-card');
+    it('redacts a card number embedded in a sentence and keeps the sentence', () => {
+      const { text } = redactText('Charged 4111 1111 1111 1111 for the order.');
+      expect(text).toContain('Charged');
+      expect(text).toContain('for the order.');
+      expect(text).not.toContain('4111');
     });
 
+    // B–H. Identifiers the agent must be able to hand back unchanged. Each
+    // one is card-shaped by digit count; none is a card.
     it.each([
-      ['a UUID that is digits after the prefix', 'ev_00000000-0000-4000-9297-968092818311'],
-      ['a long numeric identifier', 'order 1234567890123456'],
-      ['a grouped run of digits', 'reference 6285-7123-45671'],
-    ])('leaves %s intact when it fails the checksum', (_label, input) => {
+      // B. invalid card-number-shaped identifiers
+      ['an invalid card-shaped run', 'reference 6285-7123-45671'],
+      ['sixteen sequential digits', 'order 1234567890123456'],
+      ['sixteen repeated digits', 'meter 1111111111111112'],
+      // C. evidence ids
+      ['the evidence id that was corrupted', 'ev_8d66cde0-61a9-4657-9297-9680928183fd'],
+      ['an all-digit-tail evidence id', 'ev_00000000-0000-4000-9297-968092818311'],
+      ['an evidence id in a sentence', 'See evidence ev_11111111-2222-4333-9444-555566667778.'],
+      // D. task ids
+      ['a task id', 'task_4f1c2b3a-5d6e-4f70-8192-334455667781'],
+      ['a tool-call id', 'tc_9a8b7c6d-5e4f-4032-9182-736455647381'],
+      ['a session id', 'session_12345678-1234-4123-9123-123456789013'],
+      // E. UUID-like identifiers
+      ['a bare UUID', '550e8400-e29b-41d4-a716-446655440001'],
+      ['an all-numeric UUID body', '12345678-1234-4123-9123-123456789013'],
+      // F. timestamps
+      ['an ISO timestamp', 'captured at 2026-09-21T07:53:12.004Z'],
+      ['an epoch-millis timestamp', 'capturedAt 1758441192004'],
+      ['a pair of epoch timestamps', 'from 1758441192004 to 1758441192005'],
+      // G. long numeric identifiers
+      ['a fourteen-digit order number', 'order 12345678901234'],
+      ['an eighteen-digit ledger id', 'ledger 123456789012345678'],
+      ['a grouped account number', 'account 1234-5678-9012-3457'],
+      // H. mixed alphanumeric identifiers
+      ['a build id', 'build 8d66cde061a946579297968092818301'],
+      ['a git sha', 'commit 88801640e45947d69a965c9faf00e8c3d8ef7b77'],
+      ['a base64 evidence payload head', 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB'],
+    ])('leaves %s intact', (_label, input) => {
       expect(redact(input)).toBe(input);
     });
 
     it('does not report the rule as applied when every candidate is rejected', () => {
       const { appliedRules } = redactText('order 1234567890123456');
       expect(appliedRules).not.toContain('credit-card');
+    });
+
+    // The defects here appeared on a fraction of random draws — once in five
+    // hundred ids for the shape-only rule, once in ten digit strings once Luhn
+    // was added. Single fixed vectors cannot catch that class of bug, so these
+    // three sample instead: the property is what is under test, not the luck
+    // of one literal.
+    it('does not corrupt 5000 generated ids of every kind', () => {
+      const makers = [newEvidenceId, newTaskId, newToolCallId, newSessionId, newMessageId];
+      const corrupted: string[] = [];
+      for (let i = 0; i < 5000; i += 1) {
+        const id = makers[i % makers.length]!();
+        if (redact(id) !== id) corrupted.push(id);
+      }
+      expect(corrupted).toEqual([]);
+    });
+
+    it('does not corrupt 5000 epoch-millisecond timestamps', () => {
+      // 13 digits, and every task and evidence record carries one.
+      const corrupted: string[] = [];
+      const base = Date.now();
+      for (let i = 0; i < 5000; i += 1) {
+        const line = `capturedAt ${base + i * 37}`;
+        if (redact(line) !== line) corrupted.push(line);
+      }
+      expect(corrupted).toEqual([]);
+    });
+
+    it('still redacts 5000 synthesised Luhn-valid Visa numbers', () => {
+      // The other half of the property: narrowing the rule must not let real
+      // card numbers through.
+      const missed: string[] = [];
+      for (let i = 0; i < 5000; i += 1) {
+        const card = visaNumber(i);
+        if (redact(`paid with ${card}`).includes(card)) missed.push(card);
+      }
+      expect(missed).toEqual([]);
+    });
+
+    it('still redacts a card number sitting next to an identifier', () => {
+      // The checksum must not become a way to smuggle a card past the rule by
+      // burying it in identifier-shaped noise.
+      const id = 'ev_8d66cde0-61a9-4657-9297-9680928183fd';
+      const { text } = redactText(`${id} card 4111 1111 1111 1111`);
+      expect(text).toContain(id);
+      expect(text).not.toContain('4111 1111 1111 1111');
+      expect(text).toContain(REDACTED);
+    });
+
+    it('is not the only control: a card-shaped value under a secret key still goes', () => {
+      // Luhn gates one rule. A value that fails it is still redacted when the
+      // key name marks it sensitive, so the checksum cannot be used to slip a
+      // credential through.
+      const { text, appliedRules } = redactText('api_key = 1234567890123456');
+      expect(text).not.toContain('1234567890123456');
+      expect(appliedRules).toContain('named-secret-assignment');
+      expect(appliedRules).not.toContain('credit-card');
+    });
+
+    it('leaves every other rule able to fire on the same text', () => {
+      // Separate lines: the authorization rule replaces to end of line, so
+      // sharing one would prove ordering rather than coexistence.
+      const { appliedRules } = redactText(
+        'Authorization: Bearer abc123def456ghi789jkl\nCard 4111 1111 1111 1111 on file.',
+      );
+      expect(appliedRules).toContain('authorization-header-inline');
+      expect(appliedRules).toContain('credit-card');
     });
   });
 

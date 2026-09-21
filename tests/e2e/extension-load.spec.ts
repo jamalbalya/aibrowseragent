@@ -4,7 +4,7 @@
  * Unit tests prove modules behave; only this proves Chrome accepts the
  * package, starts the service worker, and mounts the side panel.
  */
-import { connectProvider, expect, test } from './fixtures/extension';
+import { connectProvider, expect, test, waitForTask } from './fixtures/extension';
 
 test('the service worker registers and completes startup', async ({
   serviceWorker,
@@ -87,4 +87,94 @@ test('the side panel reflects a connected provider', async ({ send, panel, provi
 
   await expect(panel.locator('.status')).toContainText('mock-model');
   await expect(panel.locator('.composer__input')).toBeEnabled();
+});
+
+test('the browser under test can actually host an MV3 extension', async ({
+  context,
+  serviceWorker,
+  extensionId,
+  site,
+}) => {
+  // Guard against a suite that passes because it is not testing anything.
+  //
+  // Playwright resolves `chrome-headless-shell` for a plain headless launch,
+  // and the headless shell cannot load extensions at all. That configuration
+  // did not fail loudly — every test simply timed out waiting for a service
+  // worker, which reads as flakiness rather than as "the extension was never
+  // there". The assertions below are only satisfiable by a real Chromium with
+  // this extension genuinely installed, so they fail fast if the launch
+  // regresses.
+  const manifest = await serviceWorker.evaluate(() => chrome.runtime.getManifest());
+  expect(manifest.manifest_version).toBe(3);
+  expect(manifest.name).toBe('AI Browser Agent');
+  expect(serviceWorker.url()).toContain(extensionId);
+
+  // A real extension origin serving a real document.
+  const panel = await context.newPage();
+  await panel.goto(`chrome-extension://${extensionId}/src/sidepanel/index.html`);
+  expect(panel.url().startsWith('chrome-extension://')).toBe(true);
+  await panel.close();
+
+  // The content script is genuinely injected into an ordinary page, which is
+  // the other half of "the extension is installed" — the manifest alone would
+  // not prove the browser honoured content_scripts.
+  const page = await context.newPage();
+  await page.goto(site.baseUrl, { waitUntil: 'load' });
+  const tabId = await serviceWorker.evaluate(async (url: string) => {
+    const [tab] = await chrome.tabs.query({ url: `${url}/*` });
+    return tab?.id ?? -1;
+  }, site.baseUrl);
+  expect(tabId).toBeGreaterThan(-1);
+
+  const pong = await serviceWorker.evaluate(
+    (id: number) =>
+      new Promise<unknown>((resolve) => {
+        chrome.tabs.sendMessage(
+          id,
+          { id: 'e2e_probe', type: 'content.ping', timestamp: Date.now(), payload: {} },
+          (response: unknown) => resolve(chrome.runtime.lastError ? null : response),
+        );
+      }),
+    tabId,
+  );
+  expect(pong).not.toBeNull();
+
+  await page.close();
+});
+
+test('the agent works across more than one real tab', async ({
+  context,
+  serviceWorker,
+  send,
+  provider,
+  site,
+}) => {
+  const first = await context.newPage();
+  await first.goto(site.baseUrl, { waitUntil: 'load' });
+  const second = await context.newPage();
+  await second.goto(`${site.baseUrl}/form`, { waitUntil: 'load' });
+  await first.bringToFront();
+
+  await connectProvider(send, provider);
+
+  const before = await serviceWorker.evaluate(() => chrome.tabs.query({}).then((t) => t.length));
+
+  provider.script([
+    {
+      kind: 'tool_calls',
+      calls: [{ name: 'tabs_create', arguments: { url: `${site.baseUrl}/form` } }],
+    },
+    { kind: 'tool_calls', calls: [{ name: 'tabs_list', arguments: {} }] },
+    { kind: 'text', text: 'Opened and listed the tabs.' },
+  ]);
+
+  const { task } = await send('task.create', { objective: 'Open a second page and list tabs.' });
+  const finished = await waitForTask(send, task.id);
+
+  expect(finished.state).toBe('COMPLETED');
+  const after = await serviceWorker.evaluate(() => chrome.tabs.query({}).then((t) => t.length));
+  expect(after).toBe(before + 1);
+
+  await first.close();
+  await second.close();
 });
