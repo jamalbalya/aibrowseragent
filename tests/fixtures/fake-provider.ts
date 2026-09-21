@@ -24,6 +24,8 @@ export const FULL_CAPABILITIES: ModelCapabilities = {
   structuredOutput: true,
   fileInput: false,
   audioInput: false,
+  systemInstruction: true,
+  modelListing: true,
   contextWindow: 128_000,
   maxOutputTokens: 4096,
 };

@@ -25,7 +25,7 @@ import { fromWireName } from '@/tools/registry/tool-registry';
 import { buildRequest, type ContextBudget } from '@/agent/context/context-builder';
 import { LoopDetector, hashArguments } from '@/agent/loop-detection/loop-detector';
 import { checkBudget, DEFAULT_BUDGET, type ResourceBudget } from '@/agent/budget/budget';
-import { decideRetry, DEFAULT_RETRY_POLICY } from '@/agent/recovery/retry-policy';
+import { decideRetryFor, DEFAULT_RETRY_POLICY } from '@/agent/recovery/retry-policy';
 import type { TaintSource } from '@/security/exfiltration/exfiltration-guard';
 import type { TaintState } from '@/security/taint/taint-state';
 import { taintSignature } from '@/security/egress/consent';
@@ -234,9 +234,12 @@ export class AgentRuntime {
           return this.terminate(task, 'CANCELLED', 'The task was cancelled.', evidenceIds, usage);
         }
 
-        // A transient provider failure gets a bounded retry; anything else stops.
-        const retry = decideRetry(
-          agentError.code,
+        // A transient provider failure gets a bounded retry; anything else
+        // stops. The adapter's own classification is honoured, because two
+        // failures can share a code and differ on whether waiting helps — and
+        // because a refusal by the egress gate must never be retried.
+        const retry = decideRetryFor(
+          agentError,
           usage.retries + 1,
           DEFAULT_RETRY_POLICY,
           this.random,

@@ -32,17 +32,24 @@ What works today:
 - Tool registry with schema validation, risk classification and an enforced
   policy/permission gate in front of every call
 - 25 canonical tools across browser, tabs and DevTools inspection
-- Provider abstraction with one real adapter (any OpenAI-compatible endpoint)
-  and a capability doctor that verifies rather than assumes
+- Three AI provider adapters — any OpenAI-compatible endpoint, the Anthropic
+  Messages API, and the Gemini generateContent API — behind one canonical
+  interface, with a capability doctor that verifies rather than assumes
 - Security control plane: origin validation, prompt-injection boundary, secret
   redaction, exfiltration policy, hard prohibitions
 - Task persistence that survives side-panel close and service-worker eviction —
   verified against a real Chrome worker restart, not a simulation
 
 Not yet implemented: connectors (Jira, Confluence, Figma, Sheets), MCP, skills,
-workflows, scheduling, file upload/download, and the OpenAI/Anthropic/Gemini
-native adapters. Their interfaces exist; their implementations do not, and the
-code raises `NOT_IMPLEMENTED` rather than faking a result.
+workflows, scheduling, file upload/download, and OpenAI's Responses API. Their
+interfaces exist; their implementations do not, and the code raises
+`NOT_IMPLEMENTED` rather than faking a result.
+
+The three adapters have been exercised against local servers implementing each
+provider's documented wire format, including over real sockets in real
+Chromium. None has been run against a commercial endpoint — no project
+credentials are configured — so nothing here should be read as a claim that
+one has.
 
 ---
 
@@ -67,15 +74,22 @@ Then load it into Chrome:
 ### Connect a provider
 
 1. In the side panel, click **Settings**.
-2. Choose **OpenAI-compatible endpoint**.
-3. Enter the base URL, your API key, and a model id:
+2. Choose a provider.
+3. Enter your API key and a model id. The base URL is needed only for the
+   OpenAI-compatible adapter, which is the one you point wherever you like;
+   the other two default to their own documented endpoint.
 
-   | Endpoint               | Base URL                    | Example model      |
+   | Provider               | Base URL                    | Example model      |
    | ---------------------- | --------------------------- | ------------------ |
-   | OpenAI                 | `https://api.openai.com/v1` | `gpt-4o-mini`      |
+   | Anthropic API          | _(default)_                 | a Claude model id  |
+   | Google Gemini API      | _(default)_                 | a Gemini model id  |
+   | OpenAI-compatible      | `https://api.openai.com/v1` | `gpt-4o-mini`      |
    | Local (Ollama)         | `http://localhost:11434/v1` | `qwen2.5:14b`      |
    | Local (LM Studio)      | `http://localhost:1234/v1`  | whatever is loaded |
    | Any compatible gateway | its `/v1` base URL          | its model id       |
+
+   A key from one provider is never sent to another, and an API key is not the
+   same thing as a subscription to a provider's consumer product.
 
 4. Click **Connect**, then **Run capability check**.
 
@@ -85,8 +99,9 @@ a model that cannot call tools cannot operate a browser. A model that fails
 that check is reported as _Chat only_ rather than being quietly allowed to run
 and fail later.
 
-Your API key is stored by the extension and sent only to the base URL you
-entered. It is never written to logs, evidence, task records, or model prompts.
+Your API key is stored by the extension and sent only to that provider's
+endpoint, as a request header. It never appears in a URL, and it is never
+written to logs, evidence, audit records, task records, or model prompts.
 
 ### Run a task
 

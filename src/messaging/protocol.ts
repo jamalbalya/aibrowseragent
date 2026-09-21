@@ -8,6 +8,8 @@
 import type { AgentTask, AgentSession, TaskState } from '@/tasks/task-model';
 import type { AgentError } from '@/types/result';
 import type { CapabilityReport } from '@/providers/capability-doctor/capability-doctor';
+import type { AuthKind, ProviderOperation } from '@/providers/core/types';
+import type { ProviderKind } from '@/providers/core/provider-kind';
 import type { PermissionRequest, PermissionResponse } from '@/policy/permission-engine';
 import type { AuditEvent, AuditExport } from '@/audit/audit-log';
 import type { PermissionMode } from '@/policy/policy-engine';
@@ -53,7 +55,19 @@ export interface PanelRequestMap {
 
   'provider.list': {
     request: Record<string, never>;
-    response: { providers: { id: string; displayName: string; description: string }[] };
+    response: {
+      providers: {
+        id: string;
+        displayName: string;
+        description: string;
+        kind: ProviderKind;
+        authKind: AuthKind;
+        /** Whether the user must supply an endpoint, and what it defaults to. */
+        baseUrlRequired: boolean;
+        defaultBaseUrl?: string;
+        operations: readonly ProviderOperation[];
+      }[];
+    };
   };
   'provider.connect': {
     request: {

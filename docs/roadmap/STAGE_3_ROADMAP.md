@@ -1382,6 +1382,121 @@ and body at the receiving end.
 
 ---
 
+## 4M. Wave C — API provider expansion, delivered
+
+Three API providers now ship behind one canonical interface, and one
+conformance suite runs against all of them. This section records what was
+built, what building it discovered, and what remains externally blocked.
+
+### Modules added
+
+| Module                                   | Role                                                      |
+| ---------------------------------------- | --------------------------------------------------------- |
+| `src/providers/adapters/anthropic.ts`    | Messages API: top-level system, content blocks, typed SSE |
+| `src/providers/adapters/gemini.ts`       | generateContent: contents/parts, header auth, `alt=sse`   |
+| `src/providers/core/provider-http.ts`    | shared SSE reader, error scaffolding, egress requirement  |
+| `src/providers/core/capability-guard.ts` | refuses an unsupported capability instead of dropping it  |
+| `src/providers/core/provider-error.ts`   | the nine-category provider error taxonomy                 |
+
+### What is deliberately not shared
+
+Only the parts that are genuinely identical were extracted: reading an SSE
+body, classifying a dropped connection, refusing a request with no security
+context. Translation was not. The three wire formats differ in the places that
+matter most to an agent loop — where the system prompt goes, whether a tool
+result is a message or a block, whether a tool call has an id at all — and a
+shared translator with per-provider flags would lose information quietly.
+`docs/provider-architecture.md` tabulates the differences.
+
+The sharpest one: **Gemini has no tool call ids.** Calls and responses are
+correlated by function name. The canonical model requires an id so a result can
+be attributed to the call that produced it, so the adapter synthesises one and
+sends the name back — the one place the canonical model carries more than a
+provider does.
+
+### Defects this wave uncovered
+
+**D-PR-1 — every provider's capability probe shared one pseudo-task id.**
+`FIXED`. `managementContext` used the literal task id `provider-management`
+for all providers, and the egress gate pins a task to one provider
+destination. So whichever provider probed first became the only one that ever
+could: connecting a second provider failed its capability check with a policy
+refusal, and the task that followed reported "this model does not support tool
+calling" — a wrong answer to a question that was never asked. Probe identity is
+now scoped per provider and model. Nothing is given up: the pin protects a
+task's data from reaching a second destination, and a probe has no task behind
+it and a fixed body with nothing in it. Every other gate check still runs on
+every probe. Found by the real-Chromium switching test, not by any unit test.
+
+**D-PR-2 — a refusal by the egress gate was reported as a network error.**
+`FIXED`. Adapters wrap the transport call in a try/catch, so an
+`EgressDeniedError` arrived looking like any other thrown error and was
+classified `NETWORK_ERROR` — which is **retryable**. The runtime would have
+re-sent a refused request up to the retry limit, against a gate that would
+never say yes, and told the user their network was at fault. Refusals now
+carry a marker, classify as `transport_blocked`, and are terminal.
+
+**D-PR-3 — the retry policy could not express the difference between a 5xx and
+an unparseable reply.** `FIXED`. `decideRetry` read the error code alone, and
+both conditions surface as `MODEL_ERROR`. A provider 5xx was therefore never
+retried. The runtime now calls `decideRetryFor`, which honours the
+classification the adapter already made; the backoff is unchanged.
+
+**D-PR-4 — 401 and 403 were reported identically.** `FIXED` in the reference
+adapter as part of normalisation. "Your key is wrong" and "your key is fine but
+not allowed here" need different fixes, and reporting both as the former sends
+the user to change something that was correct.
+
+### Security review of the new adapters
+
+| Question                                 | Finding                                                                                      |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Direct `fetch` anywhere?                 | No. Lint forbids it in `src/providers/**`; the default transport refuses.                    |
+| Credential in a URL?                     | No. Both new adapters use headers; Gemini refuses a base URL with a query string at all.     |
+| Credential in a destination identity?    | No. Identity is `providerId@origin`; asserted per provider in the conformance suite.         |
+| Credential in logs, audit or evidence?   | No. Asserted in real Chromium against the service worker's own console output.               |
+| Credential in a thrown error?            | No. Response bodies stay in `technicalDetails`; `userMessage` and `message` are asserted.    |
+| Can a retry bypass authorization?        | No. Each attempt re-enters `generate`, and so the gate. A refusal is terminal (D-PR-2).      |
+| Can streaming bypass it?                 | No. Same transport, same context; a mid-stream error ends the stream rather than completing. |
+| Can vision bypass it?                    | No. There is no image-specific route; image bytes ride the same gated request.               |
+| Can a tool call bypass the ToolRegistry? | No. Cross-provider tests run each provider's tool call through the real registry.            |
+| Does model output gain trust?            | No. Tool calls remain `MODEL_OUTPUT_API` and pass schema, risk, policy, permission, egress.  |
+
+Gemini's documented `key=` query parameter is the one authentication mechanism
+that would have created a new destination-identity problem. It is not used. The
+header form is, and `connect()` rejects a base URL that could smuggle a key in,
+because the gate derives a destination identity from the request URL and that
+identity reaches consent keys, audit records and evidence.
+
+The plaintext rule was made uniform across all three adapters: https required,
+loopback excepted. The rule exists so a key does not cross a network in the
+clear, and loopback crosses none — a local gateway speaking any of these three
+protocols is a real deployment, and the reference adapter already allowed it.
+
+### Web provider boundary
+
+Unchanged. **D4 = GATED. D5 = GATED.** No web provider is registered, so none
+is selectable; the real-Chromium test asserts that the registry offers three
+providers and that all three are `kind: 'api'`. Nothing in this wave reads a
+model reply from a DOM, submits a prompt to a web UI, or treats a rendered
+interface as an API.
+
+### What remains externally blocked
+
+**LIVE PROVIDER E2E = BLOCKED — PROJECT-OWNED CREDENTIALS NOT CONFIGURED.**
+
+No request in this repository has reached a commercial provider. Every test
+runs against a local server implementing the provider's documented wire
+format, in-process or over real sockets in real Chromium. That is an external
+environment limitation, not a code failure and not a missing test: the
+trajectories exist and would run unchanged against a configured endpoint.
+
+Two further claims are **not** made: no Chrome Web Store policy verification,
+and no provider terms verification. §87's per-provider acceptance runs need
+project-owned credentials before they can be executed or recorded.
+
+---
+
 ## 4K. B2 Final Implementation Contract — frozen
 
 The engineering contract for the B2 pass. Everything here is **ENGINEERING
@@ -2314,7 +2429,7 @@ implied; waves are defined by what must exist first.
 | ---- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | A    | independent, productization         | Packaged build, release versioning, update path, privacy documentation, permission justification, store submission                                                                                        | none — can start immediately                                               |
 | B    | independent, incremental            | P-006 forms; P-038 unified audit and export                                                                                                                                                               | none                                                                       |
-| C    | foundational, external-dependency   | Phase 5 providers (Anthropic, Gemini, generic compatible); §87 per provider; then P-033                                                                                                                   | provider API credentials                                                   |
+| C    | foundational, external-dependency   | Phase 5 providers (Anthropic, Gemini, generic compatible); §87 per provider; then P-033                                                                                                                   | **ADAPTERS COMPLETE** (§4M) — §87 live runs still need project credentials |
 | D1   | architectural                       | Web provider **architecture**: registry kind, provider state model, capability declaration, provenance labels                                                                                             | none — buildable today                                                     |
 | D2   | security-critical                   | **Authentication state / human-in-the-loop login**: detection from permitted signals, pause, resume                                                                                                       | none — concept B only                                                      |
 | D3   | incremental                         | **Web UI interaction**: driving AI websites as ordinary websites                                                                                                                                          | none — concept A, already supported                                        |
@@ -2601,3 +2716,5 @@ not only a review question: from Chrome 155 the permission can be blocked by
 enterprise policy regardless of review outcome.
 
 **Available now: Waves A, B, C, D1, D2, D3.** Gated: D4, D5.
+
+Waves A, B, C and D1–D3 are implemented. D4 and D5 remain gated on Q1.

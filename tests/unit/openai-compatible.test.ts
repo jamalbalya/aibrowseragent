@@ -11,6 +11,7 @@ import {
   readServerSentEvents,
 } from '@/providers/adapters/openai-compatible';
 import type { CanonicalEvent } from '@/providers/core/types';
+import type { ProviderErrorCategory } from '@/providers/core/provider-error';
 import { passthroughTransport, testEgressContext } from '../fixtures/egress';
 
 const CONFIG = {
@@ -224,7 +225,9 @@ describe('generate', () => {
   it('encodes an image part as a data URL', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ choices: [{ message: {} }] }));
     const adapter = new OpenAICompatibleAdapter(passthroughTransport(fetchMock));
-    await adapter.connect(CONFIG);
+    // A model the adapter reads as vision-capable: the capability guard
+    // refuses an image on a model that does not advertise one.
+    await adapter.connect({ ...CONFIG, model: 'gpt-4o' });
 
     await adapter.generate({
       egress: testEgressContext(),
@@ -273,17 +276,20 @@ describe('generate', () => {
 });
 
 describe('HTTP error mapping', () => {
-  const cases: [number, string][] = [
-    [401, 'AUTH_EXPIRED'],
-    [403, 'AUTH_EXPIRED'],
-    [404, 'MODEL_UNSUPPORTED'],
-    [429, 'RATE_LIMITED'],
-    [500, 'MODEL_ERROR'],
-    [400, 'MODEL_ERROR'],
+  // 401 and 403 are deliberately different categories. A rejected key and a
+  // key that is valid but not entitled need different fixes, and reporting
+  // both as "check your key" sends the user to change something correct.
+  const cases: [number, string, ProviderErrorCategory][] = [
+    [401, 'AUTH_EXPIRED', 'authentication_failed'],
+    [403, 'PERMISSION_DENIED', 'access_denied'],
+    [404, 'MODEL_UNSUPPORTED', 'unsupported_capability'],
+    [429, 'RATE_LIMITED', 'rate_limited'],
+    [500, 'MODEL_ERROR', 'transient_provider_failure'],
+    [400, 'INVALID_ARGUMENT', 'invalid_request'],
   ];
 
-  for (const [status, code] of cases) {
-    it(`maps ${status} to ${code}`, async () => {
+  for (const [status, code, category] of cases) {
+    it(`maps ${status} to ${code} (${category})`, async () => {
       const fetchMock = vi.fn().mockResolvedValue(new Response('{"error":"x"}', { status }));
       const adapter = new OpenAICompatibleAdapter(passthroughTransport(fetchMock));
       await adapter.connect(CONFIG);
@@ -291,7 +297,11 @@ describe('HTTP error mapping', () => {
       await expect(
         adapter.generate({ egress: testEgressContext(), systemInstruction: 's', messages: [] }),
       ).rejects.toSatisfy(
-        (error: unknown) => error instanceof ProviderRequestError && error.agentError.code === code,
+        (error: unknown) =>
+          error instanceof ProviderRequestError &&
+          error.agentError.code === code &&
+          error.category === category &&
+          error.httpStatus === status,
       );
     });
   }

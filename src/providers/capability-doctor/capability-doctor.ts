@@ -5,6 +5,17 @@
  * issues a real request per check and reports what actually happened, because
  * the specification forbids claiming Agent Ready on a model whose tool calling
  * has not been demonstrated.
+ *
+ * The first probe answers three separate questions at once, and they are
+ * reported separately because their fixes are different: the endpoint could
+ * not be reached (network or base URL), the endpoint answered and rejected
+ * the credential (wrong or expired key), or the request never left at all
+ * because it was not authorised (a policy decision, not a provider problem).
+ * A single "connection failed" would send a user to check their key when the
+ * key was fine.
+ *
+ * No credential is read, echoed or inferred from here. The doctor learns
+ * whether a key works by using it, never by looking at it.
  */
 import { managementContext } from '@/security/egress/provider-transport';
 import { generateTaintSalt } from '@/tasks/task-model';
@@ -15,7 +26,7 @@ import type {
   CanonicalToolSchema,
   ModelCapabilities,
 } from '@/providers/core/types';
-import { textMessage } from '@/providers/core/types';
+import { textMessage, UNKNOWN_CAPABILITIES } from '@/providers/core/types';
 
 const log = getLogger('provider');
 
@@ -89,6 +100,76 @@ async function timed(
   }
 }
 
+/**
+ * Splits one connection result into the findings a user can act on.
+ *
+ * Reachability is the precondition; the other two are only meaningful once
+ * the request got somewhere, so they are reported as skipped rather than as
+ * passing when it did not.
+ */
+function connectionChecks(
+  health: CapabilityCheck,
+  failureCode: string | undefined,
+): CapabilityCheck[] {
+  if (health.status === 'pass') {
+    return [
+      { id: 'transport', label: 'Transport authorized', status: 'pass', detail: '', durationMs: 0 },
+      {
+        id: 'reachability',
+        label: 'Provider reachable',
+        status: 'pass',
+        detail: '',
+        durationMs: health.durationMs,
+      },
+      {
+        id: 'credentials',
+        label: 'Credentials accepted',
+        status: 'pass',
+        detail: '',
+        durationMs: 0,
+      },
+      { ...health, id: 'connection', label: 'Connection' },
+    ];
+  }
+
+  const blocked = failureCode === 'POLICY_BLOCKED';
+  const rejected = failureCode === 'AUTH_EXPIRED' || failureCode === 'PERMISSION_DENIED';
+  // A rejected credential proves the endpoint was reached: something there
+  // read the key and said no.
+  const reached = rejected;
+
+  return [
+    {
+      id: 'transport',
+      label: 'Transport authorized',
+      status: blocked ? 'fail' : 'pass',
+      detail: blocked
+        ? 'The request was refused before it left the browser. This is a policy decision, not a provider fault.'
+        : '',
+      durationMs: 0,
+    },
+    {
+      id: 'reachability',
+      label: 'Provider reachable',
+      status: blocked ? 'skipped' : reached ? 'pass' : 'fail',
+      detail: blocked
+        ? 'Not attempted: the request was not authorized to leave.'
+        : reached
+          ? ''
+          : health.detail,
+      durationMs: health.durationMs,
+    },
+    {
+      id: 'credentials',
+      label: 'Credentials accepted',
+      status: reached ? 'fail' : 'skipped',
+      detail: reached ? health.detail : 'Not reached: the endpoint did not answer.',
+      durationMs: 0,
+    },
+    { ...health, id: 'connection', label: 'Connection' },
+  ];
+}
+
 export class CapabilityDoctor {
   /** Salt for probe evidence. Probe digests stay unlinkable from task ones. */
   private readonly managementSalt = generateTaintSalt();
@@ -111,38 +192,25 @@ export class CapabilityDoctor {
       egress: managementContext(adapter.id, modelId, this.managementSalt),
     } satisfies Partial<CanonicalRequest>;
 
-    // 1. Reachability + authentication.
+    // 1. One probe, three findings: reachable, authorised to leave, accepted.
     const health = await timed(async () => {
       const result = await adapter.validateConnection();
       return result.reachable
-        ? {
-            id: 'connection',
-            label: 'Authentication and reachability',
-            status: 'pass' as const,
-            detail: '',
-          }
+        ? { id: 'connection', label: 'Connection', status: 'pass' as const, detail: '' }
         : {
             id: 'connection',
-            label: 'Authentication and reachability',
+            label: 'Connection',
             status: 'fail' as const,
             detail: result.error?.userMessage ?? 'The provider endpoint could not be reached.',
+            ...(result.error ? { code: result.error.code } : {}),
           };
     });
-    checks.push({ ...health, id: 'connection', label: 'Authentication and reachability' });
+    const failureCode = (health as { code?: string }).code;
+    checks.push(...connectionChecks(health, failureCode));
 
     if (health.status !== 'pass') {
-      return this.report(adapter.id, modelId, checks, {
-        text: false,
-        streaming: false,
-        toolCalling: false,
-        parallelToolCalling: false,
-        vision: false,
-        structuredOutput: false,
-        fileInput: false,
-        audioInput: false,
-        contextWindow: null,
-        maxOutputTokens: null,
-      });
+      // Nothing was demonstrated, so nothing is claimed.
+      return this.report(adapter.id, modelId, checks, UNKNOWN_CAPABILITIES);
     }
 
     // 2. Model availability.
@@ -169,6 +237,16 @@ export class CapabilityDoctor {
           };
     });
     checks.push({ ...modelCheck, id: 'model', label: 'Model availability' });
+    // Discoverability is a separate fact from the model existing: an endpoint
+    // that lists nothing is usable, and one that lists models without this
+    // one is not.
+    checks.push({
+      id: 'discovery',
+      label: 'Model discovery',
+      status: modelCheck.status === 'skipped' ? 'unsupported' : 'pass',
+      detail: modelCheck.status === 'skipped' ? 'This endpoint does not expose a model list.' : '',
+      durationMs: 0,
+    });
 
     if (options.quick) {
       checks.push({
@@ -347,6 +425,9 @@ export class CapabilityDoctor {
       structuredOutput: structuredCheck.status === 'pass',
       fileInput: advertised.fileInput,
       audioInput: advertised.audioInput,
+      // Demonstrated by every check above having carried one and been answered.
+      systemInstruction: advertised.systemInstruction && textCheck.status === 'pass',
+      modelListing: modelCheck.status === 'pass',
       contextWindow: advertised.contextWindow,
       maxOutputTokens: advertised.maxOutputTokens,
     };

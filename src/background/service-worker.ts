@@ -32,6 +32,8 @@ import {
   openAICompatibleFactory,
   OPENAI_COMPATIBLE_PROVIDER_ID,
 } from '@/providers/adapters/openai-compatible';
+import { anthropicFactory, ANTHROPIC_PROVIDER_ID } from '@/providers/adapters/anthropic';
+import { geminiFactory, GEMINI_PROVIDER_ID } from '@/providers/adapters/gemini';
 import { UNKNOWN_CAPABILITIES } from '@/providers/core/types';
 import { ToolRegistry } from '@/tools/registry/tool-registry';
 import { ChromeBrowserAdapter } from '@/tools/browser/chrome-adapter';
@@ -147,7 +149,13 @@ const providerTransport = createGuardedTransport({
 });
 
 const providerRegistry = new ProviderRegistry({ transport: providerTransport });
+// Every registered provider is an API provider built with the guarded
+// transport above. Web providers are foundation only and are not registered
+// here: registering one would make it selectable, and inference against an
+// authenticated web session remains closed.
 providerRegistry.register(openAICompatibleFactory);
+providerRegistry.register(anthropicFactory);
+providerRegistry.register(geminiFactory);
 const capabilityDoctor = new CapabilityDoctor();
 
 // ---------------------------------------------------------------------------
@@ -386,6 +394,13 @@ router.on('provider.list', () =>
       id: factory.id,
       displayName: factory.displayName,
       description: factory.description,
+      kind: factory.kind,
+      authKind: factory.authKind,
+      baseUrlRequired: factory.baseUrl.required,
+      ...(factory.baseUrl.defaultUrl === undefined
+        ? {}
+        : { defaultBaseUrl: factory.baseUrl.defaultUrl }),
+      operations: factory.operations,
     })),
   }),
 );
@@ -621,4 +636,4 @@ void startup().catch((error: unknown) => {
   });
 });
 
-export { OPENAI_COMPATIBLE_PROVIDER_ID };
+export { OPENAI_COMPATIBLE_PROVIDER_ID, ANTHROPIC_PROVIDER_ID, GEMINI_PROVIDER_ID };

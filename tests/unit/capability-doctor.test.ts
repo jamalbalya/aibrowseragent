@@ -6,6 +6,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { CapabilityDoctor } from '@/providers/capability-doctor/capability-doctor';
+import type { CapabilityReport } from '@/providers/capability-doctor/capability-doctor';
+import { createError, type ErrorCode } from '@/types/result';
 import type {
   AIProviderAdapter,
   AuthResult,
@@ -20,6 +22,8 @@ import { FULL_CAPABILITIES } from '../fixtures/fake-provider';
 
 interface StubOptions {
   reachable?: boolean;
+  /** The failure code the health probe reports, which the doctor classifies. */
+  errorCode?: ErrorCode;
   models?: string[];
   text?: string;
   emitToolCall?: boolean;
@@ -28,6 +32,11 @@ interface StubOptions {
   supportsStream?: boolean;
   streamFails?: boolean;
   structuredOutput?: string;
+}
+
+/** The status of one check, by id. */
+function byId(report: CapabilityReport, id: string): string | undefined {
+  return report.checks.find((check) => check.id === id)?.status;
 }
 
 function stub(options: StubOptions = {}): AIProviderAdapter {
@@ -45,7 +54,15 @@ function stub(options: StubOptions = {}): AIProviderAdapter {
     getCapabilities: (): Promise<ModelCapabilities> => Promise.resolve(capabilities),
     validateConnection: (): Promise<HealthResult> =>
       Promise.resolve(
-        options.reachable === false ? { reachable: false } : { reachable: true, latencyMs: 1 },
+        options.reachable === false
+          ? {
+              reachable: false,
+              error: createError(
+                options.errorCode ?? 'NETWORK_ERROR',
+                'The probe did not succeed.',
+              ),
+            }
+          : { reachable: true, latencyMs: 1 },
       ),
     generate: (request: CanonicalRequest): Promise<CanonicalResponse> => {
       const wantsTool = (request.tools?.length ?? 0) > 0;
@@ -143,7 +160,55 @@ describe('readiness verdict', () => {
     // Nothing downstream may be claimed once the connection check failed.
     expect(report.capabilities.toolCalling).toBe(false);
     expect(report.capabilities.text).toBe(false);
-    expect(report.checks).toHaveLength(1);
+    // Only the connection findings; no behavioural check was attempted.
+    expect(report.checks.map((c) => c.id)).toEqual([
+      'transport',
+      'reachability',
+      'credentials',
+      'connection',
+    ]);
+  });
+
+  it('separates "could not reach" from "key rejected" from "not authorized"', async () => {
+    // One probe, three findings, because the fix for each is different.
+    const unreachable = await doctor.run(stub({ reachable: false }), 'test-model');
+    expect(byId(unreachable, 'reachability')).toBe('fail');
+    expect(byId(unreachable, 'credentials')).toBe('skipped');
+    expect(byId(unreachable, 'transport')).toBe('pass');
+
+    const rejected = await doctor.run(
+      stub({ reachable: false, errorCode: 'AUTH_EXPIRED' }),
+      'test-model',
+    );
+    // A rejected key proves something there read it and said no.
+    expect(byId(rejected, 'reachability')).toBe('pass');
+    expect(byId(rejected, 'credentials')).toBe('fail');
+
+    const blocked = await doctor.run(
+      stub({ reachable: false, errorCode: 'POLICY_BLOCKED' }),
+      'test-model',
+    );
+    expect(byId(blocked, 'transport')).toBe('fail');
+    // Nothing was learned about the provider, so nothing is claimed about it.
+    expect(byId(blocked, 'reachability')).toBe('skipped');
+    expect(byId(blocked, 'credentials')).toBe('skipped');
+  });
+
+  it('reports model discovery separately from the model existing', async () => {
+    const listed = await doctor.run(stub({ emitToolCall: true }), 'test-model');
+    expect(byId(listed, 'discovery')).toBe('pass');
+
+    const unlisted = await doctor.run(stub({ emitToolCall: true, models: [] }), 'test-model');
+    expect(byId(unlisted, 'discovery')).toBe('unsupported');
+    expect(byId(unlisted, 'model')).toBe('skipped');
+  });
+
+  it('never puts credential material in a report', async () => {
+    const report = await doctor.run(
+      stub({ reachable: false, errorCode: 'AUTH_EXPIRED' }),
+      'test-model',
+    );
+    expect(JSON.stringify(report)).not.toContain('sk-');
   });
 
   it('reports FAILED when the model produces no text at all', async () => {

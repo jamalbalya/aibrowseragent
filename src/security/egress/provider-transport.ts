@@ -63,6 +63,17 @@ export interface ProviderTransport {
 }
 
 export class EgressDeniedError extends Error {
+  /**
+   * Marks this as a refusal by the transport rather than a network failure.
+   *
+   * A plain field rather than `instanceof`, because adapters may be bundled
+   * separately and a duplicated class identity would make the check fail for
+   * a refusal that is perfectly real — at which point the adapter would
+   * report a policy decision as a retryable network error and the runtime
+   * would try again against a gate that will never say yes.
+   */
+  readonly transportRefusal = true;
+
   constructor(
     readonly decision: EgressDecision,
     message: string,
@@ -70,6 +81,31 @@ export class EgressDeniedError extends Error {
     super(message);
     this.name = 'EgressDeniedError';
   }
+}
+
+/**
+ * Thrown when an adapter has no authorised way to reach the network at all.
+ *
+ * Distinct from a denial: nothing was decided, because there was nothing to
+ * decide with. It carries the same marker so it is classified as blocked
+ * rather than retried.
+ */
+export class TransportUnavailableError extends Error {
+  readonly transportRefusal = true;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'TransportUnavailableError';
+  }
+}
+
+/** Structural check for either refusal, safe across bundle boundaries. */
+export function isTransportRefusal(error: unknown): error is Error {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { transportRefusal?: unknown }).transportRefusal === true
+  );
 }
 
 export interface GuardedTransportOptions {
@@ -143,6 +179,24 @@ export function createGuardedTransport(options: GuardedTransportOptions): Provid
 }
 
 /**
+ * Pseudo-task id for a provider probe.
+ *
+ * Scoped to the provider and model rather than shared. The gate pins a task
+ * to one provider destination, and a single shared id made that pin span
+ * every provider at once: whichever one probed first became the only one that
+ * could ever probe, so connecting a second provider failed its capability
+ * check with a policy refusal.
+ *
+ * Nothing is given up by separating them. The pin protects a task's data from
+ * reaching a second destination, and a probe has no task behind it and a
+ * fixed body with nothing in it — there is no provenance for the pin to
+ * protect here. Every other check still runs on every probe.
+ */
+export function managementTaskId(providerId: string, modelId: string): string {
+  return `provider-management:${providerId}:${modelId}`;
+}
+
+/**
  * Context for a provider probe.
  *
  * Probes send a fixed body — a GET, or the literal `ping` — so no task data
@@ -155,7 +209,7 @@ export function managementContext(
   salt: string,
 ): EgressContext {
   return {
-    taskId: 'provider-management',
+    taskId: managementTaskId(providerId, modelId),
     taintState: { kind: 'KNOWN_UNTAINTED' },
     taintSalt: salt,
     saltEpoch: 1,
@@ -177,7 +231,7 @@ export function refusingTransport(): ProviderTransport {
   return {
     request(): Promise<Response> {
       return Promise.reject(
-        new Error(
+        new TransportUnavailableError(
           'This provider was constructed without a guarded transport, so it has no ' +
             'authorised way to reach the network. Create it through the provider registry.',
         ),

@@ -38,7 +38,29 @@ export function decideRetry(
   policy: RetryPolicy = DEFAULT_RETRY_POLICY,
   random: () => number = Math.random,
 ): RetryDecision {
-  if (!isRetryableCode(code)) {
+  return decideRetryFor({ code, retryable: isRetryableCode(code) }, attempt, policy, random);
+}
+
+/**
+ * Retry decision for a failure that has already been classified.
+ *
+ * Two provider failures can share a code and differ on whether waiting will
+ * help: a 503 and a reply that did not parse both surface as `MODEL_ERROR`,
+ * and only the first is worth another attempt. The code alone cannot separate
+ * them, so a caller that has a classification passes it and it is honoured.
+ *
+ * This is the join between provider-specific error mapping and the one retry
+ * policy: an adapter normalises its failure into a category, the category
+ * decides `retryable`, and the backoff below is unchanged for everyone.
+ */
+export function decideRetryFor(
+  classification: { readonly code: ErrorCode; readonly retryable: boolean },
+  attempt: number,
+  policy: RetryPolicy = DEFAULT_RETRY_POLICY,
+  random: () => number = Math.random,
+): RetryDecision {
+  const { code } = classification;
+  if (!classification.retryable) {
     return { shouldRetry: false, delayMs: 0, reason: `${code} is not a transient failure.` };
   }
   if (attempt >= policy.maxAttempts) {

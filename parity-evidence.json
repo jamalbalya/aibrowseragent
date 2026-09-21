@@ -155,7 +155,18 @@
       "e2e": ["tests/e2e/mv3-lifecycle.spec.ts"]
     },
     "P-033": {
-      "unit": ["tests/unit/openai-compatible.test.ts", "tests/unit/provider-registry.test.ts"]
+      "unit": [
+        "tests/unit/openai-compatible.test.ts",
+        "tests/unit/anthropic.test.ts",
+        "tests/unit/gemini.test.ts",
+        "tests/unit/provider-registry.test.ts"
+      ],
+      "integration": ["tests/integration/provider-switching.test.ts"],
+      "security": [
+        "tests/security/provider-conformance.test.ts",
+        "tests/security/provider-transport.test.ts"
+      ],
+      "e2e": ["tests/e2e/provider-switching.spec.ts"]
     },
     "P-034": {
       "unit": ["tests/unit/tool-registry.test.ts"],
@@ -165,7 +176,7 @@
     },
     "P-035": {
       "unit": ["tests/unit/capability-doctor.test.ts"],
-      "e2e": ["tests/e2e/provider-integration.spec.ts"]
+      "e2e": ["tests/e2e/provider-integration.spec.ts", "tests/e2e/provider-switching.spec.ts"]
     },
     "P-036": {
       "unit": ["tests/unit/budget-retry.test.ts"],

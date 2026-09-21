@@ -111,6 +111,17 @@ export interface ModelCapabilities {
   readonly structuredOutput: boolean;
   readonly fileInput: boolean;
   readonly audioInput: boolean;
+  /**
+   * Whether the provider accepts a system instruction as a first-class field.
+   *
+   * Separate from `text` because the three API families place it in three
+   * different positions, and a provider that has no such field would need the
+   * instruction folded into the conversation — a downgrade the caller has to
+   * be told about rather than one the adapter performs quietly.
+   */
+  readonly systemInstruction: boolean;
+  /** Whether the endpoint exposes a model list to discover from. */
+  readonly modelListing: boolean;
   /** Maximum input tokens, or null when the provider does not report one. */
   readonly contextWindow: number | null;
   readonly maxOutputTokens: number | null;
@@ -125,6 +136,8 @@ export const UNKNOWN_CAPABILITIES: ModelCapabilities = {
   structuredOutput: false,
   fileInput: false,
   audioInput: false,
+  systemInstruction: false,
+  modelListing: false,
   contextWindow: null,
   maxOutputTokens: null,
 };
@@ -192,6 +205,36 @@ export interface AIProviderAdapter {
   stream?(request: CanonicalRequest): AsyncIterable<CanonicalEvent>;
 }
 
+/**
+ * Operations an adapter genuinely implements.
+ *
+ * Declared per factory so the registry can answer "can this provider stream?"
+ * without constructing an adapter and probing it, and so that a provider that
+ * omits one is visibly missing it rather than failing at the call site.
+ */
+export const PROVIDER_OPERATIONS = [
+  'generate',
+  'stream',
+  'listModels',
+  'validateConnection',
+  'toolCalling',
+  'vision',
+] as const;
+
+export type ProviderOperation = (typeof PROVIDER_OPERATIONS)[number];
+
+/** How an endpoint is addressed. */
+export interface BaseUrlRequirement {
+  /**
+   * Whether the user must supply one.
+   *
+   * False for a provider with a single documented endpoint; true for one
+   * whose whole purpose is to point somewhere the user chooses.
+   */
+  readonly required: boolean;
+  readonly defaultUrl?: string;
+}
+
 /** Factory registered with the provider registry. */
 export interface ProviderFactory {
   readonly id: string;
@@ -206,6 +249,24 @@ export interface ProviderFactory {
   readonly kind: ProviderKind;
   readonly authKind: AuthKind;
   readonly description: string;
+  readonly baseUrl: BaseUrlRequirement;
+  readonly operations: readonly ProviderOperation[];
+  /**
+   * Capabilities the adapter implements, before any particular model.
+   *
+   * A floor, not a promise about a model: `getCapabilities` narrows this per
+   * model and the capability doctor verifies what is left. A capability that
+   * is false here is one the adapter has no code for at all.
+   */
+  readonly baselineCapabilities: ModelCapabilities;
+  /**
+   * Whether the adapter must be built with a guarded transport.
+   *
+   * Always true, and stated rather than assumed: a future entry that set it
+   * to false would have to say so in the registry, where it is reviewable,
+   * instead of quietly constructing its own way out.
+   */
+  readonly requiresGuardedTransport: true;
   /**
    * Builds an adapter.
    *

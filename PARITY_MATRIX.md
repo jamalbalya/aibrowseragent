@@ -98,8 +98,8 @@ capability, not necessarily a test of the capability itself.
 
 | Status          | Count  |
 | --------------- | ------ |
-| PASS            | 27     |
-| PARTIAL         | 3      |
+| PASS            | 28     |
+| PARTIAL         | 2      |
 | INTERFACES-ONLY | 1      |
 | NOT-STARTED     | 9      |
 | **Total**       | **40** |
@@ -110,8 +110,12 @@ separate classes of error have actually occurred here: a revision that claimed
 17 PASS while its own table said 23, and a revision whose per-column coverage
 claims were not backed by any test. The check now covers both.
 
-Movement in this revision: PASS went from 25 to 27 and PARTIAL from 5 to 3, on
-evidence rather than on reassessment of the same evidence.
+Movement in this revision: PASS went from 27 to 28 and PARTIAL from 3 to 2, on
+evidence rather than on reassessment of the same evidence. The one row that
+moved is provider switching (P-033), explained below; audit trail (P-038)
+stays PARTIAL with a sharper statement of what is missing.
+
+### Earlier movement, kept for the record
 
 Notifications (P-019) was PARTIAL for one stated reason — `chrome.notifications`
 was called inline in the service worker, so nothing could test it. It now sits
@@ -131,9 +135,20 @@ enforced against an injected clock, because a test that slept would be slower,
 flakier and prove less. The capability name below is the specification's
 (§83); the evidence is what this paragraph says it is.
 
-Provider switching (P-033) stays PARTIAL, but its central claim is no longer
-unverified — see below. Audit trail (P-038) stays PARTIAL with a sharper
-statement of what is missing.
+### P-033 Provider switching — what PASS means here
+
+Three adapters ship and all three pass one shared conformance suite; switching between them is
+exercised in integration and, in real Chromium, against local servers speaking
+the Anthropic, Gemini and Chat Completions protocols. Every ordered pair is
+tested, and each switch is shown to carry nothing with it: the egress
+consent pin binds a canonical provider destination and a model, so changing
+either invalidates the authorization rather than inheriting it, and the
+refusal is reported as blocked — never as a retryable network fault.
+What has **not** happened is a request to a commercial provider: no
+project-owned credentials are configured in this environment, so live provider
+E2E is blocked externally. The row is PASS on the capability as specified —
+switch provider, keep the agent body — and that limitation is stated here
+rather than folded into the verdict.
 
 ---
 
@@ -173,7 +188,7 @@ statement of what is missing.
 | P-030 | Prompt injection defence             | yes        | yes  | yes         | yes      | yes | PASS            |
 | P-031 | Session persistence                  | yes        | yes  | yes         | —        | yes | PASS            |
 | P-032 | Task resume                          | yes        | yes  | yes         | —        | yes | PASS            |
-| P-033 | Provider switching                   | yes        | yes  | —           | —        | —   | PARTIAL         |
+| P-033 | Provider switching                   | yes        | yes  | yes         | yes      | yes | PASS            |
 | P-034 | Tool calling                         | yes        | yes  | yes         | yes      | yes | PASS            |
 | P-035 | Capability doctor                    | yes        | yes  | —           | —        | yes | PASS            |
 | P-036 | Error recovery                       | yes        | yes  | yes         | —        | yes | PASS            |
@@ -190,20 +205,6 @@ statement of what is missing.
 select-by-label and form submission all work and are tested. Checkbox and radio
 are reported in the page model but have no dedicated tool; the model must click
 them, which works but is less direct. File inputs are not handled at all.
-
-**P-033 Provider switching** — The architecture supports it and the registry
-enforces explicit switching with no silent fallback, now verified against two
-registered providers: activation follows a successful connection, a failed
-connection leaves the working provider active, and an unregistered target
-throws rather than redirecting. PARTIAL because only one _real_ adapter
-ships, so switching between two production providers has still never run.
-The requirement is stated further down this file, under "Before claiming
-parity": _at least three provider adapters passing the same suite, proving
-P-033 rather than asserting it_. One adapter exists, so the gap is two
-adapters and a shared suite — not a missing test. The
-guarantee that switching preserves tools, policy and task state holds by
-construction — none of those modules reference the provider — but it is not
-demonstrated.
 
 **P-038 Audit trail** — Permission decisions are recorded with task, tool,
 site, risk, decision, reason and timestamp, capped at 500 entries, and an
@@ -250,8 +251,12 @@ minimum:
 
 1. Playwright E2E coverage, so no row reads `E2E: no`.
 2. The nine NOT-STARTED capability groups implemented and tested.
-3. At least three provider adapters passing the same suite, proving P-033
-   rather than asserting it.
+3. ~~At least three provider adapters passing the same suite, proving P-033
+   rather than asserting it.~~ **Done.** Three adapters —
+   `openai-compatible`, `anthropic`, `gemini` — pass one 21-case conformance
+   suite, and switching between them runs in real Chromium against servers
+   speaking each provider's real protocol. Live commercial endpoints remain
+   unexercised (see P-033 below).
 4. The acceptance tests from specification §85–89 executed and recorded.
 
 Progress against this list belongs in this file, updated in the same commit as

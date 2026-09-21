@@ -32,6 +32,7 @@ import type {
   PanelResponse,
 } from '../../../src/messaging/protocol';
 import { startMockProvider, type MockProvider } from './mock-provider';
+import { startNativeProviders, type NativeProviders } from './native-providers';
 import { startTestSite, type TestSite } from './test-site';
 import { startCollector, type Collector } from './collector';
 
@@ -77,6 +78,8 @@ export interface ExtensionFixtures {
   panel: Page;
   send: SendToWorker;
   provider: MockProvider;
+  /** One server speaking the Anthropic and Gemini wire protocols. */
+  nativeProviders: NativeProviders;
   site: TestSite;
   /** A second origin that records what actually reaches it. */
   collector: Collector;
@@ -177,6 +180,12 @@ export const test = base.extend<ExtensionFixtures>({
     const mock = await startMockProvider();
     await use(mock);
     await mock.close();
+  },
+
+  nativeProviders: async ({}, use) => {
+    const servers = await startNativeProviders();
+    await use(servers);
+    await servers.close();
   },
 
   site: async ({ collector }, use) => {

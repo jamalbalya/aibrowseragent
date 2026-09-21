@@ -14,6 +14,8 @@ interface ProviderOption {
   readonly id: string;
   readonly displayName: string;
   readonly description: string;
+  readonly baseUrlRequired: boolean;
+  readonly defaultBaseUrl?: string;
 }
 
 /**
@@ -31,7 +33,10 @@ export function SettingsView({
 }: SettingsViewProps): React.JSX.Element {
   const [providers, setProviders] = useState<readonly ProviderOption[]>([]);
   const [providerId, setProviderId] = useState('');
-  const [baseUrl, setBaseUrl] = useState('https://api.openai.com/v1');
+  // Empty until a provider is chosen. A provider with its own documented
+  // endpoint does not need one, and pre-filling another provider's URL would
+  // invite sending a key somewhere it does not belong.
+  const [baseUrlOverride, setBaseUrlOverride] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState('');
   // The model field defaults to whatever the stored connection uses, and
   // switches to the user's choice once they pick one. Deriving it avoids an
@@ -44,6 +49,8 @@ export function SettingsView({
   const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
 
   const model = modelOverride ?? connection?.modelId ?? '';
+  const provider = providers.find((p) => p.id === providerId);
+  const baseUrl = baseUrlOverride ?? provider?.defaultBaseUrl ?? '';
 
   useEffect(() => {
     void (async () => {
@@ -67,7 +74,9 @@ export function SettingsView({
     try {
       const result = await sendToBackground('provider.connect', {
         providerId,
-        baseUrl,
+        // Omitted rather than sent empty, so the adapter applies its own
+        // documented default instead of being handed a blank endpoint.
+        ...(baseUrl.trim().length === 0 ? {} : { baseUrl }),
         apiKey,
         model,
       });
@@ -140,8 +149,6 @@ export function SettingsView({
     }
   }, []);
 
-  const selected = providers.find((p) => p.id === providerId);
-
   return (
     <div className="settings">
       <div className="settings__header">
@@ -156,7 +163,16 @@ export function SettingsView({
 
         <label className="field">
           <span>Provider</span>
-          <select value={providerId} onChange={(event) => setProviderId(event.target.value)}>
+          <select
+            value={providerId}
+            onChange={(event) => {
+              setProviderId(event.target.value);
+              // A URL typed for one provider must not be carried to the next:
+              // the API key goes wherever this field points.
+              setBaseUrlOverride(null);
+              setModels([]);
+            }}
+          >
             {providers.map((provider) => (
               <option key={provider.id} value={provider.id}>
                 {provider.displayName}
@@ -164,17 +180,22 @@ export function SettingsView({
             ))}
           </select>
         </label>
-        {selected ? <p className="field__hint">{selected.description}</p> : null}
+        {provider ? <p className="field__hint">{provider.description}</p> : null}
 
         <label className="field">
-          <span>Base URL</span>
+          <span>{provider?.baseUrlRequired === false ? 'Base URL (optional)' : 'Base URL'}</span>
           <input
             type="url"
             value={baseUrl}
-            onChange={(event) => setBaseUrl(event.target.value)}
-            placeholder="https://api.openai.com/v1"
+            onChange={(event) => setBaseUrlOverride(event.target.value)}
+            placeholder={provider?.defaultBaseUrl ?? 'https://api.openai.com/v1'}
           />
         </label>
+        {provider?.baseUrlRequired === false ? (
+          <p className="field__hint">
+            Leave this as it is unless you route this provider through your own gateway.
+          </p>
+        ) : null}
 
         <label className="field">
           <span>API key</span>

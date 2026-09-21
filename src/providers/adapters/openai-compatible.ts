@@ -15,13 +15,22 @@
  *    authority on what the endpoint can actually do.
  */
 import { getLogger } from '@/logging/logger';
-import { createError, type AgentError } from '@/types/result';
-import { delayFromRetryAfter } from '@/agent/recovery/retry-policy';
-import { ProviderRequestError } from '@/providers/core/provider-error';
+import { createError } from '@/types/result';
+import { providerFailure, type ProviderFailure } from '@/providers/core/provider-error';
+import {
+  categoryForStatus,
+  parseJsonBody,
+  readErrorBody,
+  readServerSentEvents,
+  requireEgress,
+  retryAfterMs,
+  toNetworkError,
+  toThrowable,
+} from '@/providers/core/provider-http';
+import { checkCapabilities } from '@/providers/core/capability-guard';
 import {
   managementContext,
   refusingTransport,
-  type EgressContext,
   type ProviderTransport,
 } from '@/security/egress/provider-transport';
 import { generateTaintSalt } from '@/tasks/task-model';
@@ -42,20 +51,6 @@ import type {
 } from '@/providers/core/types';
 
 const log = getLogger('provider');
-
-/**
- * Pulls the security context off a request, refusing when it is absent.
- *
- * A request with no context cannot be authorised, and guessing one — or
- * treating "no context" as "nothing sensitive" — is the fail-open this whole
- * mechanism exists to remove.
- */
-function requireEgress(request: CanonicalRequest): EgressContext {
-  if (!request.egress) {
-    throw new Error('This provider request carries no egress context, so it cannot be authorised.');
-  }
-  return request.egress;
-}
 
 export const OPENAI_COMPATIBLE_PROVIDER_ID = 'openai-compatible';
 
@@ -234,18 +229,7 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
    * this particular endpoint honours them.
    */
   getCapabilities(model: string): Promise<ModelCapabilities> {
-    return Promise.resolve({
-      text: true,
-      streaming: true,
-      toolCalling: true,
-      parallelToolCalling: true,
-      vision: looksVisionCapable(model),
-      structuredOutput: true,
-      fileInput: false,
-      audioInput: false,
-      contextWindow: null,
-      maxOutputTokens: null,
-    });
+    return Promise.resolve(capabilitiesFor(model));
   }
 
   async validateConnection(): Promise<HealthResult> {
@@ -269,16 +253,21 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
         managementContext(OPENAI_COMPATIBLE_PROVIDER_ID, config.model ?? '', this.managementSalt),
       );
       if (!response.ok) {
-        return { reachable: false, error: await toHttpError(response) };
+        return { reachable: false, error: (await toHttpFailure(response)).error };
       }
       return { reachable: true, latencyMs: Date.now() - started };
     } catch (error) {
-      return { reachable: false, error: toNetworkError(error) };
+      return {
+        reachable: false,
+        error: toNetworkError(OPENAI_COMPATIBLE_PROVIDER_ID, error, '/chat/completions').error,
+      };
     }
   }
 
   async generate(request: CanonicalRequest): Promise<CanonicalResponse> {
     const config = this.require();
+    const unsupported = this.unsupported(request, false);
+    if (unsupported) throw toThrowable(unsupported);
     const body = this.buildBody(request, false);
 
     let response: Response;
@@ -294,19 +283,24 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
         requireEgress(request),
       );
     } catch (error) {
-      throw toThrowable(toNetworkError(error));
+      throw toThrowable(toNetworkError(OPENAI_COMPATIBLE_PROVIDER_ID, error, '/chat/completions'));
     }
 
     if (!response.ok) {
-      throw toThrowable(await toHttpError(response));
+      throw toThrowable(await toHttpFailure(response));
     }
 
-    const completion = (await response.json()) as WireCompletion;
+    const completion = await parseJsonBody<WireCompletion>(OPENAI_COMPATIBLE_PROVIDER_ID, response);
     return parseCompletion(completion);
   }
 
   async *stream(request: CanonicalRequest): AsyncIterable<CanonicalEvent> {
     const config = this.require();
+    const unsupported = this.unsupported(request, true);
+    if (unsupported) {
+      yield { type: 'error', error: unsupported.error };
+      return;
+    }
     const body = this.buildBody(request, true);
 
     let response: Response;
@@ -322,12 +316,15 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
         requireEgress(request),
       );
     } catch (error) {
-      yield { type: 'error', error: toNetworkError(error) };
+      yield {
+        type: 'error',
+        error: toNetworkError(OPENAI_COMPATIBLE_PROVIDER_ID, error, '/chat/completions').error,
+      };
       return;
     }
 
     if (!response.ok) {
-      yield { type: 'error', error: await toHttpError(response) };
+      yield { type: 'error', error: (await toHttpFailure(response)).error };
       return;
     }
     if (!response.body) {
@@ -375,6 +372,23 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
     yield { type: 'done', response: final };
   }
 
+  /**
+   * Refuses a capability this model does not have, rather than dropping it.
+   *
+   * Checked before the body is built, so an unsupported feature can never be
+   * lost between the canonical request and the wire request.
+   */
+  private unsupported(request: CanonicalRequest, streaming: boolean): ProviderFailure | null {
+    const model = this.require().model ?? '';
+    return checkCapabilities(
+      OPENAI_COMPATIBLE_PROVIDER_ID,
+      model,
+      request,
+      capabilitiesFor(model),
+      streaming,
+    );
+  }
+
   private buildBody(request: CanonicalRequest, stream: boolean): Record<string, unknown> {
     const config = this.require();
     const messages: Record<string, unknown>[] = [
@@ -403,6 +417,32 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
     }
     return body;
   }
+}
+
+/**
+ * Advertised capabilities for a model on this endpoint.
+ *
+ * Streaming, tool calling and a system message are part of the Chat
+ * Completions contract, so they are advertised as available; the capability
+ * doctor verifies whether this particular endpoint honours them. Model
+ * listing is advertised because `/models` is part of the same contract, even
+ * though many compatible servers omit it.
+ */
+function capabilitiesFor(model: string): ModelCapabilities {
+  return {
+    text: true,
+    streaming: true,
+    toolCalling: true,
+    parallelToolCalling: true,
+    vision: looksVisionCapable(model),
+    structuredOutput: true,
+    fileInput: false,
+    audioInput: false,
+    systemInstruction: true,
+    modelListing: true,
+    contextWindow: null,
+    maxOutputTokens: null,
+  };
 }
 
 function looksVisionCapable(model: string): boolean {
@@ -602,119 +642,48 @@ class StreamAccumulator {
   }
 }
 
-/** Yields the `data:` payload of each SSE frame. */
-export async function* readServerSentEvents(
-  body: ReadableStream<Uint8Array>,
-): AsyncGenerator<string> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
+/**
+ * Normalises an HTTP failure from a Chat Completions endpoint.
+ *
+ * 401 and 403 are separated: a rejected key and a key that is valid but not
+ * entitled are different problems with different fixes, and reporting both as
+ * "the key was rejected" sends the user to change something that was correct.
+ */
+async function toHttpFailure(response: Response): Promise<ProviderFailure> {
+  const detail = await readErrorBody(response);
+  const category = categoryForStatus(response.status);
+  const retry = retryAfterMs(response);
 
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+  const userMessage =
+    category === 'authentication_failed'
+      ? 'The API key was rejected. Check the key and that it is still active.'
+      : category === 'access_denied'
+        ? 'The key was accepted but is not permitted to use this endpoint or model.'
+        : category === 'unsupported_capability'
+          ? 'The endpoint or model name was not found. Check the base URL and model id.'
+          : category === 'rate_limited'
+            ? retry === undefined
+              ? 'The provider is rate limiting requests. Try again shortly.'
+              : `The provider is rate limiting requests. Retry in about ${Math.ceil(retry / 1000)}s.`
+            : category === 'transient_provider_failure'
+              ? 'The provider reported a server error. This is usually temporary.'
+              : 'The provider rejected the request.';
 
-      // Frames are separated by a blank line; \r\n is tolerated.
-      let separator = findFrameEnd(buffer);
-      while (separator !== -1) {
-        const frame = buffer.slice(0, separator.index);
-        buffer = buffer.slice(separator.index + separator.length);
-        const payload = extractData(frame);
-        if (payload !== null) yield payload;
-        separator = findFrameEnd(buffer);
-      }
-    }
-    const trailing = extractData(buffer);
-    if (trailing !== null) yield trailing;
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-function findFrameEnd(buffer: string): { index: number; length: number } | -1 {
-  const lf = buffer.indexOf('\n\n');
-  const crlf = buffer.indexOf('\r\n\r\n');
-  if (lf === -1 && crlf === -1) return -1;
-  if (crlf !== -1 && (lf === -1 || crlf < lf)) return { index: crlf, length: 4 };
-  return { index: lf, length: 2 };
-}
-
-function extractData(frame: string): string | null {
-  const lines = frame.split(/\r?\n/);
-  const data = lines
-    .filter((line) => line.startsWith('data:'))
-    .map((line) => line.slice(5).trimStart())
-    .join('\n');
-  return data.length > 0 ? data : null;
-}
-
-async function toHttpError(response: Response): Promise<AgentError> {
-  let detail = '';
-  try {
-    detail = (await response.text()).slice(0, 500);
-  } catch {
-    detail = '';
-  }
-
-  if (response.status === 401 || response.status === 403) {
-    return createError('AUTH_EXPIRED', `Provider rejected the credentials (${response.status}).`, {
-      userMessage: 'The API key was rejected. Check the key and its permissions.',
+  return providerFailure(
+    OPENAI_COMPATIBLE_PROVIDER_ID,
+    category,
+    `The provider returned ${response.status}.`,
+    {
+      httpStatus: response.status,
+      ...(retry === undefined ? {} : { retryAfterMs: retry }),
+      userMessage,
       technicalDetails: detail,
-    });
-  }
-  if (response.status === 404) {
-    return createError('MODEL_UNSUPPORTED', 'The endpoint or model was not found (404).', {
-      userMessage: 'The endpoint or model name was not found. Check the base URL and model id.',
-      technicalDetails: detail,
-    });
-  }
-  if (response.status === 429) {
-    const retryAfter = delayFromRetryAfter(response.headers.get('retry-after'));
-    return createError('RATE_LIMITED', 'The provider rate limited this request.', {
-      userMessage:
-        retryAfter === null
-          ? 'The provider is rate limiting requests. Try again shortly.'
-          : `The provider is rate limiting requests. Retry in about ${Math.ceil(retryAfter / 1000)}s.`,
-      technicalDetails: detail,
-    });
-  }
-  if (response.status >= 500) {
-    return createError('MODEL_ERROR', `The provider returned ${response.status}.`, {
-      userMessage: 'The provider reported a server error. This is usually temporary.',
-      retryable: true,
-      technicalDetails: detail,
-    });
-  }
-  return createError('MODEL_ERROR', `The provider returned ${response.status}.`, {
-    userMessage: 'The provider rejected the request.',
-    technicalDetails: detail,
-  });
-}
-
-function toNetworkError(error: unknown): AgentError {
-  if (error instanceof DOMException && error.name === 'AbortError') {
-    return createError('USER_CANCELLED', 'The request was cancelled.', {
-      userMessage: 'The request was cancelled.',
-    });
-  }
-  if (error instanceof DOMException && error.name === 'TimeoutError') {
-    return createError('NETWORK_ERROR', 'The request to the provider timed out.', {
-      userMessage: 'The provider did not respond in time.',
-    });
-  }
-  return createError('NETWORK_ERROR', 'Could not reach the provider.', {
-    userMessage: 'Could not reach the provider. Check the base URL and your network connection.',
-    technicalDetails: error instanceof Error ? error.message : String(error),
-  });
-}
-
-function toThrowable(error: AgentError): ProviderRequestError {
-  return new ProviderRequestError(error);
+    },
+  );
 }
 
 export { ProviderRequestError } from '@/providers/core/provider-error';
+export { readServerSentEvents } from '@/providers/core/provider-http';
 
 export const openAICompatibleFactory: ProviderFactory = {
   id: OPENAI_COMPATIBLE_PROVIDER_ID,
@@ -724,5 +693,10 @@ export const openAICompatibleFactory: ProviderFactory = {
   description:
     'Any endpoint implementing the OpenAI Chat Completions API: OpenAI, a self-hosted model ' +
     'server, or a compatible gateway. Supply the base URL, API key and model id.',
+  // The only provider with no default: pointing it somewhere is the point.
+  baseUrl: { required: true },
+  operations: ['generate', 'stream', 'listModels', 'validateConnection', 'toolCalling', 'vision'],
+  baselineCapabilities: capabilitiesFor(''),
+  requiresGuardedTransport: true,
   create: (transport) => new OpenAICompatibleAdapter(transport),
 };

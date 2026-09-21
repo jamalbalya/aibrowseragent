@@ -23,6 +23,7 @@ import type {
   ProviderFactory,
   HealthResult,
 } from '@/providers/core/types';
+import { UNKNOWN_CAPABILITIES } from '@/providers/core/types';
 
 class StubAdapter implements AIProviderAdapter {
   readonly kind = 'api' as const;
@@ -84,6 +85,10 @@ function factoryFor(id: string): ProviderFactory & { adapter: StubAdapter } {
     kind: 'api' as const,
     authKind: 'api_key',
     description: `Stub provider ${id}`,
+    baseUrl: { required: true },
+    operations: ['generate', 'validateConnection'],
+    baselineCapabilities: UNKNOWN_CAPABILITIES,
+    requiresGuardedTransport: true,
     create: () => adapter,
     adapter,
   };

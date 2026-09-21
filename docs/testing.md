@@ -79,7 +79,9 @@ claim of exhaustiveness is made anywhere in this repository.
 | `storage.test.ts`            | 50 concurrent read-modify-writes all land; namespaces are isolated; a rejected transaction does not poison the key                                                                                                                             |
 | `loop-detection.test.ts`     | Repeated failure, identical repetition and cycles are caught — and normal `read → act → read` progress is **not**                                                                                                                              |
 | `budget-retry.test.ts`       | Every budget dimension fires; only transient codes retry; jitter is applied                                                                                                                                                                    |
-| `openai-compatible.test.ts`  | Wire translation both ways; every HTTP status maps to a canonical code; SSE frames split across chunk boundaries reassemble                                                                                                                    |
+| `openai-compatible.test.ts`  | Wire translation both ways; every HTTP status maps to a canonical category; SSE frames split across chunk boundaries reassemble                                                                                                                |
+| `anthropic.test.ts`          | The system prompt lands in the top-level field and never as a message; a tool result is a block in a **user** turn; `input_json_delta` fragments reassemble; a mid-stream error ends the stream rather than reporting a completed turn         |
+| `gemini.test.ts`             | The key travels in a header and never in a URL, though this provider documents a `key=` parameter; tool call ids are synthesised because the provider has none; capability discovery reads the endpoint and falls back conservatively          |
 | `capability-doctor.test.ts`  | AGENT_READY is reported only when tool calling actually worked; quick mode refuses to claim it at all                                                                                                                                          |
 | `semantic-tree.test.ts`      | Roles and accessible names follow the accname precedence; password values never enter the page model; truncation is reported honestly                                                                                                          |
 | `interaction-engine.test.ts` | Framework-controlled inputs receive the change; stale handles are refused with a reason; clicks survive a missing `PointerEvent`                                                                                                               |
@@ -105,10 +107,10 @@ behave.
 
 The distinction is used strictly throughout this repository:
 
-| Term                  | Meaning                                                                                                                                                                 | Status here                                                                                  |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| **Mock provider E2E** | A local, deterministic server implementing the Chat Completions protocol. Exercises real sockets, headers, CORS preflight, SSE framing, tool calling and error mapping. | **Implemented** — `provider-integration.spec.ts`                                             |
-| **Live provider E2E** | An actual external AI provider endpoint reached with real credentials.                                                                                                  | **Skipped** — no provider credentials are configured for this project, and none are invented |
+| Term                  | Meaning                                                                                                                                                                                                                | Status here                                                                                  |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| **Mock provider E2E** | Local, deterministic servers implementing the Chat Completions, Anthropic Messages and Gemini generateContent protocols. Exercises real sockets, headers, CORS preflight, SSE framing, tool calling and error mapping. | **Implemented** — `provider-integration.spec.ts`, `provider-switching.spec.ts`               |
+| **Live provider E2E** | An actual external AI provider endpoint reached with real credentials.                                                                                                                                                 | **Skipped** — no provider credentials are configured for this project, and none are invented |
 
 "Real HTTP" describes the transport, never the counterparty. A mock-provider
 result is not evidence that any commercial provider has been exercised.
@@ -121,6 +123,7 @@ result is not evidence that any commercial provider has been exercised.
 | `file-access.spec.ts`          | The local filesystem stays out of reach: Chrome refuses `scripting.executeScript` on a `file://` tab and injects no content script there (with an http negative control), every browser and debugger tool refuses such a tab without attaching the debugger to it, navigation and tab creation to `file:`/`ftp:` are refused, and a screenshot on an allowed page attaches and detaches cleanly                                        |
 | `security.spec.ts`             | A genuinely hostile page cannot escape the data envelope; a credential on the page never reaches the provider; a password field value reaches neither the provider nor evidence; refused schemes do not navigate; unknown tools and malformed arguments are rejected before anything runs; and Chrome itself — not this extension's policy — still refuses `scripting.executeScript` against a `file://` tab under the loaded manifest |
 | `mv3-lifecycle.spec.ts`        | A real Chrome service-worker kill, after which an interrupted task is parked, the provider configuration still works, a new task runs, and the debugger recovers from a closed tab                                                                                                                                                                                                                                                     |
+| `provider-switching.spec.ts`   | **Mock provider E2E.** All three adapters over real sockets, each against a server speaking its own protocol: the registry offers three API providers and no web provider, a tool call from each drives the same browser action, switching mid-session sends nothing further to the endpoint left behind, the Gemini key never reaches a URL, and no credential appears in the worker's console or the audit trail                     |
 
 Three things about this suite are worth knowing before changing it:
 
@@ -182,13 +185,14 @@ not to touch lines.
 
 Stated plainly rather than implied by omission:
 
-- **Live provider E2E is skipped, not passing.** The adapter is exercised over
-  real HTTP against a local server implementing the Chat Completions protocol.
-  That covers sockets, headers, CORS and SSE framing, but not a specific
-  vendor's quirks. No provider credentials are configured for this project and
-  none are invented, so the live suite has never run. Executing it against
-  OpenAI, Anthropic and Gemini is what specification §87 asks for and what
-  P-033 still needs.
+- **Live provider E2E is skipped, not passing.** All three adapters are
+  exercised over real HTTP against local servers implementing each provider's
+  documented wire format. That covers sockets, headers, CORS, SSE framing and
+  each protocol's own shapes, but not a specific vendor's quirks — a local
+  server answers exactly what it was told to. No provider credentials are
+  configured for this project and none are invented, so the live suite has
+  never run. Executing it against OpenAI, Anthropic and Gemini is what
+  specification §87 asks for.
 - **No React component tests.** The side panel is covered through E2E — it
   really mounts against the extension origin, its disabled states are
   asserted, and it reflects a connected provider — but individual components

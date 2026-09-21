@@ -13,6 +13,7 @@ import {
   OpenAICompatibleAdapter,
   openAICompatibleFactory,
 } from '@/providers/adapters/openai-compatible';
+import { API_PROVIDER_PACKS } from '../fixtures/provider-wire';
 import {
   createGuardedTransport,
   refusingTransport,
@@ -23,8 +24,19 @@ import { ConsentStore } from '@/security/egress/consent';
 import { addTaint, freshTaint, unknownTaint } from '@/security/taint/taint-state';
 import type { TaintSource } from '@/security/exfiltration/exfiltration-guard';
 
-/** Every factory the product registers. Extend this when a provider is added. */
-const REGISTERED_FACTORIES = [openAICompatibleFactory];
+/**
+ * Every factory the product registers, with the config each one needs.
+ *
+ * Taken from the conformance packs rather than restated, so a provider cannot
+ * be added to the product and left out of these checks: the packs are the
+ * same list the conformance suite cross-checks against the registry.
+ */
+const REGISTERED_FACTORIES = API_PROVIDER_PACKS.map((pack) => ({
+  factory: pack.factory,
+  config: pack.config,
+  fragment: pack.generateFragment,
+  ok: () => pack.text('ok'),
+}));
 
 const CONFIG = {
   providerId: 'openai-compatible',
@@ -68,31 +80,34 @@ beforeEach(() => {
 });
 
 describe('every registered factory is built guarded', () => {
-  it.each(REGISTERED_FACTORIES.map((f) => [f.id, f] as const))(
+  it.each(REGISTERED_FACTORIES.map((f) => [f.factory.id, f] as const))(
     '%s receives the registry transport',
-    async (_id, factory) => {
+    async (_id, entry) => {
       const reached: string[] = [];
       const transport = {
         request: (url: string) => {
           reached.push(url);
-          return Promise.resolve(jsonBody());
+          return Promise.resolve(entry.ok());
         },
       };
       const registry = new ProviderRegistry({ transport });
-      registry.register(factory);
+      registry.register(entry.factory);
 
-      const adapter = registry.get(factory.id);
-      await adapter.connect(CONFIG);
-      await adapter.generate({ systemInstruction: 's', messages: [], egress: context() });
+      const adapter = registry.get(entry.factory.id);
+      await adapter.connect(entry.config);
+      await adapter.generate({
+        systemInstruction: 's',
+        messages: [],
+        egress: context({ providerId: entry.factory.id, modelId: entry.config.model ?? '' }),
+      });
 
-      expect(reached).toHaveLength(1);
-      expect(reached[0]).toContain('/chat/completions');
+      expect(reached.some((url) => url.includes(entry.fragment))).toBe(true);
     },
   );
 
-  it.each(REGISTERED_FACTORIES.map((f) => [f.id, f] as const))(
+  it.each(REGISTERED_FACTORIES.map((f) => [f.factory.id, f] as const))(
     '%s performs no network call when its transport throws',
-    async (_id, factory) => {
+    async (_id, entry) => {
       // The conformance check: an adapter handed a transport that refuses must
       // surface the refusal, not find another way out.
       const fetchSpy = vi.fn(() => {
@@ -105,12 +120,16 @@ describe('every registered factory is built guarded', () => {
           request: () => Promise.reject(new Error('refused by transport')),
         },
       });
-      registry.register(factory);
-      const adapter = registry.get(factory.id);
-      await adapter.connect(CONFIG);
+      registry.register(entry.factory);
+      const adapter = registry.get(entry.factory.id);
+      await adapter.connect(entry.config);
 
       await expect(
-        adapter.generate({ systemInstruction: 's', messages: [], egress: context() }),
+        adapter.generate({
+          systemInstruction: 's',
+          messages: [],
+          egress: context({ providerId: entry.factory.id, modelId: entry.config.model ?? '' }),
+        }),
       ).rejects.toThrow();
       expect(fetchSpy).not.toHaveBeenCalled();
 
