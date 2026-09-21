@@ -84,16 +84,28 @@ its happy path.
 
 Loads the built extension into a real Chromium and drives it. Nothing is
 stubbed except the model's choice of tool call: the pages are served over real
-HTTP, the content script is really injected, and the provider is a real HTTP
-server whose received bytes are inspected.
+HTTP, the content script is really injected, and the provider exchange goes
+over real HTTP to a local server whose received bytes are inspected.
 
 This is what proves the extension _works_, as opposed to proving its modules
 behave.
 
+#### Mock provider, not live provider
+
+The distinction is used strictly throughout this repository:
+
+| Term                  | Meaning                                                                                                                                                                 | Status here                                                                                  |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| **Mock provider E2E** | A local, deterministic server implementing the Chat Completions protocol. Exercises real sockets, headers, CORS preflight, SSE framing, tool calling and error mapping. | **Implemented** — `provider-integration.spec.ts`                                             |
+| **Live provider E2E** | An actual external AI provider endpoint reached with real credentials.                                                                                                  | **Skipped** — no provider credentials are configured for this project, and none are invented |
+
+"Real HTTP" describes the transport, never the counterparty. A mock-provider
+result is not evidence that any commercial provider has been exercised.
+
 | File                           | Proves                                                                                                                                                                                                                                                                                    |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `extension-load.spec.ts`       | Chrome accepts the package, the service worker starts and registers 25 tools, the side panel mounts, and the composer stays disabled until tool calling is verified                                                                                                                       |
-| `provider-integration.spec.ts` | Real HTTP to a real endpoint: the doctor's probes are genuine round trips, the API key travels only as a bearer header, HTTP status maps to the right canonical code, and a rate limit is retried while a 500 storm is not retried forever                                                |
+| `provider-integration.spec.ts` | **Mock provider E2E.** Real HTTP to a local Chat Completions server: the doctor's probes are genuine round trips, the API key travels only as a bearer header, HTTP status maps to the right canonical code, and a rate limit is retried while a 500 storm is not retried forever         |
 | `agent-task.spec.ts`           | Full trajectories against a live page — read, type, click, navigate, screenshot — plus cancellation, stale-handle refusal, and a task outliving the side panel                                                                                                                            |
 | `security.spec.ts`             | A genuinely hostile page cannot escape the data envelope; a credential on the page never reaches the provider; a password field value reaches neither the provider nor evidence; refused schemes do not navigate; unknown tools and malformed arguments are rejected before anything runs |
 | `mv3-lifecycle.spec.ts`        | A real Chrome service-worker kill, after which an interrupted task is parked, the provider configuration still works, a new task runs, and the debugger recovers from a closed tab                                                                                                        |
@@ -144,11 +156,13 @@ not to touch lines.
 
 Stated plainly rather than implied by omission:
 
-- **No test against a commercial provider.** The adapter is exercised over real
-  HTTP against a local server that implements the Chat Completions protocol.
+- **Live provider E2E is skipped, not passing.** The adapter is exercised over
+  real HTTP against a local server implementing the Chat Completions protocol.
   That covers sockets, headers, CORS and SSE framing, but not a specific
-  vendor's quirks. Running the acceptance suite against OpenAI, Anthropic and
-  Gemini is what specification §87 asks for and what P-033 still needs.
+  vendor's quirks. No provider credentials are configured for this project and
+  none are invented, so the live suite has never run. Executing it against
+  OpenAI, Anthropic and Gemini is what specification §87 asks for and what
+  P-033 still needs.
 - **No React component tests.** The side panel is covered through E2E — it
   really mounts, and its disabled states are asserted — but individual
   components are not rendered in isolation.
