@@ -28,9 +28,12 @@ git rev-list --count origin/main..origin/claude/dreamy-shannon-tu0z6h
 Zero commits exist on the old branch that are not on `main`. Deleting it
 cannot lose work.
 
-CI already triggers on `main`, so the pipeline runs against the correct branch
-from now on. Before `main` existed, the `push` trigger matched nothing and CI
-never ran on a push.
+CI triggers on `main` and has since been observed passing there in full —
+Verify, Dependency audit and the real-Chromium end-to-end job — on run
+`35574637544`. Before `main` existed, the `push` trigger matched nothing and
+CI never ran on a push at all; the first run after it was created failed its
+end-to-end job outright, so "CI is configured" and "CI passes" were separate
+facts and had to be checked separately.
 
 ### What remains, and why it is blocked
 
