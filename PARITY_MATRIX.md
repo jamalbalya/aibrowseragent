@@ -60,14 +60,18 @@ because the column is genuinely useful — it just does not, on its own, satisfy
 cannot claim parity under §99 until the §85–§89 acceptance tests are run and
 recorded.
 
-| Status            | Meaning                                                                    |
-| ----------------- | -------------------------------------------------------------------------- |
-| `PASS`            | All five conditions met                                                    |
-| `PARTIAL`         | Implemented and tested, but some condition is unmet — the gap is stated    |
-| `INTERFACES-ONLY` | Interfaces exist; no working implementation. Calls raise `NOT_IMPLEMENTED` |
-| `NOT-STARTED`     | Nothing exists                                                             |
-| `BLOCKED`         | Cannot proceed until something external changes; the blocker is named      |
-| `DEFERRED`        | Deliberately postponed to a later phase, with the reason recorded          |
+The `Status` column below records **automated-evidence status**. It is not, and
+must not be read as, **full parity certification** under §84 — that requires the
+manual acceptance tests and is Phase 10 work.
+
+| Status            | Meaning (automated-evidence status)                                                                    |
+| ----------------- | ------------------------------------------------------------------------------------------------------ |
+| `PASS`            | §84 conditions 1, 2, 4, 5 and 6 met. Condition 3, the manual acceptance test, is unmet repository-wide |
+| `PARTIAL`         | Implemented and tested, but some condition is unmet — the gap is stated                                |
+| `INTERFACES-ONLY` | Interfaces exist; no working implementation. Calls raise `NOT_IMPLEMENTED`                             |
+| `NOT-STARTED`     | Nothing exists                                                                                         |
+| `BLOCKED`         | Cannot proceed until something external changes; the blocker is named                                  |
+| `DEFERRED`        | Deliberately postponed to a later phase, with the reason recorded                                      |
 
 "Automated" counts unit, integration and end-to-end tests. The E2E column means
 the capability was exercised against the built extension running in a real

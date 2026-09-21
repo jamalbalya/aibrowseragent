@@ -43,6 +43,16 @@ and excluded from formatting in `.prettierignore` so it cannot drift. It is
 **authoritative**, not reference-only: where this repository's documentation
 disagrees with it, the specification wins.
 
+The copy is byte-for-byte identical to the file supplied at the start of the
+project, sha256 `07aa8059df1af1bb89535039375b0d1d12cd9524f8c9be24777e8aa2a55c389b`,
+54191 bytes.
+
+One inconsistency inside the document is worth knowing and is **not** an error
+introduced here: the filename says `v1.1` while the document's own version line
+(line 3) reads _"Engineering Specification and Execution Contract v1.0"_. The
+file is stored exactly as supplied and neither has been altered. Cite it by
+filename, and be aware the two do not agree.
+
 Committing it immediately surfaced one such disagreement. `PARITY_MATRIX.md`
 had been listing five conditions for a capability to be PASS; specification
 §84 sets six, and the one that had gone missing was "manual acceptance test
@@ -67,11 +77,13 @@ OpenAI-compatible adapter.
 **REQUIRED FOR PARITY, NOT FOR STAGE 2:** execute §85–§89 once the relevant
 phases exist, and record the results here.
 
-## Open: no provider credentials are configured
+## Open: no project-owned provider credentials are configured
 
-Live provider end-to-end testing has never run because no legitimate project
-credentials are configured. None were borrowed, invented, or taken from a
-harness or another project. The mock-provider suite exercises real HTTP against
-a local Chat Completions server and is never described as a live one.
+Live provider E2E was not executed because no project-owned provider
+credentials were configured. None were borrowed, invented, personal, or taken
+from a harness or another project. The mock-provider suite exercises real HTTP
+against a local Chat Completions server and is never described as a live one.
+
+This is an environment condition, not an implementation defect.
 
 **REQUIRED OWNER ACTION, WHEN WANTED:** configure project provider credentials.

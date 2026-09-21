@@ -78,11 +78,14 @@ a real Chromium rather than simulated:
 One remains. Neither of the two reported in earlier audits is an
 implementation defect.
 
-**Live provider E2E has no credentials.** Stage 2 asks for it _when valid
-credentials are configured_; none are. No borrowed, harness, invented or
-other-project credentials were used, and the mock-provider suite is never
-described as a live one. Unblocking it needs the owner to configure project
-provider credentials.
+**Live provider E2E was not executed because no project-owned provider
+credentials were configured.** Stage 2 asks for it _when valid credentials are
+configured_. This is an environment condition, not an implementation defect:
+the provider abstraction and the OpenAI-compatible adapter are implemented and
+validated, and the mock-provider suite exercises real HTTP — it is simply never
+described as a live one. No borrowed, harness, invented, personal or
+other-project credentials were used. Unblocking it needs the owner to configure
+project-owned provider credentials.
 
 **Resolved since the last audit: the authoritative specification.** It is now
 committed verbatim at `docs/spec/` and is no longer a blocker. Validating
