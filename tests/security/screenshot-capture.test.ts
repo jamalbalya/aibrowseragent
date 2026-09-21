@@ -1,5 +1,5 @@
 /**
- * TEST-SECURITY-006 — Screenshot capture boundary (REQ-SECURITY-003, §68).
+ * TEST-SECURITY-007 — Screenshot capture boundary (REQ-SECURITY-003, §68).
  *
  * A screenshot is the widest-reaching read the agent has: whatever the page
  * renders becomes stored evidence. Two properties are enforced here.

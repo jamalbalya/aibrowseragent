@@ -79,6 +79,7 @@ its happy path.
 | `browser-tools.test.ts`      | Origin drift stops an action; typed text is never echoed back; screenshots go to evidence, not into context, and a pre-existing debugger session is left attached         |
 | `tab-tools.test.ts`          | A user's own tab is R3 and always confirms; the agent's own tab is R1 and does not                                                                                        |
 | `evidence-store.test.ts`     | Text payloads are redacted before storage; base64 is not corrupted; eviction leaves no orphaned payloads                                                                  |
+| `test-identifiers.test.ts`   | Every suite carries a `TEST-<AREA>-<NNN>` identifier and no two suites share one — it happened twice, both times a new suite copying a neighbour's header                 |
 | `context-builder.test.ts`    | Oldest tool results are trimmed before turns are dropped; recent turns are never dropped                                                                                  |
 
 ### `tests/e2e/`

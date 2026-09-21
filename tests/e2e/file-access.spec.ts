@@ -1,5 +1,5 @@
 /**
- * TEST-E2E-005 — The local filesystem is out of reach (REQ-SECURITY-003).
+ * TEST-E2E-006 — The local filesystem is out of reach (REQ-SECURITY-003).
  *
  * Adding a screenshot capability that needs no host permission raises an
  * obvious question: does the agent now have a way to photograph, read or
