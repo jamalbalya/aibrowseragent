@@ -171,11 +171,12 @@ tests, not just convention — see `tests/unit/policy-engine.test.ts`.
 
 The specification requires the agent core to survive a future desktop or cloud
 runtime. The boundary is drawn at `BrowserAdapter`
-(`src/tools/browser/chrome-adapter.ts`) and `DebuggerPort`
-(`src/tools/debugger/debugger-manager.ts`).
+(`src/tools/browser/chrome-adapter.ts`), `DebuggerPort`
+(`src/tools/debugger/debugger-manager.ts`) and `NotificationPort`
+(`src/notifications/notifier.ts`).
 
-Chrome-specific: those two interfaces' implementations, plus `chrome.sidePanel`
-and `chrome.notifications` use in the service worker.
+Chrome-specific: those three interfaces' implementations, plus `chrome.sidePanel`
+use in the service worker.
 
 Portable: everything else — agent state, tool registry, policy, permissions,
 evidence, task state, provider adapters.

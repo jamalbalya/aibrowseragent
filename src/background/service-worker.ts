@@ -42,6 +42,7 @@ import { PermissionBroker } from './permission-broker';
 import { LifecycleManager } from './lifecycle-manager';
 import { MessageRouter } from './message-router';
 import { broadcastEvent } from '@/messaging/bus';
+import { Notifier } from '@/notifications/notifier';
 import type { AgentSession } from '@/tasks/task-model';
 
 const log = getLogger('agent');
@@ -92,9 +93,13 @@ const browserAdapter = new ChromeBrowserAdapter();
 const debuggerManager = new DebuggerManager();
 const tabOwnership = new TabOwnership();
 
+const notifier = new Notifier({
+  isEnabled: async () => (await settingsStore.get()).notificationsEnabled,
+});
+
 const permissionBroker = new PermissionBroker({
   notify: (request) => {
-    void notifyPermission(request.tool);
+    void notifier.permissionRequested(request.tool);
   },
 });
 
@@ -436,25 +441,6 @@ chrome.runtime.onSuspend?.addListener(() => {
   taskManager.abortAll();
   permissionBroker.denyAll();
 });
-
-async function notifyPermission(tool: string): Promise<void> {
-  const settings = await settingsStore.get();
-  if (!settings.notificationsEnabled) return;
-  try {
-    await chrome.notifications.create({
-      type: 'basic',
-      iconUrl: 'icons/icon-128.png',
-      title: 'Approval needed',
-      // Never place the arguments in a notification: they may contain page data.
-      message: `The agent is waiting for approval to run ${tool}.`,
-      priority: 2,
-    });
-  } catch (error) {
-    log.debug('Could not show a notification.', {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Startup

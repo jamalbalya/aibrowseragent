@@ -62,25 +62,27 @@ its happy path.
 
 ### `tests/unit/`
 
-| File                         | Proves                                                                                                                                                                    |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `policy-engine.test.ts`      | Ordering: each stage only tightens. Prohibitions hold in every mode. Skip still confirms at R3+                                                                           |
-| `permission-engine.test.ts`  | A DENY is never put to the user; a prompter failure is a denial; site approval is scoped to the registrable site                                                          |
-| `permission-broker.test.ts`  | An unanswered prompt resolves as denial, not approval; concurrent prompts stay independent                                                                                |
-| `tool-registry.test.ts`      | Invalid arguments never reach an implementation; a denied call never executes; secrets are stripped from results and prompts; raw exception text does not reach the model |
-| `task-model.test.ts`         | Every live state can reach CANCELLED, FAILED and PAUSED; terminal states are absorbing                                                                                    |
-| `storage.test.ts`            | 50 concurrent read-modify-writes all land; namespaces are isolated; a rejected transaction does not poison the key                                                        |
-| `loop-detection.test.ts`     | Repeated failure, identical repetition and cycles are caught — and normal `read → act → read` progress is **not**                                                         |
-| `budget-retry.test.ts`       | Every budget dimension fires; only transient codes retry; jitter is applied                                                                                               |
-| `openai-compatible.test.ts`  | Wire translation both ways; every HTTP status maps to a canonical code; SSE frames split across chunk boundaries reassemble                                               |
-| `capability-doctor.test.ts`  | AGENT_READY is reported only when tool calling actually worked; quick mode refuses to claim it at all                                                                     |
-| `semantic-tree.test.ts`      | Roles and accessible names follow the accname precedence; password values never enter the page model; truncation is reported honestly                                     |
-| `interaction-engine.test.ts` | Framework-controlled inputs receive the change; stale handles are refused with a reason; clicks survive a missing `PointerEvent`                                          |
-| `browser-tools.test.ts`      | Origin drift stops an action; typed text is never echoed back; screenshots go to evidence, not into context, and a pre-existing debugger session is left attached         |
-| `tab-tools.test.ts`          | A user's own tab is R3 and always confirms; the agent's own tab is R1 and does not                                                                                        |
-| `evidence-store.test.ts`     | Text payloads are redacted before storage; base64 is not corrupted; eviction leaves no orphaned payloads                                                                  |
-| `test-identifiers.test.ts`   | Every suite carries a `TEST-<AREA>-<NNN>` identifier and no two suites share one — it happened twice, both times a new suite copying a neighbour's header                 |
-| `context-builder.test.ts`    | Oldest tool results are trimmed before turns are dropped; recent turns are never dropped                                                                                  |
+| File                         | Proves                                                                                                                                                                                                                                         |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `policy-engine.test.ts`      | Ordering: each stage only tightens. Prohibitions hold in every mode. Skip still confirms at R3+                                                                                                                                                |
+| `permission-engine.test.ts`  | A DENY is never put to the user; a prompter failure is a denial; site approval is scoped to the registrable site                                                                                                                               |
+| `permission-broker.test.ts`  | An unanswered prompt resolves as denial, not approval; concurrent prompts stay independent                                                                                                                                                     |
+| `tool-registry.test.ts`      | Invalid arguments never reach an implementation; a denied call never executes; secrets are stripped from results and prompts; raw exception text does not reach the model                                                                      |
+| `task-model.test.ts`         | Every live state can reach CANCELLED, FAILED and PAUSED; terminal states are absorbing                                                                                                                                                         |
+| `storage.test.ts`            | 50 concurrent read-modify-writes all land; namespaces are isolated; a rejected transaction does not poison the key                                                                                                                             |
+| `loop-detection.test.ts`     | Repeated failure, identical repetition and cycles are caught — and normal `read → act → read` progress is **not**                                                                                                                              |
+| `budget-retry.test.ts`       | Every budget dimension fires; only transient codes retry; jitter is applied                                                                                                                                                                    |
+| `openai-compatible.test.ts`  | Wire translation both ways; every HTTP status maps to a canonical code; SSE frames split across chunk boundaries reassemble                                                                                                                    |
+| `capability-doctor.test.ts`  | AGENT_READY is reported only when tool calling actually worked; quick mode refuses to claim it at all                                                                                                                                          |
+| `semantic-tree.test.ts`      | Roles and accessible names follow the accname precedence; password values never enter the page model; truncation is reported honestly                                                                                                          |
+| `interaction-engine.test.ts` | Framework-controlled inputs receive the change; stale handles are refused with a reason; clicks survive a missing `PointerEvent`                                                                                                               |
+| `browser-tools.test.ts`      | Origin drift stops an action; typed text is never echoed back; screenshots go to evidence, not into context, and a pre-existing debugger session is left attached                                                                              |
+| `tab-tools.test.ts`          | A user's own tab is R3 and always confirms; the agent's own tab is R1 and does not                                                                                                                                                             |
+| `evidence-store.test.ts`     | Text payloads are redacted before storage; base64 is not corrupted; eviction leaves no orphaned payloads                                                                                                                                       |
+| `test-identifiers.test.ts`   | Every suite carries a `TEST-<AREA>-<NNN>` identifier and no two suites share one — it happened twice, both times a new suite copying a neighbour's header                                                                                      |
+| `notifier.test.ts`           | A notification names the tool and carries nothing else from the call; the setting is read live so disabling it takes effect immediately; a settings-read failure stays quiet; a Chrome refusal never fails the approval the user is waiting on |
+| `provider-registry.test.ts`  | With two providers registered: a duplicate id is refused, an unregistered target throws instead of redirecting, a failed connection leaves the working provider active, and disconnect clears only the active one                              |
+| `context-builder.test.ts`    | Oldest tool results are trimmed before turns are dropped; recent turns are never dropped                                                                                                                                                       |
 
 ### `tests/e2e/`
 
@@ -133,12 +135,13 @@ Three things about this suite are worth knowing before changing it:
 
 ### `tests/integration/`
 
-| File                       | Proves                                                                                                                                                                                                |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agent-runtime.test.ts`    | The full loop against real policy and real tools: the required demo flow, capability gating, loop and budget stops, cancellation, provider retry, and that a failed tool is never reported as success |
-| `task-persistence.test.ts` | State survives a simulated worker eviction; interrupted tasks are parked, not resumed blind; recovery is idempotent                                                                                   |
-| `task-manager.test.ts`     | Create, pause, resume, cancel and retry; a cancel issued immediately after create actually cancels                                                                                                    |
-| `messaging.test.ts`        | Errors cross the boundary as data; timeouts are structured; a missing content script maps to a retryable failure                                                                                      |
+| File                       | Proves                                                                                                                                                                                                                             |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agent-runtime.test.ts`    | The full loop against real policy and real tools: the required demo flow, capability gating, loop and budget stops, cancellation, provider retry, and that a failed tool is never reported as success                              |
+| `sustained-task.test.ts`   | An 18-turn trajectory completes without tripping a budget or the loop detector; usage accounting equals the work performed exactly; every step is recorded once and in order; a model that never finishes is stopped by the budget |
+| `task-persistence.test.ts` | State survives a simulated worker eviction; interrupted tasks are parked, not resumed blind; recovery is idempotent                                                                                                                |
+| `task-manager.test.ts`     | Create, pause, resume, cancel and retry; a cancel issued immediately after create actually cancels                                                                                                                                 |
+| `messaging.test.ts`        | Errors cross the boundary as data; timeouts are structured; a missing content script maps to a retryable failure                                                                                                                   |
 
 ## Defects this suite has caught
 
@@ -180,12 +183,16 @@ Stated plainly rather than implied by omission:
   OpenAI, Anthropic and Gemini is what specification §87 asks for and what
   P-033 still needs.
 - **No React component tests.** The side panel is covered through E2E — it
-  really mounts, and its disabled states are asserted — but individual
-  components are not rendered in isolation.
-- **Notifications are untested.** `chrome.notifications` is called directly in
-  the service worker rather than behind an injectable seam, and headless
-  Chromium does not surface notifications. The seam is the fix, not an E2E test.
-- **No sustained long-running task test.** The longest trajectory under test is
-  a handful of turns.
+  really mounts against the extension origin, its disabled states are
+  asserted, and it reflects a connected provider — but individual components
+  are not rendered in isolation. This is a deliberate limit rather than a
+  pending task: standing up a component renderer to assert markup that the
+  end-to-end suite already exercises in a real browser would add a testing
+  stack without adding a guarantee.
+- **Wall-clock duration is not tested in wall-clock time.** A sustained run is
+  covered by turns rather than seconds (`sustained-task.test.ts`, 18 turns and
+  36 tool calls, with usage accounting and step ordering asserted exactly),
+  and the duration budget is covered with an injected clock. A test that
+  really slept would be slower, flakier, and would prove less.
 - Connectors, MCP, skills, workflows and scheduling are untested because they
   are unimplemented.

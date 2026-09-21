@@ -99,13 +99,18 @@
       "e2e": ["tests/e2e/mv3-lifecycle.spec.ts"]
     },
     "P-017": {
-      "integration": ["tests/integration/agent-runtime.test.ts"]
+      "integration": [
+        "tests/integration/agent-runtime.test.ts",
+        "tests/integration/sustained-task.test.ts"
+      ]
     },
     "P-018": {
       "integration": ["tests/integration/task-persistence.test.ts"],
       "e2e": ["tests/e2e/mv3-lifecycle.spec.ts", "tests/e2e/agent-task.spec.ts"]
     },
-    "P-019": {},
+    "P-019": {
+      "unit": ["tests/unit/notifier.test.ts"]
+    },
     "P-020": {},
     "P-021": {},
     "P-022": {},
@@ -149,7 +154,7 @@
       "e2e": ["tests/e2e/mv3-lifecycle.spec.ts"]
     },
     "P-033": {
-      "unit": ["tests/unit/openai-compatible.test.ts"]
+      "unit": ["tests/unit/openai-compatible.test.ts", "tests/unit/provider-registry.test.ts"]
     },
     "P-034": {
       "unit": ["tests/unit/tool-registry.test.ts"],
@@ -171,7 +176,8 @@
       "integration": ["tests/integration/agent-runtime.test.ts"]
     },
     "P-038": {
-      "unit": ["tests/unit/permission-engine.test.ts"]
+      "unit": ["tests/unit/permission-engine.test.ts"],
+      "e2e": ["tests/e2e/security.spec.ts"]
     },
     "P-039": {
       "unit": ["tests/unit/evidence-store.test.ts"],

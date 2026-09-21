@@ -51,8 +51,8 @@ capability, not necessarily a test of the capability itself.
 
 | Status          | Count  |
 | --------------- | ------ |
-| PASS            | 25     |
-| PARTIAL         | 5      |
+| PASS            | 27     |
+| PARTIAL         | 3      |
 | INTERFACES-ONLY | 1      |
 | NOT-STARTED     | 9      |
 | **Total**       | **40** |
@@ -63,13 +63,26 @@ separate classes of error have actually occurred here: a revision that claimed
 17 PASS while its own table said 23, and a revision whose per-column coverage
 claims were not backed by any test. The check now covers both.
 
-Movement in this revision: no status changed. Screenshot capture (P-008) was
-re-implemented over the DevTools protocol so the `<all_urls>` host permission
-could be removed, and gained a dedicated security suite; it was already PASS
-and remains so. Tab grouping (P-013) was PASS on unit tests alone, which
-exercised a fake adapter and said nothing about `chrome.tabs.group`; it now
-has an end-to-end test that groups real tabs. The counts are unchanged because
-nothing new was finished — only made safer and better evidenced.
+Movement in this revision: PASS went from 25 to 27 and PARTIAL from 5 to 3, on
+evidence rather than on reassessment of the same evidence.
+
+Notifications (P-019) was PARTIAL for one stated reason — `chrome.notifications`
+was called inline in the service worker, so nothing could test it. It now sits
+behind `NotificationPort`, the same seam pattern the debugger and messaging
+surfaces use, with tests covering what a notification may contain, the setting
+being read live, and a Chrome refusal not failing the approval underneath it.
+Headless Chromium surfaces no notifications, so the seam is the evidence and
+an end-to-end test is not possible.
+
+Long-running task (P-017) was PARTIAL because the longest tested trajectory was
+a handful of turns. An 18-turn run now asserts exact usage accounting, step
+ordering with no duplicates, and that a model which never finishes is stopped
+by the budget. Duration itself stays on an injected clock; a test that slept
+would be slower, flakier and prove less.
+
+Provider switching (P-033) stays PARTIAL, but its central claim is no longer
+unverified — see below. Audit trail (P-038) stays PARTIAL with a sharper
+statement of what is missing.
 
 ---
 
@@ -93,9 +106,9 @@ nothing new was finished — only made safer and better evidenced.
 | P-014 | DOM inspection                       | yes        | yes  | —           | yes      | yes | PASS            |
 | P-015 | Console inspection                   | yes        | yes  | —           | yes      | yes | PASS            |
 | P-016 | Network inspection                   | yes        | yes  | —           | yes      | yes | PASS            |
-| P-017 | Long-running task                    | yes        | —    | yes         | —        | —   | PARTIAL         |
+| P-017 | Long-running task                    | yes        | —    | yes         | —        | —   | PASS            |
 | P-018 | Background task while Chrome is open | yes        | —    | yes         | —        | yes | PASS            |
-| P-019 | Notifications                        | yes        | —    | —           | —        | —   | PARTIAL         |
+| P-019 | Notifications                        | yes        | yes  | —           | —        | —   | PASS            |
 | P-020 | Scheduled tasks                      | no         | —    | —           | —        | —   | NOT-STARTED     |
 | P-021 | Shortcuts                            | no         | —    | —           | —        | —   | NOT-STARTED     |
 | P-022 | Workflow recording                   | no         | —    | —           | —        | —   | NOT-STARTED     |
@@ -114,7 +127,7 @@ nothing new was finished — only made safer and better evidenced.
 | P-035 | Capability doctor                    | yes        | yes  | —           | —        | yes | PASS            |
 | P-036 | Error recovery                       | yes        | yes  | yes         | —        | yes | PASS            |
 | P-037 | Loop detection                       | yes        | yes  | yes         | —        | —   | PASS            |
-| P-038 | Audit trail                          | yes        | yes  | —           | —        | —   | PARTIAL         |
+| P-038 | Audit trail                          | yes        | yes  | —           | —        | yes | PARTIAL         |
 | P-039 | Evidence model                       | yes        | yes  | yes         | yes      | yes | PASS            |
 | P-040 | Provider/model capability detection  | yes        | yes  | —           | —        | yes | PASS            |
 
@@ -127,27 +140,26 @@ select-by-label and form submission all work and are tested. Checkbox and radio
 are reported in the page model but have no dedicated tool; the model must click
 them, which works but is less direct. File inputs are not handled at all.
 
-**P-017 Long-running task** — The runtime runs unbounded turns within its
-budget, and state persists. PARTIAL because the longest tested run is a handful
-of turns; no sustained long-duration test exists.
-
-**P-019 Notifications** — Implemented for permission requests and gated on a
-setting. PARTIAL because it has no test: `chrome.notifications` is called
-directly in the service worker rather than behind an injectable seam, which is
-a gap worth closing. Headless Chromium does not surface notifications, so this
-needs the seam rather than an E2E test.
-
 **P-033 Provider switching** — The architecture supports it and the registry
-enforces explicit switching with no silent fallback. PARTIAL because only one
-adapter exists, so switching _between_ providers has not been exercised. The
+enforces explicit switching with no silent fallback, now verified against two
+registered providers: activation follows a successful connection, a failed
+connection leaves the working provider active, and an unregistered target
+throws rather than redirecting. PARTIAL because only one _real_ adapter
+ships, so switching between two production providers has still never run.
+Shipping a second adapter is out of Stage 2 scope. The
 guarantee that switching preserves tools, policy and task state holds by
 construction — none of those modules reference the provider — but it is not
 demonstrated.
 
 **P-038 Audit trail** — Permission decisions are recorded with task, tool,
-site, risk, decision, reason and timestamp, capped at 500 entries. PARTIAL
-because tool executions are recorded in task steps rather than in a single
-unified audit log, and there is no export.
+site, risk, decision, reason and timestamp, capped at 500 entries, and an
+end-to-end test reads that history back out of a real browser after a real
+decision. PARTIAL for two specific reasons, both of which need code that does
+not exist yet rather than a test: tool executions live in per-task step
+records rather than one unified, queryable audit log spanning tasks, so
+"what did the agent do on this site last week" cannot be answered; and there
+is no export, so the trail cannot leave the extension. Building either is new
+functionality and is out of Stage 2 closure scope.
 
 ---
 

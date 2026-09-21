@@ -15,7 +15,13 @@ export interface AppSettings {
   readonly permissionMode: PermissionMode;
   readonly logLevel: LogLevel;
   readonly debugMode: boolean;
-  /** Permit automating http: and file: pages. Off by default. */
+  /**
+   * Permit automating `http:` pages. Off by default.
+   *
+   * It does not unlock `file:`, which is on the unconditional block list —
+   * see BLOCKED_SCHEMES. A convenience toggle for a local dev server must not
+   * double as filesystem reach.
+   */
   readonly allowInsecureOrigins: boolean;
   readonly notificationsEnabled: boolean;
   readonly activeProviderId: string | null;
