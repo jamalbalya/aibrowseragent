@@ -24,8 +24,9 @@ A capability is **PASS** only when all of these hold (specification §84):
 | `FOUNDATION`  | Interfaces exist; no working implementation. Calls raise `NOT_IMPLEMENTED` |
 | `NOT_STARTED` | Nothing exists                                                             |
 
-"Automated" counts unit and integration tests. No end-to-end browser test suite
-exists yet, so no row claims E2E.
+"Automated" counts unit, integration and end-to-end tests. The E2E column means
+the capability was exercised against the built extension running in a real
+Chromium — not simulated.
 
 ---
 
@@ -33,11 +34,30 @@ exists yet, so no row claims E2E.
 
 | Status      | Count  |
 | ----------- | ------ |
-| PASS        | 17     |
-| PARTIAL     | 6      |
-| FOUNDATION  | 5      |
-| NOT_STARTED | 12     |
+| PASS        | 25     |
+| PARTIAL     | 5      |
+| FOUNDATION  | 1      |
+| NOT_STARTED | 9      |
 | **Total**   | **40** |
+
+These counts are checked against the table below by
+`scripts/check-parity.mjs`, which CI runs. An earlier revision of this file
+claimed 17 PASS and 5 FOUNDATION while its own table said 23 and 1; the check
+exists so that cannot happen again.
+
+Movement in this revision: the end-to-end suite runs the built extension in a
+real Chromium, which promoted the side panel and background execution to PASS
+and gave twenty-two other capabilities genuine browser coverage. Real-browser
+testing also exposed two defects — screenshot capture was broken outright, and
+form controls were given misleading accessible names — both now fixed with
+regression tests.
+
+----------- | ------ |
+| PASS | 17 |
+| PARTIAL | 6 |
+| FOUNDATION | 5 |
+| NOT_STARTED | 12 |
+| **Total** | **40** |
 
 ---
 
@@ -45,24 +65,24 @@ exists yet, so no row claims E2E.
 
 | ID    | Capability                           | Impl       | Unit | Integration | Security | E2E | Status      |
 | ----- | ------------------------------------ | ---------- | ---- | ----------- | -------- | --- | ----------- |
-| P-001 | Side panel                           | yes        | —    | —           | —        | no  | PARTIAL     |
-| P-002 | Read page                            | yes        | yes  | yes         | yes      | no  | PASS        |
-| P-003 | Click                                | yes        | yes  | yes         | yes      | no  | PASS        |
-| P-004 | Type                                 | yes        | yes  | yes         | yes      | no  | PASS        |
-| P-005 | Navigate                             | yes        | yes  | yes         | yes      | no  | PASS        |
-| P-006 | Forms                                | yes        | yes  | yes         | yes      | no  | PARTIAL     |
-| P-007 | Scroll                               | yes        | yes  | yes         | —        | no  | PASS        |
-| P-008 | Screenshot                           | yes        | yes  | —           | yes      | no  | PASS        |
+| P-001 | Side panel                           | yes        | —    | yes         | —        | yes | PASS        |
+| P-002 | Read page                            | yes        | yes  | yes         | yes      | yes | PASS        |
+| P-003 | Click                                | yes        | yes  | yes         | yes      | yes | PASS        |
+| P-004 | Type                                 | yes        | yes  | yes         | yes      | yes | PASS        |
+| P-005 | Navigate                             | yes        | yes  | yes         | yes      | yes | PASS        |
+| P-006 | Forms                                | yes        | yes  | yes         | yes      | yes | PARTIAL     |
+| P-007 | Scroll                               | yes        | yes  | yes         | —        | yes | PASS        |
+| P-008 | Screenshot                           | yes        | yes  | —           | yes      | yes | PASS        |
 | P-009 | Image upload                         | no         | —    | —           | —        | —   | NOT_STARTED |
 | P-010 | File upload                          | no         | —    | —           | —        | —   | NOT_STARTED |
 | P-011 | Download                             | no         | —    | —           | —        | —   | NOT_STARTED |
-| P-012 | Multi-tab                            | yes        | yes  | —           | yes      | no  | PASS        |
+| P-012 | Multi-tab                            | yes        | yes  | —           | yes      | yes | PASS        |
 | P-013 | Tab grouping                         | yes        | yes  | —           | —        | no  | PASS        |
-| P-014 | DOM inspection                       | yes        | yes  | —           | yes      | no  | PASS        |
-| P-015 | Console inspection                   | yes        | yes  | —           | yes      | no  | PASS        |
-| P-016 | Network inspection                   | yes        | yes  | —           | yes      | no  | PASS        |
+| P-014 | DOM inspection                       | yes        | yes  | —           | yes      | yes | PASS        |
+| P-015 | Console inspection                   | yes        | yes  | —           | yes      | yes | PASS        |
+| P-016 | Network inspection                   | yes        | yes  | —           | yes      | yes | PASS        |
 | P-017 | Long-running task                    | yes        | —    | yes         | —        | no  | PARTIAL     |
-| P-018 | Background task while Chrome is open | yes        | —    | yes         | —        | no  | PARTIAL     |
+| P-018 | Background task while Chrome is open | yes        | —    | yes         | —        | yes | PASS        |
 | P-019 | Notifications                        | yes        | no   | no          | —        | no  | PARTIAL     |
 | P-020 | Scheduled tasks                      | no         | —    | —           | —        | —   | NOT_STARTED |
 | P-021 | Shortcuts                            | no         | —    | —           | —        | —   | NOT_STARTED |
@@ -71,31 +91,24 @@ exists yet, so no row claims E2E.
 | P-024 | Skills                               | no         | —    | —           | —        | —   | NOT_STARTED |
 | P-025 | Plugins                              | no         | —    | —           | —        | —   | NOT_STARTED |
 | P-026 | MCP                                  | no         | —    | —           | —        | —   | NOT_STARTED |
-| P-027 | Permission modes                     | yes        | yes  | yes         | yes      | no  | PASS        |
-| P-028 | Site permissions                     | yes        | yes  | —           | yes      | no  | PASS        |
-| P-029 | Permission history                   | yes        | yes  | —           | —        | no  | PASS        |
-| P-030 | Prompt injection defence             | yes        | yes  | yes         | yes      | no  | PASS        |
-| P-031 | Session persistence                  | yes        | yes  | yes         | —        | no  | PASS        |
-| P-032 | Task resume                          | yes        | yes  | yes         | —        | no  | PASS        |
+| P-027 | Permission modes                     | yes        | yes  | yes         | yes      | yes | PASS        |
+| P-028 | Site permissions                     | yes        | yes  | —           | yes      | yes | PASS        |
+| P-029 | Permission history                   | yes        | yes  | —           | yes      | yes | PASS        |
+| P-030 | Prompt injection defence             | yes        | yes  | yes         | yes      | yes | PASS        |
+| P-031 | Session persistence                  | yes        | yes  | yes         | —        | yes | PASS        |
+| P-032 | Task resume                          | yes        | yes  | yes         | —        | yes | PASS        |
 | P-033 | Provider switching                   | yes        | yes  | —           | —        | no  | PARTIAL     |
-| P-034 | Tool calling                         | yes        | yes  | yes         | yes      | no  | PASS        |
-| P-035 | Capability doctor                    | yes        | yes  | —           | —        | no  | PASS        |
-| P-036 | Error recovery                       | yes        | yes  | yes         | —        | no  | PASS        |
+| P-034 | Tool calling                         | yes        | yes  | yes         | yes      | yes | PASS        |
+| P-035 | Capability doctor                    | yes        | yes  | yes         | —        | yes | PASS        |
+| P-036 | Error recovery                       | yes        | yes  | yes         | —        | yes | PASS        |
 | P-037 | Loop detection                       | yes        | yes  | yes         | —        | no  | PASS        |
 | P-038 | Audit trail                          | yes        | yes  | —           | —        | no  | PARTIAL     |
-| P-039 | Evidence model                       | yes        | yes  | —           | yes      | no  | PASS        |
-| P-040 | Provider/model capability detection  | yes        | yes  | —           | —        | no  | PASS        |
+| P-039 | Evidence model                       | yes        | yes  | —           | yes      | yes | PASS        |
+| P-040 | Provider/model capability detection  | yes        | yes  | yes         | —        | yes | PASS        |
 
 ---
 
 ## Why each PARTIAL is partial
-
-**P-001 Side panel** — Implemented and functional: header with live provider
-and connection state, task view with per-step outcomes, permission prompts,
-controls, settings, task history, and an evidence viewer that opens stored
-screenshots and page snapshots. Marked PARTIAL because no automated test
-renders it; its logic is covered through `useAgentState` and the message
-handlers it calls, not through rendering.
 
 **P-006 Forms** — Text input, textarea, contenteditable, select-by-value,
 select-by-label and form submission all work and are tested. Checkbox and radio
@@ -106,15 +119,11 @@ them, which works but is less direct. File inputs are not handled at all.
 budget, and state persists. PARTIAL because the longest tested run is a handful
 of turns; no sustained long-duration test exists.
 
-**P-018 Background execution** — Tasks live in the service worker and survive
-the side panel closing and the worker being evicted; `task-persistence.test.ts`
-simulates eviction. PARTIAL because it has not been verified against a real
-Chrome eviction, only a faithful simulation.
-
 **P-019 Notifications** — Implemented for permission requests and gated on a
 setting. PARTIAL because it has no test: `chrome.notifications` is called
 directly in the service worker rather than behind an injectable seam, which is
-a gap worth closing.
+a gap worth closing. Headless Chromium does not surface notifications, so this
+needs the seam rather than an E2E test.
 
 **P-033 Provider switching** — The architecture supports it and the registry
 enforces explicit switching with no silent fallback. PARTIAL because only one

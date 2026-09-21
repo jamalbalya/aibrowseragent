@@ -59,6 +59,11 @@ jobs:
       - name: Validate extension package
         run: node scripts/validate-package.mjs
 
+      # A capability matrix whose summary contradicts its own table reports a
+      # status nobody verified, so the drift is a build failure.
+      - name: Check capability matrix consistency
+        run: npm run check:parity
+
       - name: Upload unpacked extension
         if: success()
         uses: actions/upload-artifact@v4
@@ -66,6 +71,46 @@ jobs:
           name: extension-${{ github.sha }}
           path: dist/
           retention-days: 14
+
+  e2e:
+    name: End-to-end (real Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # Only worth the browser download once the cheap gates are green.
+    needs: verify
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The suite loads the built extension, so dist/ must exist first.
+      - name: Build extension
+        run: npm run build
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # Without E2E_CHROMIUM_PATH the fixtures fall back to Playwright's own
+      # resolution, which is correct once the browser above is installed.
+      - name: Run end-to-end suite
+        run: npm run test:e2e
+        env:
+          E2E_CHROMIUM_PATH: ''
+
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.sha }}
+          path: playwright-report/
+          retention-days: 7
 
   audit:
     name: Dependency audit
