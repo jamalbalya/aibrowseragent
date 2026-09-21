@@ -53,6 +53,8 @@ export function textResponse(text: string): CanonicalResponse {
 export class FakeProvider implements AIProviderAdapter {
   readonly id = 'fake';
   readonly displayName = 'Fake provider';
+  readonly kind = 'api' as const;
+
   readonly authKind = 'api_key' as const;
 
   readonly requests: CanonicalRequest[] = [];

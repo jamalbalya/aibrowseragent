@@ -25,6 +25,7 @@ import type {
 } from '@/providers/core/types';
 
 class StubAdapter implements AIProviderAdapter {
+  readonly kind = 'api' as const;
   readonly authKind = 'api_key' as const;
   connects = 0;
   disconnects = 0;
@@ -80,6 +81,7 @@ function factoryFor(id: string): ProviderFactory & { adapter: StubAdapter } {
   return {
     id,
     displayName: `Stub ${id}`,
+    kind: 'api' as const,
     authKind: 'api_key',
     description: `Stub provider ${id}`,
     create: () => adapter,

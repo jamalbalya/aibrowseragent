@@ -249,6 +249,65 @@ export function performSelect(element: Element, value: string): SelectResult {
   return { value: match.value };
 }
 
+export interface CheckedResult {
+  readonly checked: boolean;
+  readonly value: string;
+  readonly kind: 'checkbox' | 'radio';
+}
+
+/**
+ * Sets a checkbox or radio to a specific state.
+ *
+ * Expressed as "make it this" rather than "toggle it" on purpose. A toggle has
+ * to be right about the current state to produce the intended one, and a model
+ * working from a stale snapshot would silently invert the answer — the sort of
+ * error that submits the opposite of what was asked without failing.
+ *
+ * A radio cannot be unset by clearing it: the group is what holds the value,
+ * so asking for `false` on a radio is a request the DOM has no way to satisfy
+ * and is refused rather than quietly ignored.
+ */
+export function performSetChecked(element: Element, checked: boolean): CheckedResult {
+  if (!(element instanceof HTMLInputElement)) {
+    throw new TypeError('This element is not an input control.');
+  }
+  const kind = element.type === 'checkbox' ? 'checkbox' : element.type === 'radio' ? 'radio' : null;
+  if (kind === null) {
+    throw new TypeError(`This input is a "${element.type}", not a checkbox or radio.`);
+  }
+  if (element.readOnly) {
+    throw new TypeError('This control is read-only.');
+  }
+  if (kind === 'radio' && !checked) {
+    throw new RangeError(
+      'A radio button cannot be cleared on its own. Select a different option in the group.',
+    );
+  }
+
+  scrollIntoView(element);
+  element.focus({ preventScroll: true });
+
+  if (element.checked !== checked) {
+    // `click()` rather than assigning `.checked`, so the activation behaviour
+    // runs: label association, radio-group exclusivity and any framework
+    // listener all depend on the real event sequence.
+    element.click();
+  }
+
+  // The click may have been intercepted — a label overlay, a handler calling
+  // preventDefault. Reporting success without looking would tell the model the
+  // form says something it does not.
+  if (element.checked !== checked) {
+    throw new Error(
+      `The control did not change state; it is still ${element.checked ? 'checked' : 'unchecked'}.`,
+    );
+  }
+
+  element.dispatchEvent(new Event('input', { bubbles: true }));
+  element.dispatchEvent(new Event('change', { bubbles: true }));
+  return { checked: element.checked, value: element.value, kind };
+}
+
 export type ScrollDirection = 'up' | 'down' | 'top' | 'bottom';
 
 export interface ScrollResult {

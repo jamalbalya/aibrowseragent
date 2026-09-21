@@ -7,6 +7,7 @@
  * not remove the agent body's capabilities.
  */
 import type { EgressContext, ProviderTransport } from '@/security/egress/provider-transport';
+import type { ProviderKind } from './provider-kind';
 import type { AgentError } from '@/types/result';
 
 /** Canonical content parts. */
@@ -177,6 +178,7 @@ export interface HealthResult {
 export interface AIProviderAdapter {
   readonly id: string;
   readonly displayName: string;
+  readonly kind: ProviderKind;
   readonly authKind: AuthKind;
 
   connect(config: ProviderConfig): Promise<AuthResult>;
@@ -194,6 +196,14 @@ export interface AIProviderAdapter {
 export interface ProviderFactory {
   readonly id: string;
   readonly displayName: string;
+  /**
+   * What sort of provider this is, independent of how it authenticates.
+   *
+   * An API endpoint and a web application can share an `authKind` and share
+   * nothing else: one has a documented contract, the other has markup that
+   * changes without notice and content that is untrusted by definition.
+   */
+  readonly kind: ProviderKind;
   readonly authKind: AuthKind;
   readonly description: string;
   /**

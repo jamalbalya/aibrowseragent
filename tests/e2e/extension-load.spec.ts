@@ -28,6 +28,7 @@ test('every canonical tool is registered', async ({ send }) => {
     'browser.click',
     'browser.type',
     'browser.select',
+    'browser.set_checked',
     'browser.navigate',
     'browser.scroll',
     'browser.wait',

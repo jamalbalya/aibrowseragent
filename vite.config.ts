@@ -19,7 +19,10 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     target: 'chrome120',
-    sourcemap: true,
+    // Source maps are for development. A released package must not carry the
+    // whole source tree, so the release build turns them off; `validate-release`
+    // fails the build if one slips through.
+    sourcemap: process.env.RELEASE_BUILD !== '1',
     rollupOptions: {
       input: {
         sidepanel: resolve(import.meta.dirname, 'src/sidepanel/index.html'),

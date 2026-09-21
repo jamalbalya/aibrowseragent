@@ -103,6 +103,7 @@ const VISION_MODEL_HINTS = ['gpt-4o', 'gpt-4.1', 'gpt-5', 'o3', 'o4', 'vision', 
 export class OpenAICompatibleAdapter implements AIProviderAdapter {
   readonly id = OPENAI_COMPATIBLE_PROVIDER_ID;
   readonly displayName = 'OpenAI-compatible endpoint';
+  readonly kind = 'api' as const;
   readonly authKind = 'api_key' as const;
 
   private config: ProviderConfig | null = null;
@@ -718,6 +719,7 @@ export { ProviderRequestError } from '@/providers/core/provider-error';
 export const openAICompatibleFactory: ProviderFactory = {
   id: OPENAI_COMPATIBLE_PROVIDER_ID,
   displayName: 'OpenAI-compatible endpoint',
+  kind: 'api',
   authKind: 'api_key',
   description:
     'Any endpoint implementing the OpenAI Chat Completions API: OpenAI, a self-hosted model ' +

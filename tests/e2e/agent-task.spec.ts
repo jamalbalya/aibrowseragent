@@ -294,3 +294,68 @@ test('groups real tabs through the Chrome tab-group API', async ({
   await first.close();
   await second.close();
 });
+
+test('sets checkboxes and radios on a real form', async ({ context, send, provider, site }) => {
+  const page = await context.newPage();
+  await page.goto(`${site.baseUrl}/controls`, { waitUntil: 'domcontentloaded' });
+  await page.bringToFront();
+
+  await connectProvider(send, provider);
+  provider.script([
+    { kind: 'tool_calls', calls: [{ name: 'browser_read_page', arguments: {} }] },
+    {
+      kind: 'tool_calls',
+      calls: [
+        { name: 'browser_set_checked', arguments: { elementId: 'e1-0', checked: true } },
+        { name: 'browser_set_checked', arguments: { elementId: 'e1-1', checked: false } },
+        { name: 'browser_set_checked', arguments: { elementId: 'e1-3', checked: true } },
+      ],
+    },
+    { kind: 'text', text: 'Preferences set.' },
+  ]);
+
+  const { task } = await send('task.create', { objective: 'Set my preferences.' });
+  const finished = await waitForTask(send, task.id);
+
+  expect(finished.state).toBe('COMPLETED');
+  // The real DOM changed, and the radio group stayed exclusive.
+  expect(await page.isChecked('#news')).toBe(true);
+  expect(await page.isChecked('#terms')).toBe(false);
+  expect(await page.isChecked('#sb')).toBe(true);
+  expect(await page.isChecked('#sa')).toBe(false);
+});
+
+test('a unified audit trail records decisions and exports without page text', async ({
+  context,
+  send,
+  provider,
+  site,
+}) => {
+  const page = await context.newPage();
+  await page.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await page.bringToFront();
+
+  await connectProvider(send, provider);
+  provider.script([
+    { kind: 'tool_calls', calls: [{ name: 'browser_read_page', arguments: {} }] },
+    { kind: 'text', text: 'Read it.' },
+  ]);
+
+  const { task } = await send('task.create', { objective: 'Read the page.' });
+  await waitForTask(send, task.id);
+
+  const { events } = await send('audit.list', { taskId: task.id });
+  expect(events.length).toBeGreaterThan(0);
+  expect(events.some((e) => e.type === 'egress.decided')).toBe(true);
+  // Every egress record points at evidence rather than repeating it.
+  const egress = events.find((e) => e.type === 'egress.decided')!;
+  expect(egress.evidenceIds?.length).toBeGreaterThan(0);
+
+  const exported = await send('audit.export', {});
+  const serialised = JSON.stringify(exported.export);
+  expect(exported.export.format).toBe('aiba-audit/1');
+  expect(exported.export.eventCount).toBeGreaterThan(0);
+  // The trail describes what happened; it does not carry what was read.
+  expect(serialised).not.toContain('Widget Catalogue');
+  expect(serialised).not.toContain('hunter2');
+});

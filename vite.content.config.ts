@@ -13,7 +13,9 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: false,
     target: 'chrome120',
-    sourcemap: true,
+    // Off for a release build, for the same reason as the main config: a
+    // published package should not carry the source tree.
+    sourcemap: process.env.RELEASE_BUILD !== '1',
     lib: {
       entry: resolve(import.meta.dirname, 'src/content/content-script.ts'),
       formats: ['iife'],

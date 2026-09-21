@@ -63,6 +63,22 @@ const PAGES: Record<string, string> = {
  */
 function dynamicPages(collectorUrl: string): Record<string, string> {
   return {
+    '/controls': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Controls</title></head>
+<body>
+  <h1>Preferences</h1>
+  <form id="f" method="POST" action="/collect-local">
+    <label for="news">Newsletter</label>
+    <input id="news" name="news" type="checkbox">
+    <label for="terms">Accept terms</label>
+    <input id="terms" name="terms" type="checkbox" checked>
+    <label for="sa">Small</label>
+    <input id="sa" name="size" type="radio" value="s" checked>
+    <label for="sb">Large</label>
+    <input id="sb" name="size" type="radio" value="l">
+    <button id="send" type="submit">Save</button>
+  </form>
+</body></html>`,
+
     '/same-site-form': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Same Site Form</title></head>
 <body>
   <h1>Feedback</h1>

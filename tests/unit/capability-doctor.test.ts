@@ -36,6 +36,7 @@ function stub(options: StubOptions = {}): AIProviderAdapter {
   const adapter: AIProviderAdapter = {
     id: 'stub',
     displayName: 'Stub',
+    kind: 'api' as const,
     authKind: 'api_key',
     connect: (): Promise<AuthResult> => Promise.resolve({ authenticated: true }),
     disconnect: () => Promise.resolve(),

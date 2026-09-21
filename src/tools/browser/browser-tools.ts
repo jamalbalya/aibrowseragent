@@ -351,7 +351,18 @@ export function createSelectTool({ adapter }: BrowserToolDeps): AgentTool<typeof
     sideEffects: ['Changes a form field value.'],
     timeoutMs: 15_000,
     idempotent: true,
-    classify: (input) => ({ summary: `Select "${input.value}" in element ${input.elementId}.` }),
+    classify: (input, context) => ({
+      summary: `Select "${input.value}" in element ${input.elementId}.`,
+      // The chosen value is model output written into the page, so it is a
+      // page write for the same reason typing is.
+      egress: {
+        destination: urlDestination('page_write', context.currentUrl ?? '', {
+          ...(context.tabId === undefined ? {} : { tabId: context.tabId }),
+        }),
+        carrier: { writesValue: true },
+        payload: input.value,
+      },
+    }),
 
     async execute(input, context): Promise<ToolExecutionResult> {
       const tab = await requireTab(adapter, context);
@@ -361,6 +372,60 @@ export function createSelectTool({ adapter }: BrowserToolDeps): AgentTool<typeof
           value: input.value,
         });
         return { success: true, data: { selected: true, value: result.value } };
+      } catch (error) {
+        rethrowContentError(error, tab.url);
+      }
+    },
+  };
+}
+
+const setCheckedInput = z.object({
+  elementId: z.string().min(1).describe('Handle of a checkbox or radio from browser.read_page.'),
+  checked: z.boolean().describe('The state the control should end in.'),
+});
+
+export function createSetCheckedTool({
+  adapter,
+}: BrowserToolDeps): AgentTool<typeof setCheckedInput> {
+  return {
+    name: 'browser.set_checked',
+    version: '1.0.0',
+    description:
+      'Set a checkbox or radio button to a specific state. Radio buttons can only be set, ' +
+      'not cleared — select a different option in the group instead.',
+    inputSchema: setCheckedInput,
+    risk: 'R1',
+    executionMode: 'requires_page',
+    sideEffects: ['Changes a form control value.'],
+    timeoutMs: 15_000,
+    // Setting a state rather than toggling one, so repeating it is a no-op.
+    idempotent: true,
+    classify: (input, context) => ({
+      summary: `${input.checked ? 'Check' : 'Uncheck'} element ${input.elementId}.`,
+      // A checkbox carries far less than a text field, but it is still a
+      // model-chosen value written into a page: consent to an agree-to-terms
+      // box, or a "share my data" opt-in, is exactly the kind of small write
+      // that matters. It goes through the same gate as every other page write.
+      egress: {
+        destination: urlDestination('page_write', context.currentUrl ?? '', {
+          ...(context.tabId === undefined ? {} : { tabId: context.tabId }),
+        }),
+        carrier: { writesValue: true },
+        payload: String(input.checked),
+      },
+    }),
+
+    async execute(input, context): Promise<ToolExecutionResult> {
+      const tab = await requireTab(adapter, context);
+      try {
+        const result = await adapter.callContent(tab.id, 'content.setChecked', {
+          elementId: input.elementId,
+          checked: input.checked,
+        });
+        return {
+          success: true,
+          data: { checked: result.checked, kind: result.kind, value: result.value },
+        };
       } catch (error) {
         rethrowContentError(error, tab.url);
       }
@@ -764,6 +829,7 @@ export function createBrowserTools(deps: BrowserToolDeps): AgentTool[] {
     createClickTool(deps),
     createTypeTool(deps),
     createSelectTool(deps),
+    createSetCheckedTool(deps),
     createNavigateTool(deps),
     createBackTool(deps),
     createForwardTool(deps),

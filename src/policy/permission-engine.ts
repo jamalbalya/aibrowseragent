@@ -61,6 +61,14 @@ export interface PermissionEngineOptions {
   readonly prompter: PermissionPrompter;
   readonly loadSitePolicy: () => Promise<SitePolicyState>;
   readonly saveSitePolicy: (state: SitePolicyState) => Promise<void>;
+  /**
+   * Mirrors the decision into the unified audit trail.
+   *
+   * Optional so the engine can be tested alone. A failure here must not fail
+   * the decision: refusing an action because its record could not be written
+   * would turn an observability problem into a functional one.
+   */
+  readonly onDecision?: (entry: PermissionHistoryEntry) => Promise<void>;
   readonly now?: () => number;
 }
 
@@ -170,6 +178,16 @@ export class PermissionEngine {
     };
     const state = await this.options.loadSitePolicy();
     await this.options.saveSitePolicy(appendHistory(state, entry));
+
+    if (this.options.onDecision) {
+      try {
+        await this.options.onDecision(entry);
+      } catch (error) {
+        log.warn('Permission decision could not be added to the audit trail.', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     log.debug('Permission decision recorded.', {
       tool: entry.tool,
       decision: entry.decision,

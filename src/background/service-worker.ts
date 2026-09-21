@@ -22,6 +22,7 @@ import { TaskStore } from '@/tasks/task-store';
 import { EvidenceStore } from '@/evidence/evidence-store';
 import { ProviderRegistry, type ProviderConnection } from '@/providers/registry/provider-registry';
 import { ConsentStore } from '@/security/egress/consent';
+import { AuditLog, buildAuditExport } from '@/audit/audit-log';
 import { createGuardedTransport } from '@/security/egress/provider-transport';
 import { installNetworkInterceptor } from '@/security/egress/network-interceptor';
 import { buildEgressEvidence } from '@/security/egress/egress-evidence';
@@ -66,6 +67,7 @@ const settingsStore = new SettingsStore(new NamespacedStorageArea(local, 'settin
 const credentialStore = new CredentialStore(local);
 const taskStore = new TaskStore(new NamespacedStorageArea(local, 'tasks'));
 const evidenceStore = new EvidenceStore(new NamespacedStorageArea(local, 'evidence'));
+const auditLog = new AuditLog(new NamespacedStorageArea(local, 'audit'));
 const policyArea = new NamespacedStorageArea(local, 'policy');
 
 const SITE_POLICY_KEY = 'site-policy';
@@ -118,10 +120,28 @@ const providerTransport = createGuardedTransport({
       saltEpoch: context.saltEpoch,
       now: Date.now(),
     });
-    await evidenceStore.put(built.reference, {
+    const stored = await evidenceStore.put(built.reference, {
       content: JSON.stringify(built.detail),
       encoding: 'utf8',
       mimeType: 'application/json',
+    });
+    await auditLog.record({
+      type: 'egress.decided',
+      taskId: context.taskId,
+      tool: 'provider.request',
+      ...(decision.destinationIdentity === null
+        ? {}
+        : { destination: decision.destinationIdentity }),
+      providerId: context.providerId,
+      modelId: context.modelId,
+      outcome:
+        decision.verdict === 'allow'
+          ? 'allowed'
+          : decision.verdict === 'deny'
+            ? 'denied'
+            : 'confirmed',
+      code: decision.code,
+      evidenceIds: [stored.id],
     });
   },
 });
@@ -149,6 +169,19 @@ const permissionBroker = new PermissionBroker({
 });
 
 const permissionEngine = new PermissionEngine({
+  onDecision: async (entry) => {
+    await auditLog.record({
+      type: 'permission.decided',
+      taskId: entry.taskId,
+      tool: entry.tool,
+      site: entry.site,
+      risk: entry.risk,
+      outcome:
+        entry.decision === 'approved' || entry.decision === 'auto_approved' ? 'allowed' : 'denied',
+      code: entry.decision,
+      detail: entry.reason,
+    });
+  },
   prompter: permissionBroker,
   loadSitePolicy,
   saveSitePolicy,
@@ -169,10 +202,33 @@ const toolRegistry = new ToolRegistry({
     consent: consentStore,
     record: async (input) => {
       const built = await buildEgressEvidence(input);
-      await evidenceStore.put(built.reference, {
+      const stored = await evidenceStore.put(built.reference, {
         content: JSON.stringify(built.detail),
         encoding: 'utf8',
         mimeType: 'application/json',
+      });
+      await auditLog.record({
+        type: 'egress.decided',
+        taskId: input.taskId,
+        tool: input.sourceTool,
+        ...(input.decision.destinationIdentity === null
+          ? {}
+          : { destination: input.decision.destinationIdentity }),
+        ...(input.destination.origin === undefined ? {} : { origin: input.destination.origin }),
+        ...(input.destination.providerId === undefined
+          ? {}
+          : { providerId: input.destination.providerId }),
+        ...(input.destination.modelId === undefined ? {} : { modelId: input.destination.modelId }),
+        outcome:
+          input.decision.verdict === 'allow'
+            ? 'allowed'
+            : input.decision.verdict === 'deny'
+              ? 'denied'
+              : 'confirmed',
+        code: input.decision.code,
+        // The digest lives in evidence; the trail points at it rather than
+        // holding a second copy of anything.
+        evidenceIds: [stored.id],
       });
     },
   },
@@ -457,6 +513,24 @@ router.on('policy.removeSiteRule', async ({ site }) => {
   await saveSitePolicy(next);
   return { state: next };
 });
+
+router.on('audit.list', async ({ limit, taskId, site }) => {
+  if (taskId !== undefined) return { events: await auditLog.forTask(taskId, limit) };
+  if (site !== undefined) return { events: await auditLog.forSite(site, limit) };
+  return { events: await auditLog.list(limit) };
+});
+
+/**
+ * Builds the export and hands it back over extension messaging.
+ *
+ * This stays inside the extension: the side panel is an extension page, so
+ * nothing crosses the boundary and there is no egress to authorise. Writing
+ * the same document to a file or a server would cross it, and would have to
+ * go through the gate like anything else.
+ */
+router.on('audit.export', async ({ limit }) => ({
+  export: buildAuditExport(await auditLog.list(limit ?? 2000), Date.now()),
+}));
 
 router.on('evidence.listForTask', async ({ taskId }) => ({
   evidence: await evidenceStore.listForTask(taskId),

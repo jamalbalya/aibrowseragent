@@ -15,6 +15,7 @@ import {
   performClick,
   performScroll,
   performSelect,
+  performSetChecked,
   performType,
   resolveActionable,
 } from './interaction-engine';
@@ -80,6 +81,13 @@ const handlers: Handlers = {
       throw new InteractionRejection(resolved.error.failure, resolved.error.message);
     const result = performSelect(resolved.element, payload.value);
     return { selected: true as const, value: result.value };
+  },
+
+  'content.setChecked': (payload) => {
+    const resolved = resolveActionable(registry, payload.elementId);
+    if (!resolved.ok)
+      throw new InteractionRejection(resolved.error.failure, resolved.error.message);
+    return performSetChecked(resolved.element, payload.checked);
   },
 
   'content.scroll': (payload) => performScroll(window, payload.direction, payload.amount),

@@ -9,6 +9,7 @@ import type { AgentTask, AgentSession, TaskState } from '@/tasks/task-model';
 import type { AgentError } from '@/types/result';
 import type { CapabilityReport } from '@/providers/capability-doctor/capability-doctor';
 import type { PermissionRequest, PermissionResponse } from '@/policy/permission-engine';
+import type { AuditEvent, AuditExport } from '@/audit/audit-log';
 import type { PermissionMode } from '@/policy/policy-engine';
 import type { SemanticPage } from '@/content/semantic-tree';
 import type { EvidenceReference } from '@/evidence/evidence-model';
@@ -95,6 +96,21 @@ export interface PanelRequestMap {
   'policy.getSitePolicy': { request: Record<string, never>; response: { state: SitePolicyState } };
   'policy.removeSiteRule': { request: { site: string }; response: { state: SitePolicyState } };
 
+  'audit.list': {
+    request: { limit?: number; taskId?: string; site?: string };
+    response: { events: AuditEvent[] };
+  };
+  /**
+   * Builds the export document and returns it to the side panel.
+   *
+   * The result crosses no security boundary: it travels over extension
+   * messaging to a page of this extension, which is inside. Saving it
+   * elsewhere would be an egress and is not what this does.
+   */
+  'audit.export': {
+    request: { limit?: number };
+    response: { export: AuditExport };
+  };
   'evidence.listForTask': {
     request: { taskId: string };
     response: { evidence: EvidenceReference[] };
@@ -138,6 +154,10 @@ export interface ContentRequestMap {
   'content.select': {
     request: { elementId: string; value: string };
     response: { selected: true; value: string };
+  };
+  'content.setChecked': {
+    request: { elementId: string; checked: boolean };
+    response: { checked: boolean; value: string; kind: 'checkbox' | 'radio' };
   };
   'content.scroll': {
     request: { direction: 'up' | 'down' | 'top' | 'bottom'; amount?: number; elementId?: string };
