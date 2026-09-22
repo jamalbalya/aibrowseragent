@@ -2426,7 +2426,11 @@ build register — there is no installer, and no message that can add one.
 
 Workflow recording, shortcuts, scheduling, MCP and plugins remain NOT-STARTED.
 Workflow recording (P-022) named skills as its dependency and is now
-unblocked.
+unblocked. Its security invariant is fixed in advance and recorded in
+`docs/skills.md`: a recorded workflow goes through the existing validator, the
+existing registered tools and `ToolRegistry.dispatch`, and must not introduce a
+second execution engine. A recording earns no trust from having been performed,
+and replay is a fresh run that re-enters every gate.
 
 Skills (Phase 7) depended on connectors and are now unblocked. Workflow,
 recording, shortcuts and scheduling (Phase 8) depend on skills and on

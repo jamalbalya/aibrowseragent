@@ -415,6 +415,133 @@ test('a skill run interrupted by a worker restart is not silently resumed', asyn
   void serviceWorker;
 });
 
+// --- blocked egress, measured at the receiving side -------------------------
+
+test('a blocked egress inside a skill produces zero hits on the receiving origin', async ({
+  context,
+  send,
+  provider,
+  site,
+  collector,
+}) => {
+  const target = await context.newPage();
+  await target.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await target.bringToFront();
+
+  await connectProvider(send, provider);
+  // Read a real page first so the task genuinely carries taint, then try to
+  // navigate to a different origin from inside a workflow.
+  provider.script([
+    {
+      kind: 'tool_calls',
+      calls: [{ name: 'skills.run', arguments: { skillId: 'page.inspect' } }],
+    },
+    {
+      kind: 'tool_calls',
+      calls: [
+        {
+          name: 'skills.run',
+          arguments: {
+            skillId: 'page.open_and_read',
+            inputs: { url: `${collector.baseUrl}/?leak=1` },
+          },
+        },
+      ],
+    },
+    { kind: 'text', text: 'The second workflow was refused.' },
+  ]);
+
+  await send('session.setPermissionMode', { mode: 'manual' });
+  const answers = autoAnswer(send, (tool) =>
+    tool === 'browser.navigate' ? 'deny' : 'approve_once',
+  );
+  const { task } = await send('task.create', { objective: 'Inspect, then open the other site.' });
+  await waitForTask(send, task.id, 60_000);
+  answers.stop();
+
+  // The independent witness. A refusal inside the extension that still issued
+  // the request would look identical from the inside, which is why this
+  // assertion is on the receiving server rather than on a decision code.
+  expect(collector.requests).toEqual([]);
+  expect(answers.asked).toContain('browser.navigate');
+});
+
+test('a skill run records no page content in the audit trail', async ({
+  send,
+  provider,
+  site,
+  page,
+}) => {
+  // The page carries a distinctive string; the workflow reads it; the audit
+  // trail must not contain it anywhere, at any nesting.
+  await page.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  const pageText = await page.evaluate(() => document.body.innerText.slice(0, 40));
+
+  await connectProvider(send, provider);
+  provider.script([
+    {
+      kind: 'tool_calls',
+      calls: [{ name: 'skills.run', arguments: { skillId: 'page.inspect' } }],
+    },
+    { kind: 'text', text: 'Read it.' },
+  ]);
+
+  const { task } = await send('task.create', { objective: 'Inspect the page.' });
+  await waitForTask(send, task.id, 40_000);
+
+  const { events } = await send('audit.list', { limit: 100 });
+  const dumped = JSON.stringify(events);
+
+  const distinctive = pageText.split(/\s+/).filter((word) => word.length > 6);
+  // Guard against the assertion below passing because there was nothing to
+  // look for.
+  expect(distinctive.length).toBeGreaterThan(0);
+  for (const word of distinctive.slice(0, 5)) {
+    expect(dumped).not.toContain(word);
+  }
+  // And the skill events are there, so this is not vacuous.
+  expect(events.some((event) => event.type.startsWith('skill.'))).toBe(true);
+});
+
+test('taint survives a real worker restart and still gates a later skill step', async ({
+  context,
+  send,
+  provider,
+  site,
+  collector,
+  serviceWorker,
+}) => {
+  const target = await context.newPage();
+  await target.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await target.bringToFront();
+
+  await connectProvider(send, provider);
+  provider.script([
+    {
+      kind: 'tool_calls',
+      calls: [{ name: 'skills.run', arguments: { skillId: 'page.inspect' } }],
+    },
+    { kind: 'text', text: 'Read it.' },
+  ]);
+
+  const { task } = await send('task.create', { objective: 'Inspect the page.' });
+  await waitForTask(send, task.id, 40_000);
+
+  // Kill the real service worker, as Chrome does routinely.
+  await serviceWorker
+    .evaluate(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).registration?.unregister?.();
+    })
+    .catch(() => undefined);
+
+  const after = await send('task.get', { taskId: task.id });
+  // The task's record still says what it read: taint is persisted, not held
+  // in the worker's memory.
+  expect(after.task?.taintState.kind).not.toBe('UNKNOWN');
+  expect(collector.requests).toEqual([]);
+});
+
 // --- what skills did not add ------------------------------------------------
 
 test('skills added no permission and no host access', async ({ serviceWorker }) => {

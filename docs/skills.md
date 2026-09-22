@@ -268,8 +268,22 @@ Recorded: which skill ran, at what version and hash, which step, what it ran,
 the permission and egress decisions, cancellation, retry and final status.
 
 Not recorded: the run's inputs, its step results, its outputs, or anything they
-contained. The audit log refuses a record carrying any of them, for the same
-reason the run store does.
+contained. The audit log refuses a record carrying any of them — at any depth,
+through objects and arrays alike — for the same reason the run store does.
+
+Being precise about what that check is: it is a **denylist of field names**,
+applied recursively, on top of a closed `AuditEvent` type. It is not a content
+filter. A caller that invented a benign-sounding field and put a page's text in
+it would not be refused; what stops that is the type having no such field.
+Credentials are defended more heavily — redaction is recursive and matches the
+_value_ as well as the name, so a token under any name at any depth is stored
+as `[REDACTED]`.
+
+The recursion was added during post-implementation verification. The check was
+top-level only, so `{ detail: { inputs: pageText } }` reached the store
+verbatim. No credential was ever exposed by it, and the closed event type meant
+no shipped call site produced such a record — but the control did not do what
+this document claimed it did.
 
 ## What ships
 
@@ -283,6 +297,40 @@ All three are read-only. A "file a bug" workflow is a reasonable thing to want
 and a bad thing to ship first: it would make an irreversible, publicly visible
 write the easiest path through a brand-new feature. Writes stay individually
 requested until the read path has been used in anger.
+
+## Workflow recording (P-022) — the contract it must obey
+
+Not implemented, and not designed here. What is fixed in advance is the
+security shape any implementation has to take, because the tempting design is
+the one this wave spent its effort avoiding:
+
+```
+recorded workflow
+    → the existing validator
+    → the existing registered tools
+    → ToolRegistry.dispatch
+    → the existing security controls
+```
+
+It must **not** introduce a second execution engine. A recording is a
+`SkillDefinition` like any other, so:
+
+- it validates through `validateSkillDefinition`, with no relaxation for having
+  been recorded rather than written;
+- every step names an already-registered tool, and recording one does not
+  create it;
+- it carries no code, and a recorded value is a literal or a binding, never an
+  expression;
+- it earns no trust from having been performed. A user doing something by hand
+  once is not a grant to do it unattended later, so a recording is a proposal
+  until it is registered by whatever mechanism a future wave designs — and
+  today the only registering provenance is `bundled`;
+- replay is a fresh run: it re-enters every gate, carries no approval forward,
+  and is subject to the same per-step permission and egress evaluation.
+
+If recording ever needs a run to be _resumed_ rather than re-run, that is a
+separate capability with its own design: the current run record deliberately
+holds no step results, and the reason is above.
 
 ## What skills did not add
 

@@ -189,12 +189,46 @@ export class ProhibitedAuditFieldError extends Error {
   }
 }
 
-/** Rejects a record carrying anything the trail must not hold. */
+/** How deep the check walks before giving up and refusing outright. */
+const MAX_AUDIT_DEPTH = 8;
+
+/**
+ * Rejects a record carrying anything the trail must not hold.
+ *
+ * Recursive, through objects and arrays alike. It was top-level only, which
+ * made it trivially avoidable: `{ detail: { inputs: pageText } }` passed, and
+ * so did `{ steps: [{ result: pageText }] }`. Redaction still caught anything
+ * *credential*-shaped at any depth — that was never the gap — but a page's
+ * text under a nested `inputs` is not credential-shaped and reached the store
+ * verbatim.
+ *
+ * A nested prohibited name is reported with its path, so a caller that spread
+ * a wider object in can see where it came from.
+ */
 export function assertAuditSafe(event: Record<string, unknown>): void {
-  for (const key of Object.keys(event)) {
-    if (PROHIBITED_FIELDS.has(key.toLowerCase())) {
-      throw new ProhibitedAuditFieldError(key);
+  walkForProhibited(event, [], 0);
+}
+
+function walkForProhibited(value: unknown, path: readonly string[], depth: number): void {
+  if (depth > MAX_AUDIT_DEPTH) {
+    // A structure this deep is not an audit record. Refusing beats walking
+    // an unbounded graph, and beats silently stopping the check partway.
+    throw new ProhibitedAuditFieldError(path.join('.') || '(root)');
+  }
+  if (value === null || typeof value !== 'object') return;
+
+  if (Array.isArray(value)) {
+    for (const [index, item] of value.entries()) {
+      walkForProhibited(item, [...path, String(index)], depth + 1);
     }
+    return;
+  }
+
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (PROHIBITED_FIELDS.has(key.toLowerCase())) {
+      throw new ProhibitedAuditFieldError([...path, key].join('.'));
+    }
+    walkForProhibited(nested, [...path, key], depth + 1);
   }
 }
 

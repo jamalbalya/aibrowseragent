@@ -106,12 +106,37 @@ export class ProhibitedSkillRecordFieldError extends Error {
   }
 }
 
-/** Rejects a record that grew a field it should not have. */
+const MAX_RECORD_DEPTH = 6;
+
+/**
+ * Rejects a record that grew a field it should not have.
+ *
+ * Recursive, for the same reason the audit trail's check is: a top-level scan
+ * is avoided by one level of nesting, and `{ detail: { result: pageText } }`
+ * is exactly the shape a caller reaches for when a flat field is refused.
+ */
 export function assertRecordSafe(record: Record<string, unknown>): void {
-  for (const key of Object.keys(record)) {
-    if (PROHIBITED_FIELDS.has(key.toLowerCase())) {
-      throw new ProhibitedSkillRecordFieldError(key);
+  walkRecord(record, [], 0);
+}
+
+function walkRecord(value: unknown, path: readonly string[], depth: number): void {
+  if (depth > MAX_RECORD_DEPTH) {
+    throw new ProhibitedSkillRecordFieldError(path.join('.') || '(root)');
+  }
+  if (value === null || typeof value !== 'object') return;
+
+  if (Array.isArray(value)) {
+    for (const [index, item] of value.entries()) {
+      walkRecord(item, [...path, String(index)], depth + 1);
     }
+    return;
+  }
+
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (PROHIBITED_FIELDS.has(key.toLowerCase())) {
+      throw new ProhibitedSkillRecordFieldError([...path, key].join('.'));
+    }
+    walkRecord(nested, [...path, key], depth + 1);
   }
 }
 
