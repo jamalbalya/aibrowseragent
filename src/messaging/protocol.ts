@@ -596,6 +596,22 @@ export interface ContentRequestMap {
     request: { elementId: string; value: string };
     response: { selected: true; value: string; actedOn?: ActedOnElement };
   };
+  /**
+   * Sets a structured input (date, time, colour, range, number) to a value.
+   *
+   * Separate from `content.type` because these controls are not typed into:
+   * typing lands in whichever segment has focus, and a range has no segments
+   * at all.
+   */
+  'content.setValue': {
+    request: { elementId: string; value: string };
+    response: { value: string; type: string; adjusted?: boolean; actedOn?: ActedOnElement };
+  };
+  /** Sets the whole selection of a multi-select, rather than adding to it. */
+  'content.selectMany': {
+    request: { elementId: string; values: readonly string[] };
+    response: { values: readonly string[]; actedOn?: ActedOnElement };
+  };
   'content.setChecked': {
     request: { elementId: string; checked: boolean };
     response: {

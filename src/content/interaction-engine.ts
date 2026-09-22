@@ -8,6 +8,7 @@
  */
 import { isEnabled, isVisible, type ElementRegistry } from './semantic-tree';
 import { matchesAccept } from '@/files/file-model';
+import { STRUCTURED_INPUT_TYPES, type StructuredInputType } from './form-controls';
 
 export type InteractionFailure =
   | 'STALE_HANDLE'
@@ -310,6 +311,175 @@ export function performSetChecked(element: Element, checked: boolean): CheckedRe
   element.dispatchEvent(new Event('input', { bubbles: true }));
   element.dispatchEvent(new Event('change', { bubbles: true }));
   return { checked: element.checked, value: element.value, kind };
+}
+
+/**
+ * The format each type accepts, as the HTML specification defines it.
+ *
+ * Validated here rather than left to the browser alone for one reason: a
+ * browser silently clears a value it cannot parse, so a model that sent
+ * `12/03/2026` to a date field would be told the field is now empty and would
+ * have no idea why. Checking first turns that into a message naming the
+ * format.
+ */
+const VALUE_FORMATS: Record<StructuredInputType, { pattern: RegExp; shape: string }> = {
+  date: { pattern: /^\d{4}-\d{2}-\d{2}$/, shape: 'YYYY-MM-DD' },
+  time: { pattern: /^\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?$/, shape: 'HH:MM or HH:MM:SS' },
+  'datetime-local': {
+    pattern: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?$/,
+    shape: 'YYYY-MM-DDTHH:MM',
+  },
+  month: { pattern: /^\d{4}-\d{2}$/, shape: 'YYYY-MM' },
+  week: { pattern: /^\d{4}-W\d{2}$/, shape: 'YYYY-Www' },
+  // Lower-case six-digit hex is the only form the DOM keeps; `red` and
+  // `#ABC` are both valid CSS and neither survives a round trip.
+  color: { pattern: /^#[0-9a-f]{6}$/, shape: '#rrggbb in lower case' },
+  range: { pattern: /^-?\d+(\.\d+)?$/, shape: 'a number' },
+  number: { pattern: /^-?\d+(\.\d+)?$/, shape: 'a number' },
+};
+
+export interface ValueResult {
+  readonly value: string;
+  readonly type: StructuredInputType;
+  /** Present when the control clamped or snapped what was asked for. */
+  readonly adjusted?: boolean;
+}
+
+/**
+ * Sets a structured input to a value, in the format that control accepts.
+ *
+ * Deliberately not `performType`. Typing into a date field types into whatever
+ * segment happens to have focus, so the same keystrokes mean different things
+ * depending on where the caret was — and on a `range` there is nothing to type
+ * into at all. Assigning the value and firing the events the page listens for
+ * is what these controls actually respond to.
+ *
+ * What it will not do is decide what the page meant. A value outside `min` and
+ * `max` is refused rather than clamped: a model that asked for a date outside
+ * the allowed window has made a mistake, and silently moving it to the nearest
+ * legal one submits something nobody chose.
+ */
+export function performSetValue(element: Element, value: string): ValueResult {
+  if (!(element instanceof HTMLInputElement)) {
+    throw new TypeError('This element is not an input control.');
+  }
+  const type = element.type.toLowerCase() as StructuredInputType;
+  if (!(STRUCTURED_INPUT_TYPES as readonly string[]).includes(type)) {
+    throw new TypeError(
+      `This input is a "${element.type}". Use browser.type for text fields, ` +
+        'browser.select for dropdowns and browser.set_checked for checkboxes.',
+    );
+  }
+  if (element.readOnly) throw new TypeError('This control is read-only.');
+  if (element.disabled) throw new TypeError('This control is disabled.');
+
+  const format = VALUE_FORMATS[type];
+  if (!format.pattern.test(value)) {
+    throw new RangeError(`"${value}" is not a valid ${type} value. Expected ${format.shape}.`);
+  }
+
+  // Bounds are the page's rules about its own field, so they are enforced
+  // rather than discovered by watching the value change underneath us.
+  if (type === 'range' || type === 'number') {
+    const numeric = Number(value);
+    const min = element.min === '' ? undefined : Number(element.min);
+    const max = element.max === '' ? undefined : Number(element.max);
+    if (min !== undefined && numeric < min) {
+      throw new RangeError(`${value} is below this control's minimum of ${element.min}.`);
+    }
+    if (max !== undefined && numeric > max) {
+      throw new RangeError(`${value} is above this control's maximum of ${element.max}.`);
+    }
+  }
+  if (element.min !== '' && type !== 'range' && type !== 'number' && value < element.min) {
+    throw new RangeError(`${value} is earlier than this control's minimum of ${element.min}.`);
+  }
+  if (element.max !== '' && type !== 'range' && type !== 'number' && value > element.max) {
+    throw new RangeError(`${value} is later than this control's maximum of ${element.max}.`);
+  }
+
+  scrollIntoView(element);
+  element.focus({ preventScroll: true });
+  // Kept so a rejection can be undone. Assigning is how the browser is asked
+  // whether it will accept a value, and its way of saying no is to clear the
+  // field — so asking destroys what was there unless it is put back.
+  const previous = element.value;
+  element.value = value;
+
+  // Read back. An empty string here means the browser rejected the value
+  // outright; a different string means it snapped to a legal step. Either way
+  // the caller is told what the field actually holds rather than what was
+  // asked for.
+  //
+  // `2026-02-30` is the case this exists for: well-formed, matches the
+  // pattern, and is not a date. No amount of checking the string first
+  // catches it, because the calendar is the browser's business.
+  const settled = element.value;
+  if (settled === '') {
+    element.value = previous;
+    throw new RangeError(
+      `The control did not accept "${value}". It expects ${format.shape} and may restrict the range further.`,
+    );
+  }
+
+  element.dispatchEvent(new Event('input', { bubbles: true }));
+  element.dispatchEvent(new Event('change', { bubbles: true }));
+  return { value: settled, type, ...(settled === value ? {} : { adjusted: true }) };
+}
+
+export interface SelectManyResult {
+  readonly values: readonly string[];
+}
+
+/**
+ * Sets every selected option of a multi-select at once.
+ *
+ * Expressed as the whole selection rather than as "also select this", for the
+ * same reason `set_checked` is not a toggle: an additive call has to be right
+ * about what is already selected, and a model working from a stale snapshot
+ * would leave options set that it believed it had cleared. Passing the
+ * complete list makes the call say what the field should end up holding.
+ *
+ * An empty list is a legitimate request — it clears the selection — so it is
+ * accepted rather than treated as a mistake.
+ */
+export function performSelectMany(element: Element, values: readonly string[]): SelectManyResult {
+  if (!(element instanceof HTMLSelectElement)) {
+    throw new TypeError('This element is not a select control.');
+  }
+  if (!element.multiple) {
+    throw new TypeError('This dropdown takes one value. Use browser.select instead.');
+  }
+  if (element.disabled) throw new TypeError('This control is disabled.');
+
+  const options = [...element.options];
+  const resolved: HTMLOptionElement[] = [];
+  for (const wanted of values) {
+    const match =
+      options.find((option) => option.value === wanted) ??
+      options.find((option) => option.text.trim() === wanted.trim()) ??
+      options.find((option) => option.text.trim().toLowerCase() === wanted.trim().toLowerCase());
+    if (!match) {
+      const available = options
+        .slice(0, 20)
+        .map((option) => option.text.trim())
+        .join(', ');
+      throw new RangeError(`No option matches "${wanted}". Available options: ${available}`);
+    }
+    if (match.disabled) {
+      throw new RangeError(`The option "${wanted}" is disabled.`);
+    }
+    resolved.push(match);
+  }
+
+  scrollIntoView(element);
+  element.focus({ preventScroll: true });
+  const chosen = new Set(resolved);
+  for (const option of options) option.selected = chosen.has(option);
+
+  element.dispatchEvent(new Event('input', { bubbles: true }));
+  element.dispatchEvent(new Event('change', { bubbles: true }));
+  return { values: [...element.selectedOptions].map((option) => option.value) };
 }
 
 export type ScrollDirection = 'up' | 'down' | 'top' | 'bottom';

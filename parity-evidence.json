@@ -44,10 +44,16 @@
       ]
     },
     "P-006": {
-      "unit": ["tests/unit/interaction-engine.test.ts"],
+      "unit": [
+        "tests/unit/interaction-engine.test.ts",
+        "tests/unit/advanced-form-controls.test.ts"
+      ],
       "integration": ["tests/integration/agent-runtime.test.ts"],
-      "security": ["tests/security/secret-redaction.test.ts"],
-      "e2e": ["tests/e2e/agent-task.spec.ts"]
+      "security": [
+        "tests/security/secret-redaction.test.ts",
+        "tests/security/advanced-forms-security.test.ts"
+      ],
+      "e2e": ["tests/e2e/agent-task.spec.ts", "tests/e2e/advanced-forms.spec.ts"]
     },
     "P-007": {
       "unit": ["tests/unit/interaction-engine.test.ts", "tests/unit/browser-tools.test.ts"],

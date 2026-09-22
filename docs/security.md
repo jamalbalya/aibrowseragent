@@ -584,6 +584,30 @@ either, and a worker that starts afterwards cannot know. This raises the floor
 and a transient fault — and it is not a guarantee. It is not described as one
 in the code, and it is not described as one here.
 
+## Setting a form control that is not a text field
+
+Date, time, datetime-local, month, week, colour, range and number are set
+through `browser.set_value`, and a multi-select through
+`browser.select_many`. Both are ordinary registry tools: an element handle
+from a page read this build issued, a declared page-write egress, a risk
+level, and no route or authorisation of their own. Neither accepts a
+selector, an expression or a script, and neither added a permission.
+
+Two rules keep a value honest. It is checked against the format its type
+accepts _and_ against the bounds the page declared, so a value outside them
+is refused rather than clamped — clamping would submit a number or a date
+nobody chose. And it is read back after assignment, because a browser's way
+of rejecting a value it cannot parse is to clear the field and say nothing:
+`2026-02-30` matches the date format exactly and is not a date. A value the
+control refuses is restored rather than left cleared.
+
+A multi-select is set as a whole rather than added to, for the same reason
+`set_checked` is not a toggle: an additive call has to be right about what is
+already selected, and a stale snapshot would leave options set that the
+caller believed it had cleared. Options match exactly — a prefix match would
+turn `admin` into `admin-readonly` depending on document order, which is not a
+substitution a permissions dropdown should make.
+
 ## Switching provider, and what must not come with it
 
 Switching provider or model is an explicit action, and §60 forbids a silent

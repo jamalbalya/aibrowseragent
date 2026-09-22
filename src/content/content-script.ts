@@ -17,6 +17,8 @@ import {
   performClick,
   performScroll,
   performSelect,
+  performSelectMany,
+  performSetValue,
   performSetChecked,
   performType,
   resolveActionable,
@@ -97,6 +99,26 @@ const handlers: Handlers = {
       ...(payload.submit === undefined ? {} : { submit: payload.submit }),
     });
     return { typed: true as const, ...(actedOn === undefined ? {} : { actedOn }) };
+  },
+
+  'content.setValue': (payload) => {
+    const resolved = resolveActionable(registry, payload.elementId);
+    if (!resolved.ok)
+      throw new InteractionRejection(resolved.error.failure, resolved.error.message);
+    // Described before the change, for the same reason click and type are:
+    // a field labelled by its own contents is named after whatever is in it.
+    const actedOn = describeActedOn(registry, resolved.element);
+    const result = performSetValue(resolved.element, payload.value);
+    return { ...result, ...(actedOn === undefined ? {} : { actedOn }) };
+  },
+
+  'content.selectMany': (payload) => {
+    const resolved = resolveActionable(registry, payload.elementId);
+    if (!resolved.ok)
+      throw new InteractionRejection(resolved.error.failure, resolved.error.message);
+    const actedOn = describeActedOn(registry, resolved.element);
+    const result = performSelectMany(resolved.element, payload.values);
+    return { ...result, ...(actedOn === undefined ? {} : { actedOn }) };
   },
 
   'content.select': (payload) => {

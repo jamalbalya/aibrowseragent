@@ -84,6 +84,57 @@ function dynamicPages(collectorUrl: string): Record<string, string> {
   </form>
 </body></html>`,
 
+    // Advanced form controls (P-006). Bounds are declared on purpose: a field
+    // that accepts anything proves nothing about a tool that is supposed to
+    // respect what a page asks for.
+    '/advanced-controls': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Advanced Controls</title></head>
+<body>
+  <h1>Booking</h1>
+  <form id="f" method="POST" action="/collect-local">
+    <label for="when">Travel date</label>
+    <input id="when" name="when" type="date" min="2026-01-01" max="2026-12-31">
+    <label for="at">Departure time</label>
+    <input id="at" name="at" type="time">
+    <label for="exact">Exact moment</label>
+    <input id="exact" name="exact" type="datetime-local">
+    <label for="cycle">Billing month</label>
+    <input id="cycle" name="cycle" type="month">
+    <label for="sprint">Sprint week</label>
+    <input id="sprint" name="sprint" type="week">
+    <label for="shade">Label colour</label>
+    <input id="shade" name="shade" type="color" value="#000000">
+    <label for="seats">Seats</label>
+    <input id="seats" name="seats" type="range" min="1" max="8" step="1" value="1">
+    <label for="qty">Quantity</label>
+    <input id="qty" name="qty" type="number" min="1" max="10">
+    <label for="extras">Extras</label>
+    <select id="extras" name="extras" multiple size="4">
+      <option value="bags">Extra bags</option>
+      <option value="meal">Meal</option>
+      <option value="wifi">Wi-Fi</option>
+      <option value="lounge" disabled>Lounge (unavailable)</option>
+    </select>
+    <label for="one">Cabin</label>
+    <select id="one" name="one"><option value="e">Economy</option><option value="b">Business</option></select>
+    <label for="locked">Reference</label>
+    <input id="locked" name="locked" type="date" value="2026-06-01" readonly>
+    <label for="note">Note</label>
+    <input id="note" name="note" type="text">
+    <p id="echo"></p>
+    <button id="send" type="submit">Book</button>
+  </form>
+  <script>
+    // The page's own listeners, so a tool that sets a value without firing
+    // the events a real user would fire is visibly different from one that
+    // does.
+    const seen = [];
+    for (const el of document.querySelectorAll('input, select')) {
+      el.addEventListener('input', () => seen.push(el.id + ':input'));
+      el.addEventListener('change', () => { seen.push(el.id + ':change'); document.getElementById('echo').textContent = seen.join(' '); });
+    }
+  </script>
+</body></html>`,
+
     '/same-site-form': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Same Site Form</title></head>
 <body>
   <h1>Feedback</h1>

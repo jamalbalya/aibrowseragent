@@ -393,6 +393,149 @@ export function createSelectTool({ adapter }: BrowserToolDeps): AgentTool<typeof
   };
 }
 
+const setValueInput = z.object({
+  elementId: z
+    .string()
+    .min(1)
+    .describe('Handle of a date, time, colour, range or number input from browser.read_page.'),
+  value: z
+    .string()
+    .min(1)
+    .max(64)
+    .describe(
+      'The value in the format the control accepts: YYYY-MM-DD for date, HH:MM for time, ' +
+        'YYYY-MM-DDTHH:MM for datetime-local, YYYY-MM for month, YYYY-Www for week, ' +
+        '#rrggbb in lower case for colour, and a plain number for range and number.',
+    ),
+});
+
+/**
+ * Sets a control whose value the browser parses for itself.
+ *
+ * Separate from `browser.type` because these are not typed into. A date field
+ * has segments and typing lands in whichever one has focus; a range has none
+ * at all. The page model reports the control's `inputType` and its bounds so
+ * the choice between the two tools is visible rather than guessed.
+ */
+export function createSetValueTool({ adapter }: BrowserToolDeps): AgentTool<typeof setValueInput> {
+  return {
+    name: 'browser.set_value',
+    version: '1.0.0',
+    description:
+      'Set a date, time, datetime-local, month, week, colour, range or number input to a ' +
+      'value. Use browser.type for text fields and browser.select for dropdowns.',
+    inputSchema: setValueInput,
+    risk: 'R1',
+    executionMode: 'requires_page',
+    sideEffects: ['Changes a form field value.'],
+    timeoutMs: 15_000,
+    // Setting a value rather than appending one, so repeating it lands on the
+    // same state.
+    idempotent: true,
+    classify: (input, context) => ({
+      summary: `Set element ${input.elementId} to "${input.value}".`,
+      // Model output written into the page, gated like every other page write.
+      // A date is smaller than a paragraph and is still a value the page will
+      // submit on someone's behalf.
+      egress: {
+        destination: urlDestination('page_write', context.currentUrl ?? '', {
+          ...(context.tabId === undefined ? {} : { tabId: context.tabId }),
+        }),
+        carrier: { writesValue: true },
+        payload: input.value,
+      },
+    }),
+
+    async execute(input, context): Promise<ToolExecutionResult> {
+      const tab = await requireTab(adapter, context);
+      try {
+        const result = await adapter.callContent(tab.id, 'content.setValue', {
+          elementId: input.elementId,
+          value: input.value,
+        });
+        return {
+          success: true,
+          // `adjusted` is reported rather than smoothed over: a control that
+          // snapped to its nearest legal step holds something other than what
+          // was asked for, and the caller should know which.
+          data: {
+            value: result.value,
+            type: result.type,
+            ...(result.adjusted === undefined ? {} : { adjusted: result.adjusted }),
+          },
+          ...(result.actedOn === undefined ? {} : { actedOn: result.actedOn }),
+        };
+      } catch (error) {
+        rethrowContentError(error, tab.url);
+      }
+    },
+  };
+}
+
+const selectManyInput = z.object({
+  elementId: z.string().min(1).describe('Handle of a multi-select listbox from browser.read_page.'),
+  values: z
+    .array(z.string().min(1).max(200))
+    .max(100)
+    .describe(
+      'The complete set of options that should end up selected, by value or visible label. ' +
+        'Anything not listed is deselected; an empty list clears the selection.',
+    ),
+});
+
+/**
+ * Sets the whole selection of a multi-select.
+ *
+ * The complete list rather than "also select this", for the same reason
+ * `set_checked` is not a toggle: an additive call has to be right about what
+ * is already selected, and a model working from a stale snapshot would leave
+ * options set that it believed it had cleared.
+ */
+export function createSelectManyTool({
+  adapter,
+}: BrowserToolDeps): AgentTool<typeof selectManyInput> {
+  return {
+    name: 'browser.select_many',
+    version: '1.0.0',
+    description:
+      'Set every selected option of a multi-select listbox at once. Pass the complete set ' +
+      'that should end up selected; anything omitted is deselected.',
+    inputSchema: selectManyInput,
+    risk: 'R1',
+    executionMode: 'requires_page',
+    sideEffects: ['Changes a form field value.'],
+    timeoutMs: 15_000,
+    idempotent: true,
+    classify: (input, context) => ({
+      summary: `Select ${input.values.length} option(s) in element ${input.elementId}.`,
+      egress: {
+        destination: urlDestination('page_write', context.currentUrl ?? '', {
+          ...(context.tabId === undefined ? {} : { tabId: context.tabId }),
+        }),
+        carrier: { writesValue: true },
+        payload: input.values.join(', '),
+      },
+    }),
+
+    async execute(input, context): Promise<ToolExecutionResult> {
+      const tab = await requireTab(adapter, context);
+      try {
+        const result = await adapter.callContent(tab.id, 'content.selectMany', {
+          elementId: input.elementId,
+          values: input.values,
+        });
+        return {
+          success: true,
+          data: { values: result.values },
+          ...(result.actedOn === undefined ? {} : { actedOn: result.actedOn }),
+        };
+      } catch (error) {
+        rethrowContentError(error, tab.url);
+      }
+    },
+  };
+}
+
 const setCheckedInput = z.object({
   elementId: z.string().min(1).describe('Handle of a checkbox or radio from browser.read_page.'),
   checked: z.boolean().describe('The state the control should end in.'),
@@ -843,6 +986,8 @@ export function createBrowserTools(deps: BrowserToolDeps): AgentTool[] {
     createClickTool(deps),
     createTypeTool(deps),
     createSelectTool(deps),
+    createSelectManyTool(deps),
+    createSetValueTool(deps),
     createSetCheckedTool(deps),
     createNavigateTool(deps),
     createBackTool(deps),

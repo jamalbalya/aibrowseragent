@@ -9,6 +9,7 @@
  * every read issues a fresh generation, and a stale id is rejected rather than
  * silently resolving to a different element.
  */
+import { STRUCTURED_INPUT_TYPES } from './form-controls';
 
 export interface SemanticElement {
   /** Snapshot-scoped handle the model uses to target this element. */
@@ -32,8 +33,23 @@ export interface SemanticElement {
   readonly href?: string;
   /** `accept` attribute of a file input, when it sets one. */
   readonly accept?: string;
-  /** Whether a file input takes more than one file. */
+  /** Whether a file input, or a select, takes more than one value. */
   readonly multiple?: boolean;
+  /**
+   * The input's `type`, for controls whose type decides how to set them.
+   *
+   * Reported because a date field and a text field are both `textbox` to an
+   * accessibility tree, and a model told "textbox" will try to type into one
+   * — which types into whichever segment has focus and means something
+   * different every time. The type is what points it at `browser.set_value`.
+   */
+  readonly inputType?: string;
+  /** Bounds a control declares for itself, when it declares any. */
+  readonly min?: string;
+  readonly max?: string;
+  readonly step?: string;
+  /** Currently selected options of a multi-select. */
+  readonly selected?: readonly string[];
 }
 
 export interface SemanticPage {
@@ -519,6 +535,15 @@ function describeElement(
       if (attached.length > 0) extras.text = attached.join(', ').slice(0, 300);
     }
     if (type === 'checkbox' || type === 'radio') extras.checked = element.checked;
+    // The type and its bounds, for controls where setting a value means more
+    // than typing one. Reported as the browser resolves them, so a `range`
+    // that declares nothing still reports the defaults it actually enforces.
+    if ((STRUCTURED_INPUT_TYPES as readonly string[]).includes(type)) {
+      extras.inputType = type;
+      if (element.min !== '') extras.min = element.min;
+      if (element.max !== '') extras.max = element.max;
+      if (element.step !== '') extras.step = element.step;
+    }
     if (element.placeholder) extras.placeholder = element.placeholder;
     if (element.required) extras.required = true;
   } else if (element instanceof HTMLTextAreaElement) {
@@ -528,6 +553,13 @@ function describeElement(
   } else if (element instanceof HTMLSelectElement) {
     extras.value = element.value;
     extras.options = [...element.options].slice(0, 100).map((o) => o.text.trim());
+    // A multi-select's `value` is only its first selected option, which reads
+    // as "one thing is chosen" when several are. The whole selection is
+    // reported alongside it, and the flag points at `browser.select_many`.
+    if (element.multiple) {
+      extras.multiple = true;
+      extras.selected = [...element.selectedOptions].slice(0, 100).map((o) => o.value);
+    }
   } else if (element instanceof HTMLAnchorElement && element.href) {
     extras.href = element.href.slice(0, 500);
   }

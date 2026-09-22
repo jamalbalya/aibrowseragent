@@ -288,11 +288,28 @@ tool and had to be clicked. That was written before `browser.set_checked`
 shipped and was never updated; it is corrected here rather than left to
 mislead a reader deciding what is left to build.
 
-PARTIAL for coverage of the less common controls rather than the common ones:
-date, time, colour and range inputs are reported in the page model but have no
-dedicated tool, and a multi-select listbox can only be set one value at a
-time. Each is incremental work on the existing interaction engine with no new
-security surface.
+Date, time, datetime-local, month, week, colour, range and number now have a
+dedicated tool, `browser.set_value`, and a multi-select has
+`browser.select_many`. They are separate from `browser.type` because these
+controls are not typed into: a date field has segments and typing lands in
+whichever one has focus, and a range has none at all. The page model reports
+each control's `inputType` and the bounds it declares, so the choice between
+the tools is read rather than guessed, and a multi-select reports its whole
+selection rather than only its first option.
+
+A value is checked against the format its type accepts and against the bounds
+the page declared, then assigned, then read back — because a browser's way of
+rejecting a value it cannot parse is to clear the field silently, and `2026-02-30`
+is well-formed and is not a date. A rejected value is restored rather than left
+cleared. Bounds are enforced rather than clamped: moving a date into the allowed
+window would submit something nobody chose.
+
+PARTIAL still, and for two narrower reasons than before. The §85 A–F manual
+acceptance scenarios are unexecuted, as for every row in this file. And two
+controls remain without a dedicated tool: `<input type="file">` is handled
+through the separate user-mediated path (see P-010) rather than as a form
+control, and a `<datalist>`-backed combobox is typed into like the text input
+it is, which works but is not a distinct capability.
 
 **P-038 Audit trail** — One append-only stream across every task, recording
 what was proposed and what was decided. Tool executions now reach it through
