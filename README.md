@@ -31,17 +31,20 @@ What works today:
   resource budgets, cancellation
 - Tool registry with schema validation, risk classification and an enforced
   policy/permission gate in front of every call
-- 25 canonical tools across browser, tabs and DevTools inspection
+- 29 canonical tools across browser, tabs, files and DevTools inspection
 - Three AI provider adapters — any OpenAI-compatible endpoint, the Anthropic
   Messages API, and the Gemini generateContent API — behind one canonical
   interface, with a capability doctor that verifies rather than assumes
 - Security control plane: origin validation, prompt-injection boundary, secret
   redaction, exfiltration policy, hard prohibitions
+- File upload and download with no filesystem access: a file arrives only when
+  you choose it in a picker, and sending one to a site is a decision separate
+  from reading it ([docs/file-handling.md](docs/file-handling.md))
 - Task persistence that survives side-panel close and service-worker eviction —
   verified against a real Chrome worker restart, not a simulation
 
 Not yet implemented: connectors (Jira, Confluence, Figma, Sheets), MCP, skills,
-workflows, scheduling, file upload/download, and OpenAI's Responses API. Their
+workflows, scheduling, and OpenAI's Responses API. Their
 interfaces exist; their implementations do not, and the code raises
 `NOT_IMPLEMENTED` rather than faking a result.
 

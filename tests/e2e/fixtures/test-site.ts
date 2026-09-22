@@ -11,8 +11,13 @@ import type { AddressInfo } from 'node:net';
 
 export interface TestSite {
   readonly baseUrl: string;
+  /** Raw bodies of every multipart upload the site received. */
+  readonly uploads: readonly string[];
   close(): Promise<void>;
 }
+
+/** Body served from `/file/...`, distinctive enough to find on disk. */
+export const DOWNLOAD_BODY = 'widget-catalogue-export-0123456789';
 
 export interface TestSiteOptions {
   /** Origin a cross-site form posts to, so egress has a real receiving side. */
@@ -89,6 +94,55 @@ function dynamicPages(collectorUrl: string): Record<string, string> {
   </form>
 </body></html>`,
 
+    // Upload forms. The hidden input is the shape almost every real site
+    // uses: a styled button next to an `input[type=file]` that is not visible.
+    '/upload': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Upload</title></head>
+<body>
+  <h1>Application form</h1>
+  <form id="f" method="POST" action="/collect-upload" enctype="multipart/form-data">
+    <label for="cv">Attach your CV</label>
+    <input id="cv" name="cv" type="file" accept=".pdf,.txt">
+    <button id="send" type="submit">Send</button>
+  </form>
+  <p id="chosen">nothing chosen</p>
+  <script>
+    document.getElementById('cv').addEventListener('change', (event) => {
+      const files = [...event.target.files].map((file) => file.name + ':' + file.size);
+      document.getElementById('chosen').textContent = files.join(',') || 'nothing chosen';
+    });
+  </script>
+</body></html>`,
+
+    '/upload-hidden': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Hidden Upload</title></head>
+<body>
+  <h1>Styled upload control</h1>
+  <button id="proxy" type="button">Choose a file…</button>
+  <input id="cv" name="cv" type="file" style="display:none">
+  <p id="chosen">nothing chosen</p>
+  <script>
+    document.getElementById('proxy').addEventListener('click', () => document.getElementById('cv').click());
+    document.getElementById('cv').addEventListener('change', (event) => {
+      const files = [...event.target.files].map((file) => file.name);
+      document.getElementById('chosen').textContent = files.join(',') || 'nothing chosen';
+    });
+  </script>
+</body></html>`,
+
+    '/upload-multi': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Multi Upload</title></head>
+<body>
+  <h1>Attach several</h1>
+  <input id="many" name="many" type="file" multiple>
+  <input id="one" name="one" type="file">
+  <input id="off" name="off" type="file" disabled>
+  <p id="chosen">nothing chosen</p>
+  <script>
+    document.getElementById('many').addEventListener('change', (event) => {
+      document.getElementById('chosen').textContent =
+        [...event.target.files].map((file) => file.name).join(',');
+    });
+  </script>
+</body></html>`,
+
     '/cross-site-form': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Cross Site Form</title></head>
 <body>
   <h1>Share</h1>
@@ -104,12 +158,38 @@ function dynamicPages(collectorUrl: string): Record<string, string> {
 
 export async function startTestSite(options: TestSiteOptions = {}): Promise<TestSite> {
   const extra = dynamicPages(options.collectorUrl ?? 'http://127.0.0.1:1');
+  const uploads: string[] = [];
   const server: Server = createServer((req, res) => {
     const path = (req.url ?? '/').split('?')[0] ?? '/';
 
     if (path === '/redirect') {
       res.writeHead(302, { Location: 'https://example.com/elsewhere' });
       res.end();
+      return;
+    }
+
+    // Receives a real multipart upload, so an attachment can be shown to have
+    // actually left the browser rather than only reaching the input.
+    if (path === '/collect-upload') {
+      let received = '';
+      req.on('data', (chunk) => {
+        received += String(chunk);
+      });
+      req.on('end', () => {
+        uploads.push(received);
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<!doctype html><title>Uploaded</title><h1>Upload received</h1>');
+      });
+      return;
+    }
+
+    // A file to download, with a name Chrome will have to handle.
+    if (path.startsWith('/file/')) {
+      res.writeHead(200, {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Length': String(DOWNLOAD_BODY.length),
+      });
+      res.end(DOWNLOAD_BODY);
       return;
     }
 
@@ -137,6 +217,7 @@ export async function startTestSite(options: TestSiteOptions = {}): Promise<Test
 
   return {
     baseUrl: `http://127.0.0.1:${port}`,
+    uploads,
     close: () =>
       new Promise<void>((resolve) => {
         server.closeAllConnections();

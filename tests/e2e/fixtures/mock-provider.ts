@@ -54,6 +54,46 @@ interface WireRequest {
 }
 
 /**
+ * Placeholder a scripted tool call can use for a value the model would only
+ * learn at run time.
+ *
+ * A file id is minted when the user picks a file, so a fixed script cannot
+ * contain one. Substituting the id from the most recent tool result is what a
+ * real model does — it reads the id out of the result it was just handed —
+ * and it keeps the script readable.
+ */
+const FILE_ID_PLACEHOLDER = '$lastFileId';
+
+/** The newest file id the conversation has carried back to the model. */
+function lastFileId(request: WireRequest): string | null {
+  const ids: string[] = [];
+  for (const message of request.messages ?? []) {
+    if (typeof message.content !== 'string') continue;
+    for (const match of message.content.matchAll(/"fileId":"(file_[^"]+)"/g)) {
+      if (match[1]) ids.push(match[1]);
+    }
+  }
+  return ids.at(-1) ?? null;
+}
+
+/** Replaces the placeholder in a scripted reply with the real id. */
+function resolvePlaceholders(reply: ScriptedReply, request: WireRequest): ScriptedReply {
+  if (reply.kind !== 'tool_calls') return reply;
+  const id = lastFileId(request);
+  if (id === null) return reply;
+
+  return {
+    ...reply,
+    calls: reply.calls.map((call) => ({
+      ...call,
+      arguments: JSON.parse(
+        JSON.stringify(call.arguments).replaceAll(FILE_ID_PLACEHOLDER, id),
+      ) as Record<string, unknown>,
+    })),
+  };
+}
+
+/**
  * Recognises the capability doctor's probes.
  *
  * The doctor is infrastructure every test needs to get past, so the mock
@@ -213,9 +253,10 @@ export async function startMockProvider(): Promise<MockProvider> {
     // Doctor probes are answered directly and never consume the script, so a
     // test's script indexes line up with the agent turns it wrote.
     const probe = doctorProbe(request, toolCallingSupported);
-    const reply = probe ??
+    const scripted = probe ??
       replies[cursor] ?? { kind: 'text' as const, text: 'Mock script exhausted.' };
     if (!probe) cursor += 1;
+    const reply = resolvePlaceholders(scripted, request);
 
     if (reply.kind === 'http_error') {
       res.writeHead(reply.status, { 'Content-Type': 'application/json', ...cors });

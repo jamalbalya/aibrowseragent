@@ -46,6 +46,7 @@ export function SettingsView({
   const [report, setReport] = useState<CapabilityReport | null>(null);
   const [sitePolicy, setSitePolicy] = useState<SitePolicyState | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [downloadsGranted, setDownloadsGranted] = useState(false);
   const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
 
   const model = modelOverride ?? connection?.modelId ?? '';
@@ -61,6 +62,7 @@ export function SettingsView({
         ]);
         setProviders(list.providers);
         setSitePolicy(policy.state);
+        setDownloadsGranted((await sendToBackground('file.downloadsPermission', {})).granted);
         setProviderId((current) => current || (list.providers[0]?.id ?? ''));
       } catch (error) {
         setMessage({ tone: 'error', text: describe(error) });
@@ -264,6 +266,41 @@ export function SettingsView({
 
         {message ? <p className={`message message--${message.tone}`}>{message.text}</p> : null}
         {report ? <DoctorReport report={report} /> : null}
+      </section>
+
+      <section className="settings__section">
+        <h3>Downloads</h3>
+        <p className="field__hint">
+          Saving a file needs Chrome’s downloads permission. It is off until you turn it on, and the
+          agent cannot request it for you — this button has to be pressed by you. Files are saved to
+          your normal download folder under a plain name; the agent cannot choose a folder, and it
+          will not download programs, installers, scripts or browser extensions.
+        </p>
+        <div className="settings__actions">
+          {downloadsGranted ? (
+            <span className="field__hint">Granted.</span>
+          ) : (
+            <button
+              type="button"
+              className="button"
+              onClick={() => {
+                // Must run inside the click handler: Chrome only honours a
+                // permission request made during a user gesture.
+                chrome.permissions.request({ permissions: ['downloads'] }).then(
+                  (granted) => {
+                    setDownloadsGranted(granted);
+                    if (!granted) {
+                      setMessage({ tone: 'error', text: 'The downloads permission was declined.' });
+                    }
+                  },
+                  () => setMessage({ tone: 'error', text: 'Chrome refused the request.' }),
+                );
+              }}
+            >
+              Allow downloads
+            </button>
+          )}
+        </div>
       </section>
 
       <section className="settings__section">

@@ -4,6 +4,7 @@ import { Header } from './components/Header';
 import { TaskComposer } from './components/TaskComposer';
 import { TaskView } from './components/TaskView';
 import { PermissionPrompt } from './components/PermissionPrompt';
+import { FilePrompt } from './components/FilePrompt';
 import { SettingsView } from './components/SettingsView';
 
 export function App(): React.JSX.Element {
@@ -55,6 +56,14 @@ export function App(): React.JSX.Element {
           key={request.id}
           request={request}
           onRespond={(requestId, response) => void agent.respondToPermission(requestId, response)}
+        />
+      ))}
+
+      {agent.fileRequests.map((request) => (
+        <FilePrompt
+          key={request.id}
+          request={request}
+          onRespond={(requestId, files) => void agent.respondToFileRequest(requestId, files)}
         />
       ))}
 

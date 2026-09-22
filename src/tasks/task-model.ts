@@ -74,7 +74,18 @@ export const TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = {
     'FAILED',
     'CANCELLED',
   ],
-  WAITING_FOR_TOOL: ['RUNNING', 'RECOVERING', 'PAUSED', 'FAILED', 'CANCELLED', 'BLOCKED'],
+  // WAITING_FOR_USER is reachable from here because a tool can legitimately
+  // need a person: choosing a file in a picker is the first such tool, and
+  // there is no timeout that can substitute for someone deciding.
+  WAITING_FOR_TOOL: [
+    'RUNNING',
+    'WAITING_FOR_USER',
+    'RECOVERING',
+    'PAUSED',
+    'FAILED',
+    'CANCELLED',
+    'BLOCKED',
+  ],
   WAITING_FOR_PERMISSION: ['RUNNING', 'BLOCKED', 'PAUSED', 'FAILED', 'CANCELLED'],
   WAITING_FOR_USER: ['RUNNING', 'PLANNING', 'PAUSED', 'CANCELLED', 'FAILED', 'BLOCKED'],
   PAUSED: ['RUNNING', 'PLANNING', 'CANCELLED', 'FAILED'],

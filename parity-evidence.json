@@ -67,9 +67,32 @@
         "tests/e2e/file-access.spec.ts"
       ]
     },
-    "P-009": {},
-    "P-010": {},
-    "P-011": {},
+    "P-009": {
+      "unit": [
+        "tests/unit/file-model.test.ts",
+        "tests/unit/file-store.test.ts",
+        "tests/unit/file-input.test.ts"
+      ],
+      "integration": ["tests/integration/file-workflow.test.ts"],
+      "security": ["tests/security/file-transfer.test.ts"],
+      "e2e": ["tests/e2e/file-transfer.spec.ts"]
+    },
+    "P-010": {
+      "unit": [
+        "tests/unit/file-model.test.ts",
+        "tests/unit/file-store.test.ts",
+        "tests/unit/file-input.test.ts"
+      ],
+      "integration": ["tests/integration/file-workflow.test.ts"],
+      "security": ["tests/security/file-transfer.test.ts"],
+      "e2e": ["tests/e2e/file-transfer.spec.ts"]
+    },
+    "P-011": {
+      "unit": ["tests/unit/file-model.test.ts"],
+      "integration": ["tests/integration/file-workflow.test.ts"],
+      "security": ["tests/security/file-transfer.test.ts"],
+      "e2e": ["tests/e2e/file-transfer.spec.ts"]
+    },
     "P-012": {
       "unit": ["tests/unit/tab-tools.test.ts"],
       "security": ["tests/security/origin-validation.test.ts"],

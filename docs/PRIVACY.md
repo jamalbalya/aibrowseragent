@@ -28,9 +28,16 @@ tokens; it does not request the permissions that would allow it to. It does not
 touch the browser's saved-password store. It cannot turn a website session you
 are signed into on the web into an API credential, and does not try to.
 
+**It cannot browse your computer.** There is no filesystem access and none is
+requested. The agent cannot list a folder, cannot open a file by name, and
+cannot be instructed to — the tool that brings a file into a task takes a
+description of why a file is wanted and has no field for a location. A file
+reaches the agent exactly one way: you open Chrome's own file picker and choose
+one.
+
 These are absences of capability, not promises of restraint: the extension does
-not request the `cookies` permission, and no code path reads a password field's
-value.
+not request the `cookies` permission, no code path reads a password field's
+value, and there is no filesystem API anywhere in it.
 
 ## What can leave your device
 
@@ -48,6 +55,11 @@ you first.
 **Changing provider re-asks.** A task is bound to the provider and model you
 started it with. Switching either does not inherit the previous approval.
 
+**A file you chose, if you approve sending it.** Choosing a file and sending it
+to a website are two separate decisions, and you are asked for both. The second
+prompt names the file and the site it would go to. A file you picked but did
+not approve sending is never transmitted.
+
 ## What stays on your device
 
 Task records, evidence, settings and API keys are stored in the browser's
@@ -55,8 +67,15 @@ extension storage. None of it is sent anywhere by the extension. There is no
 analytics, no telemetry and no crash reporting: the extension makes no network
 request other than to the AI provider you configured.
 
+**A file you choose is held in memory only.** It is never written to extension
+storage, to evidence, to the activity log or to a log file. When the browser
+shuts the extension's background worker down — which Chrome does routinely —
+the file is simply gone, and a task that resumes afterwards asks again rather
+than pretending it still has it.
+
 Evidence of what left the device records metadata — destination, decision,
-size, a keyed digest — and not the content itself. The digest is computed under
+size, a keyed digest — and not the content itself. A file appears there as a
+name and a size, never as its contents. The digest is computed under
 a key unique to each task, so records cannot be correlated across tasks and a
 short payload cannot be recovered from its digest.
 

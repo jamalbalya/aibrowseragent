@@ -37,6 +37,9 @@ export const AUDIT_EVENT_TYPES = [
   'provider.selected',
   'provider.state',
   'recovery',
+  'file.selected',
+  'file.attached',
+  'file.downloaded',
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
@@ -73,6 +76,16 @@ export interface AuditEvent {
   readonly code?: string;
   /** Short extension-authored description. Never page or model text. */
   readonly detail?: string;
+  /**
+   * Basename of a file the event is about. Never a path, never contents.
+   *
+   * A filename is chosen by a user, a page or a model rather than by the
+   * extension, so it goes through the same redaction every other field does —
+   * a key pasted into a filename must not be preserved by the audit trail.
+   */
+  readonly fileName?: string;
+  readonly mimeType?: string;
+  readonly byteLength?: number;
   /** Evidence ids that hold the detail this record deliberately omits. */
   readonly evidenceIds?: readonly string[];
 }
@@ -214,9 +227,9 @@ export interface AuditExport {
 
 const EXPORT_NOTICE =
   'Decisions and references only. This file contains no page content, no model output, ' +
-  'no request or response bodies, and no credentials. Evidence ids refer to records held ' +
-  'inside the extension, whose digests are keyed per task and cannot be recomputed from ' +
-  'this file.';
+  'no request or response bodies, no file contents, and no credentials. File entries name ' +
+  'a file and its size; they do not carry it. Evidence ids refer to records held inside ' +
+  'the extension, whose digests are keyed per task and cannot be recomputed from this file.';
 
 /**
  * Builds the export document.

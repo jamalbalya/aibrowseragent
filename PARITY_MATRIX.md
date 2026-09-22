@@ -98,10 +98,10 @@ capability, not necessarily a test of the capability itself.
 
 | Status          | Count  |
 | --------------- | ------ |
-| PASS            | 28     |
-| PARTIAL         | 2      |
+| PASS            | 30     |
+| PARTIAL         | 3      |
 | INTERFACES-ONLY | 1      |
-| NOT-STARTED     | 9      |
+| NOT-STARTED     | 6      |
 | **Total**       | **40** |
 
 These counts are checked against the table below, and the table against
@@ -110,10 +110,11 @@ separate classes of error have actually occurred here: a revision that claimed
 17 PASS while its own table said 23, and a revision whose per-column coverage
 claims were not backed by any test. The check now covers both.
 
-Movement in this revision: PASS went from 27 to 28 and PARTIAL from 3 to 2, on
-evidence rather than on reassessment of the same evidence. The one row that
-moved is provider switching (P-033), explained below; audit trail (P-038)
-stays PARTIAL with a sharper statement of what is missing.
+Movement in this revision: PASS went from 28 to 30 and PARTIAL from 2 to 3,
+and NOT-STARTED from 9 to 6, on evidence rather than on reassessment of the
+same evidence. Image upload (P-009) and file upload (P-010) move from
+NOT-STARTED to PASS; download (P-011) moves from NOT-STARTED to PARTIAL, for
+a reason stated below rather than a missing test.
 
 ### Earlier movement, kept for the record
 
@@ -134,6 +135,50 @@ wall-clock endurance or soak test and is not described as one — duration is
 enforced against an injected clock, because a test that slept would be slower,
 flakier and prove less. The capability name below is the specification's
 (§83); the evidence is what this paragraph says it is.
+
+### P-009 / P-010 File and image upload — what PASS means here
+
+Upload is implemented as four separate operations rather than one, because
+that is what it is: the user selects a file, the extension reads it, the
+extension puts it into a page input, and the site transmits it. Selection is
+user-mediated through the side panel's own file picker — there is no tool that
+takes a path, and no filesystem access to give one meaning. Reading a file
+taints the task with a `local_file` source that carries no site, so sending it
+anywhere needs consent rather than a same-origin pass. Putting it into the
+input is the egress, gated like every other transfer, because a page can read
+`input.files` the moment they are set.
+
+Image upload (P-009) is the same path with an `accept` that names image types;
+there is no separate image mechanism and none was added.
+
+Real Chromium covers what jsdom cannot: a file input the page has hidden still
+gets a handle while a hidden button still does not, and the `DataTransfer`
+assignment actually populates `input.files` so the page's own `change`
+listener fires.
+
+**Stated limitation.** The `change` event an extension dispatches has
+`isTrusted: false`. A site that requires a trusted event will ignore it. That
+cannot be worked around, so the assignment is verified and a failure is
+reported rather than assumed away. File inputs inside cross-origin iframes are
+also out of reach, because `all_frames` is `false` and widening it is not
+justified by this feature.
+
+### P-011 Download — why PARTIAL
+
+**P-011 Download** — The implementation is complete and tested: filename validation (traversal,
+absolute paths, separators, control characters, reserved device names,
+executables and browser extensions all refused), `conflictAction: 'uniquify'`
+so nothing is ever overwritten, full lifecycle handling, and an audit record
+for each outcome.
+
+PARTIAL for one reason, and it is not a missing test: `downloads` is an
+**optional** permission that a person grants from Settings under their own
+gesture, and a headless Chromium profile cannot produce that gesture. So the
+end-to-end path that has actually run is the refusal — the tool declining
+cleanly because the permission is absent — rather than a completed download
+landing on disk. Everything up to and including the refusal is verified in a
+real browser; the granted path is verified in unit and integration tests
+against the download port.
 
 ### P-033 Provider switching — what PASS means here
 
@@ -164,9 +209,9 @@ rather than folded into the verdict.
 | P-006 | Forms                                | yes        | yes  | yes         | yes      | yes | PARTIAL         |
 | P-007 | Scroll                               | yes        | yes  | yes         | —        | yes | PASS            |
 | P-008 | Screenshot                           | yes        | yes  | yes         | yes      | yes | PASS            |
-| P-009 | Image upload                         | no         | —    | —           | —        | —   | NOT-STARTED     |
-| P-010 | File upload                          | no         | —    | —           | —        | —   | NOT-STARTED     |
-| P-011 | Download                             | no         | —    | —           | —        | —   | NOT-STARTED     |
+| P-009 | Image upload                         | yes        | yes  | yes         | yes      | yes | PASS            |
+| P-010 | File upload                          | yes        | yes  | yes         | yes      | yes | PASS            |
+| P-011 | Download                             | yes        | yes  | yes         | yes      | yes | PARTIAL         |
 | P-012 | Multi-tab                            | yes        | yes  | —           | yes      | yes | PASS            |
 | P-013 | Tab grouping                         | yes        | yes  | —           | —        | yes | PASS            |
 | P-014 | DOM inspection                       | yes        | yes  | —           | yes      | yes | PASS            |

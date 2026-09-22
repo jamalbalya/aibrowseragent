@@ -13,16 +13,38 @@ import type { PermissionRequest, PermissionResponse } from '@/policy/permission-
 import type { PermissionMode } from '@/policy/policy-engine';
 import type { ProviderConnection } from '@/providers/registry/provider-registry';
 import type { AgentError } from '@/types/result';
+import type { FileSelectionRequest } from '@/background/file-broker';
+import { MAX_FILE_BYTES, MAX_FILES_PER_SELECTION } from '@/files/file-model';
 
 export interface AgentState {
   readonly tasks: readonly AgentTask[];
   readonly activeTask: AgentTask | null;
   readonly permissionRequests: readonly PermissionRequest[];
+  readonly fileRequests: readonly FileSelectionRequest[];
   readonly connection: ProviderConnection | null;
   readonly permissionMode: PermissionMode;
   readonly activity: string | null;
   readonly error: AgentError | null;
   readonly loading: boolean;
+}
+
+/**
+ * Reads a file into base64.
+ *
+ * Base64 rather than a `File` or an `ArrayBuffer` because extension messaging
+ * is a JSON channel: neither survives the trip to the service worker.
+ */
+async function toBase64(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  // Chunked, because spreading a multi-megabyte array into `String.fromCharCode`
+  // overflows the argument limit.
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
 }
 
 function asAgentError(error: unknown): AgentError {
@@ -40,6 +62,7 @@ export function useAgentState() {
   const [tasks, setTasks] = useState<readonly AgentTask[]>([]);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [permissionRequests, setPermissionRequests] = useState<readonly PermissionRequest[]>([]);
+  const [fileRequests, setFileRequests] = useState<readonly FileSelectionRequest[]>([]);
   const [connection, setConnection] = useState<ProviderConnection | null>(null);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('auto');
   const [activity, setActivity] = useState<string | null>(null);
@@ -104,6 +127,14 @@ export function useAgentState() {
           break;
         case 'permission.resolved':
           setPermissionRequests((current) => current.filter((r) => r.id !== event.requestId));
+          break;
+        case 'file.selectionRequested':
+          setFileRequests((current) =>
+            current.some((r) => r.id === event.request.id) ? current : [...current, event.request],
+          );
+          break;
+        case 'file.selectionResolved':
+          setFileRequests((current) => current.filter((r) => r.id !== event.requestId));
           break;
         case 'provider.statusChanged':
           setConnection(event.connection);
@@ -175,6 +206,71 @@ export function useAgentState() {
     [run],
   );
 
+  /**
+   * Hands the worker what the user chose.
+   *
+   * The read happens here, in the panel, because this is where a real file
+   * picker and a real user gesture exist. Nothing below this point can ask
+   * for a file; it can only receive one that was already chosen.
+   */
+  const respondToFileRequest = useCallback(
+    async (requestId: string, files: readonly File[] | null) => {
+      if (files === null || files.length === 0) {
+        await run(() =>
+          sendToBackground('file.respondSelection', {
+            requestId,
+            response: { kind: 'cancelled', reason: 'The user closed the file picker.' },
+          }),
+        );
+        return;
+      }
+
+      if (files.length > MAX_FILES_PER_SELECTION) {
+        setError({
+          code: 'INVALID_ARGUMENT',
+          message: 'Too many files.',
+          userMessage: `Choose at most ${MAX_FILES_PER_SELECTION} files.`,
+          recoverable: true,
+          retryable: false,
+        });
+        return;
+      }
+
+      const payloads: {
+        name: string;
+        mimeType: string;
+        byteLength: number;
+        dataBase64: string;
+      }[] = [];
+      for (const file of files) {
+        if (file.size > MAX_FILE_BYTES) {
+          setError({
+            code: 'INVALID_ARGUMENT',
+            message: 'File too large.',
+            userMessage: `"${file.name}" is larger than this extension will carry.`,
+            recoverable: true,
+            retryable: false,
+          });
+          return;
+        }
+        payloads.push({
+          name: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          byteLength: file.size,
+          dataBase64: await toBase64(file),
+        });
+      }
+
+      await run(() =>
+        sendToBackground('file.respondSelection', {
+          requestId,
+          response: { kind: 'selected', files: payloads },
+        }),
+      );
+    },
+    [run],
+  );
+
   const changePermissionMode = useCallback(
     async (mode: PermissionMode) => {
       setPermissionMode(mode);
@@ -187,6 +283,7 @@ export function useAgentState() {
     tasks,
     activeTask,
     permissionRequests,
+    fileRequests,
     connection,
     permissionMode,
     activity: visibleActivity,
@@ -204,6 +301,7 @@ export function useAgentState() {
     cancelTask,
     retryTask,
     respondToPermission,
+    respondToFileRequest,
     changePermissionMode,
     dismissError: () => setError(null),
   };

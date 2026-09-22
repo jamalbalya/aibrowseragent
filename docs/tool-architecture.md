@@ -133,6 +133,19 @@ control for the whole task.
 be something the user would not want repeated into model context, and the model
 already knows what it asked to type.
 
+### Files are metadata to the model, bytes only to the page
+
+`files.select` returns a file's name, type, size and an id. The contents never
+enter model context: they go into a memory-only store and come out again only
+when `browser.attach_file` hands them to a content script. The id is the
+model's whole handle on the file, and it resolves only within the task that
+selected it.
+
+The split is the point. Reading a file, sending it to a page, and the page
+transmitting it are three separate events with three separate decisions; a
+single "upload" tool would have gated only the last. See
+[file-handling.md](file-handling.md).
+
 ### Evidence, not payloads
 
 `browser.screenshot` stores the image as evidence and returns only its id. A

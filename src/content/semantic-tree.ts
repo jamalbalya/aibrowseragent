@@ -30,6 +30,10 @@ export interface SemanticElement {
   /** Options for a select element. */
   readonly options?: readonly string[];
   readonly href?: string;
+  /** `accept` attribute of a file input, when it sets one. */
+  readonly accept?: string;
+  /** Whether a file input takes more than one file. */
+  readonly multiple?: boolean;
 }
 
 export interface SemanticPage {
@@ -192,6 +196,12 @@ export function roleOf(element: Element): string {
           return 'searchbox';
         case 'number':
           return 'spinbutton';
+        // Reported as its own role rather than falling through to `textbox`.
+        // A model told a file input is a textbox will try to type a path into
+        // it, which cannot work and produces a confusing failure instead of a
+        // usable one.
+        case 'file':
+          return 'file';
         default:
           return 'textbox';
       }
@@ -352,11 +362,23 @@ export function extractSemanticPage(
   let index = 0;
   for (const candidate of candidates) {
     if (elements.length >= maxElements) break;
-    if (!isVisible(candidate)) continue;
+
+    const visible = isVisible(candidate);
+    // Hidden elements are normally left out: a model should not act on
+    // something the user cannot see. File inputs are the one exception, and
+    // only because the common way to build an upload control is a styled
+    // button beside an `input[type=file]` that is deliberately hidden. Leaving
+    // those out would mean uploads work on almost no real site.
+    //
+    // Attaching to one is not the same as clicking something invisible: the
+    // file was chosen by the user in a picker, the attach passes the egress
+    // gate, and the permission prompt names both the file and the origin. The
+    // element is reported as not visible rather than described as if it were.
+    if (!visible && !isHiddenFileInput(candidate)) continue;
 
     const handle = registry.register(candidate, index);
     index += 1;
-    elements.push(describeElement(candidate, handle, frameId));
+    elements.push(describeElement(candidate, handle, frameId, visible));
   }
 
   const view = doc.defaultView;
@@ -379,13 +401,23 @@ export function extractSemanticPage(
   };
 }
 
-function describeElement(element: Element, handle: string, frameId: string): SemanticElement {
+/** A file input the page has hidden behind its own styled control. */
+export function isHiddenFileInput(element: Element): boolean {
+  return element instanceof HTMLInputElement && element.type.toLowerCase() === 'file';
+}
+
+function describeElement(
+  element: Element,
+  handle: string,
+  frameId: string,
+  visible: boolean,
+): SemanticElement {
   const role = roleOf(element);
   const base = {
     elementId: handle,
     role,
     name: accessibleName(element),
-    visible: true,
+    visible,
     enabled: isEnabled(element),
     selectorHints: selectorHints(element),
     frameId,
@@ -395,8 +427,19 @@ function describeElement(element: Element, handle: string, frameId: string): Sem
 
   if (element instanceof HTMLInputElement) {
     const type = element.type.toLowerCase();
-    // Never read a password field's value into the page model.
-    if (type !== 'password' && type !== 'hidden') extras.value = element.value.slice(0, 500);
+    // Never read a password field's value into the page model. A file input's
+    // `value` is a fake path the browser synthesises ("C:\\fakepath\\x.pdf")
+    // and says nothing useful, so it is left out too; the names of any files
+    // already attached are reported instead.
+    if (type !== 'password' && type !== 'hidden' && type !== 'file') {
+      extras.value = element.value.slice(0, 500);
+    }
+    if (type === 'file') {
+      if (element.accept) extras.accept = element.accept.slice(0, 200);
+      if (element.multiple) extras.multiple = true;
+      const attached = [...(element.files ?? [])].map((file) => file.name);
+      if (attached.length > 0) extras.text = attached.join(', ').slice(0, 300);
+    }
     if (type === 'checkbox' || type === 'radio') extras.checked = element.checked;
     if (element.placeholder) extras.placeholder = element.placeholder;
     if (element.required) extras.required = true;

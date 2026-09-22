@@ -11,6 +11,7 @@ import type { CapabilityReport } from '@/providers/capability-doctor/capability-
 import type { AuthKind, ProviderOperation } from '@/providers/core/types';
 import type { ProviderKind } from '@/providers/core/provider-kind';
 import type { PermissionRequest, PermissionResponse } from '@/policy/permission-engine';
+import type { FileSelectionRequest } from '@/background/file-broker';
 import type { AuditEvent, AuditExport } from '@/audit/audit-log';
 import type { PermissionMode } from '@/policy/policy-engine';
 import type { SemanticPage } from '@/content/semantic-tree';
@@ -102,6 +103,33 @@ export interface PanelRequestMap {
     request: { requestId: string; response: PermissionResponse };
     response: { ok: true };
   };
+  /**
+   * The user's answer to a file request.
+   *
+   * Only the side panel can send this: it is the only surface with a real
+   * file picker behind a real user gesture, which is the whole mechanism.
+   */
+  'file.respondSelection': {
+    request: {
+      requestId: string;
+      response:
+        | {
+            kind: 'selected';
+            files: { name: string; mimeType: string; byteLength: number; dataBase64: string }[];
+          }
+        | { kind: 'cancelled'; reason?: string };
+    };
+    response: { accepted: boolean };
+  };
+  'file.listPendingSelections': {
+    request: Record<string, never>;
+    response: { requests: FileSelectionRequest[] };
+  };
+  /** Whether the optional `downloads` permission is currently granted. */
+  'file.downloadsPermission': {
+    request: Record<string, never>;
+    response: { granted: boolean };
+  };
   'permission.listPending': {
     request: Record<string, never>;
     response: { requests: PermissionRequest[] };
@@ -191,6 +219,23 @@ export interface ContentRequestMap {
     request: { selector: string; timeoutMs: number };
     response: { found: boolean };
   };
+  /**
+   * Places already-selected files into a file input.
+   *
+   * Bytes are base64 because extension messaging is a JSON channel — a `File`
+   * or an `ArrayBuffer` does not survive it.
+   */
+  'content.attachFiles': {
+    request: {
+      elementId: string;
+      files: { name: string; mimeType: string; dataBase64: string }[];
+    };
+    response: { attached: number; names: string[]; inputWasHidden: boolean };
+  };
+  'content.clearFiles': {
+    request: { elementId: string };
+    response: { cleared: true };
+  };
 }
 
 export type ContentRequestType = keyof ContentRequestMap;
@@ -208,6 +253,8 @@ export type AgentEvent =
     }
   | { readonly type: 'permission.requested'; readonly request: PermissionRequest }
   | { readonly type: 'permission.resolved'; readonly requestId: string }
+  | { readonly type: 'file.selectionRequested'; readonly request: FileSelectionRequest }
+  | { readonly type: 'file.selectionResolved'; readonly requestId: string }
   | { readonly type: 'provider.statusChanged'; readonly connection: ProviderConnection | null }
   | { readonly type: 'log'; readonly record: LogRecord };
 

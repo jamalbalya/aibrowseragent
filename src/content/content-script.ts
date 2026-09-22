@@ -12,12 +12,16 @@
  */
 import { ElementRegistry, extractSemanticPage } from './semantic-tree';
 import {
+  performAttachFiles,
+  performClearFiles,
   performClick,
   performScroll,
   performSelect,
   performSetChecked,
   performType,
   resolveActionable,
+  resolveFileInput,
+  type InteractionFailure,
 } from './interaction-engine';
 import type {
   ContentRequest,
@@ -88,6 +92,37 @@ const handlers: Handlers = {
     if (!resolved.ok)
       throw new InteractionRejection(resolved.error.failure, resolved.error.message);
     return performSetChecked(resolved.element, payload.checked);
+  },
+
+  /**
+   * Puts already-selected files into a file input.
+   *
+   * Resolved through `resolveFileInput`, which allows a hidden input: the
+   * usual upload control is a styled button beside one the page has hidden,
+   * and the file was chosen by the user in a picker before this ran.
+   */
+  'content.attachFiles': (payload) => {
+    const resolved = resolveFileInput(registry, payload.elementId);
+    if (!resolved.ok)
+      throw new InteractionRejection(resolved.error.failure, resolved.error.message);
+    try {
+      const result = performAttachFiles(resolved.element as HTMLInputElement, payload.files);
+      return { ...result, names: [...result.names] };
+    } catch (error) {
+      const failure = (error as { failure?: InteractionFailure }).failure;
+      throw new InteractionRejection(
+        failure ?? 'WRONG_ELEMENT_TYPE',
+        error instanceof Error ? error.message : 'The files could not be attached.',
+      );
+    }
+  },
+
+  'content.clearFiles': (payload) => {
+    const resolved = resolveFileInput(registry, payload.elementId);
+    if (!resolved.ok)
+      throw new InteractionRejection(resolved.error.failure, resolved.error.message);
+    performClearFiles(resolved.element as HTMLInputElement);
+    return { cleared: true as const };
   },
 
   'content.scroll': (payload) => performScroll(window, payload.direction, payload.amount),

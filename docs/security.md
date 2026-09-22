@@ -333,9 +333,34 @@ visible, conservative trade.
 `content_scripts.matches` is unchanged at `http://*/*` and `https://*/*`, as it
 was throughout.
 
-Requested as **optional**, not granted until a feature needs them:
-`alarms` (scheduling) and `downloads` (file handling). Neither feature is
-implemented yet, so neither permission is held.
+Requested as **optional**, not granted until a person grants them:
+`alarms` (scheduling) and `downloads` (file handling).
+
+`alarms` has no feature behind it yet, so it is never requested.
+
+`downloads` now does, and it stays optional. It is not granted at install, the
+agent cannot request it — `chrome.permissions.request` needs a user gesture in
+an extension page — and a person turns it on from Settings. Until they do,
+`browser.download` refuses with an explanation rather than failing obscurely.
+Uploads were built in the same wave and need **no** permission at all: they use
+the content script that already exists, so the file half of the feature added
+nothing to the manifest.
+
+### Files, and what the extension still cannot reach
+
+File upload and download exist (see [file-handling.md](file-handling.md)) and
+were deliberately built so that the local-access question never arises. There
+is no filesystem API, no `file://` host permission, and no tool that accepts a
+path — `files.select` takes a description of _why_ a file is wanted and nothing
+else, so "read `~/.ssh/id_rsa`" cannot be expressed even as a proposal. A file
+reaches a task exactly one way: a person opens Chrome's own picker and chooses
+one.
+
+The bytes are then held in the service worker's memory and written nowhere —
+not to storage, evidence, the audit trail or a log. An eviction loses them, and
+a task that resumes says so rather than reporting an upload that did not
+happen. What survives is the taint: the task stays marked as having read a
+local file whether or not the file is still held.
 
 Deliberately **not** requested, despite appearing in comparable products:
 `nativeMessaging`, `offscreen`, `system.display`, `webNavigation`,

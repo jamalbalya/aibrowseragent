@@ -11,7 +11,7 @@ import {
 } from '@/policy/permission-engine';
 import { emptySitePolicyState, type SitePolicyState } from '@/policy/site-policy';
 import type { PermissionMode, PolicyContext } from '@/policy/policy-engine';
-import { ToolRegistry } from '@/tools/registry/tool-registry';
+import { ToolRegistry, type ToolRegistryOptions } from '@/tools/registry/tool-registry';
 import type { AgentTool } from '@/tools/core/tool-types';
 
 export class ScriptedPrompter implements PermissionPrompter {
@@ -39,7 +39,13 @@ export interface Harness {
 
 export function createHarness(
   tools: readonly AgentTool[],
-  options: { mode?: PermissionMode; prompter?: ScriptedPrompter } = {},
+  options: {
+    mode?: PermissionMode;
+    prompter?: ScriptedPrompter;
+    /** Supplying this exercises the real egress gate inside the registry. */
+    egress?: ToolRegistryOptions['egress'];
+    resolveTabUrl?: ToolRegistryOptions['resolveTabUrl'];
+  } = {},
 ): Harness {
   const area = new SerializedStorageArea(new MemoryStorageArea());
   const prompter = options.prompter ?? new ScriptedPrompter();
@@ -58,7 +64,12 @@ export function createHarness(
     sitePolicy: await loadSitePolicy(),
   });
 
-  const registry = new ToolRegistry({ permissionEngine, loadPolicyContext });
+  const registry = new ToolRegistry({
+    permissionEngine,
+    loadPolicyContext,
+    ...(options.egress === undefined ? {} : { egress: options.egress }),
+    ...(options.resolveTabUrl === undefined ? {} : { resolveTabUrl: options.resolveTabUrl }),
+  });
   registry.registerAll(tools);
 
   return {

@@ -290,6 +290,22 @@ export class TaskManager {
     };
   }
 
+  /**
+   * Parks a task while a person does something only they can do.
+   *
+   * Choosing a file in a picker is the first such case. There is deliberately
+   * no deadline attached here: the broker owns the timeout, and a task
+   * waiting on a human must not be failed by a clock.
+   */
+  async markWaitingForUser(taskId: string, summary: string): Promise<void> {
+    await this.transition(taskId, 'WAITING_FOR_USER', summary);
+  }
+
+  /** Returns a task to RUNNING once the person has answered. */
+  async markUserResponded(taskId: string): Promise<void> {
+    await this.transition(taskId, 'RUNNING');
+  }
+
   async pause(taskId: string): Promise<TaskState> {
     // Pausing aborts the in-flight turn; the task record keeps its history so
     // a resume starts a fresh turn rather than a half-finished one. The handle

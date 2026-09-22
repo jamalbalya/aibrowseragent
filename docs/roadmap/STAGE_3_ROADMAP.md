@@ -1382,6 +1382,122 @@ and body at the receiving end.
 
 ---
 
+## 4N. Wave E — file transfer, delivered
+
+Upload and download now exist, built as four separate operations rather than
+one. This section records what was built, what building it found, and what a
+browser will not let an extension do.
+
+### The four operations
+
+|     | Operation                     | Where                  | Security event                         |
+| --- | ----------------------------- | ---------------------- | -------------------------------------- |
+| A   | The user selects a local file | side panel file picker | the only route to local bytes          |
+| B   | The extension reads it        | panel → worker         | task-derived data appears; taint added |
+| C   | It is put into a page input   | content script         | **the egress**                         |
+| D   | The site transmits it         | the page's own submit  | an ordinary, already-gated action      |
+
+`files.select` is A and B, `browser.attach_file` is C, and D is reached
+through the existing tools. Collapsing these into one "upload" would have
+gated only the last of them.
+
+**C is the boundary, not D.** A page can read `input.files` with its own
+JavaScript the instant they are set, so waiting for a form submit would gate
+an event that had already happened. This is not the same as assuming a submit
+is harmless — it is not gated _as the file transfer_ because by then the
+transfer is done.
+
+### Modules added
+
+| Module                                    | Role                                                          |
+| ----------------------------------------- | ------------------------------------------------------------- |
+| `src/files/file-model.ts`                 | the §68 record, size ceilings, taint sources, accept matching |
+| `src/files/download-safety.ts`            | filename validation, independent of Chrome's own              |
+| `src/files/file-store.ts`                 | memory-only, task-scoped staging                              |
+| `src/files/download-port.ts`              | the seam over `chrome.downloads`                              |
+| `src/background/file-broker.ts`           | user-mediated selection, mirroring `PermissionBroker`         |
+| `src/tools/files/file-tools.ts`           | the three tools                                               |
+| `src/sidepanel/components/FilePrompt.tsx` | the picker, and the whole local-file capability               |
+
+### Local access is absent, not guarded
+
+There is no filesystem API, no `file://` host permission, and no tool that
+takes a path. A model cannot express "read `~/.ssh/id_rsa`" even as a
+proposal, because `files.select` accepts a `purpose` and nothing else. The
+capability being absent rather than gated is what makes the guarantee cheap to
+verify: the security tests assert that no tool schema contains a path field at
+all.
+
+### Defects this wave uncovered
+
+**D-FILE-1 — a file input was reported to the model as a `textbox`.**
+`FIXED`. `roleOf` fell through to the `default` branch for
+`input[type=file]`, so the model was told to type a path into it — an action
+that cannot work and fails confusingly. It now has its own `file` role, and
+reports `accept` and `multiple`.
+
+**D-FILE-2 — a hidden file input got no handle at all.** `FIXED`. The page
+snapshot skips invisible elements, and the standard way to build an upload
+control is a styled button beside an `input[type=file]` the page has hidden.
+Uploads would therefore have worked on almost no real form. File inputs are
+now the one exception to the visibility filter, reported honestly as
+`visible: false`; every other hidden element is still excluded, which real
+Chromium verifies because jsdom has no layout to discriminate with.
+
+**D-FILE-3 — `siteOf` was being handed a whole URL.** `FIXED`. It takes a
+hostname; given a URL it returns the URL unchanged, which would have travelled
+as a taint "site" and as an audit origin — neither matching anything, quietly
+weakening both. Found by a test asserting the recorded origin.
+
+### What jsdom could not prove
+
+Two claims were moved to real Chromium rather than left looking tested:
+
+- jsdom's `getBoundingClientRect` returns zeros, so **every** element reads as
+  invisible and "a hidden file input still gets a handle" would have passed
+  without discriminating anything.
+- jsdom implements no `DataTransfer`, which is the only way to populate
+  `input.files`. The unit tests use a documented stand-in and say so; the real
+  assignment is exercised in `tests/e2e/file-transfer.spec.ts`.
+
+### Permissions
+
+**No manifest permission was added.** `downloads` was already declared
+optional and stays optional: not granted at install, not requestable by the
+agent, turned on by a person in Settings under their own gesture. Uploads need
+no permission at all. `<all_urls>` remains absent and `all_frames` remains
+`false`.
+
+### Platform limitations, stated rather than worked around
+
+**BLOCKED — BROWSER/PLATFORM LIMITATION: synthesised events are not trusted.**
+The `change` event dispatched after an attachment has `isTrusted: false`,
+because nothing an extension synthesises is trusted. A site that requires a
+trusted event will ignore it. There is no way around this from an extension,
+so the assignment is verified afterwards and a failure is reported rather than
+assumed away.
+
+**BLOCKED — BROWSER/PLATFORM LIMITATION: file inputs in cross-origin iframes.**
+Out of reach, because the content script runs only in the top frame. Widening
+`all_frames` would inject into every frame of every page — a materially larger
+surface than this feature justifies, and the same reasoning that removed
+`<all_urls>` in Stage 2.
+
+**BLOCKED — BROWSER/PLATFORM LIMITATION: a granted-permission download E2E.**
+`downloads` is granted by a human gesture in Settings, which a headless
+profile cannot produce. The refusal path runs end to end in a real browser;
+the granted path is covered by unit and integration tests against the download
+port. P-011 is recorded as PARTIAL for this reason and no other.
+
+### Web provider boundary
+
+Unchanged. **D4 = GATED. D5 = GATED.** Nothing here uploads to an AI website,
+reads a model reply from a DOM, or treats a rendered interface as an API. The
+file architecture is provider-neutral, which is what prepares it for a future
+web provider without opening one.
+
+---
+
 ## 4M. Wave C — API provider expansion, delivered
 
 Three API providers now ship behind one canonical interface, and one
@@ -2436,7 +2552,7 @@ implied; waves are defined by what must exist first.
 | B2   | security-critical, **prerequisite** | **Data egress / exfiltration control closure** (§4I): persist taint, declare destinations, generalise the destination model, pin web output to untrusted, consent as (task, destination), egress evidence | **COMPLETE** — implemented, verified and released (§4L)                    |
 | D4   | **GATED**                           | **Web AI inference**: prompt an AI site, read the reply, admit as untrusted data                                                                                                                          | B2 satisfied; still **GATED** on Q1 — terms verified **and** §3.3 decision |
 | D5   | **GATED**                           | **Provider-specific enablement**: turning a named provider on in production                                                                                                                               | D4 closed **and** that provider's terms verified individually              |
-| E    | dependent, security-critical        | P-009/010/011 upload and download                                                                                                                                                                         | permission review                                                          |
+| E    | dependent, security-critical        | P-009/010/011 upload and download                                                                                                                                                                         | **COMPLETE** (§4N) — no new manifest permission was needed                 |
 | F    | dependent, external-dependency      | Phase 6 connectors; §88 per connector                                                                                                                                                                     | B2 satisfied; OAuth apps per connector                                     |
 | G    | dependent                           | Phase 7 skills                                                                                                                                                                                            | Wave F                                                                     |
 | H    | dependent                           | Phase 8 workflow, recording, shortcuts, scheduling                                                                                                                                                        | Wave G                                                                     |

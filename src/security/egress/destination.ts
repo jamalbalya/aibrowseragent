@@ -105,9 +105,9 @@ export function describeDestination(destination: EgressDestination): string {
   return destination.origin ?? destination.identity;
 }
 
-/** A navigation or page-write destination built from a URL. */
+/** A navigation, page-write or download destination built from a URL. */
 export function urlDestination(
-  channel: Extract<EgressChannel, 'navigation' | 'page_write' | 'web_ai_provider'>,
+  channel: Extract<EgressChannel, 'navigation' | 'page_write' | 'web_ai_provider' | 'download'>,
   url: string,
   extra: { tabId?: number; frameId?: number; purpose?: string } = {},
 ): EgressDestination {

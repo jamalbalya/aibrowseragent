@@ -806,3 +806,15 @@ body {
 .evidence__meta code {
   font-family: var(--mono);
 }
+
+/* The file picker prompt keeps the native input out of the layout: the
+   labelled button is what the user presses, and it forwards the click. */
+.prompt__file-input {
+  display: none;
+}
+
+.prompt__note {
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}

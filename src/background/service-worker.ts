@@ -41,6 +41,11 @@ import { createBrowserTools } from '@/tools/browser/browser-tools';
 import { createTabTools, TabOwnership } from '@/tools/tabs/tab-tools';
 import { DebuggerManager } from '@/tools/debugger/debugger-manager';
 import { createDebuggerTools } from '@/tools/debugger/debugger-tools';
+import { createFileTools } from '@/tools/files/file-tools';
+import { StagedFileStore } from '@/files/file-store';
+import { ChromeDownloadPort } from '@/files/download-port';
+import { FileSelectionBroker } from './file-broker';
+import { safeDisplayName } from '@/files/file-model';
 import { PermissionEngine } from '@/policy/permission-engine';
 import { emptySitePolicyState, removeRule, type SitePolicyState } from '@/policy/site-policy';
 import type { PolicyContext } from '@/policy/policy-engine';
@@ -176,6 +181,34 @@ const permissionBroker = new PermissionBroker({
   },
 });
 
+/**
+ * Files a user has chosen for the run.
+ *
+ * Bytes are held here in memory and written nowhere. Losing them when the
+ * worker is evicted is the accepted cost of never putting a user's document
+ * into extension storage; the task's taint is persisted separately, so the
+ * security state survives even though the file does not.
+ */
+const stagedFiles = new StagedFileStore();
+const downloadPort = new ChromeDownloadPort();
+
+/**
+ * The only route to a local file.
+ *
+ * A request carries a purpose and never a path — there is nowhere in it to
+ * put one — so a model cannot name a file to read. The person picks.
+ */
+const fileSelectionBroker = new FileSelectionBroker({
+  onWaiting: (request) => {
+    void taskManager
+      .markWaitingForUser(request.taskId, 'Waiting for you to choose a file.')
+      .catch(() => undefined);
+  },
+  onSettled: (request) => {
+    void taskManager.markUserResponded(request.taskId).catch(() => undefined);
+  },
+});
+
 const permissionEngine = new PermissionEngine({
   onDecision: async (entry) => {
     await auditLog.record({
@@ -244,6 +277,19 @@ const toolRegistry = new ToolRegistry({
   loadPolicyContext,
   evidenceStore,
 });
+toolRegistry.registerAll(
+  createFileTools({
+    adapter: browserAdapter,
+    broker: fileSelectionBroker,
+    store: stagedFiles,
+    downloads: downloadPort,
+    // Structured file events, separate from the egress decision the gate
+    // already records: one says what was authorised, the other what happened.
+    recordFileEvent: async (event) => {
+      await auditLog.record(event);
+    },
+  }),
+);
 toolRegistry.registerAll(createBrowserTools({ adapter: browserAdapter, debuggerManager }));
 toolRegistry.registerAll(createTabTools({ adapter: browserAdapter, ownership: tabOwnership }));
 toolRegistry.registerAll(
@@ -376,6 +422,9 @@ router.on('task.resume', async ({ taskId }) => ({ state: await taskManager.resum
 
 router.on('task.cancel', async ({ taskId }) => {
   permissionBroker.denyForTask(taskId);
+  fileSelectionBroker.cancelForTask(taskId, 'The task was cancelled.');
+  // A cancelled task must not leave the user's file sitting in memory.
+  stagedFiles.clearTask(taskId);
   return { state: await taskManager.cancel(taskId) };
 });
 
@@ -512,6 +561,47 @@ router.on('provider.setActive', async ({ providerId, modelId }) => {
   return { connection };
 });
 
+/**
+ * The user's answer to a file request.
+ *
+ * Every selection is recorded before the bytes go anywhere: names, types and
+ * sizes only, put through the same redaction as every other audit field so a
+ * secret pasted into a filename does not survive in the trail.
+ */
+router.on('file.respondSelection', async ({ requestId, response }) => {
+  const accepted = fileSelectionBroker.respond(requestId, response);
+
+  if (accepted && response.kind === 'selected') {
+    for (const file of response.files) {
+      await auditLog.record({
+        type: 'file.selected',
+        outcome: 'allowed',
+        origin: 'local',
+        fileName: safeDisplayName(file.name),
+        mimeType: file.mimeType,
+        byteLength: file.byteLength,
+        detail: 'The user chose this file in the browser’s file picker.',
+      });
+    }
+  } else if (accepted) {
+    await auditLog.record({
+      type: 'file.selected',
+      outcome: 'denied',
+      detail: 'The user did not choose a file.',
+    });
+  }
+
+  return { accepted };
+});
+
+router.on('file.listPendingSelections', () =>
+  Promise.resolve({ requests: fileSelectionBroker.listPending() }),
+);
+
+router.on('file.downloadsPermission', async () => ({
+  granted: await downloadPort.isPermitted(),
+}));
+
 router.on('permission.respond', ({ requestId, response }) => {
   permissionBroker.respond(requestId, response);
   return Promise.resolve({ ok: true as const });
@@ -599,6 +689,10 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 chrome.runtime.onSuspend?.addListener(() => {
   taskManager.abortAll();
   permissionBroker.denyAll();
+  fileSelectionBroker.cancelAll('The extension was suspended before a file was chosen.');
+  // Redundant, since the worker's memory goes with it — stated anyway, so the
+  // lifetime of a staged file is written down rather than inferred.
+  stagedFiles.clearAll();
 });
 
 // ---------------------------------------------------------------------------
