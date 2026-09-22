@@ -24,11 +24,27 @@ import {
 import type { PermissionMode } from '@/policy/policy-engine';
 import { broadcastEvent } from '@/messaging/bus';
 import type { EvidenceReference } from '@/evidence/evidence-model';
+import { describeBlock, type PersistenceHealthStore } from '@/storage/persistence-health';
 
 const log = getLogger('task');
 
 export interface TaskManagerOptions {
   readonly store: TaskStore;
+  /**
+   * Durable persistence health (D-3).
+   *
+   * Consulted before work starts or resumes, and nowhere else. A task whose
+   * security state could not be persisted is a task whose taint, salt and
+   * history are no longer established, and running it would mean deciding
+   * with state that is missing rather than state that is clean.
+   *
+   * Deliberately *not* consulted mid-execution. A check in the middle of a
+   * run would abort work that is already authorised and already happening,
+   * which is a different failure from refusing to begin — and the audit
+   * domain, which this gate ignores entirely, is the one that must never stop
+   * an execution at all.
+   */
+  readonly health?: PersistenceHealthStore;
   /** Resolves the provider + capabilities for a task at run time. */
   readonly resolveProvider: () => Promise<{
     adapter: AIProviderAdapter;
@@ -95,8 +111,33 @@ export class TaskManager {
     return this.runtime;
   }
 
+  /**
+   * Refuses to begin when persistence is not in a state that can carry a
+   * task's security state.
+   *
+   * Fail closed and say why. The alternative — starting anyway and hoping the
+   * writes land this time — produces a task whose taint cannot be trusted,
+   * and every gate downstream is reading that taint.
+   */
+  private async requireHealthyPersistence(action: string): Promise<void> {
+    if (!this.options.health) return;
+    const snapshot = await this.options.health.snapshot();
+    if (!snapshot.blocked) return;
+    log.error('Refusing to start work: persistence is not healthy.', {
+      action,
+      gating: snapshot.gating,
+    });
+    throw new TaskManagerError(
+      createError('POLICY_BLOCKED', `Persistence is ${snapshot.gating}; ${action} is refused.`, {
+        userMessage: describeBlock(snapshot),
+        retryable: false,
+      }),
+    );
+  }
+
   /** Creates a task and starts it. Execution proceeds in the background. */
   async create(objective: string, sessionId: string): Promise<AgentTask> {
+    await this.requireHealthyPersistence('starting a task');
     const trimmed = objective.trim();
     if (trimmed.length === 0) {
       throw new TaskManagerError(
@@ -381,6 +422,7 @@ export class TaskManager {
   }
 
   async resume(taskId: string): Promise<TaskState> {
+    await this.requireHealthyPersistence('resuming a task');
     const task = await this.options.store.getTask(taskId);
     if (!task) {
       throw new TaskManagerError(createError('INVALID_ARGUMENT', 'That task no longer exists.'));
@@ -409,6 +451,7 @@ export class TaskManager {
 
   /** Starts a fresh task with the same objective. History is never rewritten. */
   async retry(taskId: string): Promise<AgentTask> {
+    await this.requireHealthyPersistence('retrying a task');
     const previous = await this.options.store.getTask(taskId);
     if (!previous) {
       throw new TaskManagerError(createError('INVALID_ARGUMENT', 'That task no longer exists.'));

@@ -330,6 +330,12 @@ export const PANEL_ROUTE_CLASSES: Record<PanelRequestType, RouteClass> = {
   'permission.respond': 'CLASS_B_PANEL_CONTROL_PLANE',
   'permission.listPending': 'CLASS_B_PANEL_CONTROL_PLANE',
 
+  // Reading health changes nothing. Acknowledging is the only way down the
+  // severity ladder, which makes it a control-plane action even though it
+  // repairs nothing: it is what lets work start again.
+  'health.get': 'CLASS_E_PANEL_READ_ONLY',
+  'health.acknowledge': 'CLASS_B_PANEL_CONTROL_PLANE',
+
   'policy.getSitePolicy': 'CLASS_E_PANEL_READ_ONLY',
   'policy.removeSiteRule': 'CLASS_B_PANEL_CONTROL_PLANE',
 

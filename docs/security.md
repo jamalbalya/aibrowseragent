@@ -533,6 +533,57 @@ Eviction writes a `retention.compacted` record in the same transaction that
 removes the records, so a reader can always tell a quiet period from a
 truncated one. There is no delete in the UI. See [audit.md](audit.md).
 
+## Persistence failure, and why it is written down
+
+The failure this guards against is quiet. A task's security state — its
+taint, its salt, what it has already read — lives in one place; a write to
+that place fails; and within minutes MV3 evicts the worker that noticed. What
+comes back is a task that looks fine, because the only record that it was not
+fine was in the memory of a worker that no longer exists. A storage failure
+that erases its own evidence is indistinguishable from no failure at all.
+
+So health is written down, per domain, on a ladder: `HEALTHY`, `DEGRADED`
+(a write did not land), `CORRUPT` (something stored did not read back as
+written), `RECOVERY_REQUIRED`, `IRRECOVERABLE` (storage itself is unusable).
+
+Two rules keep it honest:
+
+- **Monotone.** Severity only rises. A later successful write does not mean
+  the earlier loss did not happen, so nothing in the failure paths may lower
+  it — and no failure handler in the codebase can, which is asserted by test.
+  Only an explicit acknowledgement from a person lowers it, and that is
+  recorded in the audit trail.
+- **Worst of both.** What is reported is the worse of the persisted record and
+  a floor this worker has held since it started. If the marker itself could
+  not be written, the floor still stops _this_ worker.
+
+Two domains gate work and one deliberately does not:
+
+| Domain          | Degraded means                                         | Gates work |
+| --------------- | ------------------------------------------------------ | ---------- |
+| `task-security` | a task's taint, salt or record did not persist         | **yes**    |
+| `storage`       | the substrate is not usable                            | **yes**    |
+| `audit`         | a record of something that already happened is missing | **no**     |
+
+The audit domain is excluded on purpose, and it is not an oversight. A gap in
+the record of an execution that already ran is not a failed execution, and
+making audit failure stop a task would convert one into the other — which is
+exactly what P-038's contract forbids. It is reported, durably, and it does
+not stop anything.
+
+The gate is consulted where work _begins_ — starting, resuming and retrying a
+task — and nowhere else. Not mid-execution: aborting work that is already
+authorised and already happening is a different failure from refusing to
+begin. It adds no check to dispatch, policy, permission or egress, and those
+modules do not import it.
+
+**The honest limit.** The marker is written to the same storage whose failure
+it records. Under a total, permanent storage failure it cannot be written
+either, and a worker that starts afterwards cannot know. This raises the floor
+— it covers quota exhaustion, a rejected write, a record that will not parse,
+and a transient fault — and it is not a guarantee. It is not described as one
+in the code, and it is not described as one here.
+
 ## Route trust
 
 Every message the extension routes arrives over `chrome.runtime` or

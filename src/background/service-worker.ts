@@ -17,6 +17,7 @@ import {
   NamespacedStorageArea,
   SerializedStorageArea,
 } from '@/storage/storage-area';
+import { PersistenceHealthStore } from '@/storage/persistence-health';
 import { SettingsStore, CredentialStore } from '@/config/settings';
 import { TaskStore } from '@/tasks/task-store';
 import { generateTaintSalt } from '@/tasks/task-model';
@@ -118,9 +119,19 @@ const session = new SerializedStorageArea(new ChromeStorageArea(chrome.storage.s
 void chrome.storage.session
   .setAccessLevel?.({ accessLevel: 'TRUSTED_CONTEXTS' })
   .catch(() => undefined);
+/**
+ * Durable persistence health (D-3).
+ *
+ * Constructed before the stores that report into it, and on the same
+ * serialized area, so a report is written under the same mutex as the writes
+ * it describes.
+ */
+const persistenceHealth = new PersistenceHealthStore(new NamespacedStorageArea(local, 'health'));
 const settingsStore = new SettingsStore(new NamespacedStorageArea(local, 'settings'));
 const credentialStore = new CredentialStore(local);
-const taskStore = new TaskStore(new NamespacedStorageArea(local, 'tasks'));
+const taskStore = new TaskStore(new NamespacedStorageArea(local, 'tasks'), {
+  health: persistenceHealth,
+});
 const evidenceStore = new EvidenceStore(new NamespacedStorageArea(local, 'evidence'));
 const auditLog = new AuditLog(new NamespacedStorageArea(local, 'audit'), {
   // A tool name reaches the trail from a model proposal, so it is checked
@@ -128,6 +139,10 @@ const auditLog = new AuditLog(new NamespacedStorageArea(local, 'audit'), {
   // recorded as unknown and the proposed string is dropped, which stops the
   // trail being a model-writable text field.
   knownTool: (name) => toolRegistry.has(name),
+  // A lost audit record is recorded where worker eviction cannot erase it.
+  // It does not stop anything: a gap in the record is a gap in the record of
+  // an execution that already happened.
+  health: persistenceHealth,
 });
 const policyArea = new NamespacedStorageArea(local, 'policy');
 const connectorTokens = new TokenVault(new NamespacedStorageArea(session, 'connector-tokens'));
@@ -976,6 +991,7 @@ class ProviderUnavailable extends Error {
 // neither has to be forward-declared.
 const taskManager = new TaskManager({
   store: taskStore,
+  health: persistenceHealth,
   resolveProvider,
   getPermissionMode: async () => (await settingsStore.get()).permissionMode,
   getActiveTabId: async () => (await browserAdapter.getActiveTab())?.id,
@@ -1385,6 +1401,26 @@ router.on('permission.respond', ({ requestId, response }) => {
 router.on('permission.listPending', () =>
   Promise.resolve({ requests: permissionBroker.listPending() }),
 );
+
+/**
+ * Persistence health (D-3).
+ *
+ * A read and an acknowledgement. The acknowledgement is the only way down the
+ * ladder and is deliberately a person's action: a later successful write does
+ * not mean the earlier loss did not happen, so nothing in the failure paths
+ * may clear it.
+ */
+router.on('health.get', async () => ({ snapshot: await persistenceHealth.snapshot() }));
+
+router.on('health.acknowledge', async ({ domain }) => {
+  const snapshot = await persistenceHealth.acknowledge(domain);
+  await auditLog.record({
+    type: 'persistence.health',
+    outcome: 'confirmed',
+    code: `acknowledged:${domain}`,
+  });
+  return { snapshot };
+});
 
 router.on('policy.getSitePolicy', async () => ({ state: await loadSitePolicy() }));
 

@@ -13,6 +13,7 @@ import type { ProviderKind } from '@/providers/core/provider-kind';
 import type { PermissionRequest, PermissionResponse } from '@/policy/permission-engine';
 import type { FileSelectionRequest } from '@/background/file-broker';
 import type { AuditEvent, AuditExport } from '@/audit/audit-log';
+import type { HealthDomain, HealthSnapshot } from '@/storage/persistence-health';
 import type { PermissionMode } from '@/policy/policy-engine';
 import type { ActedOnElement, SemanticPage } from '@/content/semantic-tree';
 import type { EvidenceReference } from '@/evidence/evidence-model';
@@ -257,6 +258,19 @@ export interface PanelRequestMap {
   'permission.listPending': {
     request: Record<string, never>;
     response: { requests: PermissionRequest[] };
+  };
+
+  /**
+   * Durable persistence health (D-3).
+   *
+   * A read, and an acknowledgement that is the only way down the ladder.
+   * Acknowledging does not repair anything — it records that a person has
+   * seen what was lost and is choosing to continue.
+   */
+  'health.get': { request: Record<string, never>; response: { snapshot: HealthSnapshot } };
+  'health.acknowledge': {
+    request: { domain: HealthDomain };
+    response: { snapshot: HealthSnapshot };
   };
 
   'policy.getSitePolicy': { request: Record<string, never>; response: { state: SitePolicyState } };

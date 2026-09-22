@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAgentState } from './state/useAgentState';
 import { Header } from './components/Header';
+import { PersistenceBanner } from './components/PersistenceBanner';
 import { TaskComposer } from './components/TaskComposer';
 import { TaskView } from './components/TaskView';
 import { PermissionPrompt } from './components/PermissionPrompt';
@@ -73,6 +74,10 @@ export function App(): React.JSX.Element {
         onOpenWorkflows={() => setShowWorkflows(true)}
         onOpenAudit={() => setShowAudit(true)}
       />
+
+      {/* Above the task error, because a lost record is a condition rather
+          than a failed action, and it stays until someone deals with it. */}
+      <PersistenceBanner />
 
       {agent.error ? (
         <div className="banner banner--error" role="alert">

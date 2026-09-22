@@ -22,6 +22,7 @@ import { getLogger } from '@/logging/logger';
 import { update, type StorageArea } from '@/storage/storage-area';
 import { hashContent } from '@/evidence/evidence-model';
 import { REDACTED, redactValue } from '@/security/redaction/secret-redactor';
+import type { PersistenceHealthStore } from '@/storage/persistence-health';
 
 const log = getLogger('storage');
 
@@ -55,6 +56,9 @@ export const AUDIT_EVENT_TYPES = [
   // sender class, never the sender's URL: a URL is page-derived, and
   // page-derived text does not enter this trail.
   'route.refused',
+  // A person acknowledging that stored state was lost (D-3). Recorded because
+  // it is the one action that lets work resume after a persistence failure.
+  'persistence.health',
   // Written only by the log itself, when eviction removes records. It exists
   // so a reader can tell a quiet period from a truncated one.
   'retention.compacted',
@@ -500,6 +504,18 @@ export interface AuditLogOptions {
    * `(unknown)` and the proposed string is dropped.
    */
   readonly knownTool?: (name: string) => boolean;
+  /**
+   * Where a persistence failure is recorded durably (D-3).
+   *
+   * Optional, and deliberately not required: a log constructed without one
+   * behaves exactly as before. What it changes is that a lost record survives
+   * worker eviction as a fact, instead of only as a flag this instance holds.
+   *
+   * Reporting is fire-and-forget and never gates anything here. A gap in the
+   * audit trail is a gap in the record of an execution that already happened;
+   * turning it into a stopped execution is the one thing P-038 forbids.
+   */
+  readonly health?: PersistenceHealthStore;
   readonly now?: () => number;
 }
 
@@ -645,6 +661,17 @@ export class AuditLog {
   }
 
   /**
+   * Records a persistence failure where it will outlive this worker.
+   *
+   * Fire-and-forget, and its own failure is swallowed: this runs on the path
+   * that is already failing, and a reporter that threw would replace the
+   * failure being reported with a different one.
+   */
+  private reportHealth(state: 'DEGRADED' | 'CORRUPT', reason: string): void {
+    void this.options.health?.report('audit', state, reason).catch(() => undefined);
+  }
+
+  /**
    * Appends one event.
    *
    * Inside the storage mutator, so two tool calls finishing together cannot
@@ -659,6 +686,7 @@ export class AuditLog {
       // failure to record would be a recursion whose base case is the same
       // validator that just said no. It goes to the redacted worker log.
       this.degraded = 'A record was refused because its shape was not usable.';
+      this.reportHealth('CORRUPT', 'a record could not be shaped');
       log.error('An audit record was refused.', {
         type: String(event.type),
         error: error instanceof Error ? error.name : 'unknown',
@@ -680,6 +708,7 @@ export class AuditLog {
         return await this.append(prepared);
       } catch {
         this.degraded = 'The audit trail could not be written to; records are missing.';
+        this.reportHealth('DEGRADED', 'a record could not be written');
         log.error('An audit write failed after compaction; the trail has a gap.');
         return null;
       }
@@ -841,6 +870,9 @@ export class AuditLog {
     });
 
     if (!written) throw new Error('audit_append_produced_nothing');
+    // The in-memory note clears; the durable record does not. A write that
+    // works now says nothing about the one that did not, and the earlier
+    // records are still missing.
     this.degraded = null;
     return written;
   }

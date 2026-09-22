@@ -12,6 +12,7 @@ import { isTerminal, isValidTaintSalt } from './task-model';
 import type { TaintSource } from '@/security/exfiltration/exfiltration-guard';
 import type { TaintState } from '@/security/taint/taint-state';
 import { addTaint, parseTaintState, unknownTaint } from '@/security/taint/taint-state';
+import type { PersistenceHealthStore } from '@/storage/persistence-health';
 
 const log = getLogger('storage');
 
@@ -28,6 +29,16 @@ interface TaskIndex {
 export interface TaskStoreOptions {
   /** Maximum tasks retained. Older completed tasks are evicted first. */
   readonly maxTasks?: number;
+  /**
+   * Where a persistence failure is recorded durably (D-3).
+   *
+   * This store holds the only copy of a task's security state — its taint,
+   * its salt, what it has read. A write that does not land means that state
+   * is no longer established, and the worker that noticed is evicted within
+   * minutes. Recording it here is what stops the next worker from reading the
+   * survivors as a healthy task and carrying on.
+   */
+  readonly health?: PersistenceHealthStore;
 }
 
 export class TaskStore {
@@ -35,22 +46,56 @@ export class TaskStore {
 
   constructor(
     private readonly area: StorageArea,
-    options: TaskStoreOptions = {},
+    private readonly options: TaskStoreOptions = {},
   ) {
     this.maxTasks = options.maxTasks ?? 100;
   }
 
   async saveTask(task: AgentTask): Promise<void> {
-    await this.area.set(taskKey(task.id), task);
-    await update<TaskIndex>(this.area, TASK_INDEX_KEY, { ids: [] }, (index) => ({
-      ids: [task.id, ...index.ids.filter((id) => id !== task.id)],
-    }));
-    await this.evictOverflow();
+    await this.guard('a task record could not be written', async () => {
+      await this.area.set(taskKey(task.id), task);
+      await update<TaskIndex>(this.area, TASK_INDEX_KEY, { ids: [] }, (index) => ({
+        ids: [task.id, ...index.ids.filter((id) => id !== task.id)],
+      }));
+      await this.evictOverflow();
+    });
   }
 
   async getTask(id: string): Promise<AgentTask | undefined> {
-    const task = await this.area.get<AgentTask>(taskKey(id));
-    return task === undefined ? undefined : normaliseSecurityState(task);
+    const task = await this.guard('a task record could not be read', () =>
+      this.area.get<AgentTask>(taskKey(id)),
+    );
+    if (task === undefined) return undefined;
+    const normalised = normaliseSecurityState(task);
+    // A record that came back without usable security state is not a task
+    // that happens to be untainted — it is a task whose security state did
+    // not survive. Said out loud, durably, so the next worker knows too.
+    if (!hasUsableSecurityState(normalised) && !isTerminal(normalised.state)) {
+      void this.options.health
+        ?.report('task-security', 'CORRUPT', 'a task lost its security state')
+        .catch(() => undefined);
+    }
+    return normalised;
+  }
+
+  /**
+   * Runs a storage operation, recording a failure before re-throwing it.
+   *
+   * The throw is preserved on purpose: callers already handle it, and several
+   * of them fail closed on it. What is added is that the failure outlives the
+   * worker that saw it.
+   */
+  private async guard<T>(reason: string, operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      void this.options.health?.report('task-security', 'DEGRADED', reason).catch(() => undefined);
+      log.error('A task-store operation failed.', {
+        reason,
+        error: error instanceof Error ? error.name : 'unknown',
+      });
+      throw error;
+    }
   }
 
   /**
@@ -97,6 +142,13 @@ export class TaskStore {
    * Returns `undefined` when the task no longer exists.
    */
   async updateTask(
+    id: string,
+    mutate: (task: AgentTask) => AgentTask,
+  ): Promise<AgentTask | undefined> {
+    return this.guard('a task record could not be updated', () => this.updateTaskInner(id, mutate));
+  }
+
+  private async updateTaskInner(
     id: string,
     mutate: (task: AgentTask) => AgentTask,
   ): Promise<AgentTask | undefined> {

@@ -1044,3 +1044,28 @@ body {
   background: var(--warn-bg, #fdf3e0);
   color: var(--warn, #8a5a00);
 }
+
+/* Persistence health banner (D-3). A condition, not a transient error, so it
+   keeps its own list rather than collapsing into one line. */
+.banner--warn {
+  background: color-mix(in srgb, var(--warn, #b26a00) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn, #b26a00) 45%, transparent);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.banner__list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 0.85rem;
+}
+
+.banner__list li {
+  margin-bottom: 4px;
+}
+
+.banner__note {
+  margin: 6px 0 0;
+  font-size: 0.78rem;
+  opacity: 0.8;
+}
