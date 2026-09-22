@@ -584,6 +584,30 @@ either, and a worker that starts afterwards cannot know. This raises the floor
 and a transient fault — and it is not a guarantee. It is not described as one
 in the code, and it is not described as one here.
 
+## A file does not outlive the work it was chosen for
+
+A person hands the extension bytes from their own machine for one piece of
+work. Cancelling a task freed them from the start. Completing one did not —
+so a staged file sat in the worker's memory until MV3 happened to evict it,
+which is minutes and is not a guarantee, and was not a decision anybody made.
+Any terminal state now frees them, hooked once where the task manager already
+says a task has finished rather than reproduced at each exit.
+
+Around that, the properties the upload path already had and keeps: a request
+that nobody answers resolves as **cancelled**, never as a selection; an
+answer to a request that already settled changes nothing; the request has
+nowhere to put a filesystem path, so a model cannot propose one; and a staged
+file is looked up by task as well as by id, which makes reaching another
+task's file a matter of not being able to rather than of not guessing.
+
+Download is the browser's job. The extension validates a filename, never
+overwrites, declares the URL as an egress in the outbound direction — a URL
+carries whatever was put in its query string — and holds no filesystem
+primitive of its own. The `downloads` permission stays optional and
+unrequested, so the path that has actually run end to end in a browser is the
+refusal; the granted path is covered in unit and integration tests, and that
+distinction is kept rather than folded into a verdict.
+
 ## Setting a form control that is not a text field
 
 Date, time, datetime-local, month, week, colour, range and number are set

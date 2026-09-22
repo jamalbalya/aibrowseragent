@@ -1006,6 +1006,23 @@ const taskManager = new TaskManager({
   // the start and never written, which is why the trail could say what was
   // *decided* but not what was *done*.
   onLifecycle: (event) => {
+    // A finished task must not leave the user's file sitting in memory, for
+    // exactly the reason a cancelled one must not: the bytes were handed over
+    // for one piece of work, and that work is over. Cancellation had this
+    // from the start; completing and failing did not, which meant a file
+    // outlived its purpose until the worker happened to be evicted.
+    //
+    // Hooked here rather than at each exit, because "the task reached a
+    // terminal state" is one fact and reproducing it at three call sites is
+    // how one of them ends up missing.
+    if (event.kind === 'completed') {
+      fileSelectionBroker.cancelForTask(
+        event.taskId,
+        'The task finished before a file was chosen.',
+      );
+      stagedFiles.clearTask(event.taskId);
+    }
+
     void auditLog
       .record({
         type:
