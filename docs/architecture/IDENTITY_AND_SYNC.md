@@ -418,3 +418,46 @@ is persisted.
    connections require a reconnect on the new device.
 
 Backend work (phases 8–20) does not start until these are answered.
+
+---
+
+## Queued for the next design review — Browser Workspace boundary
+
+Received after this wave's scope was fixed, and **not designed or implemented
+here**. Recorded so it is not lost, and because two of its constraints bear
+directly on identifiers this wave introduced.
+
+The requirement: activating the agent from a tab makes that tab the initial
+context of a _workspace_; tabs the agent opens join the same Chrome tab group;
+only tabs in the active workspace count as live browser context; the user can
+drag tabs in and out to change membership.
+
+Three things to settle before any of it is built, flagged now because they are
+where this design would go wrong:
+
+1. **Chrome ids are not application identity.** `tabGroupId`, `tabId` and
+   `windowId` are runtime handles: they do not survive a browser restart, and
+   a group the user ungroups takes its id with it. A `workspaceId` minted and
+   persisted by this extension is the durable identity, with Chrome ids
+   re-bound to it at startup. Using a `tabGroupId` as the stored key would
+   make every workspace evaporate on restart, which is the same class of
+   mistake as binding user data to a session.
+2. **Membership is a boundary, not an authorization.** A tab being inside the
+   workspace must not shortcut origin policy, consent, taint, the egress gate,
+   route trust or `ToolRegistry`. The boundary can only ever _narrow_ what is
+   considered context; it must never widen what may be done to it. That is the
+   same relationship route trust has to policy — a filter in front, which can
+   subtract and never add.
+3. **It must not be coupled to the AI brain.** Switching workspace must not
+   switch provider, and switching provider must not switch workspace. Two
+   independent selections, following the separation this wave established
+   between identity, accounts and brain.
+
+Persistence follows §D and the classification table: `workspaceId` and its
+membership are `USER_SELECTABLE` metadata; runtime Chrome ids are
+`LOCAL_ONLY` and are never synced, because they mean nothing on another
+device.
+
+Coverage would need real Chromium — tab-group membership, drag in and out,
+ungroup, close and navigate are browser behaviours a fake cannot establish —
+plus mutation tests on the isolation guard.
