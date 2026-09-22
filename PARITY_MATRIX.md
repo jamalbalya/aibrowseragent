@@ -99,9 +99,9 @@ capability, not necessarily a test of the capability itself.
 | Status          | Count  |
 | --------------- | ------ |
 | PASS            | 30     |
-| PARTIAL         | 6      |
+| PARTIAL         | 7      |
 | INTERFACES-ONLY | 0      |
-| NOT-STARTED     | 4      |
+| NOT-STARTED     | 3      |
 | **Total**       | **40** |
 
 These counts are checked against the table below, and the table against
@@ -110,10 +110,15 @@ separate classes of error have actually occurred here: a revision that claimed
 17 PASS while its own table said 23, and a revision whose per-column coverage
 claims were not backed by any test. The check now covers both.
 
-Movement in this revision: workflow recording (P-022) moves from NOT-STARTED
-to PARTIAL, taking PARTIAL from 5 to 6 and NOT-STARTED from 5 to 4. **Not**
-PASS, for a reason stated below that is a genuine gap against the
-specification rather than a missing test.
+Movement in this revision: shortcuts (P-021) move from NOT-STARTED to
+PARTIAL, taking PARTIAL from 6 to 7 and NOT-STARTED from 4 to 3. **Not** PASS:
+the §85 manual acceptance scenarios remain unexecuted, as they do for every
+row in this file.
+
+### Earlier movement, kept for the record
+
+Workflow recording (P-022) moved from NOT-STARTED to PARTIAL, taking PARTIAL
+from 5 to 6 and NOT-STARTED from 5 to 4.
 
 ### Earlier movement, kept for the record
 
@@ -239,7 +244,7 @@ rather than folded into the verdict.
 | P-018 | Background task while Chrome is open | yes  | —    | yes         | —        | yes | PASS        |
 | P-019 | Notifications                        | yes  | yes  | —           | —        | —   | PASS        |
 | P-020 | Scheduled tasks                      | no   | —    | —           | —        | —   | NOT-STARTED |
-| P-021 | Shortcuts                            | no   | —    | —           | —        | —   | NOT-STARTED |
+| P-021 | Shortcuts                            | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-022 | Workflow recording                   | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-023 | Connector framework                  | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-024 | Skills                               | yes  | yes  | yes         | yes      | yes | PARTIAL     |
@@ -265,11 +270,23 @@ rather than folded into the verdict.
 ## Why each PARTIAL is partial
 
 **P-006 Forms** — Text input, textarea, contenteditable, select-by-value,
-select-by-label and form submission all work and are tested. Checkbox and radio
-are reported in the page model but have no dedicated tool; the model must click
-them, which works but is less direct. File inputs are handled — see P-010 —
-through `files.select` and `browser.attach_file` rather than through a form
-tool, because choosing a file and sending it are two separate decisions.
+select-by-label, form submission and checkbox/radio all work and are tested.
+`browser.set_checked` covers checkbox and radio directly, with radio buttons
+settable but not clearable — a group is changed by selecting a different
+option, which is what the control actually does. File inputs are handled — see
+P-010 — through `files.select` and `browser.attach_file` rather than through a
+form tool, because choosing a file and sending it are two separate decisions.
+
+An earlier revision of this entry said checkbox and radio had no dedicated
+tool and had to be clicked. That was written before `browser.set_checked`
+shipped and was never updated; it is corrected here rather than left to
+mislead a reader deciding what is left to build.
+
+PARTIAL for coverage of the less common controls rather than the common ones:
+date, time, colour and range inputs are reported in the page model but have no
+dedicated tool, and a multi-select listbox can only be set one value at a
+time. Each is incremental work on the existing interaction engine with no new
+security surface.
 
 **P-038 Audit trail** — Permission decisions are recorded with task, tool,
 site, risk, decision, reason and timestamp, capped at 500 entries, and an
@@ -304,6 +321,35 @@ anything real.
 
 Nothing here is blocked externally. Both reasons resolve by building more, not
 by obtaining anything.
+
+**P-021 Shortcuts** — A shortcut is a name for something that already exists
+and has already been reviewed: a stored workflow (P-022) or a bundled skill
+(P-024). It holds a name and a reference and nothing else — no steps, no tool
+arguments, no prompt, no code — and it adds no execution path. Resolving one
+is a read that runs nothing; what it points at then runs through the route
+that already existed for that kind of target, with risk, policy, permission,
+egress and evidence all re-applied per step. A confirmation shows what a name
+means before anything starts, and is deliberately not an authorization.
+
+Names are identifiers, not patterns: normalisation is fixed and idempotent,
+lookup is exact equality with no nearest match, and a name that collides with
+an existing one — identically, or only under a confusability key that folds
+digit and letter lookalikes — is refused rather than merged or renamed.
+Targets are re-checked at every resolution, so a deleted workflow, an
+incomplete recording or an unregistered skill fails closed and never falls
+through to something else. No `shortcut.*` tool exists and no model can
+create, choose or invoke one.
+
+Covered by a unit suite, an integration suite, a twenty-seven-case security
+suite and an eight-test real-Chromium suite, with twelve mutations proved to
+fail. No new permission and no new host access.
+
+PARTIAL because the §85 A–F manual acceptance scenarios have not been
+executed — as for every row in this file — and for one reach limit: a shortcut
+names a whole target and takes no per-run inputs, so a workflow with runtime
+slots is reached through the review surface rather than by name. Extending
+shortcuts to carry input values would mean storing values, which is a
+different security question and deliberately out of P-021's scope.
 
 **P-022 Workflow recording** — Recording and replay are implemented, on top
 of the skill definition, validator, runner and dispatch path rather than

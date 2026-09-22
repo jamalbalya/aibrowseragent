@@ -474,6 +474,37 @@ security, policy, permission or evidence state and no live reference to
 anything the dispatch path uses, on a path the return value does not depend on,
 with exceptions caught. See [workflows.md](workflows.md).
 
+### A name is not a capability
+
+Shortcuts (P-021) let a user type `/qa-regression` to run a workflow or a
+bundled skill they already have. A shortcut holds a name and a reference and
+nothing else — no steps, no tool arguments, no prompt, no code — so it is not
+a thing that runs, it is a thing that names something that runs.
+
+Four properties carry the boundary:
+
+- **It adds no execution path.** Resolving a name is a read that runs nothing.
+  What it points at then runs through `workflow.replay` or `skill.run`, which
+  reach the same `SkillRunner` and the same `ToolRegistry.dispatch` they always
+  did, with risk, policy, permission, egress and evidence re-applied per step.
+  A name buys nothing.
+- **A name means one thing.** Normalisation is fixed and idempotent, lookup is
+  exact equality with no nearest match, and a collision — identical, or merely
+  confusable under a key that folds digit and letter lookalikes — is refused
+  rather than merged or auto-renamed. Two distinct choices must not become one
+  executable shortcut, because then one of them silently runs the other's
+  target.
+- **Targets are re-checked every time.** A deleted workflow, a recording with
+  gaps, an unregistered skill or a malformed stored record all fail closed, and
+  a shortcut never falls through to a different target.
+- **No model authority.** There is no `shortcut.*` tool and no `shortcut.run`
+  route; a model can neither manage a shortcut nor invoke one, and shortcuts
+  never reach `skills.list` or the tool schemas a model is offered.
+
+The confirmation shown before a shortcut runs is **not** a security decision.
+It says which reviewed thing is about to start, not whether it may do what it
+does. See [shortcuts.md](shortcuts.md).
+
 ## Reporting a vulnerability
 
 Open a security advisory on the repository rather than a public issue.

@@ -136,7 +136,12 @@
       "unit": ["tests/unit/notifier.test.ts"]
     },
     "P-020": {},
-    "P-021": {},
+    "P-021": {
+      "unit": ["tests/unit/shortcut-name.test.ts"],
+      "integration": ["tests/integration/shortcut-invocation.test.ts"],
+      "security": ["tests/security/shortcut-security.test.ts"],
+      "e2e": ["tests/e2e/shortcuts.spec.ts"]
+    },
     "P-022": {
       "unit": ["tests/unit/workflow-recording.test.ts"],
       "integration": ["tests/integration/workflow-lifecycle.test.ts"],

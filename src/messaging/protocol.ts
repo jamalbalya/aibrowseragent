@@ -76,6 +76,29 @@ export interface WorkflowSummary {
   }[];
 }
 
+/**
+ * A shortcut as the side panel sees it.
+ *
+ * A name and a reference. There is nothing here describing what the target
+ * does, because a shortcut does not know: the place to inspect that is the
+ * review surface belonging to the workflow or skill it points at.
+ */
+export interface ShortcutSummary {
+  readonly shortcutId: string;
+  /** Exactly what the user typed, for display. */
+  readonly displayName: string;
+  /** The normalised name a typed `/command` is matched against. */
+  readonly name: string;
+  readonly targetKind: string;
+  readonly targetId: string;
+  readonly targetVersion?: string;
+  /** The target's own name, or a note that it is no longer there. */
+  readonly targetName: string;
+  /** False when the target is missing or cannot run. Such a shortcut fails closed. */
+  readonly usable: boolean;
+  readonly createdAt: number;
+}
+
 /** Request/response pairs handled by the service worker. */
 export interface PanelRequestMap {
   'task.create': {
@@ -299,6 +322,100 @@ export interface PanelRequestMap {
       }[];
     };
   };
+  /**
+   * Shortcuts (P-021).
+   *
+   * A shortcut is a **name** for something that already exists and has
+   * already been reviewed — a stored workflow, or a bundled skill. Every
+   * route here creates, reads or deletes a name. None of them runs anything.
+   *
+   * There is deliberately **no `shortcut.run`** and no shortcut-specific
+   * execution route of any kind. Invoking a shortcut means resolving it to a
+   * target and then calling the route that already existed for that kind of
+   * target — `workflow.replay` or `skill.run` — so a shortcut adds an alias
+   * rather than an execution path, and grants no authority.
+   *
+   * Like every other route in this map, these are reachable only from the
+   * side panel. There is no `shortcut.*` tool, so a model can neither manage
+   * a shortcut nor invoke one.
+   */
+  'shortcut.list': {
+    request: Record<string, never>;
+    response: { shortcuts: ShortcutSummary[] };
+  };
+  'shortcut.create': {
+    request: {
+      name: string;
+      target:
+        | { kind: 'workflow'; workflowId: string }
+        | { kind: 'skill'; skillId: string; skillVersion: string };
+    };
+    response: { shortcut: ShortcutSummary | null; error?: { reason: string; detail: string } };
+  };
+  /** Points an existing shortcut at a different target. Runs nothing. */
+  'shortcut.retarget': {
+    request: {
+      shortcutId: string;
+      target:
+        | { kind: 'workflow'; workflowId: string }
+        | { kind: 'skill'; skillId: string; skillVersion: string };
+    };
+    response: { shortcut: ShortcutSummary | null; error?: { reason: string; detail: string } };
+  };
+  'shortcut.remove': { request: { shortcutId: string }; response: { ok: true } };
+  /**
+   * Works out what a typed name means, and runs nothing.
+   *
+   * Safe to call on every keystroke: it is a read. The result is what the
+   * user is shown before they commit, and showing it is not an
+   * authorization — the target still asks for everything it would have asked
+   * for.
+   */
+  'shortcut.resolve': {
+    request: { typed: string };
+    response: {
+      ok: boolean;
+      reason?: string;
+      detail?: string;
+      resolution?: {
+        shortcutId: string;
+        name: string;
+        targetKind: string;
+        targetName: string;
+        targetId: string;
+        targetVersion?: string;
+        risk: string;
+        stepCount: number;
+      };
+    };
+  };
+
+  /**
+   * Runs a bundled skill because a person asked (P-021).
+   *
+   * The user-initiated counterpart of the `skills.run` tool, reaching the
+   * same `SkillRunner` and therefore the same per-step dispatch. It takes an
+   * id and a pinned version, never a definition, so nothing can describe a
+   * skill into existence. Being a panel route rather than a tool is what
+   * keeps it out of a model's reach.
+   */
+  'skill.run': {
+    request: {
+      skillId: string;
+      skillVersion: string;
+      inputs?: Record<string, string | number | boolean>;
+    };
+    response: {
+      ok: boolean;
+      taskId?: string;
+      status?: string;
+      summary?: string;
+      reason?: string;
+      detail?: string;
+      steps?: { step: string; ran: string; status: string }[];
+    };
+  };
+
   /**
    * Recorded workflows (P-022).
    *

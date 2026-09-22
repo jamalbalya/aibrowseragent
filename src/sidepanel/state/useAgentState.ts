@@ -178,6 +178,38 @@ export function useAgentState() {
     [run],
   );
 
+  /**
+   * Runs what a confirmed shortcut resolved to.
+   *
+   * The shortcut is already spent by this point: it produced an id, and what
+   * happens here is the route that already existed for that kind of target.
+   * There is no shortcut-specific execution, so every permission, policy and
+   * egress decision happens exactly as it would have without a name in front
+   * of it.
+   */
+  const runShortcutTarget = useCallback(
+    async (resolution: {
+      targetKind: string;
+      targetId: string;
+      targetVersion?: string;
+    }): Promise<void> => {
+      if (resolution.targetKind === 'workflow') {
+        await run(() =>
+          sendToBackground('workflow.replay', { workflowId: resolution.targetId, inputs: {} }),
+        );
+      } else if (resolution.targetKind === 'skill' && resolution.targetVersion !== undefined) {
+        await run(() =>
+          sendToBackground('skill.run', {
+            skillId: resolution.targetId,
+            skillVersion: resolution.targetVersion as string,
+          }),
+        );
+      }
+      await refresh();
+    },
+    [run, refresh],
+  );
+
   const pauseTask = useCallback(
     (taskId: string) => run(() => sendToBackground('task.pause', { taskId })),
     [run],
@@ -296,6 +328,7 @@ export function useAgentState() {
     setActiveTaskId,
     refresh,
     startTask,
+    runShortcutTarget,
     pauseTask,
     resumeTask,
     cancelTask,

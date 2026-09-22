@@ -69,6 +69,12 @@ What works today:
   and a recording that had to leave a step out cannot be replayed at all
   ([docs/workflows.md](docs/workflows.md)).
 
+- Shortcuts: a name for a workflow you already have, typed as `/qa-regression`.
+  A shortcut holds a name and a reference — never steps, arguments or code — so
+  it adds no execution path: what it names runs through the same route, with
+  the same permission prompts. Names that collide, or merely look alike, are
+  refused rather than merged ([docs/shortcuts.md](docs/shortcuts.md)).
+
 Not yet implemented: further connectors (Jira, Confluence, Figma, Sheets),
 MCP, plugins, scheduling, and OpenAI's Responses API. Their interfaces exist;
 their implementations do not, and the code raises `NOT_IMPLEMENTED` rather than

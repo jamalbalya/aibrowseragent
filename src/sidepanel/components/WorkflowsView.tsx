@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { sendToBackground, MessagingError } from '@/messaging/bus';
-import type { WorkflowSummary } from '@/messaging/protocol';
+import type { PanelResponse, ShortcutSummary, WorkflowSummary } from '@/messaging/protocol';
 
 interface WorkflowsViewProps {
   /** The task whose calls a new recording would capture. */
@@ -46,16 +46,24 @@ export function WorkflowsView({
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [shortcuts, setShortcuts] = useState<readonly ShortcutSummary[]>([]);
+  const [skills, setSkills] = useState<PanelResponse<'skill.list'>['skills']>([]);
+  const [naming, setNaming] = useState<string | null>(null);
+  const [newName, setNewName] = useState('');
 
   const refresh = useCallback(async () => {
     try {
-      const [list, status] = await Promise.all([
+      const [list, status, shortcutList, skillList] = await Promise.all([
         sendToBackground('workflow.list', {}),
         sendToBackground('workflow.recordStatus', {}),
+        sendToBackground('shortcut.list', {}),
+        sendToBackground('skill.list', {}),
       ]);
       setWorkflows(list.workflows);
       setRecording(status.recording);
       setRecordedSteps(status.stepCount);
+      setShortcuts(shortcutList.shortcuts);
+      setSkills(skillList.skills);
     } catch (error) {
       setMessage({ tone: 'error', text: describe(error) });
     }
@@ -163,6 +171,68 @@ export function WorkflowsView({
     }
   };
 
+  /**
+   * Gives an existing target a name. Runs nothing.
+   *
+   * A collision comes back as a message naming what it clashed with, rather
+   * than being merged or silently renamed — two distinct choices must not
+   * become one executable shortcut.
+   */
+  const addShortcut = async (target: ShortcutSummaryTarget, label: string): Promise<void> => {
+    setBusy('shortcut');
+    try {
+      const result = await sendToBackground('shortcut.create', { name: newName, target });
+      setMessage(
+        result.shortcut
+          ? { tone: 'ok', text: `/${result.shortcut.name} now runs ${label}.` }
+          : { tone: 'error', text: result.error?.detail ?? 'That name could not be used.' },
+      );
+      if (result.shortcut) {
+        setNaming(null);
+        setNewName('');
+      }
+      await refresh();
+    } catch (error) {
+      setMessage({ tone: 'error', text: describe(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const removeShortcut = async (shortcutId: string): Promise<void> => {
+    setBusy('shortcut');
+    try {
+      await sendToBackground('shortcut.remove', { shortcutId });
+      await refresh();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const nameForm = (target: ShortcutSummaryTarget, label: string): React.JSX.Element => (
+    <span className="settings__actions">
+      <input
+        className="field__input"
+        value={newName}
+        maxLength={48}
+        placeholder="qa-regression"
+        aria-label="Shortcut name"
+        onChange={(event) => setNewName(event.target.value)}
+      />
+      <button
+        type="button"
+        className="button"
+        disabled={busy !== null || newName.trim().length === 0}
+        onClick={() => void addShortcut(target, label)}
+      >
+        Save
+      </button>
+      <button type="button" className="button button--ghost" onClick={() => setNaming(null)}>
+        Cancel
+      </button>
+    </span>
+  );
+
   const remove = async (workflowId: string): Promise<void> => {
     setBusy(workflowId);
     try {
@@ -252,6 +322,75 @@ export function WorkflowsView({
       </section>
 
       <section className="settings__section">
+        <h3>Shortcuts</h3>
+        <p className="field__hint">
+          A shortcut is a name for a workflow you already have. Type it in the composer with a
+          leading slash. It runs the same thing, with the same permission prompts — a name grants
+          nothing.
+        </p>
+        {shortcuts.length === 0 ? (
+          <p className="field__hint">No shortcuts yet. Add one from a workflow below.</p>
+        ) : (
+          <ul className="sites">
+            {shortcuts.map((shortcut) => (
+              <li key={shortcut.shortcutId} className="sites__row">
+                <span className={shortcut.usable ? '' : 'shortcut--broken'}>
+                  <strong className="shortcut__name">/{shortcut.name}</strong> —{' '}
+                  {shortcut.targetName}
+                </span>
+                <button
+                  type="button"
+                  className="button button--ghost"
+                  disabled={busy !== null}
+                  onClick={() => void removeShortcut(shortcut.shortcutId)}
+                >
+                  Delete
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="settings__section">
+        <h3>Built-in workflows</h3>
+        <p className="field__hint">
+          These ship with the extension and cannot be changed. Give one a shortcut to run it by
+          name.
+        </p>
+        <ul className="sites">
+          {skills.map((skill) => (
+            <li key={`${skill.id}@${skill.version}`} className="sites__row">
+              <span>
+                <strong>{skill.name}</strong>{' '}
+                <span className={`badge badge--risk-${skill.risk.toLowerCase()}`}>
+                  {skill.risk}
+                </span>
+              </span>
+              {naming === `skill:${skill.id}` ? (
+                nameForm(
+                  { kind: 'skill', skillId: skill.id, skillVersion: skill.version },
+                  skill.name,
+                )
+              ) : (
+                <button
+                  type="button"
+                  className="button button--ghost"
+                  disabled={busy !== null}
+                  onClick={() => {
+                    setNaming(`skill:${skill.id}`);
+                    setNewName('');
+                  }}
+                >
+                  Add shortcut
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="settings__section">
         <h3>Saved workflows</h3>
         {workflows.length === 0 ? (
           <p className="field__hint">
@@ -280,6 +419,24 @@ export function WorkflowsView({
                       >
                         {open ? 'Hide' : 'Review'}
                       </button>
+                      {naming === `workflow:${workflow.workflowId}` ? (
+                        nameForm(
+                          { kind: 'workflow', workflowId: workflow.workflowId },
+                          workflow.name,
+                        )
+                      ) : (
+                        <button
+                          type="button"
+                          className="button button--ghost"
+                          disabled={busy !== null || workflow.incomplete}
+                          onClick={() => {
+                            setNaming(`workflow:${workflow.workflowId}`);
+                            setNewName('');
+                          }}
+                        >
+                          Add shortcut
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="button button--ghost"
@@ -391,6 +548,11 @@ export function WorkflowsView({
     </div>
   );
 }
+
+/** What a shortcut may point at. A reference, never a definition. */
+type ShortcutSummaryTarget =
+  | { kind: 'workflow'; workflowId: string }
+  | { kind: 'skill'; skillId: string; skillVersion: string };
 
 /**
  * The steps and the gaps, in the order they happened.

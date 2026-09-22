@@ -980,3 +980,39 @@ body {
   color: var(--text-muted);
   font-size: 11px;
 }
+
+/* Shortcut confirmation ------------------------------------------- */
+
+/*
+ * What a shortcut resolves to, before it runs.
+ *
+ * A definition list rather than prose, because the three facts that matter —
+ * the name typed, the kind of thing it found, and that thing's own name — are
+ * exactly what distinguishes a shortcut the user meant from one they mistyped.
+ */
+.prompt__facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  margin: 8px 0;
+  font-size: 12px;
+}
+
+.prompt__facts dt {
+  color: var(--text-muted);
+}
+
+.prompt__facts dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+/* Shortcuts list -------------------------------------------------- */
+
+.shortcut__name {
+  font-family: var(--mono, monospace);
+}
+
+.shortcut--broken {
+  color: var(--danger, #a12222);
+}

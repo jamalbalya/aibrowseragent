@@ -124,6 +124,12 @@ export function App(): React.JSX.Element {
         disabled={!ready}
         {...(disabledReason === undefined ? {} : { disabledReason })}
         onSubmit={(objective) => void agent.startTask(objective)}
+        onRunShortcut={async (resolution) => {
+          // The shortcut is spent here: what runs is the route that already
+          // existed for that kind of target, so every gate applies as it
+          // would have without a name in front of it.
+          await agent.runShortcutTarget(resolution);
+        }}
       />
     </div>
   );

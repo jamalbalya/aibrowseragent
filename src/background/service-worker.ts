@@ -62,6 +62,11 @@ import { createSkillTools } from '@/tools/skills/skill-tools';
 import { WorkflowStore } from '@/workflows/workflow-store';
 import { WorkflowRecorder } from '@/workflows/workflow-recorder';
 import { WorkflowReplayer } from '@/workflows/workflow-replay';
+import { ShortcutStore, ShortcutError } from '@/shortcuts/shortcut-store';
+import { ShortcutResolver } from '@/shortcuts/shortcut-resolver';
+import { SkillLauncher } from './skill-launcher';
+import type { ShortcutRecord } from '@/shortcuts/shortcut-model';
+import type { ShortcutSummary } from '@/messaging/protocol';
 import { isIncomplete, type RecordedWorkflow } from '@/workflows/workflow-model';
 import type { WorkflowSummary } from '@/messaging/protocol';
 import {
@@ -756,6 +761,89 @@ function summariseWorkflow(record: RecordedWorkflow): WorkflowSummary {
 }
 
 // ---------------------------------------------------------------------------
+// Shortcuts (P-021)
+// ---------------------------------------------------------------------------
+
+/**
+ * Names for things that already exist.
+ *
+ * A shortcut holds a name and a reference, and nothing else. Resolving one is
+ * a read; running what it points at goes through the route that already
+ * existed for that kind of target. There is no shortcut execution path, and
+ * no `shortcut.*` tool — a model can neither manage a shortcut nor invoke one.
+ */
+const shortcutStore = new ShortcutStore({
+  area: new NamespacedStorageArea(local, 'shortcuts'),
+});
+
+const shortcutResolver = new ShortcutResolver({
+  store: shortcutStore,
+  // Read through the stores that own each kind of target, so a deleted or
+  // unusable target is discovered at every resolution rather than trusted
+  // from whenever the shortcut was created.
+  workflow: async (workflowId) => {
+    const record = await workflowStore.get(workflowId);
+    if (!record) return undefined;
+    return {
+      workflowId: record.workflowId,
+      name: record.name,
+      risk: record.risk,
+      stepCount: record.definition.steps.length,
+      incomplete: isIncomplete(record),
+    };
+  },
+  skill: (skillId, skillVersion) => {
+    // The registry, which takes only definitions that shipped in the build.
+    const entry = skillRegistry.get(skillId, skillVersion);
+    if (!entry) return undefined;
+    return {
+      skillId: entry.definition.id,
+      skillVersion: entry.definition.version,
+      name: entry.definition.name,
+      risk: entry.risk,
+      stepCount: entry.definition.steps.length,
+    };
+  },
+});
+
+/**
+ * The user-initiated way to run a bundled skill.
+ *
+ * The counterpart of the `skills.run` tool, reaching the same runner from the
+ * side panel instead of from a model. It exists because a shortcut may name a
+ * bundled skill and a shortcut is a user action.
+ */
+const skillLauncher = new SkillLauncher({
+  registry: skillRegistry,
+  runner: skillRunner,
+  tasks: taskStore,
+  getPermissionMode: async () => (await settingsStore.get()).permissionMode,
+  getActiveTabId: async () => (await browserAdapter.getActiveTab())?.id,
+  publishSecurityContext: (taskId, context) => {
+    connectorEgressContexts.set(taskId, context);
+  },
+  onTaskChanged: (task) => {
+    broadcastEvent({ type: 'task.updated', task });
+  },
+});
+
+/** A shortcut as the panel sees it, with its target looked up now. */
+async function summariseShortcut(record: ShortcutRecord): Promise<ShortcutSummary> {
+  const verdict = await shortcutResolver.resolveRecord(record);
+  return {
+    shortcutId: record.shortcutId,
+    displayName: record.displayName,
+    name: record.name,
+    targetKind: record.target.kind,
+    targetId: record.target.kind === 'workflow' ? record.target.workflowId : record.target.skillId,
+    ...(record.target.kind === 'skill' ? { targetVersion: record.target.skillVersion } : {}),
+    targetName: verdict.ok ? verdict.resolution.targetName : verdict.detail,
+    usable: verdict.ok,
+    createdAt: record.createdAt,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Agent runtime and task management
 // ---------------------------------------------------------------------------
 
@@ -1377,6 +1465,102 @@ router.on('workflow.replay', async ({ workflowId, inputs }) => {
 router.on('workflow.cancelReplay', ({ taskId }) =>
   Promise.resolve({ cancelled: workflowReplayer.cancel(taskId) }),
 );
+
+/**
+ * The shortcut routes (P-021).
+ *
+ * Create, read, retarget and delete a **name**. Nothing here runs anything:
+ * there is no `shortcut.run`, and `shortcut.resolve` is a read that a panel
+ * can safely call on every keystroke.
+ *
+ * Invoking a shortcut is two steps the panel takes explicitly — resolve, show
+ * the user what it means, and then call `workflow.replay` or `skill.run`. That
+ * is what keeps a shortcut an alias rather than an execution path.
+ */
+router.on('shortcut.list', async () => ({
+  shortcuts: await Promise.all((await shortcutStore.list()).map(summariseShortcut)),
+}));
+
+router.on('shortcut.create', async ({ name, target }) => {
+  // Checked at creation so a user is not allowed to name something that is
+  // already broken. It is checked again at every resolution, because a target
+  // that exists now can be deleted later.
+  if (!(await shortcutResolver.targetIsUsable(target))) {
+    return {
+      shortcut: null,
+      error: { reason: 'INVALID_TARGET', detail: 'That workflow is not available to run.' },
+    };
+  }
+  try {
+    return { shortcut: await summariseShortcut(await shortcutStore.create(name, target)) };
+  } catch (error) {
+    // A collision comes back as data rather than an exception, because the
+    // panel has to tell the user which existing name they clashed with.
+    if (error instanceof ShortcutError) {
+      return { shortcut: null, error: { reason: error.reason, detail: error.message } };
+    }
+    throw error;
+  }
+});
+
+router.on('shortcut.retarget', async ({ shortcutId, target }) => {
+  if (!(await shortcutResolver.targetIsUsable(target))) {
+    return {
+      shortcut: null,
+      error: { reason: 'INVALID_TARGET', detail: 'That workflow is not available to run.' },
+    };
+  }
+  try {
+    return { shortcut: await summariseShortcut(await shortcutStore.retarget(shortcutId, target)) };
+  } catch (error) {
+    if (error instanceof ShortcutError) {
+      return { shortcut: null, error: { reason: error.reason, detail: error.message } };
+    }
+    throw error;
+  }
+});
+
+router.on('shortcut.remove', async ({ shortcutId }) => {
+  await shortcutStore.remove(shortcutId);
+  return { ok: true } as const;
+});
+
+router.on('shortcut.resolve', async ({ typed }) => {
+  const verdict = await shortcutResolver.resolveTyped(typed);
+  return verdict.ok
+    ? { ok: true, resolution: verdict.resolution }
+    : { ok: false, reason: verdict.reason, detail: verdict.detail };
+});
+
+/**
+ * Runs a bundled skill because a person asked.
+ *
+ * Takes an id and a pinned version, never a definition. Every step still
+ * dispatches through the one `ToolRegistry.dispatch`, so this is the same
+ * destination the `skills.run` tool reaches — approached from the side panel
+ * rather than from a model.
+ */
+router.on('skill.run', async ({ skillId, skillVersion, inputs }) => {
+  const session = await getOrCreateSession();
+  const outcome = await skillLauncher.launch({
+    skillId,
+    skillVersion,
+    sessionId: session.id,
+    inputs: inputs ?? {},
+  });
+  if (!outcome.ok) return { ok: false, reason: outcome.reason, detail: outcome.detail };
+  return {
+    ok: outcome.result.status === 'completed',
+    taskId: outcome.taskId,
+    status: outcome.result.status,
+    summary: outcome.result.summary,
+    steps: outcome.result.steps.map((step) => ({
+      step: step.stepId,
+      ran: step.ran,
+      status: step.status,
+    })),
+  };
+});
 
 router.on('tools.list', () =>
   Promise.resolve({
