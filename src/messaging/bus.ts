@@ -7,6 +7,12 @@
 import { newMessageId } from '@/utils/ids';
 import { createError, type AgentError } from '@/types/result';
 import { getLogger } from '@/logging/logger';
+import {
+  classifySender,
+  extensionIdentity,
+  senderMayBroadcastEvent,
+  type MessageSenderLike,
+} from './route-trust';
 import type {
   AgentEvent,
   ContentRequest,
@@ -150,11 +156,23 @@ export function broadcastEvent(event: AgentEvent, port: MessagingPort = chromeMe
 
 export type EventHandler = (event: AgentEvent) => void;
 
-/** Subscribes the side panel to broadcast events. Returns an unsubscribe fn. */
+/**
+ * Subscribes the side panel to broadcast events. Returns an unsubscribe fn.
+ *
+ * Events are accepted only from the service worker. This channel carries
+ * `permission.requested`, which the panel renders as a prompt — so an event
+ * from anywhere else would put someone else's text in front of the person at
+ * the one moment a human is the control. The payload is never trusted to say
+ * where it came from; the sender is.
+ */
 export function subscribeToEvents(handler: EventHandler): () => void {
-  const listener = (message: unknown): undefined => {
+  const listener = (message: unknown, sender?: MessageSenderLike): undefined => {
     const typed = message as ExtensionMessage<string, unknown> | undefined;
     if (typed?.type !== EVENT_MESSAGE_TYPE) return undefined;
+    if (!senderMayBroadcastEvent(classifySender(sender, extensionIdentity()))) {
+      log.warn('A broadcast event was refused: it did not come from the service worker.');
+      return undefined;
+    }
     try {
       handler(typed.payload as AgentEvent);
     } catch (error) {

@@ -527,11 +527,101 @@ most sensitive single thing the product holds. Five properties carry it:
   rewrite the chain with it.
 - **Export is local only.** A blob of the extension's own origin, written
   through an anchor click, needing no permission, with no network carrier and
-  no URL parameter. The default scope is one task.
+  no URL parameter. The scope is required and never inferred.
 
 Eviction writes a `retention.compacted` record in the same transaction that
 removes the records, so a reader can always tell a quiet period from a
 truncated one. There is no delete in the UI. See [audit.md](audit.md).
+
+## Route trust
+
+Every message the extension routes arrives over `chrome.runtime` or
+`chrome.tabs`, and the receiver used to look only at the message. That is the
+wrong half: a message says what the sender wants, and it cannot say who the
+sender is. A `taskId`, a `requestId` or an export `scope` in a payload is a
+request, never a credential.
+
+A route now runs only when the sender is **positively identified** as a
+context allowed to invoke it. Classification happens before anything else:
+
+    classify sender → resolve route class → authorise → handler
+
+so a refused message never reaches a handler. It cannot mutate state, answer a
+pending permission or file selection, start or replay anything, change policy,
+or produce an export — there is no partially-executed case, because nothing
+ran.
+
+### Contexts, and how one is recognised
+
+`sender.id` is the _extension_ id and is identical for the side panel and for
+this extension's content scripts, so it separates this extension from another
+one and nothing else. Identity is a conjunction:
+
+| Context            | How it is recognised                                                                                                                                                                                                                                                             |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Side panel**     | this extension's id, the extension origin, and the panel document itself — exactly, not its directory                                                                                                                                                                            |
+| **Service worker** | this extension's id and the worker script URL, with no tab. Chrome sets no `origin` on a worker sender, so requiring one here would deny every broadcast; `sender.url` is filled in by the browser, not the sender, and no outside context can carry this extension's worker URL |
+| **Content script** | this extension's id with a _page_ origin, corroborated by a tab                                                                                                                                                                                                                  |
+| **Anything else**  | another extension, a page, or a sender whose fields contradict each other                                                                                                                                                                                                        |
+
+`sender.tab` is used only to recognise a content script, never to establish
+that a sender _is_ the panel: Chrome may associate a side panel with a tab,
+and a rule reading "the panel has no tab" would break the day that changed.
+
+Ambiguity is a denial. A sender missing a field it should have, or carrying
+fields that disagree, is refused rather than resolved to whatever it most
+resembles.
+
+### Route classes
+
+| Class                          | Who may send   | What it covers                                                                      |
+| ------------------------------ | -------------- | ----------------------------------------------------------------------------------- |
+| `INTERNAL_SERVICE_WORKER_ONLY` | nobody         | reserved; empty today                                                               |
+| `PANEL_CONTROL_PLANE`          | side panel     | mutates, executes, authorises, changes policy, or discloses audit, evidence or logs |
+| `PANEL_READ_ONLY`              | side panel     | reads that do none of those                                                         |
+| `CONTENT_DATA_PLANE`           | service worker | the `content.*` routes                                                              |
+| `AUTH_CALLBACK`                | nobody         | the OAuth redirect target, which carries no message path                            |
+| `EVENT_CHANNEL`                | service worker | `agent.event` broadcasts to the panel                                               |
+
+Every panel route is in one of the two panel classes. The table is typed as a
+total record over the protocol's route names, so **adding a route without
+assigning a class does not compile**, and a route that somehow reaches the
+router without one is refused. Registration grants nothing on its own.
+
+### What this replaces
+
+No page can reach a privileged route today, for three reasons: the content
+script runs in an isolated world, `src/content/` contains no `postMessage`
+bridge, and the manifest declares no `externally_connectable`. All three are
+true. **None of them is a check** — each is a fact about the current shape of
+the code that a single future line could change.
+
+So the boundary is enforced at the receiver instead. A `postMessage` bridge
+added by accident in a later wave would expose page content to a content
+script, which is a real bug; it would not expose a single route.
+
+Two consequences worth stating plainly:
+
+- **A pending request id is not a credential.** `permission.listPending` hands
+  out live request ids and `permission.respond` turns one into an approval —
+  including `approve_site`, which writes a lasting rule at a caller-chosen
+  risk ceiling. Both are control-plane routes, because the first is what makes
+  the second usable.
+- **Model unreachability is not authorization.** No panel route is a
+  registered tool, and none may become one. That is a separate control from
+  this one, and neither substitutes for the other.
+
+The event channel is protected at its receiver too. It carries
+`permission.requested`, which the panel renders as a prompt, so an event from
+anywhere but the worker would put someone else's text in front of the person
+at the one moment a human is the control.
+
+A refused message is recorded as a `route.refused` audit record holding the
+route name and a closed sender class — never the sender's URL.
+
+Route trust is a filter in front of the existing routes. It can only subtract:
+a message that passes it meets exactly the same policy, permission, egress and
+consent gates it met before.
 
 ## Reporting a vulnerability
 

@@ -240,9 +240,10 @@
       "integration": ["tests/integration/audit-trail.test.ts"],
       "security": [
         "tests/security/audit-trail-security.test.ts",
-        "tests/security/audit-log.test.ts"
+        "tests/security/audit-log.test.ts",
+        "tests/security/route-trust-security.test.ts"
       ],
-      "e2e": ["tests/e2e/audit.spec.ts"]
+      "e2e": ["tests/e2e/audit.spec.ts", "tests/e2e/route-trust.spec.ts"]
     },
     "P-039": {
       "unit": ["tests/unit/evidence-store.test.ts"],

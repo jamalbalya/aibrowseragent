@@ -354,7 +354,9 @@ test('a unified audit trail records decisions and exports without page text', as
   const egress = events.find((e) => e.type === 'egress.decided')!;
   expect(egress.evidenceIds?.length).toBeGreaterThan(0);
 
-  const exported = await send('audit.export', {});
+  // Explicit scope: since D-2 there is no default, so an export says what it
+  // is an export of.
+  const exported = await send('audit.export', { scope: { kind: 'all' } });
   const serialised = JSON.stringify(exported.export);
   // `/2` since P-038: the artefact now states its scope, the sequence window
   // it covers and the integrity verdict, so a reader knows what they hold.

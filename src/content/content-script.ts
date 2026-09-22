@@ -30,6 +30,12 @@ import type {
   ExtensionMessage,
   ResponseEnvelope,
 } from '@/messaging/protocol';
+import {
+  classifySender,
+  extensionIdentity,
+  senderMayInvokeContentRoute,
+  type MessageSenderLike,
+} from '@/messaging/route-trust';
 import { createError } from '@/types/result';
 
 const registry = new ElementRegistry();
@@ -238,7 +244,11 @@ function toErrorEnvelope(error: unknown): ResponseEnvelope<never> {
 }
 
 chrome.runtime.onMessage.addListener(
-  (message: unknown, _sender, sendResponse: (response: ResponseEnvelope<unknown>) => void) => {
+  (
+    message: unknown,
+    sender: MessageSenderLike | undefined,
+    sendResponse: (response: ResponseEnvelope<unknown>) => void,
+  ) => {
     const typed = message as ExtensionMessage<ContentRequestType, unknown> | undefined;
     // Dispatch is dynamic, so the handler is widened here. The `Handlers`
     // mapped type above is what keeps each individual handler honest.
@@ -246,6 +256,18 @@ chrome.runtime.onMessage.addListener(
       ? (handlers as Record<string, ((payload: unknown) => unknown) | undefined>)[typed.type]
       : undefined;
     if (!typed || !handler) return false;
+
+    // These requests arrive by `chrome.tabs.sendMessage`, which a content
+    // script cannot call — but that is a property of the platform, not
+    // something this extension established. Checking the sender is what makes
+    // it a boundary rather than an accident of the API surface.
+    if (!senderMayInvokeContentRoute(classifySender(sender, extensionIdentity()))) {
+      sendResponse({
+        ok: false,
+        error: createError('PERMISSION_DENIED', 'This message is not allowed from its sender.'),
+      });
+      return false;
+    }
 
     try {
       const result: unknown = handler(typed.payload);

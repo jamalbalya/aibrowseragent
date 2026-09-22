@@ -51,6 +51,10 @@ export const AUDIT_EVENT_TYPES = [
   'workflow.replay',
   'shortcut.resolved',
   'shortcut.launched',
+  // A message refused because of who sent it. Holds a route name and a closed
+  // sender class, never the sender's URL: a URL is page-derived, and
+  // page-derived text does not enter this trail.
+  'route.refused',
   // Written only by the log itself, when eviction removes records. It exists
   // so a reader can tell a quiet period from a truncated one.
   'retention.compacted',
@@ -181,6 +185,22 @@ export interface AuditEvent {
   readonly tabId?: number;
   readonly stepCount?: number;
   readonly stepIndex?: number;
+  /**
+   * The message route a refusal was about, on `route.refused` records.
+   *
+   * A route name this build registered, validated as an identifier like every
+   * other one here — which structurally excludes a URL, since an identifier
+   * has no slashes.
+   */
+  readonly route?: string;
+  /**
+   * What the refused sender was, from the closed set in `route-trust.ts`.
+   *
+   * A class, never the sender's origin or URL. Recording where a message came
+   * from would put a page's address in a cross-task trail, which is the thing
+   * `taintKind` exists to avoid for taint sources.
+   */
+  readonly senderClass?: string;
   /** Retention bookkeeping, on `retention.compacted` records only. */
   readonly removedCount?: number;
   readonly removedFromSeq?: number;
@@ -702,7 +722,15 @@ export class AuditLog {
 
     // Identifiers are opaque handles this extension minted. Anything that is
     // not one is a value that arrived from somewhere it should not have.
-    for (const field of ['taskId', 'sessionId', 'workflowId', 'shortcutId', 'connectorId']) {
+    for (const field of [
+      'taskId',
+      'sessionId',
+      'workflowId',
+      'shortcutId',
+      'connectorId',
+      'route',
+      'senderClass',
+    ]) {
       const value = supplied[field];
       if (value !== undefined && !isOpaqueId(value)) {
         throw new AuditShapeError(field, 'is not a usable identifier');
@@ -967,6 +995,77 @@ export class AuditLog {
 
 export type AuditExportScope =
   { readonly kind: 'task'; readonly taskId: string } | { readonly kind: 'all' };
+
+/**
+ * Why a scope was not usable. A closed vocabulary, so a caller's message can
+ * say what was wrong without echoing what they sent.
+ */
+export type AuditScopeProblem =
+  'missing' | 'not-an-object' | 'unknown-kind' | 'bad-task-id' | 'unexpected-fields';
+
+export type AuditScopeVerdict =
+  | { readonly ok: true; readonly scope: AuditExportScope }
+  | { readonly ok: false; readonly problem: AuditScopeProblem };
+
+/**
+ * Validates an export scope, refusing anything it cannot recognise exactly.
+ *
+ * Nothing here infers. An omitted scope is not "probably the current task" —
+ * this module has no notion of which task the caller is looking at, and
+ * inventing one would make a cross-task artefact turn on a guess. An
+ * unrecognised scope is not narrowed to something safer either, because a
+ * caller who asked for the wrong thing should be told, not quietly given a
+ * different thing.
+ *
+ * The union is closed, so an object carrying extra keys is refused rather
+ * than trimmed: a field this build does not know is a field whose meaning it
+ * cannot honour, and honouring the rest would be answering a question nobody
+ * asked.
+ */
+export function parseAuditExportScope(value: unknown): AuditScopeVerdict {
+  if (value === undefined || value === null) return { ok: false, problem: 'missing' };
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, problem: 'not-an-object' };
+  }
+
+  const record = value as Record<string, unknown>;
+  const kind = record['kind'];
+
+  if (kind === 'all') {
+    if (Object.keys(record).length !== 1) return { ok: false, problem: 'unexpected-fields' };
+    return { ok: true, scope: { kind: 'all' } };
+  }
+
+  if (kind === 'task') {
+    const keys = Object.keys(record);
+    if (keys.length !== 2 || !keys.includes('taskId')) {
+      return { ok: false, problem: 'unexpected-fields' };
+    }
+    const taskId = record['taskId'];
+    // The same identifier rule the records themselves are held to, so a scope
+    // cannot name something a record never could.
+    if (!isOpaqueId(taskId)) return { ok: false, problem: 'bad-task-id' };
+    return { ok: true, scope: { kind: 'task', taskId } };
+  }
+
+  return { ok: false, problem: 'unknown-kind' };
+}
+
+/** What to tell a caller whose scope was refused. Never echoes their input. */
+export function describeScopeProblem(problem: AuditScopeProblem): string {
+  switch (problem) {
+    case 'missing':
+      return 'An export needs an explicit scope: one task, or every task.';
+    case 'not-an-object':
+      return 'The export scope was not a scope.';
+    case 'unknown-kind':
+      return 'The export scope named a kind this build does not know.';
+    case 'bad-task-id':
+      return 'The export scope named a task id that is not a usable identifier.';
+    case 'unexpected-fields':
+      return 'The export scope carried fields this build does not recognise.';
+  }
+}
 
 export interface AuditExport {
   readonly format: 'aiba-audit/2';

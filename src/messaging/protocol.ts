@@ -294,10 +294,14 @@ export interface PanelRequestMap {
   'audit.export': {
     request: {
       /**
-       * Defaults to the current task. Exporting every task is a different
-       * thing to be handed and must be asked for.
+       * Required, and never inferred.
+       *
+       * One task and every task are different things to be handed, and the
+       * worker has no way to know which one a caller is looking at. An
+       * omitted scope is an incomplete request rather than a default, so it
+       * is refused — including here in the type, so a caller has to say.
        */
-      scope?: { kind: 'task'; taskId: string } | { kind: 'all' };
+      scope: { kind: 'task'; taskId: string } | { kind: 'all' };
       limit?: number;
     };
     response: { export: AuditExport };

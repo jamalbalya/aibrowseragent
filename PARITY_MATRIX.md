@@ -309,12 +309,17 @@ rather than trimmed when they exceed a limit. A persisted sequence and a
 digest chain give corruption and reordering detection — explicitly not tamper
 protection, since anyone who can rewrite extension storage can rewrite the
 chain with it. Eviction writes a marker in the same transaction that removes
-the records. Export is local only, needs no permission, has no network
-carrier and defaults to the current task.
+the records. Export is local only, needs no permission and has no network
+carrier, and its scope is required rather than inferred: an omitted or
+unrecognised scope is refused before any document is built, because one task
+and every task are different things to be handed. The audit routes, like
+every other panel route, are reachable only from the side panel — checked at
+the receiver rather than inferred from the absence of another caller.
 
 Covered by a unit suite, an integration suite, a thirty-four-case security
 suite and an eight-test real-Chromium suite, with sixteen mutations proved to
-fail.
+fail; the export scope contract and the route boundary add a forty-one-case
+security suite and a fourteen-test real-Chromium suite of their own.
 
 Both reasons this row was PARTIAL are now closed. It **stays PARTIAL**, for
 the reason every row in this file does: §84 condition 3, the manual

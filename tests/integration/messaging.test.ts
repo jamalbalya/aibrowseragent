@@ -13,36 +13,54 @@ import {
 } from '@/messaging/bus';
 import { createError } from '@/types/result';
 import { EVENT_MESSAGE_TYPE, type ExtensionMessage } from '@/messaging/protocol';
+import { TEST_IDENTITY, panelSender } from '../fixtures/senders';
 
 /** Routes messages straight into a MessageRouter, as the worker would. */
 function portFor(router: MessageRouter): MessagingPort {
   const send = async (message: unknown): Promise<unknown> => {
     const typed = message as ExtensionMessage<string, unknown>;
-    return router.route(typed.type, typed.payload);
+    return router.route(typed.type, typed.payload, panelSender);
   };
   return { sendMessage: send, sendMessageToTab: (_tabId, message) => send(message) };
 }
 
 describe('MessageRouter', () => {
   it('routes a request to its handler and wraps the reply', async () => {
-    const router = new MessageRouter();
+    const router = new MessageRouter({ identity: TEST_IDENTITY });
     router.on('task.list', ({ limit }) => Promise.resolve({ tasks: [], ...(limit ? {} : {}) }));
 
-    const envelope = await router.route('task.list', { limit: 5 });
+    const envelope = await router.route('task.list', { limit: 5 }, panelSender);
     expect(envelope).toEqual({ ok: true, value: { tasks: [] } });
   });
 
-  it('reports an unknown message type as data, not as a throw', async () => {
-    const envelope = await new MessageRouter().route('nope', {});
+  it('refuses a message type that has no route class, rather than looking for a handler', async () => {
+    // Default deny. An unclassified route is not "unknown" to be reported as
+    // missing — it is unreachable until someone assigns it a class, which is
+    // what stops a route added later from being callable by everything.
+    const envelope = await new MessageRouter({ identity: TEST_IDENTITY }).route(
+      'nope',
+      {},
+      panelSender,
+    );
+    expect(envelope.ok).toBe(false);
+    if (!envelope.ok) expect(envelope.error.code).toBe('PERMISSION_DENIED');
+  });
+
+  it('reports a classified route with no handler as data, not as a throw', async () => {
+    const envelope = await new MessageRouter({ identity: TEST_IDENTITY }).route(
+      'task.get',
+      { taskId: 'x' },
+      panelSender,
+    );
     expect(envelope.ok).toBe(false);
     if (!envelope.ok) expect(envelope.error.code).toBe('TOOL_NOT_FOUND');
   });
 
   it('converts a handler throw into a structured error envelope', async () => {
-    const router = new MessageRouter();
+    const router = new MessageRouter({ identity: TEST_IDENTITY });
     router.on('task.get', () => Promise.reject(new Error('database unavailable at /var/db')));
 
-    const envelope = await router.route('task.get', { taskId: 'x' });
+    const envelope = await router.route('task.get', { taskId: 'x' }, panelSender);
     expect(envelope.ok).toBe(false);
     if (!envelope.ok) {
       expect(envelope.error.code).toBe('INTERNAL_ERROR');
@@ -54,7 +72,7 @@ describe('MessageRouter', () => {
   });
 
   it('preserves a structured error a handler already produced', async () => {
-    const router = new MessageRouter();
+    const router = new MessageRouter({ identity: TEST_IDENTITY });
     router.on('task.cancel', () =>
       Promise.reject(
         Object.assign(new Error('nope'), {
@@ -63,12 +81,12 @@ describe('MessageRouter', () => {
       ),
     );
 
-    const envelope = await router.route('task.cancel', { taskId: 'x' });
+    const envelope = await router.route('task.cancel', { taskId: 'x' }, panelSender);
     if (!envelope.ok) expect(envelope.error.code).toBe('PERMISSION_DENIED');
   });
 
   it('knows which types it handles', () => {
-    const router = new MessageRouter();
+    const router = new MessageRouter({ identity: TEST_IDENTITY });
     router.on('task.list', () => Promise.resolve({ tasks: [] }));
     expect(router.handles('task.list')).toBe(true);
     expect(router.handles('task.get')).toBe(false);
@@ -77,7 +95,7 @@ describe('MessageRouter', () => {
 
 describe('sendToBackground', () => {
   it('unwraps a successful response', async () => {
-    const router = new MessageRouter();
+    const router = new MessageRouter({ identity: TEST_IDENTITY });
     router.on('provider.getConnection', () => Promise.resolve({ connection: null }));
 
     const result = await sendToBackground('provider.getConnection', {}, { port: portFor(router) });
@@ -85,7 +103,7 @@ describe('sendToBackground', () => {
   });
 
   it('throws a MessagingError carrying the structured error', async () => {
-    const router = new MessageRouter();
+    const router = new MessageRouter({ identity: TEST_IDENTITY });
     router.on('task.get', () =>
       Promise.reject(
         Object.assign(new Error('x'), { agentError: createError('TAB_NOT_FOUND', 'Gone.') }),
@@ -192,6 +210,6 @@ describe('envelopes', () => {
 
   it('uses a distinct type for broadcast events so they are not routed as requests', () => {
     expect(EVENT_MESSAGE_TYPE).toBe('agent.event');
-    expect(new MessageRouter().handles(EVENT_MESSAGE_TYPE)).toBe(false);
+    expect(new MessageRouter({ identity: TEST_IDENTITY }).handles(EVENT_MESSAGE_TYPE)).toBe(false);
   });
 });

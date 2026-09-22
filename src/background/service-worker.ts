@@ -23,7 +23,12 @@ import { generateTaintSalt } from '@/tasks/task-model';
 import { EvidenceStore } from '@/evidence/evidence-store';
 import { ProviderRegistry, type ProviderConnection } from '@/providers/registry/provider-registry';
 import { ConsentStore } from '@/security/egress/consent';
-import { AuditLog, buildAuditExport } from '@/audit/audit-log';
+import {
+  AuditLog,
+  buildAuditExport,
+  describeScopeProblem,
+  parseAuditExportScope,
+} from '@/audit/audit-log';
 import { createDispatchAuditObserver } from '@/audit/dispatch-audit';
 import { createGuardedTransport, guardedSend } from '@/security/egress/provider-transport';
 import { installNetworkInterceptor } from '@/security/egress/network-interceptor';
@@ -1045,7 +1050,26 @@ async function updateSession(patch: Partial<AgentSession>): Promise<AgentSession
 // Message routing
 // ---------------------------------------------------------------------------
 
-const router = new MessageRouter();
+/**
+ * The one router, with route trust attached.
+ *
+ * A refusal is recorded so that a message arriving from somewhere it should
+ * not have is visible afterwards rather than only in a log line that an
+ * evicted worker takes with it. What is recorded is the route and a closed
+ * sender class — never the sender's URL, which is page-derived.
+ *
+ * The write is fire-and-forget and swallows its own failure: this runs on the
+ * refusal path, and a failure to write a record must not turn a denial into
+ * anything else. `record()` already returns `null` rather than throwing, and
+ * this catch is the second belt.
+ */
+const router = new MessageRouter({
+  onRefused: ({ route, senderClass }) => {
+    void auditLog
+      .record({ type: 'route.refused', outcome: 'denied', route, senderClass })
+      .catch(() => undefined);
+  },
+});
 
 router.on('task.create', async ({ objective }) => {
   const session = await getOrCreateSession();
@@ -1407,11 +1431,25 @@ router.on('audit.integrity', async () => {
  * origin — so there is no URL here for anything to supply and no carrier that
  * could reach a destination.
  *
- * The scope defaults to one task. A file holding every task's records is a
- * different thing to be handed, and has to be asked for.
+ * The scope is required and is never inferred. A file holding every task's
+ * records is a different thing to be handed than one task's, and this worker
+ * has no way to know which the caller is looking at — so an omitted scope is
+ * refused rather than guessed at in either direction.
  */
 router.on('audit.export', async ({ scope, limit }) => {
-  const chosen = scope ?? { kind: 'all' as const };
+  // Validated before anything is read. A refused scope must not produce a
+  // document at all: building one and then discarding it would run the
+  // export sanitiser over records that were never authorised to leave.
+  const verdict = parseAuditExportScope(scope);
+  if (!verdict.ok) {
+    throw new RouteError(
+      createError('INVALID_ARGUMENT', `The export scope was refused: ${verdict.problem}.`, {
+        userMessage: describeScopeProblem(verdict.problem),
+        retryable: false,
+      }),
+    );
+  }
+  const chosen = verdict.scope;
   const page = await auditLog.page({
     ...(chosen.kind === 'task' ? { taskId: chosen.taskId } : {}),
     limit: Math.min(limit ?? 2000, 5000),
