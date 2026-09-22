@@ -129,7 +129,11 @@ void chrome.storage.session
  */
 import { WorkspaceStore } from '@/workspaces/workspace-store';
 import { WorkspaceReconciler } from '@/workspaces/workspace-reconciler';
-import { checkMembership, deriveWorkspaceTitle } from '@/workspaces/workspace-model';
+import {
+  checkMembership,
+  deriveWorkspaceTitle,
+  TAB_GROUP_ID_NONE,
+} from '@/workspaces/workspace-model';
 import { AccountStore } from '@/providers/accounts/account-store';
 import {
   accountAfterSelection,
@@ -1789,6 +1793,217 @@ async function runLegacyMigration(): Promise<void> {
 }
 
 void runLegacyMigration();
+
+/* ------------------------------------------------------------------ *
+ * Browser workspaces — the user's control surface
+ *
+ * The panel never touches workspace storage and never drives a browser tool.
+ * It asks for state and states intentions; everything else happens here,
+ * behind route trust, and every tab the agent later acts on still passes the
+ * live membership guard. The UI is not an authorization mechanism.
+ * ------------------------------------------------------------------ */
+
+function broadcastWorkspace(): void {
+  broadcastEvent({ type: 'workspace.changed' });
+}
+
+/** The live tabs of one workspace, straight from Chrome. */
+async function liveTabsOf(workspaceId: string): Promise<chrome.tabs.Tab[]> {
+  const bound = await workspaceStore.binding(workspaceId);
+  if (bound === null) return [];
+  if (!(await groupExists(bound.chromeTabGroupId))) {
+    // The group went away while we were not looking. Reconcile rather than
+    // reporting a binding that names nothing.
+    await workspaceStore.unbind(workspaceId);
+    return [];
+  }
+  return await chrome.tabs.query({ groupId: bound.chromeTabGroupId });
+}
+
+router.on('workspace.state', async () => {
+  const abaUserId = await currentAbaUserId();
+  const mine = await workspaceStore.listFor(abaUserId);
+  const activeWorkspaceId = await workspaceStore.getActiveId();
+
+  const workspaces = await Promise.all(
+    mine.map(async (workspace) => ({
+      workspaceId: workspace.workspaceId,
+      title: workspace.title,
+      state: await workspaceStore.state(workspace.workspaceId),
+      // Live count, so a workspace whose tabs were all closed reads as empty
+      // rather than as whatever it used to hold.
+      liveTabCount: (await liveTabsOf(workspace.workspaceId)).length,
+      isActive: workspace.workspaceId === activeWorkspaceId,
+    })),
+  );
+
+  const live = activeWorkspaceId ? await liveTabsOf(activeWorkspaceId) : [];
+  const memberIds = new Set(live.map((tab) => tab.id));
+  const current = await browserAdapter.getActiveTab();
+
+  return {
+    workspaces,
+    activeWorkspaceId,
+    tabs: live
+      .filter((tab) => tab.id !== undefined)
+      .map((tab) => ({
+        tabId: tab.id!,
+        title: tab.title ?? '',
+        url: tab.url ?? '',
+        active: tab.active,
+      })),
+    currentTab:
+      current === null
+        ? null
+        : {
+            tabId: current.id,
+            title: current.title,
+            url: current.url,
+            // Stated, never acted on. The panel says the tab is outside and
+            // offers to add it; it is not added because the user looked at it.
+            inActiveWorkspace: memberIds.has(current.id),
+          },
+  };
+});
+
+router.on('workspace.create', async ({ title }) => {
+  const active = await browserAdapter.getActiveTab();
+  if (!active) {
+    return {
+      workspaceId: '',
+      attached: false,
+      error: createError('INVALID_ARGUMENT', 'There is no tab to start a workspace from.'),
+    };
+  }
+
+  // "Start working from this tab" is what the action means, so the workspace
+  // is created around it rather than created empty and left for the user to
+  // populate.
+  const workspaceId = workspaceStore.mintWorkspaceId();
+  await workspaceStore.put({
+    workspaceId,
+    abaUserId: await currentAbaUserId(),
+    title: title?.trim() || deriveWorkspaceTitle(active.url),
+    members: [],
+    createdAt: Date.now(),
+    lastActiveAt: Date.now(),
+  });
+  const attached = await attachWorkspaceToActiveTab(workspaceId);
+  await workspaceStore.setActiveId(workspaceId);
+  await auditLog.record({ type: 'workspace.membership', outcome: 'info', code: 'created' });
+  broadcastWorkspace();
+  return { workspaceId, attached };
+});
+
+router.on('workspace.switch', async ({ workspaceId }) => {
+  const workspace = await workspaceStore.get(workspaceId);
+  const abaUserId = await currentAbaUserId();
+  // Another user's workspace is not switchable to, and saying so is better
+  // than a generic failure: it is a scope that exists and is not theirs.
+  if (!workspace || workspace.abaUserId !== abaUserId) {
+    return {
+      activeWorkspaceId: (await workspaceStore.getActiveId()) ?? '',
+      error: createError('INVALID_ARGUMENT', 'That workspace is not available.'),
+    };
+  }
+
+  // Changes the active workspace and nothing else. The AI brain, the
+  // connected account and the identity profile live in different stores that
+  // this route has no reference to, so the independence is structural rather
+  // than a rule to remember.
+  await workspaceStore.setActiveId(workspaceId);
+  await auditLog.record({ type: 'workspace.membership', outcome: 'info', code: 'switched' });
+  broadcastWorkspace();
+  return { activeWorkspaceId: workspaceId };
+});
+
+router.on('workspace.addCurrentTab', async () => {
+  const activeWorkspaceId = await workspaceStore.getActiveId();
+  if (!activeWorkspaceId) {
+    return { added: false, error: createError('INVALID_ARGUMENT', 'No workspace is active.') };
+  }
+  const current = await browserAdapter.getActiveTab();
+  if (!current) {
+    return { added: false, error: createError('INVALID_ARGUMENT', 'There is no current tab.') };
+  }
+  const bound = await workspaceStore.binding(activeWorkspaceId);
+  if (bound === null || !(await groupExists(bound.chromeTabGroupId))) {
+    return {
+      added: false,
+      error: createError(
+        'INVALID_ARGUMENT',
+        'This workspace has no live tab group. Re-attach it first.',
+      ),
+    };
+  }
+
+  try {
+    await chrome.tabs.group({ tabIds: [current.id], groupId: bound.chromeTabGroupId });
+    // Verified against Chrome, not assumed: the membership predicate reads
+    // the live group, so a grouping that did not take would leave the user
+    // believing a tab is in scope when the guard will refuse it.
+    const after = await browserAdapter.getTab(current.id);
+    if (after?.groupId !== bound.chromeTabGroupId) {
+      return {
+        added: false,
+        error: createError('INVALID_ARGUMENT', 'That tab could not be added to the workspace.'),
+      };
+    }
+    await workspaceReconciler.handleGroupChanged(current.id, bound.chromeTabGroupId);
+    await auditLog.record({ type: 'workspace.membership', outcome: 'info', code: 'tab_added' });
+    broadcastWorkspace();
+    return { added: true, tabId: current.id };
+  } catch {
+    return {
+      added: false,
+      error: createError('INVALID_ARGUMENT', 'That tab could not be added to the workspace.'),
+    };
+  }
+});
+
+router.on('workspace.removeTab', async ({ tabId }) => {
+  const activeWorkspaceId = await workspaceStore.getActiveId();
+  if (!activeWorkspaceId) {
+    return { removed: false, error: createError('INVALID_ARGUMENT', 'No workspace is active.') };
+  }
+  const bound = await workspaceStore.binding(activeWorkspaceId);
+  const tab = await browserAdapter.getTab(tabId);
+  // A tab belonging to another workspace — or to none — is refused rather
+  // than ungrouped. Otherwise this route would be a way to reach across the
+  // boundary and rearrange somebody else's scope.
+  if (bound === null || tab === null || tab.groupId !== bound.chromeTabGroupId) {
+    return {
+      removed: false,
+      error: createError('INVALID_ARGUMENT', 'That tab is not part of this workspace.'),
+    };
+  }
+
+  // Detach, never delete. The tab keeps existing and keeps its page; what it
+  // loses is eligibility. The workspace, its tasks and its history are
+  // untouched.
+  await chrome.tabs.ungroup([tabId]);
+  await workspaceReconciler.handleGroupChanged(tabId, TAB_GROUP_ID_NONE);
+  await auditLog.record({ type: 'workspace.membership', outcome: 'info', code: 'tab_removed' });
+  broadcastWorkspace();
+  return { removed: true };
+});
+
+router.on('workspace.reattach', async ({ workspaceId }) => {
+  const workspace = await workspaceStore.get(workspaceId);
+  if (!workspace || workspace.abaUserId !== (await currentAbaUserId())) {
+    return {
+      attached: false,
+      error: createError('INVALID_ARGUMENT', 'That workspace is not available.'),
+    };
+  }
+  const attached = await attachWorkspaceToActiveTab(workspaceId);
+  if (attached) {
+    await workspaceStore.setActiveId(workspaceId);
+    await auditLog.record({ type: 'workspace.membership', outcome: 'info', code: 'reattached' });
+    broadcastWorkspace();
+  }
+  return { attached };
+});
 
 router.on('accounts.list', async () => {
   const { accounts, brainId, abaUserId } = await visibleAccounts();

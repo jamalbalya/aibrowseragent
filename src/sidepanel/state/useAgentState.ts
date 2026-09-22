@@ -139,6 +139,10 @@ export function useAgentState() {
         case 'provider.statusChanged':
           setConnection(event.connection);
           break;
+        case 'workspace.changed':
+          // The workspace panel subscribes for itself and refreshes from the
+          // worker; the main panel holds no workspace state to update.
+          break;
         case 'accounts.changed':
           // The settings view owns the account list and refreshes itself.
           // Nothing in the main panel reads it, so there is nothing to do

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { sendToBackground, MessagingError } from '@/messaging/bus';
 import { ConnectedAccounts } from './ConnectedAccounts';
+import { WorkspaceView } from './WorkspaceView';
 import type { CapabilityReport } from '@/providers/capability-doctor/capability-doctor';
 import type { ProviderConnection } from '@/providers/registry/provider-registry';
 import type { SitePolicyState } from '@/policy/site-policy';
@@ -223,6 +224,8 @@ export function SettingsView({
           Done
         </button>
       </div>
+
+      <WorkspaceView onMessage={(tone, text) => setMessage({ tone, text })} />
 
       <ConnectedAccounts
         onMessage={(tone, text) => setMessage({ tone, text })}

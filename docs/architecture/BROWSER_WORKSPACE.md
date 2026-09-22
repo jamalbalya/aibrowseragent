@@ -1,24 +1,29 @@
 # Browser Workspace — Architecture Review
 
-Status: **design review, now partly implemented.** Steps W-1 to W-5 and W-7 of
-§22 are built and validated; **W-6 (workspace routes and side-panel UI) is
-not**. The audit in §2 is from the tree at `a3cafad`, before any of it was
-built; the Chrome API findings in §3 were measured in real Chromium.
+Status: **design review, fully implemented.** Steps W-1 to W-7 of §22 are
+built and validated. The audit in §2 is from the tree at `a3cafad`, before any
+of it was built; the Chrome API findings in §3 were measured in real Chromium.
 
-| Step                                                         | State           |
-| ------------------------------------------------------------ | --------------- |
-| W-1 model and membership predicate                           | **done**        |
-| W-2 store: durable record, session-scoped binding            | **done**        |
-| W-3 reconciliation from real Chrome events                   | **done**        |
-| W-4 the guard, narrowed enumeration, `AgentTask.workspaceId` | **done**        |
-| W-5 agent-created tab lifecycle                              | **done**        |
-| W-6 `workspace.*` routes and side-panel UI                   | **not started** |
-| W-7 security suite, mutations, real Chromium                 | **done**        |
+| Step                                                         | State    |
+| ------------------------------------------------------------ | -------- |
+| W-1 model and membership predicate                           | **done** |
+| W-2 store: durable record, session-scoped binding            | **done** |
+| W-3 reconciliation from real Chrome events                   | **done** |
+| W-4 the guard, narrowed enumeration, `AgentTask.workspaceId` | **done** |
+| W-5 agent-created tab lifecycle                              | **done** |
+| W-6 `workspace.*` routes and side-panel UI                   | **done** |
+| W-7 security suite, mutations, real Chromium                 | **done** |
 
-Because W-6 is absent, a workspace is created implicitly from the tab the user
-activates the agent on (§9), and there is no UI yet to switch workspaces,
-re-attach a detached one, or add the current tab deliberately. The boundary is
-live and enforced; what is missing is the user's control surface over it.
+W-6 ships six routes — one read and five writers — and a panel section. The
+read is `CLASS_E_PANEL_READ_ONLY`; every writer is
+`CLASS_B_PANEL_CONTROL_PLANE`. **None is exposed to the model**: creating,
+switching and re-scoping are decisions about what the agent may see, and a
+model able to make them could widen its own reach.
+
+**Workspace deletion has no route.** `WorkspaceStore.remove` exists and is
+reachable only from code, because none of the ten required capabilities asked
+for deletion and adding a destructive route nobody requested would be the
+overbuilding the brief warned against. It is listed in §21 as a limitation.
 
 ---
 
@@ -610,6 +615,14 @@ _narrowing_ of what the extension does and is worth stating.
    workspaces do not alter that and must not be described as if they did.
 6. The mirror can briefly lag Chrome between an event and its handler. The
    live-read guard (§6) means this affects display, never authorization.
+7. **There is no route to delete a workspace.** The store can, the UI cannot.
+   None of the ten capabilities W-6 was asked for included deletion, and a
+   destructive route nobody requested is the kind of thing that gets added
+   quietly and used by accident. A workspace can be detached and left; it
+   cannot yet be removed from the panel.
+8. **A genuine mouse drag is still not automated.** `TEST-E2E-022` drives
+   `chrome.tabs.group`/`ungroup`, which emit the identical events (measured in
+   §3), and the real drag stays classified `BLOCKED — HUMAN/ENVIRONMENT`.
 
 ---
 

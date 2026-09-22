@@ -233,6 +233,54 @@ export interface PanelRequestMap {
     response: { mode: DataStorageMode };
   };
 
+  /**
+   * Browser workspaces.
+   *
+   * Six routes, deliberately. One read answers everything the panel needs —
+   * which workspaces exist, which is active, which tabs it holds *right now*,
+   * and whether the tab in front of the user is one of them — because
+   * splitting that into `list`, `get`, `current` and `tabs` would invite four
+   * reads that can disagree with each other about the same moment.
+   *
+   * The five writers are each a distinct user intention. None is exposed to
+   * the model: creating, switching and re-scoping are the user's decisions
+   * about what the agent may see, and a model that could make them could
+   * widen its own reach.
+   */
+  'workspace.state': {
+    request: Record<string, never>;
+    response: {
+      workspaces: readonly WorkspaceView[];
+      activeWorkspaceId: string | null;
+      /** Live from Chrome, never from stored ids. A closed tab is absent. */
+      tabs: readonly WorkspaceTabView[];
+      /** The tab the user is looking at, and whether it is in scope. */
+      currentTab: CurrentTabView | null;
+    };
+  };
+  /** Starts a workspace from the tab the user is on. */
+  'workspace.create': {
+    request: { title?: string };
+    response: { workspaceId: string; attached: boolean; error?: AgentError };
+  };
+  'workspace.switch': {
+    request: { workspaceId: string };
+    response: { activeWorkspaceId: string; error?: AgentError };
+  };
+  'workspace.addCurrentTab': {
+    request: Record<string, never>;
+    response: { added: boolean; tabId?: number; error?: AgentError };
+  };
+  'workspace.removeTab': {
+    request: { tabId: number };
+    response: { removed: boolean; error?: AgentError };
+  };
+  /** Gives a detached workspace a live Chrome group around the current tab. */
+  'workspace.reattach': {
+    request: { workspaceId: string };
+    response: { attached: boolean; error?: AgentError };
+  };
+
   'permission.respond': {
     request: { requestId: string; response: PermissionResponse };
     response: { ok: true };
@@ -654,6 +702,39 @@ export interface ConnectedAccountView {
   readonly isBrain: boolean;
 }
 
+/** A workspace as the panel lists it. */
+export interface WorkspaceView {
+  readonly workspaceId: string;
+  readonly title: string;
+  /** `detached` means no live Chrome group — normal, never an implicit close. */
+  readonly state: 'attached' | 'detached';
+  readonly liveTabCount: number;
+  readonly isActive: boolean;
+}
+
+/**
+ * A tab in the active workspace, read live from Chrome.
+ *
+ * No stored tab id reaches the panel: a tab id is a recyclable runtime handle,
+ * and showing a remembered one would present a closed tab — or someone
+ * else's — as live context.
+ */
+export interface WorkspaceTabView {
+  readonly tabId: number;
+  readonly title: string;
+  readonly url: string;
+  readonly active: boolean;
+}
+
+/** The tab the user is looking at, whether or not it is in the workspace. */
+export interface CurrentTabView {
+  readonly tabId: number;
+  readonly title: string;
+  readonly url: string;
+  /** False means the panel says so and offers to add it. Never adds it. */
+  readonly inActiveWorkspace: boolean;
+}
+
 export type PanelRequestType = keyof PanelRequestMap;
 export type PanelRequest<T extends PanelRequestType> = PanelRequestMap[T]['request'];
 export type PanelResponse<T extends PanelRequestType> = PanelRequestMap[T]['response'];
@@ -766,6 +847,7 @@ export type AgentEvent =
   | { readonly type: 'file.selectionRequested'; readonly request: FileSelectionRequest }
   | { readonly type: 'file.selectionResolved'; readonly requestId: string }
   | { readonly type: 'provider.statusChanged'; readonly connection: ProviderConnection | null }
+  | { readonly type: 'workspace.changed' }
   | {
       readonly type: 'accounts.changed';
       readonly accounts: readonly ConnectedAccountView[];

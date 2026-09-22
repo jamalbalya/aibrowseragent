@@ -331,6 +331,19 @@ export const PANEL_ROUTE_CLASSES: Record<PanelRequestType, RouteClass> = {
   'storage.getPreference': 'CLASS_E_PANEL_READ_ONLY',
   'storage.setPreference': 'CLASS_B_PANEL_CONTROL_PLANE',
 
+  // Browser workspaces. The read changes nothing and is CLASS_E; every
+  // mutation is control plane, because each one changes which tabs the agent
+  // may see. None is reachable by a content script or a page, and none is
+  // exposed to the model: a model that could switch workspace or add a tab
+  // could widen its own reach, which is the opposite of what the boundary is
+  // for.
+  'workspace.state': 'CLASS_E_PANEL_READ_ONLY',
+  'workspace.create': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'workspace.switch': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'workspace.addCurrentTab': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'workspace.removeTab': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'workspace.reattach': 'CLASS_B_PANEL_CONTROL_PLANE',
+
   'connector.list': 'CLASS_E_PANEL_READ_ONLY',
   'connector.authorize': 'CLASS_B_PANEL_CONTROL_PLANE',
   'connector.disconnect': 'CLASS_B_PANEL_CONTROL_PLANE',
