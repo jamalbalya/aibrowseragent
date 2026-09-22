@@ -67,7 +67,10 @@ manual half. Not needed to publish.
 Twelve procedures remain, listed with exact steps in
 [`../testing/acceptance/MATRIX.md`](../testing/acceptance/MATRIX.md).
 
-Three need **no credential at all** and are the highest value per minute:
+Three of them cannot be automated at all, and they are the highest value per
+minute. **They still need a provider key from step 6** — each starts by
+running a task, and there is no task to interrupt without one. (An earlier
+draft of this file said they were credential-free. They are not.)
 
 | Procedure                   | What it catches                                                                                                     |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -210,7 +213,8 @@ fails until the manifest agrees, which is intended.
 
 **Twelve acceptance procedures are unexecuted.** Publishing is still
 defensible: the automated coverage is substantial and the listing states the
-gaps. But the three credential-free ones in step 8 cost about an hour between
-them, and the last two procedures that were executed both found real defects.
+gaps. But the three environment ones in step 8 cost about an hour between them
+once you have a key, and the last two procedures that were executed both found
+real defects.
 That is the argument for doing them first, in one sitting, and capturing the
 screenshots while you are there.

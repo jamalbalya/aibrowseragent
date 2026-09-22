@@ -171,7 +171,8 @@ invent. Stated per item rather than as one excuse.
 The first nine need a credential. A session that fabricated one would produce
 a green result describing nothing.
 
-The last three need a person at a machine. Playwright drives the browser it
+The last three need a person at a machine **and a provider key**: each starts
+by running a task, so there is nothing to interrupt without one. Playwright drives the browser it
 launched: it cannot quit that browser and reattach to the same profile, and it
 cannot reload the extension out from under its own connection. Each is written
 and each takes a few minutes.
