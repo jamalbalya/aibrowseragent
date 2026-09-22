@@ -3,6 +3,7 @@ import { sendToBackground, MessagingError } from '@/messaging/bus';
 import type { CapabilityReport } from '@/providers/capability-doctor/capability-doctor';
 import type { ProviderConnection } from '@/providers/registry/provider-registry';
 import type { SitePolicyState } from '@/policy/site-policy';
+import type { PanelResponse } from '@/messaging/protocol';
 
 interface SettingsViewProps {
   readonly connection: ProviderConnection | null;
@@ -47,6 +48,7 @@ export function SettingsView({
   const [sitePolicy, setSitePolicy] = useState<SitePolicyState | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [downloadsGranted, setDownloadsGranted] = useState(false);
+  const [connectors, setConnectors] = useState<PanelResponse<'connector.list'>['connectors']>([]);
   const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
 
   const model = modelOverride ?? connection?.modelId ?? '';
@@ -63,6 +65,7 @@ export function SettingsView({
         setProviders(list.providers);
         setSitePolicy(policy.state);
         setDownloadsGranted((await sendToBackground('file.downloadsPermission', {})).granted);
+        setConnectors((await sendToBackground('connector.list', {})).connectors);
         setProviderId((current) => current || (list.providers[0]?.id ?? ''));
       } catch (error) {
         setMessage({ tone: 'error', text: describe(error) });
@@ -100,6 +103,57 @@ export function SettingsView({
       setBusy(null);
     }
   }, [providerId, baseUrl, apiKey, model, onChanged]);
+
+  const refreshConnectors = useCallback(async () => {
+    setConnectors((await sendToBackground('connector.list', {})).connectors);
+  }, []);
+
+  /**
+   * Starts an authorization.
+   *
+   * `includeWrite` is decided here, by the person, and never by the agent: a
+   * connector authorised for read cannot later be talked into a write,
+   * because the scope was never granted.
+   */
+  const authorizeConnector = useCallback(
+    async (connectorId: string, includeWrite: boolean) => {
+      setBusy('connector');
+      setMessage(null);
+      try {
+        const result = await sendToBackground('connector.authorize', {
+          connectorId,
+          includeWrite,
+        });
+        setMessage(
+          result.state === 'READY'
+            ? { tone: 'ok', text: 'Connected.' }
+            : { tone: 'error', text: `Not connected (${result.reason}).` },
+        );
+        await refreshConnectors();
+      } catch (error) {
+        setMessage({ tone: 'error', text: describe(error) });
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refreshConnectors],
+  );
+
+  const disconnectConnector = useCallback(
+    async (connectorId: string) => {
+      setBusy('connector');
+      try {
+        await sendToBackground('connector.disconnect', { connectorId });
+        await refreshConnectors();
+        setMessage({ tone: 'ok', text: 'Disconnected.' });
+      } catch (error) {
+        setMessage({ tone: 'error', text: describe(error) });
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refreshConnectors],
+  );
 
   const runDoctor = useCallback(async () => {
     if (!model) {
@@ -266,6 +320,77 @@ export function SettingsView({
 
         {message ? <p className={`message message--${message.tone}`}>{message.text}</p> : null}
         {report ? <DoctorReport report={report} /> : null}
+      </section>
+
+      <section className="settings__section">
+        <h3>Connectors</h3>
+        <p className="field__hint">
+          A connector lets the agent use an external service through its API instead of by driving
+          its website. You authorise it in that service’s own sign-in page: the extension never sees
+          your password, and it receives only the permissions listed here.
+        </p>
+
+        {connectors.length === 0 ? (
+          <p className="field__hint">No connectors are available in this build.</p>
+        ) : null}
+
+        {connectors.map((connector) => (
+          <div key={connector.id} className="connector">
+            <div className="connector__header">
+              <strong>{connector.displayName}</strong>
+              <span className="connector__state">
+                {connector.state === 'READY' ? 'Connected' : 'Not connected'}
+              </span>
+            </div>
+
+            {Object.entries(connector.scopeRationale).map(([scope, why]) => (
+              <p key={scope} className="field__hint">
+                <code>{scope}</code> — {why}
+              </p>
+            ))}
+
+            {connector.configured ? (
+              <div className="settings__actions">
+                {connector.state === 'READY' ? (
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={busy !== null}
+                    onClick={() => void disconnectConnector(connector.id)}
+                  >
+                    Disconnect
+                  </button>
+                ) : (
+                  <>
+                    {/* Two buttons rather than a checkbox: the scope is the
+                        decision, and it should be the thing being pressed. */}
+                    <button
+                      type="button"
+                      className="button button--primary"
+                      disabled={busy !== null}
+                      onClick={() => void authorizeConnector(connector.id, false)}
+                    >
+                      Connect (read only)
+                    </button>
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={busy !== null}
+                      onClick={() => void authorizeConnector(connector.id, true)}
+                    >
+                      Connect with write access
+                    </button>
+                  </>
+                )}
+              </div>
+            ) : (
+              <p className="field__hint">
+                This build has no OAuth application registered for {connector.displayName}, so it
+                cannot be connected. That is missing configuration, not a fault.
+              </p>
+            )}
+          </div>
+        ))}
       </section>
 
       <section className="settings__section">

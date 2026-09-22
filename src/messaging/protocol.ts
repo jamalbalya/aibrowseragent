@@ -130,6 +130,60 @@ export interface PanelRequestMap {
     request: Record<string, never>;
     response: { granted: boolean };
   };
+  /** Connectors the product ships, and where each one currently stands. */
+  'connector.list': {
+    request: Record<string, never>;
+    response: {
+      connectors: {
+        id: string;
+        displayName: string;
+        site: string;
+        authKind: string;
+        state: string;
+        reason: string;
+        scopes: readonly string[];
+        accountLabel?: string;
+        /** Whether a client id has been configured for this deployment. */
+        configured: boolean;
+        operations: { id: string; kind: 'read' | 'write'; description: string }[];
+        scopeRationale: Readonly<Record<string, string>>;
+      }[];
+    };
+  };
+  /**
+   * Starts an authorization.
+   *
+   * `includeWrite` is the scope decision, made by the user rather than by the
+   * agent: a connector authorised for read cannot later be talked into a
+   * write, because the scope was never granted.
+   */
+  'connector.authorize': {
+    request: { connectorId: string; includeWrite?: boolean };
+    response: { state: string; reason: string; scopes: readonly string[] };
+  };
+  'connector.disconnect': {
+    request: { connectorId: string };
+    response: { state: string };
+  };
+  /** Writes whose outcome was never confirmed, so a replay must be decided. */
+  'connector.pendingWrites': {
+    request: { taskId?: string };
+    response: {
+      writes: {
+        key: string;
+        connectorId: string;
+        operation: string;
+        taskId: string;
+        outcome: string;
+        startedAt: number;
+      }[];
+    };
+  };
+  /** Clears an uncertain write so a user-confirmed replay can proceed. */
+  'connector.resolveWrite': {
+    request: { key: string };
+    response: { cleared: boolean };
+  };
   'permission.listPending': {
     request: Record<string, never>;
     response: { requests: PermissionRequest[] };

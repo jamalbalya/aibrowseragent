@@ -161,7 +161,10 @@ tests, not just convention — see `tests/unit/policy-engine.test.ts`.
 | `src/security/`                    | Redaction, origin validation, injection boundary, exfiltration |
 | `src/tasks/`                       | Task model, state machine, persistence                         |
 | `src/evidence/`                    | Evidence model, store, provenance                              |
-| `src/connectors/core/`             | Connector interfaces. Foundation only; no adapters yet         |
+| `src/connectors/core/`             | Connector contract, session lifecycle, duplicate-write guard   |
+| `src/connectors/oauth/`            | PKCE, callback validation, token vault, tab-based auth flow    |
+| `src/connectors/transport/`        | Guarded connector egress; delegates to the shared gate         |
+| `src/connectors/adapters/`         | Service adapters. GitHub                                       |
 | `src/messaging/`                   | Typed protocol and bus                                         |
 | `src/storage/`                     | Storage abstraction with atomic read-modify-write              |
 | `src/logging/`                     | Structured, categorised, redacting logger                      |

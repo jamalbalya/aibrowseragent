@@ -43,8 +43,17 @@ What works today:
 - Task persistence that survives side-panel close and service-worker eviction —
   verified against a real Chrome worker restart, not a simulation
 
-Not yet implemented: connectors (Jira, Confluence, Figma, Sheets), MCP, skills,
-workflows, scheduling, and OpenAI's Responses API. Their
+- Connectors: a structured integration with an external service, reached
+  through the same egress gate as everything else, with OAuth (authorization
+  code + PKCE, no client secret), least-privilege scopes with a stated reason
+  for each, and duplicate-write protection that refuses to replay a write
+  whose outcome is unknown ([docs/connectors.md](docs/connectors.md)). One
+  connector is implemented, for GitHub. **This build registers no OAuth
+  application, so nothing can actually be connected** — it says so rather
+  than offering a button that cannot work.
+
+Not yet implemented: further connectors (Jira, Confluence, Figma, Sheets),
+MCP, skills, workflows, scheduling, and OpenAI's Responses API. Their
 interfaces exist; their implementations do not, and the code raises
 `NOT_IMPLEMENTED` rather than faking a result.
 

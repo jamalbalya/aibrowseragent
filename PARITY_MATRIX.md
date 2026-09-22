@@ -99,8 +99,8 @@ capability, not necessarily a test of the capability itself.
 | Status          | Count  |
 | --------------- | ------ |
 | PASS            | 30     |
-| PARTIAL         | 3      |
-| INTERFACES-ONLY | 1      |
+| PARTIAL         | 4      |
+| INTERFACES-ONLY | 0      |
 | NOT-STARTED     | 6      |
 | **Total**       | **40** |
 
@@ -110,11 +110,18 @@ separate classes of error have actually occurred here: a revision that claimed
 17 PASS while its own table said 23, and a revision whose per-column coverage
 claims were not backed by any test. The check now covers both.
 
-Movement in this revision: PASS went from 28 to 30 and PARTIAL from 2 to 3,
-and NOT-STARTED from 9 to 6, on evidence rather than on reassessment of the
-same evidence. Image upload (P-009) and file upload (P-010) move from
-NOT-STARTED to PASS; download (P-011) moves from NOT-STARTED to PARTIAL, for
-a reason stated below rather than a missing test.
+Movement in this revision: the connector framework (P-023) moves from
+INTERFACES-ONLY to PARTIAL, taking PARTIAL from 3 to 4 and emptying the
+INTERFACES-ONLY category. It is **not** PASS, for a reason stated below that
+is external rather than architectural.
+
+### Earlier movement, kept for the record
+
+PASS went from 28 to 30 and PARTIAL from 2 to 3, and NOT-STARTED from 9 to 6,
+on evidence rather than on reassessment of the same evidence. Image upload
+(P-009) and file upload (P-010) moved from NOT-STARTED to PASS; download
+(P-011) moved from NOT-STARTED to PARTIAL, for a reason stated below rather
+than a missing test.
 
 ### Earlier movement, kept for the record
 
@@ -223,7 +230,7 @@ rather than folded into the verdict.
 | P-020 | Scheduled tasks                      | no         | —    | —           | —        | —   | NOT-STARTED     |
 | P-021 | Shortcuts                            | no         | —    | —           | —        | —   | NOT-STARTED     |
 | P-022 | Workflow recording                   | no         | —    | —           | —        | —   | NOT-STARTED     |
-| P-023 | Connector framework                  | interfaces | —    | —           | —        | —   | INTERFACES-ONLY |
+| P-023 | Connector framework                  | yes        | yes  | yes         | yes      | yes | PARTIAL         |
 | P-024 | Skills                               | no         | —    | —           | —        | —   | NOT-STARTED     |
 | P-025 | Plugins                              | no         | —    | —           | —        | —   | NOT-STARTED     |
 | P-026 | MCP                                  | no         | —    | —           | —        | —   | NOT-STARTED     |
@@ -249,7 +256,9 @@ rather than folded into the verdict.
 **P-006 Forms** — Text input, textarea, contenteditable, select-by-value,
 select-by-label and form submission all work and are tested. Checkbox and radio
 are reported in the page model but have no dedicated tool; the model must click
-them, which works but is less direct. File inputs are not handled at all.
+them, which works but is less direct. File inputs are handled — see P-010 —
+through `files.select` and `browser.attach_file` rather than through a form
+tool, because choosing a file and sending it are two separate decisions.
 
 **P-038 Audit trail** — Permission decisions are recorded with task, tool,
 site, risk, decision, reason and timestamp, capped at 500 entries, and an
@@ -261,18 +270,25 @@ records rather than one unified, queryable audit log spanning tasks, so
 is no export, so the trail cannot leave the extension. Building either is new
 functionality and is out of Stage 2 closure scope.
 
----
+**P-023 Connector framework** — The framework is implemented and one adapter
+exists, for GitHub: OAuth (authorization code + PKCE, no client secret), a
+token vault whose only exit is an `Authorization` header, a guarded transport
+that shares the one egress gate rather than duplicating it, least-privilege
+scopes with a stated rationale for each, duplicate-write protection, and four
+tools in the same registry as every other tool. Covered by four unit suites,
+an integration suite against a mock service, a security suite and a
+real-Chromium E2E suite.
 
-## INTERFACES-ONLY
+PARTIAL for one reason, and it is external rather than architectural: **this
+project registers no OAuth application**, so no connector can actually be
+connected in this build and no live authorization has ever been performed.
+The extension says so and refuses to start a flow it cannot finish, rather
+than faking one. Everything below that line is exercised against a local mock
+authorization server and API over real HTTP.
 
-**P-023 Connector framework** — `Connector`, `ConnectorTool`,
-`ConnectorAuth`, `ConnectorRegistry` and `ConnectorDescriptor` are defined in
-`src/connectors/core/types.ts`, including the `site` and `defaultSensitivity`
-the exfiltration guard needs. No adapter exists. Nothing returns a fake
-connector response.
-
-The same applies to the Jira, Confluence, Figma and Google Sheets connectors
-named in the specification: interfaces only.
+PARTIAL also because one connector is not a connector ecosystem. The Jira,
+Confluence, Figma and Google Sheets connectors named in the specification are
+not implemented, and nothing returns a fake response for them.
 
 ---
 

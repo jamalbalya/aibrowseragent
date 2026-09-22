@@ -17,6 +17,13 @@
  * task runtime use to talk about providers; D4 and D5 remain closed.
  */
 
+import {
+  AUTH_STATES,
+  canTransitionAuthState,
+  isReadyReason,
+  type AuthState,
+} from '@/security/state/auth-states';
+
 export const PROVIDER_KINDS = ['api', 'web'] as const;
 
 /**
@@ -35,16 +42,9 @@ export type ProviderKind = (typeof PROVIDER_KINDS)[number];
  * reason — it is a fact about the registry, not a state a connection passes
  * through; an unregistered provider has no state because it has no instance.
  */
-export const PROVIDER_STATES = [
-  'UNCONFIGURED',
-  'NEEDS_AUTH',
-  'AUTHENTICATING',
-  'READY',
-  'UNAVAILABLE',
-  'DENIED',
-] as const;
+export const PROVIDER_STATES = AUTH_STATES;
 
-export type ProviderState = (typeof PROVIDER_STATES)[number];
+export type ProviderState = AuthState;
 
 /**
  * Why a state was entered. Recorded so a pause is explainable to the user and
@@ -73,40 +73,9 @@ export interface ProviderStatus {
   readonly since: number;
 }
 
-/**
- * Permitted transitions.
- *
- * Written as an explicit table rather than as scattered `if` statements so
- * that "can this provider become READY from here?" has one answer in one
- * place. The table is the security property: the only route into `READY` is
- * from `AUTHENTICATING`, so a provider cannot be declared usable without
- * having passed through a step that required a confirmed signal.
- */
-const TRANSITIONS: Record<ProviderState, readonly ProviderState[]> = {
-  // A configured API provider is usable immediately; a web provider is not.
-  UNCONFIGURED: ['NEEDS_AUTH', 'READY', 'UNAVAILABLE', 'DENIED'],
-  NEEDS_AUTH: ['AUTHENTICATING', 'UNAVAILABLE', 'DENIED', 'UNCONFIGURED'],
-  // Deliberately no NEEDS_AUTH -> READY edge.
-  AUTHENTICATING: ['READY', 'NEEDS_AUTH', 'UNAVAILABLE', 'DENIED'],
-  READY: ['NEEDS_AUTH', 'UNAVAILABLE', 'DENIED', 'UNCONFIGURED'],
-  UNAVAILABLE: ['NEEDS_AUTH', 'AUTHENTICATING', 'READY', 'DENIED', 'UNCONFIGURED'],
-  // Access refused is terminal for this provider until it is reconfigured.
-  DENIED: ['UNCONFIGURED'],
-};
-
 export function canTransition(from: ProviderState, to: ProviderState): boolean {
-  return TRANSITIONS[from].includes(to);
+  return canTransitionAuthState(from, to);
 }
-
-/**
- * Reasons that may accompany entry into `READY`.
- *
- * A provider becomes ready because authentication was confirmed, and for no
- * other reason. Listing the permitted reasons — rather than accepting any —
- * closes the path where a caller reports success with a reason that says
- * something else happened.
- */
-const READY_REASONS: readonly ProviderStateReason[] = ['authenticated'];
 
 export interface TransitionResult {
   readonly status: ProviderStatus;
@@ -131,7 +100,7 @@ export function transitionProvider(
   if (!canTransition(current.state, to)) return { status: current, changed: false };
 
   // The one edge that must not be reachable by accident.
-  if (to === 'READY' && !READY_REASONS.includes(reason)) {
+  if (to === 'READY' && !isReadyReason(reason)) {
     return { status: current, changed: false };
   }
 

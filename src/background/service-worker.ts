@@ -19,14 +19,15 @@ import {
 } from '@/storage/storage-area';
 import { SettingsStore, CredentialStore } from '@/config/settings';
 import { TaskStore } from '@/tasks/task-store';
+import { generateTaintSalt } from '@/tasks/task-model';
 import { EvidenceStore } from '@/evidence/evidence-store';
 import { ProviderRegistry, type ProviderConnection } from '@/providers/registry/provider-registry';
 import { ConsentStore } from '@/security/egress/consent';
 import { AuditLog, buildAuditExport } from '@/audit/audit-log';
-import { createGuardedTransport } from '@/security/egress/provider-transport';
+import { createGuardedTransport, guardedSend } from '@/security/egress/provider-transport';
 import { installNetworkInterceptor } from '@/security/egress/network-interceptor';
 import { buildEgressEvidence } from '@/security/egress/egress-evidence';
-import { providerDestination } from '@/security/egress/destination';
+import { connectorDestination, providerDestination } from '@/security/egress/destination';
 import { CapabilityDoctor } from '@/providers/capability-doctor/capability-doctor';
 import {
   openAICompatibleFactory,
@@ -46,6 +47,17 @@ import { StagedFileStore } from '@/files/file-store';
 import { ChromeDownloadPort } from '@/files/download-port';
 import { FileSelectionBroker } from './file-broker';
 import { safeDisplayName } from '@/files/file-model';
+import { ConnectorRegistry, scopesFor } from '@/connectors/core/types';
+import { ConnectorSession } from '@/connectors/core/connector-session';
+import { TokenVault } from '@/connectors/oauth/token-vault';
+import { WriteGuard } from '@/connectors/core/write-guard';
+import { TabAuthFlow, chromeTabs } from '@/connectors/oauth/auth-flow-port';
+import { createConnectorTransport } from '@/connectors/transport/connector-transport';
+import {
+  GitHubConnector,
+  githubDescriptor,
+  type ConnectorCallContext,
+} from '@/connectors/adapters/github';
 import { PermissionEngine } from '@/policy/permission-engine';
 import { emptySitePolicyState, removeRule, type SitePolicyState } from '@/policy/site-policy';
 import type { PolicyContext } from '@/policy/policy-engine';
@@ -70,12 +82,28 @@ const log = getLogger('agent');
 // ---------------------------------------------------------------------------
 
 const local = new SerializedStorageArea(new ChromeStorageArea(chrome.storage.local));
+
+/**
+ * In-memory storage, for things that must not reach the disk.
+ *
+ * `chrome.storage.session` is held in memory and cleared when the browser
+ * closes, and its access level is set to trusted contexts so a content script
+ * cannot read it. Connector tokens live here: they survive the constant
+ * service-worker evictions and do not survive a browser restart, which is the
+ * right trade for a bearer credential.
+ */
+const session = new SerializedStorageArea(new ChromeStorageArea(chrome.storage.session));
+void chrome.storage.session
+  .setAccessLevel?.({ accessLevel: 'TRUSTED_CONTEXTS' })
+  .catch(() => undefined);
 const settingsStore = new SettingsStore(new NamespacedStorageArea(local, 'settings'));
 const credentialStore = new CredentialStore(local);
 const taskStore = new TaskStore(new NamespacedStorageArea(local, 'tasks'));
 const evidenceStore = new EvidenceStore(new NamespacedStorageArea(local, 'evidence'));
 const auditLog = new AuditLog(new NamespacedStorageArea(local, 'audit'));
 const policyArea = new NamespacedStorageArea(local, 'policy');
+const connectorTokens = new TokenVault(new NamespacedStorageArea(session, 'connector-tokens'));
+const connectorWrites = new WriteGuard(new NamespacedStorageArea(local, 'connector-writes'));
 
 const SITE_POLICY_KEY = 'site-policy';
 const SESSION_KEY = 'active-session';
@@ -239,6 +267,9 @@ const toolRegistry = new ToolRegistry({
       return undefined;
     }
   },
+  publishSecurityContext: (taskId, context) => {
+    connectorEgressContexts.set(taskId, context);
+  },
   egress: {
     consent: consentStore,
     record: async (input) => {
@@ -277,6 +308,222 @@ const toolRegistry = new ToolRegistry({
   loadPolicyContext,
   evidenceStore,
 });
+// ---------------------------------------------------------------------------
+// Connectors
+// ---------------------------------------------------------------------------
+
+/**
+ * The client id for each connector, supplied per deployment.
+ *
+ * Empty here, because this project owns no OAuth application. A connector
+ * without one reports as unconfigured and refuses to start an authorization —
+ * it does not invent a flow that cannot complete.
+ */
+const CONNECTOR_CLIENT_IDS: Readonly<Record<string, string>> = {};
+
+/**
+ * The redirect the authorization lands on.
+ *
+ * A real page inside the extension, declared as a web-accessible resource for
+ * the authorization origins and nothing else.
+ *
+ * Both halves of that were established by running it. A bare extension path
+ * that is *not* web-accessible cannot be redirected to at all: Chromium
+ * refuses the navigation with `net::ERR_BLOCKED_BY_CLIENT`, so an
+ * authorization would end on an error page and no callback would ever be
+ * seen. Declaring the page web-accessible makes the redirect arrive intact,
+ * with its code and state. The `matches` list is kept to the origins that
+ * actually redirect here, because a broad one would let any page on the web
+ * confirm this extension is installed.
+ *
+ * The page itself carries no script. The extension watches the one tab it
+ * opened for a navigation whose origin and path match this exactly and takes
+ * the code from that URL; a page that parsed its own URL and messaged the
+ * code onward would be a second path for a credential to travel.
+ */
+const CONNECTOR_REDIRECT_URI = chrome.runtime.getURL('oauth/callback.html');
+
+/**
+ * A route failure the message router can report as an `AgentError`.
+ *
+ * The router reads `agentError` off whatever was thrown; wrapping keeps it a
+ * real `Error`, so a stack exists and the linter's "throw an Error" rule is
+ * satisfied rather than suppressed.
+ */
+class RouteError extends Error {
+  constructor(readonly agentError: ReturnType<typeof createError>) {
+    super(agentError.message);
+    this.name = 'RouteError';
+  }
+}
+
+const connectorRegistry = new ConnectorRegistry();
+
+/** Evidence key for authentication traffic, which belongs to no task. */
+const connectorAuthSalt = generateTaintSalt();
+
+/**
+ * The token exchange.
+ *
+ * Deliberately not routed through the connector transport. The token endpoint
+ * is authentication, not a task data operation: it carries no task taint, must
+ * not carry a bearer token, and must not be attributed to a task in the audit
+ * trail. It is also the one place an authorization code exists, so it is kept
+ * as small as possible and its body is never logged.
+ */
+async function exchangeConnectorToken(
+  endpoint: string,
+  body: URLSearchParams,
+): Promise<Record<string, unknown>> {
+  const response = await guardedSend(
+    {
+      url: endpoint,
+      init: {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Accept: 'application/json',
+        },
+        body: body.toString(),
+        // Never followed: a token endpoint that redirects is one that could
+        // be made to carry an authorization code somewhere else.
+        redirect: 'error',
+        signal: AbortSignal.timeout(30_000),
+      },
+      destination: connectorDestination('oauth-token-exchange', endpoint, {
+        purpose: 'token_exchange',
+      }),
+      // No task is behind this and none may be attributed to it. The clean
+      // state says there is no task, not that one was inspected.
+      taskId: 'connector-authentication',
+      taintState: { kind: 'KNOWN_UNTAINTED' },
+      taintSalt: connectorAuthSalt,
+      taintSignature: 'authentication',
+      describe: 'connector token exchange',
+      // The body is a credential by construction; see the transport.
+      payloadPolicy: 'opaque',
+    },
+    { consent: consentStore },
+  );
+
+  if (!response.ok) {
+    // The status, never the body: a token endpoint's error response can echo
+    // the authorization code back.
+    throw new Error(`token_endpoint_status_${response.status}`);
+  }
+  return (await response.json()) as Record<string, unknown>;
+}
+
+const githubDescriptorValue = githubDescriptor({ redirectUri: CONNECTOR_REDIRECT_URI });
+
+const githubSession = new ConnectorSession({
+  descriptor: githubDescriptorValue,
+  vault: connectorTokens,
+  authFlow: new TabAuthFlow(chromeTabs()),
+  clientId: CONNECTOR_CLIENT_IDS[githubDescriptorValue.id] ?? '',
+  exchange: exchangeConnectorToken,
+  onStatusChange: (status) => {
+    void auditLog
+      .record({
+        type: 'connector.auth',
+        connectorId: status.connectorId,
+        connectorState: status.state,
+        outcome: status.state === 'READY' ? 'allowed' : 'info',
+        code: status.reason,
+        scopes: status.scopes,
+      })
+      .catch(() => undefined);
+  },
+});
+
+const githubConnector = new GitHubConnector({
+  descriptor: githubDescriptorValue,
+  session: githubSession,
+  transport: createConnectorTransport({
+    descriptor: githubDescriptorValue,
+    vault: connectorTokens,
+    consent: consentStore,
+    onDecision: async (decision, context, url, payload) => {
+      const built = await buildEgressEvidence({
+        taskId: context.taskId,
+        sourceTool: `connector.${context.connectorId}.${context.operationId}`,
+        destination: connectorDestination(context.connectorId, url, {
+          purpose: context.operationId,
+        }),
+        decision,
+        ...(payload === undefined ? {} : { payload }),
+        taintSalt: context.taintSalt,
+        saltEpoch: context.saltEpoch,
+        now: Date.now(),
+      });
+      const stored = await evidenceStore.put(built.reference, {
+        content: JSON.stringify(built.detail),
+        encoding: 'utf8',
+        mimeType: 'application/json',
+      });
+      await auditLog.record({
+        type: 'connector.operation',
+        taskId: context.taskId,
+        connectorId: context.connectorId,
+        operation: context.operationId,
+        ...(decision.destinationIdentity === null
+          ? {}
+          : { destination: decision.destinationIdentity }),
+        outcome:
+          decision.verdict === 'allow'
+            ? 'allowed'
+            : decision.verdict === 'deny'
+              ? 'denied'
+              : 'confirmed',
+        code: decision.code,
+        evidenceIds: [stored.id],
+      });
+    },
+  }),
+  writes: connectorWrites,
+  // The connector never builds its own security context: it asks the runtime
+  // for the one belonging to the task making the call, so a connector request
+  // carries exactly the taint that task accumulated.
+  egressFor: (taskId) => connectorEgressContexts.get(taskId),
+});
+
+/**
+ * Registers a connector without letting a bad one take the extension down.
+ *
+ * `register` throws on an unregistrable descriptor, which is the right
+ * behaviour for a programming error — but this is module scope, so an
+ * uncaught throw here stops the rest of this file from evaluating and every
+ * `router.on` below it from being registered. That is exactly what happened:
+ * one descriptor rejected for its redirect URI silently killed *all* side
+ * panel messaging, with no error anywhere a user or a test would look.
+ *
+ * So the throw is caught, the connector is left out, and the reason is
+ * logged. A missing connector is a missing feature; a worker that never
+ * finishes loading is a dead extension.
+ */
+function registerConnector(connector: GitHubConnector): void {
+  try {
+    connectorRegistry.register(connector);
+  } catch (error) {
+    log.error('A connector could not be registered and has been left out.', {
+      connectorId: connector.descriptor.id,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+registerConnector(githubConnector);
+
+/**
+ * Security contexts for in-flight tasks.
+ *
+ * Populated by the task manager on every turn and read by connector tools.
+ * Held rather than passed because a tool's execution context carries the task
+ * id but not the taint, and a connector call must inherit the task's taint
+ * rather than starting from a clean one.
+ */
+const connectorEgressContexts = new Map<string, ConnectorCallContext>();
+
 toolRegistry.registerAll(
   createFileTools({
     adapter: browserAdapter,
@@ -290,6 +537,7 @@ toolRegistry.registerAll(
     },
   }),
 );
+toolRegistry.registerAll(connectorRegistry.allTools());
 toolRegistry.registerAll(createBrowserTools({ adapter: browserAdapter, debuggerManager }));
 toolRegistry.registerAll(createTabTools({ adapter: browserAdapter, ownership: tabOwnership }));
 toolRegistry.registerAll(
@@ -568,6 +816,117 @@ router.on('provider.setActive', async ({ providerId, modelId }) => {
  * sizes only, put through the same redaction as every other audit field so a
  * secret pasted into a filename does not survive in the trail.
  */
+router.on('connector.list', async () => {
+  const connectors = [];
+  for (const connector of connectorRegistry.list()) {
+    const state = await connector.getAuthState();
+    const descriptor = connector.descriptor;
+    const status = descriptor.id === githubDescriptorValue.id ? githubSession.current() : undefined;
+    connectors.push({
+      id: descriptor.id,
+      displayName: descriptor.displayName,
+      site: descriptor.site,
+      authKind: descriptor.authKind,
+      state: status?.state ?? (state.authenticated ? 'READY' : 'NEEDS_AUTH'),
+      reason: status?.reason ?? 'no_grant',
+      scopes: state.scopes,
+      ...(state.accountLabel === undefined ? {} : { accountLabel: state.accountLabel }),
+      // A deployment without an OAuth application cannot authorise anything,
+      // and says so rather than offering a button that cannot work.
+      configured: (CONNECTOR_CLIENT_IDS[descriptor.id] ?? '').length > 0,
+      operations: descriptor.operations.map((operation) => ({
+        id: operation.id,
+        kind: operation.kind,
+        description: operation.description,
+      })),
+      scopeRationale: descriptor.scopeRationale,
+    });
+  }
+  return { connectors };
+});
+
+router.on('connector.authorize', async ({ connectorId, includeWrite }) => {
+  const connector = connectorRegistry.get(connectorId);
+  if (!connector) {
+    throw new RouteError(createError('INVALID_ARGUMENT', `Unknown connector "${connectorId}".`));
+  }
+  if ((CONNECTOR_CLIENT_IDS[connectorId] ?? '').length === 0) {
+    // No OAuth application is configured for this deployment. Refusing here
+    // is the honest outcome: starting a flow that cannot complete would look
+    // like a bug rather than like missing configuration.
+    throw new RouteError(
+      createError(
+        'NOT_IMPLEMENTED',
+        `No OAuth application is configured for ${connector.descriptor.displayName}.`,
+        {
+          userMessage:
+            `${connector.descriptor.displayName} cannot be connected in this build: it needs an ` +
+            'OAuth application registered for this extension.',
+        },
+      ),
+    );
+  }
+
+  await auditLog.record({
+    type: 'connector.auth',
+    connectorId,
+    outcome: 'info',
+    code: 'authorization_started',
+  });
+
+  // Read scopes always; write scopes only when the user asked for them. The
+  // agent cannot widen this — it is a choice made in the panel, before any
+  // model turn.
+  const scopes = scopesFor(connector.descriptor, includeWrite === true ? 'all' : 'read');
+  const controller = new AbortController();
+  const status = await githubSession.authorize(scopes, controller.signal);
+  return { state: status.state, reason: status.reason, scopes: status.scopes };
+});
+
+router.on('connector.disconnect', async ({ connectorId }) => {
+  const connector = connectorRegistry.get(connectorId);
+  if (!connector) {
+    throw new RouteError(createError('INVALID_ARGUMENT', `Unknown connector "${connectorId}".`));
+  }
+  await connector.revoke();
+  await auditLog.record({
+    type: 'connector.configured',
+    connectorId,
+    outcome: 'info',
+    code: 'disconnected',
+  });
+  return { state: 'UNCONFIGURED' };
+});
+
+router.on('connector.pendingWrites', async ({ taskId }) => {
+  const records = await connectorWrites.list(taskId);
+  return {
+    writes: records
+      .filter((record) => record.outcome === 'uncertain')
+      .map((record) => ({
+        key: record.key,
+        connectorId: record.connectorId,
+        operation: record.operationId,
+        taskId: record.taskId,
+        outcome: record.outcome,
+        startedAt: record.startedAt,
+      })),
+  };
+});
+
+router.on('connector.resolveWrite', async ({ key }) => {
+  // Clearing the record is what lets a replay happen, and only a person can
+  // do it — they are the only one who can look and see whether the write
+  // already landed.
+  await connectorWrites.forget(key);
+  await auditLog.record({
+    type: 'connector.operation',
+    outcome: 'info',
+    code: 'uncertain_write_resolved',
+  });
+  return { cleared: true };
+});
+
 router.on('file.respondSelection', async ({ requestId, response }) => {
   const accepted = fileSelectionBroker.respond(requestId, response);
 

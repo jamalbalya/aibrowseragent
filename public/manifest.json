@@ -4,20 +4,16 @@
   "version": "0.1.0",
   "description": "A provider-agnostic browser agent. You choose the AI model; the extension supplies the browser capabilities.",
   "minimum_chrome_version": "116",
-
   "action": {
     "default_title": "Open AI Browser Agent"
   },
-
   "side_panel": {
     "default_path": "src/sidepanel/index.html"
   },
-
   "background": {
     "service_worker": "service-worker.js",
     "type": "module"
   },
-
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
@@ -26,7 +22,6 @@
       "all_frames": false
     }
   ],
-
   "permissions": [
     "sidePanel",
     "storage",
@@ -38,19 +33,21 @@
     "notifications",
     "activeTab"
   ],
-
   "optional_permissions": ["alarms", "downloads"],
-
   "host_permissions": ["http://*/*", "https://*/*"],
-
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
-
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["oauth/callback.html"],
+      "matches": ["https://github.com/*", "http://127.0.0.1/*", "http://localhost/*"]
+    }
+  ]
 }

@@ -55,6 +55,16 @@ you first.
 **Changing provider re-asks.** A task is bound to the provider and model you
 started it with. Switching either does not inherit the previous approval.
 
+**Data sent to a service you connected.** If you connect a service — GitHub —
+the agent can read from it and, if you granted write access, write to it. Those
+requests pass the same authorization gate as everything else, so a task that
+has read a confidential page and then tries to send it to a connected service
+asks you first. Nothing about the connection lets it skip that.
+
+You choose read-only or read-and-write when you connect, and the agent cannot
+widen it. Every permission the extension asks a service for is listed in the
+side panel with the reason it is needed.
+
 **A file you chose, if you approve sending it.** Choosing a file and sending it
 to a website are two separate decisions, and you are asked for both. The second
 prompt names the file and the site it would go to. A file you picked but did
@@ -72,6 +82,12 @@ storage, to evidence, to the activity log or to a log file. When the browser
 shuts the extension's background worker down — which Chrome does routinely —
 the file is simply gone, and a task that resumes afterwards asks again rather
 than pretending it still has it.
+
+**A connected service's access token is held in memory only.** It is kept in
+session storage, which is never written to disk, and it is gone when the
+browser restarts — at which point you reconnect. It never appears in the
+activity log, in evidence, in a log file, in anything sent to the AI provider,
+or in any page. It is attached to a request to that service and nowhere else.
 
 Evidence of what left the device records metadata — destination, decision,
 size, a keyed digest — and not the content itself. A file appears there as a
@@ -114,6 +130,13 @@ intent can do those things.
 The extension deliberately does **not** request `<all_urls>`. That broader
 permission would also grant access to local files, which was demonstrated and
 removed.
+
+It also does **not** request `identity`, `cookies` or `webRequest`. Signing in
+to a connected service opens its authorization page in an ordinary tab, which
+needs no permission beyond `tabs` — the `identity` permission would have been
+more convenient and would also have granted the ability to mint a token for
+your browser profile's own signed-in account, which this extension must never
+do.
 
 ## Removing your data
 

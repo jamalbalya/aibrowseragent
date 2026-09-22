@@ -40,6 +40,9 @@ export const AUDIT_EVENT_TYPES = [
   'file.selected',
   'file.attached',
   'file.downloaded',
+  'connector.configured',
+  'connector.auth',
+  'connector.operation',
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
@@ -86,6 +89,13 @@ export interface AuditEvent {
   readonly fileName?: string;
   readonly mimeType?: string;
   readonly byteLength?: number;
+  readonly connectorId?: string;
+  /** Connector operation id, e.g. `create_issue`. Never its arguments. */
+  readonly operation?: string;
+  /** Scope names the user granted. Names only — never a token. */
+  readonly scopes?: readonly string[];
+  /** Connector authorization state, e.g. `READY`. */
+  readonly connectorState?: string;
   /** Evidence ids that hold the detail this record deliberately omits. */
   readonly evidenceIds?: readonly string[];
 }
@@ -97,7 +107,21 @@ export interface AuditEvent {
  * building an event from a wider object could spread one in. This rejects the
  * write rather than storing it and hoping redaction catches it later.
  */
-const PROHIBITED_FIELDS = [
+const PROHIBITED_FIELD_NAMES = [
+  // Connector credential material. The types above have nowhere to put any
+  // of it, and this rejects a caller that spread a token response in.
+  'access_token',
+  'accessToken',
+  'refresh_token',
+  'refreshToken',
+  'client_secret',
+  'clientSecret',
+  'code_verifier',
+  'codeVerifier',
+  'authorization_code',
+  'authorizationCode',
+  'id_token',
+  'idToken',
   'password',
   'passwd',
   'secret',
@@ -115,6 +139,19 @@ const PROHIBITED_FIELDS = [
   'body',
 ];
 
+/**
+ * The same names, case-folded once.
+ *
+ * The comparison below lowercases the incoming key, so the list it is
+ * compared against has to be lowercased too. It was not, which made every
+ * camelCase entry above unreachable: `accessToken` case-folded to
+ * `accesstoken` and matched nothing. Redaction still caught the value, but
+ * the refusal that is supposed to be the primary control never fired.
+ */
+const PROHIBITED_FIELDS: ReadonlySet<string> = new Set(
+  PROHIBITED_FIELD_NAMES.map((name) => name.toLowerCase()),
+);
+
 export class ProhibitedAuditFieldError extends Error {
   constructor(readonly field: string) {
     super(
@@ -128,7 +165,7 @@ export class ProhibitedAuditFieldError extends Error {
 /** Rejects a record carrying anything the trail must not hold. */
 export function assertAuditSafe(event: Record<string, unknown>): void {
   for (const key of Object.keys(event)) {
-    if (PROHIBITED_FIELDS.includes(key.toLowerCase())) {
+    if (PROHIBITED_FIELDS.has(key.toLowerCase())) {
       throw new ProhibitedAuditFieldError(key);
     }
   }

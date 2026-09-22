@@ -214,6 +214,19 @@ and the model all depend on a failed action being reported as failed.
 | `tabs.group` / `ungroup`   | R1      |                                  |
 | `tabs.wait_for_navigation` | R0      |                                  |
 
+### Files — `src/tools/files/`
+
+| Tool                  | Risk | Notes                                                         |
+| --------------------- | ---- | ------------------------------------------------------------- |
+| `files.select`        | R2   | Asks the user; the only route to local bytes                  |
+| `browser.attach_file` | R3   | Puts a chosen file into a page input — **this is the egress** |
+| `browser.download`    | R3   | Needs the optional `downloads` permission                     |
+
+The specification calls the second one `browser.upload`. It is named
+`attach_file` here because it attaches a file to an input; the page's own form
+submit is what uploads, and that is an ordinary page action the existing tools
+already gate. See [file-handling.md](file-handling.md).
+
 ### Debugger — `src/tools/debugger/`
 
 | Tool                  | Risk | Notes                               |
@@ -227,10 +240,28 @@ and the model all depend on a failed action being reported as failed.
 There is deliberately no `debugger.command`: the model cannot name a CDP
 method. See [security.md](security.md#t6--devtools-access).
 
+### Connectors — `src/connectors/adapters/`
+
+A connector contributes its tools to this same registry, so one policy engine
+classifies them and one permission layer gates them. Its calls go through the
+same egress gate as a provider request — a different destination channel, the
+same authorization model.
+
+| Tool                   | Risk | Notes                                                    |
+| ---------------------- | ---- | -------------------------------------------------------- |
+| `github.search_issues` | R1   | Capped at 25 results; needs no scope                     |
+| `github.read_issue`    | R1   | Body truncated; recorded as untrusted evidence           |
+| `github.create_issue`  | R3   | Always confirms; not idempotent; duplicate-write guarded |
+| `github.comment_issue` | R3   | Always confirms; not idempotent; duplicate-write guarded |
+
+Everything a connector returns is wrapped as untrusted external content. A
+response cannot grant a scope, authorise a tool, or steer a later request's
+destination. See [connectors.md](connectors.md).
+
 ## Not implemented
 
-`browser.upload`, `browser.download` and `browser.execute_script` are named in
-the specification but are not implemented, and nothing fakes them.
+`browser.execute_script` is named in the specification but is not implemented,
+and nothing fakes it.
 
 `browser.execute_script` in particular would make the entire gate bypassable —
 arbitrary script from model output is the thing this architecture exists to

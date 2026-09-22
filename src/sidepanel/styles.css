@@ -818,3 +818,24 @@ body {
   font-size: 0.8125rem;
   color: var(--text-muted);
 }
+
+/* Connector rows: one block per service, with its scopes spelled out so the
+   authorization being requested is visible before it is granted. */
+.connector {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.connector__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.5rem;
+}
+
+.connector__state {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}

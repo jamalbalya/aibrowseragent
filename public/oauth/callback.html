@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Authorization complete</title>
+    <meta name="color-scheme" content="light dark" />
+    <style>
+      body {
+        font:
+          16px/1.5 system-ui,
+          sans-serif;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        min-height: 100vh;
+        padding: 24px;
+        text-align: center;
+      }
+      p {
+        max-width: 40ch;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      The OAuth redirect target.
+
+      Nothing here reads the authorization code. The extension watches the one
+      tab it opened for a navigation whose origin and path match this page
+      exactly, takes the code from that URL, and closes the tab — so this
+      document exists only so the navigation has somewhere to land, and so the
+      user sees something other than an error if they happen to look.
+
+      It has no script on purpose. A page that parsed its own URL and messaged
+      the code anywhere would be a second path for a credential to travel, and
+      one that any site able to navigate here could try to drive.
+    -->
+    <p>Authorization complete. You can close this tab.</p>
+  </body>
+</html>

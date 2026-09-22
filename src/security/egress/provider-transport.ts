@@ -27,7 +27,7 @@ import { getLogger } from '@/logging/logger';
 import { markGuarded } from './network-interceptor';
 import type { TaintState } from '@/security/taint/taint-state';
 import { authorizeEgress, type EgressDecision } from './egress-gate';
-import { providerDestination } from './destination';
+import { providerDestination, type EgressDestination } from './destination';
 import type { ConsentStore } from './consent';
 
 const log = getLogger('security');
@@ -122,6 +122,107 @@ export interface GuardedTransportOptions {
 }
 
 /**
+ * One outbound transfer, described independently of who is making it.
+ *
+ * AI providers and connectors are different domains and must not share an
+ * identity type — but they must share the *authorization*, or there would be
+ * two answers to "may this data go there". This is the shape both reduce to
+ * before the gate sees them.
+ */
+export interface GuardedSend {
+  readonly url: string;
+  readonly init: RequestInit;
+  readonly destination: EgressDestination;
+  readonly taskId: string;
+  readonly taintState: TaintState;
+  readonly taintSalt: string;
+  readonly taintSignature: string;
+  /** Short label for the refusal log. Never a payload. */
+  readonly describe: string;
+  /**
+   * How the body is treated by the gate.
+   *
+   * `digest` — the default — puts the body through the credential scan and
+   * the evidence digest, which is right for a data transfer.
+   *
+   * `opaque` replaces it with a fixed descriptor. Used for **authentication**
+   * requests, where the body is a credential by construction: an OAuth token
+   * exchange carries a code and a PKCE verifier, and the credential scan
+   * would refuse it for containing exactly what it is supposed to contain.
+   * Nothing else is relaxed — the destination is still resolved and checked,
+   * policy still runs, and the decision is still recorded. What changes is
+   * that a secret the user is deliberately sending to its own issuer does not
+   * get digested into evidence.
+   */
+  readonly payloadPolicy?: 'digest' | 'opaque';
+}
+
+export interface GuardedSendOptions {
+  readonly consent: ConsentStore;
+  readonly fetchImpl?: typeof fetch;
+  readonly now?: () => number;
+  readonly onDecision?: (decision: EgressDecision, payload: unknown) => Promise<void>;
+}
+
+/**
+ * Authorises one transfer and performs it.
+ *
+ * The single place any outbound request is decided. Both the AI provider
+ * transport and the connector transport call this; neither reimplements the
+ * gate, so there is one authorization model rather than one per domain.
+ *
+ * `confirm` is treated as a denial. These requests are issued deep inside a
+ * model turn with no user interaction available, so the conservative reading
+ * is the only correct one — consent is established before the task gets here.
+ */
+export async function guardedSend(
+  send: GuardedSend,
+  options: GuardedSendOptions,
+): Promise<Response> {
+  const doFetch = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+  const now = options.now ?? (() => Date.now());
+
+  // Bodies here are already-serialised strings; anything else is described
+  // rather than coerced, so a stray object cannot become the literal
+  // "[object Object]" in an evidence digest.
+  const payload =
+    send.payloadPolicy === 'opaque'
+      ? '[authentication]'
+      : send.init.body === undefined || send.init.body === null
+        ? undefined
+        : typeof send.init.body === 'string'
+          ? send.init.body
+          : '[non-string body]';
+
+  const decision = authorizeEgress(
+    {
+      taskId: send.taskId,
+      taintState: send.taintState,
+      taintSalt: send.taintSalt,
+      destination: send.destination,
+      payload,
+      taintSignature: send.taintSignature,
+      now: now(),
+    },
+    { consent: options.consent },
+  );
+
+  if (options.onDecision) await options.onDecision(decision, payload);
+
+  if (decision.verdict !== 'allow') {
+    log.warn('Outbound request refused by the egress gate.', {
+      taskId: send.taskId,
+      counterparty: send.describe,
+      code: decision.code,
+      verdict: decision.verdict,
+    });
+    throw new EgressDeniedError(decision, decision.reason);
+  }
+
+  return doFetch(send.url, markGuarded(send.init));
+}
+
+/**
  * Builds the transport every provider adapter is given.
  *
  * `confirm` is treated as a denial here rather than as a prompt. The provider
@@ -131,49 +232,31 @@ export interface GuardedTransportOptions {
  * before the task reaches this path.
  */
 export function createGuardedTransport(options: GuardedTransportOptions): ProviderTransport {
-  const doFetch = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
-  const now = options.now ?? (() => Date.now());
-
   return {
-    async request(url: string, init: RequestInit, context: EgressContext): Promise<Response> {
-      const destination = providerDestination(context.providerId, url, context.modelId);
-
-      // Bodies here are already-serialised JSON strings; anything else is
-      // described rather than coerced, so a stray object cannot become the
-      // literal "[object Object]" in an evidence digest.
-      const payload =
-        init.body === undefined || init.body === null
-          ? undefined
-          : typeof init.body === 'string'
-            ? init.body
-            : '[non-string body]';
-
-      const decision = authorizeEgress(
+    request(url: string, init: RequestInit, context: EgressContext): Promise<Response> {
+      return guardedSend(
         {
+          url,
+          init,
+          destination: providerDestination(context.providerId, url, context.modelId),
           taskId: context.taskId,
           taintState: context.taintState,
           taintSalt: context.taintSalt,
-          destination,
-          payload,
           taintSignature: context.taintSignature,
-          now: now(),
+          describe: context.providerId,
         },
-        { consent: options.consent },
+        {
+          consent: options.consent,
+          ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+          ...(options.now === undefined ? {} : { now: options.now }),
+          ...(options.onDecision === undefined
+            ? {}
+            : {
+                onDecision: (decision, payload) =>
+                  options.onDecision!(decision, context, url, payload),
+              }),
+        },
       );
-
-      if (options.onDecision) await options.onDecision(decision, context, url, payload);
-
-      if (decision.verdict !== 'allow') {
-        log.warn('Provider request refused by the egress gate.', {
-          taskId: context.taskId,
-          providerId: context.providerId,
-          code: decision.code,
-          verdict: decision.verdict,
-        });
-        throw new EgressDeniedError(decision, decision.reason);
-      }
-
-      return doFetch(url, markGuarded(init));
     },
   };
 }

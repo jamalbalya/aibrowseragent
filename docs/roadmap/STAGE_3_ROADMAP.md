@@ -2399,21 +2399,27 @@ review rather than being treated as ordinary browser features.
 
 ## 15. Connectors / Skills / Workflow / Scheduling
 
-Phases 6–9, all out of Stage 2 and all currently NOT-STARTED or
-INTERFACES-ONLY. `src/connectors/core/types.ts` holds interfaces only (§33,
-§34, §88); calls raise `NOT_IMPLEMENTED`.
+**Connectors (Phase 6) are implemented.** `src/connectors/` holds the OAuth
+layer, the session lifecycle, the guarded transport, the duplicate-write
+guard and one adapter (GitHub). The common prerequisites that made this
+cluster are now built: an OAuth credential store distinct from provider
+credentials, per-connector scope and least-privilege enforcement, write
+consent, connector evidence, and §88 acceptance per connector. See
+`docs/connectors.md`.
 
-Common prerequisites, which is why they cluster: an OAuth credential store
-distinct from provider credentials, per-connector scope and least-privilege
-enforcement, write-action consent, connector-specific evidence, cancellation
-that is safe mid-write, and §88 acceptance per connector (connect, scope
-validation, read, write, auth expiry, revocation, rate limit, permission
-denied, least privilege).
+The one thing outstanding is external rather than architectural: this project
+registers no OAuth application, so no live authorization has been performed.
+The framework is exercised against a local mock authorization server and API
+over real HTTP, and the extension refuses to start a flow it cannot finish.
 
-Skills (Phase 7) depend on connectors. Workflow, recording, shortcuts and
-scheduling (Phase 8) depend on skills and on background execution. MCP and
-plugins (Phase 9) depend on a plugin trust model that does not exist and is
-the single largest new security surface in the remaining plan.
+Skills, workflow, recording, shortcuts, scheduling, MCP and plugins remain
+NOT-STARTED.
+
+Skills (Phase 7) depended on connectors and are now unblocked. Workflow,
+recording, shortcuts and scheduling (Phase 8) depend on skills and on
+background execution. MCP and plugins (Phase 9) depend on a plugin trust
+model that does not exist and is the single largest new security surface in
+the remaining plan.
 
 ---
 

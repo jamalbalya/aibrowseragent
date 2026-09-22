@@ -139,6 +139,40 @@ export function providerDestination(
   };
 }
 
+/**
+ * Canonical identity for a connector endpoint.
+ *
+ * `connectorId@origin`, the same shape a provider uses and deliberately in a
+ * different channel. A connector must never collide with an AI provider on
+ * identity: they are separate domains, a grant for one is never a grant for
+ * the other, and only the `ai_provider` channel takes the task's provider
+ * pin — so a connector call always falls through to the consent path rather
+ * than inheriting the provider's standing authorization.
+ */
+export function canonicalConnectorIdentity(connectorId: string, url: string): string | null {
+  const origin = canonicalUrlIdentity(url);
+  if (!origin) return null;
+  const id = connectorId.trim().toLowerCase();
+  if (id.length === 0) return null;
+  return `${id}@${origin}`;
+}
+
+/** An external service destination reached through a connector. */
+export function connectorDestination(
+  connectorId: string,
+  url: string,
+  extra: { purpose?: string; sensitivity?: DataSensitivity } = {},
+): EgressDestination {
+  const info = parseOrigin(url);
+  return {
+    channel: 'connector',
+    identity: canonicalConnectorIdentity(connectorId, url),
+    ...(info ? { origin: info.origin } : {}),
+    ...(extra.purpose === undefined ? {} : { purpose: extra.purpose }),
+    ...(extra.sensitivity === undefined ? {} : { sensitivity: extra.sensitivity }),
+  };
+}
+
 /** A declaration that a call transfers nothing outward. */
 export function noEgress(): EgressDestination {
   return { channel: 'none', identity: null };

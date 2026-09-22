@@ -236,6 +236,31 @@ A key is:
   model prompt;
 - shown in the UI only as a masked suffix.
 
+### Connector tokens
+
+An OAuth access token for a connected service lives in `TokenVault`, which has
+exactly one method that lets a credential out — and it returns an
+`Authorization` header value, not a token. A caller that only ever receives a
+header cannot put a token in a log line, an audit record, a tool result or a
+model prompt, because it never holds one. A test asserts over the vault's
+whole prototype, so adding a convenience getter breaks the build.
+
+Tokens are kept in `chrome.storage.session` with the access level set
+explicitly to `TRUSTED_CONTEXTS` rather than relying on the default staying
+what it is. That is memory-only and unreadable from a content script. The
+grant survives the service-worker eviction Chrome performs constantly and is
+gone at a browser restart, which is rare — persisting a refresh token to disk
+would buy a reconnect a few times a year at the cost of a long-lived
+credential in extension storage.
+
+The header is attached by the connector transport, last, over caller headers
+that have had every casing of `Authorization` stripped first. HTTP header
+names are case-insensitive, so "applied last" is only a guarantee if a caller
+cannot have written the same header under a different spelling.
+
+See [connectors.md](connectors.md) for the OAuth design, including why
+`chrome.identity` was not used.
+
 **Known limitation:** `chrome.storage.local` is not encrypted at rest. Anyone
 with filesystem access to the Chrome profile can read the stored key. This is a
 property of the Chrome extension platform, not something the extension can fix,

@@ -97,6 +97,24 @@ export interface ToolRegistryOptions {
     readonly consent: ConsentStore;
     readonly record: (input: EgressEvidenceInput) => Promise<void>;
   };
+  /**
+   * Publishes the task's security context before a tool runs.
+   *
+   * A tool that reaches an external service — a connector — has to send under
+   * the task's own taint, and `ToolExecutionContext` deliberately carries the
+   * task id without the taint. Rather than widening that type for everything,
+   * the registry hands the context to one subscriber, so a connector inherits
+   * what the task accumulated instead of inventing a clean context.
+   */
+  readonly publishSecurityContext?: (
+    taskId: string,
+    context: {
+      taintState: TaintState;
+      taintSalt: string;
+      saltEpoch: number;
+      taintSignature: string;
+    },
+  ) => void;
 }
 
 export class ToolRegistry {
@@ -174,6 +192,21 @@ export class ToolRegistry {
         userMessage: `Arguments for ${canonicalName} did not match its schema. ${issues}`,
       });
       return this.refuse(invocation, error, tool.risk);
+    }
+
+    // Published before classification, so a connector tool's `classify` and
+    // `execute` both see the same context the gate will evaluate against.
+    if (
+      this.options.publishSecurityContext &&
+      invocation.taintState !== undefined &&
+      invocation.taintSalt !== undefined
+    ) {
+      this.options.publishSecurityContext(invocation.taskId, {
+        taintState: invocation.taintState,
+        taintSalt: invocation.taintSalt,
+        saltEpoch: invocation.saltEpoch ?? 1,
+        taintSignature: invocation.taintSignature ?? '',
+      });
     }
 
     const recorded: { reference: RecordedEvidence; payload: Omit<EvidencePayload, 'id'> }[] = [];
