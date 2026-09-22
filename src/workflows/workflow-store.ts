@@ -23,10 +23,12 @@ import {
 } from '@/skills/core/skill-model';
 import type { RiskLevel } from '@/policy/risk-classifier';
 import {
+  assertProvenancePlacement,
   assertWorkflowSafe,
   canonicalJson,
   RECORDED_PROVENANCE,
   WORKFLOW_FORMAT_VERSION,
+  type DroppedStep,
   type RecordedWorkflow,
 } from './workflow-model';
 
@@ -59,6 +61,8 @@ export interface SaveWorkflowInput {
   readonly definition: SkillDefinition;
   readonly recordedFromTaskId: string;
   readonly taintAtCapture: RecordedWorkflow['taintAtCapture'];
+  /** What the recorder watched happen and could not write down. */
+  readonly droppedSteps?: readonly DroppedStep[];
 }
 
 export class WorkflowStore {
@@ -165,6 +169,17 @@ export class WorkflowStore {
         problems.push(`step "${step.id}" is not a tool call, which a recording cannot hold`);
       }
     }
+
+    // Checked here as well as before disk, because `validate` is what runs
+    // again before every replay: a record that acquired a misplaced
+    // page-derived value after it was stored must not run.
+    try {
+      assertProvenancePlacement(definition as unknown as Record<string, unknown>);
+    } catch (error) {
+      problems.push(
+        error instanceof Error ? error.message : 'a page-derived value is in the wrong place',
+      );
+    }
     return problems;
   }
 
@@ -188,12 +203,16 @@ export class WorkflowStore {
       updatedAt: this.now(),
       recordedFromTaskId: input.recordedFromTaskId,
       taintAtCapture: input.taintAtCapture,
+      droppedSteps: input.droppedSteps ?? [],
       state: 'stored',
     };
 
-    // The last gate before disk. The types have nowhere to put a credential
-    // or a page's text, and this refuses a record that grew one anyway.
+    // The last two gates before disk. The first refuses a record that grew a
+    // field for a credential or a page's text; the second refuses a
+    // page-derived value anywhere other than the one place it is allowed —
+    // the match predicate of an element binding.
     assertWorkflowSafe(record as unknown as Record<string, unknown>);
+    assertProvenancePlacement(record as unknown as Record<string, unknown>);
     return record;
   }
 

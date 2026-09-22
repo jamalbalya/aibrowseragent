@@ -25,7 +25,13 @@
  * that taint would have refused.
  */
 import { REDACTED, redact, isSensitiveFieldName } from '@/security/redaction/secret-redactor';
-import type { SkillBinding, SkillInput } from '@/skills/core/skill-model';
+import {
+  isBindableRole,
+  type ElementBinding,
+  type SkillBinding,
+  type SkillInput,
+} from '@/skills/core/skill-model';
+import type { ActedOnElement } from '@/content/semantic-tree';
 import type { TaintState } from '@/security/taint/taint-state';
 
 /** Arguments whose value is a credential or a secret by the tool's own design. */
@@ -44,20 +50,18 @@ const ALWAYS_SLOT_ARGUMENTS: ReadonlySet<string> = new Set(
 const STRUCTURAL_ARGUMENTS: ReadonlySet<string> = new Set(['clearfirst', 'submit']);
 
 /**
- * Arguments naming an element handle, which cannot be recorded at all yet.
+ * Arguments naming an element handle.
  *
  * A handle is `e<snapshot>-<index>` and is valid only for the page read that
  * minted it: a replay reads the page again, which starts a new snapshot, so a
- * stored handle is refused as stale every single time. Storing one would put a
- * step into a workflow that can never succeed.
+ * stored handle is refused as stale every single time. It is therefore never
+ * stored.
  *
- * The right shape is the declarative `ElementBinding` — a role and an
- * accessible name, re-resolved against a fresh read — which the validator and
- * the runner already support. The recorder cannot build one yet: the semantic
- * identity of a handle lives in the `browser.read_page` result that produced
- * it, and a dispatch observation deliberately carries no result. So a step
- * naming an element is left out of the recording, with a reason, rather than
- * recorded in a form that cannot run.
+ * What is stored instead is the declarative `ElementBinding` §49 asks for — a
+ * role and an accessible name, re-resolved against a fresh read — built from
+ * the descriptor the tool reported for the element it acted on. When no such
+ * descriptor is available, or it cannot be stored safely, the step is left
+ * out of the recording rather than recorded in a form that cannot run.
  */
 const ELEMENT_HANDLE_ARGUMENTS: ReadonlySet<string> = new Set(['elementid']);
 
@@ -67,6 +71,11 @@ const SHORT_VALUE = 24;
 export type ParameterDecision =
   | { readonly kind: 'literal'; readonly binding: SkillBinding }
   | { readonly kind: 'slot'; readonly binding: SkillBinding; readonly input: SkillInput }
+  // Separate from `literal` on purpose: an element binding supplies no value.
+  // It is a match predicate, re-resolved at replay against a page read, and
+  // keeping it a distinct outcome is what stops page-derived text ever being
+  // handled by the code path that produces stored literals.
+  | { readonly kind: 'element'; readonly binding: ElementBinding }
   | { readonly kind: 'refused'; readonly reason: string };
 
 export interface ParameteriseInput {
@@ -76,6 +85,10 @@ export interface ParameteriseInput {
   readonly value: unknown;
   /** The task's taint when the call was made. */
   readonly taint: TaintState;
+  /** The element the call acted on, when the tool reported one. */
+  readonly actedOn?: ActedOnElement;
+  /** The recorded step whose page read a binding resolves against. */
+  readonly elementStep?: string;
 }
 
 /**
@@ -109,14 +122,10 @@ export function parameteriseArgument(input: ParameteriseInput): ParameterDecisio
     return slot(input, 'a credential-carrying argument');
   }
 
-  // A handle from one page read cannot be replayed against another.
+  // A handle from one page read cannot be replayed against another, so what
+  // is stored is a description of the element rather than the handle.
   if (ELEMENT_HANDLE_ARGUMENTS.has(lower)) {
-    return {
-      kind: 'refused',
-      reason:
-        'this step acts on an element the recorder cannot yet describe in a way that ' +
-        'would still mean the same thing on a later visit',
-    };
+    return bindElement(input);
   }
 
   // Structure, not data: kept as written because it is not a value a person
@@ -205,3 +214,98 @@ export function looksSecret(argument: string, value: unknown): boolean {
 function hasPayloadShape(value: string): boolean {
   return /\s/.test(value) || /^[a-z][a-z0-9+.-]*:/i.test(value) || value.includes('@');
 }
+
+/**
+ * How long an accessible name may be and still be worth storing.
+ *
+ * Short enough that a name is a label rather than a paragraph. A control
+ * named by a sentence of page prose is not something a recording should be
+ * carrying around, and matching on it would be brittle anyway.
+ */
+const MAX_BINDING_NAME = 64;
+
+/**
+ * Turns the element a step acted on into a binding, or refuses.
+ *
+ * Every check here decides **whether the binding may be stored at all**. None
+ * of them changes where the data came from: the result always carries
+ * `PAGE_DERIVED`, because it always did come from a page. Semantic validity
+ * and provenance are independent properties, and passing the first never
+ * grants the second.
+ */
+function bindElement(input: ParameteriseInput): ParameterDecision {
+  const actedOn = input.actedOn;
+  if (!actedOn) {
+    return {
+      kind: 'refused',
+      reason: 'the element this step used could not be described without its page handle',
+    };
+  }
+
+  // A role is page-controlled — a page sets `role="anything"`, and an element
+  // with no mapping reports its tag name — so only roles a recorded
+  // interaction can meaningfully target are bindable.
+  if (!isBindableRole(actedOn.role)) {
+    return {
+      kind: 'refused',
+      reason: `the element is a "${actedOn.role}", which is not something a recording can name`,
+    };
+  }
+
+  const name = actedOn.name.trim();
+  if (name.length === 0 || name.length > MAX_BINDING_NAME) {
+    return {
+      kind: 'refused',
+      reason: 'the element has no short, stable name to recognise it by',
+    };
+  }
+
+  // Secret detection, before anything is persisted and regardless of
+  // provenance — the same check every other captured value gets. It can only
+  // ever reject: passing it does not make this value authored, untainted or
+  // trusted, it just removes one reason to refuse.
+  if (looksSecret('name', name)) {
+    return {
+      kind: 'refused',
+      reason: 'the element’s name looked like it contained a credential',
+    };
+  }
+
+  // A name carrying selector or scheme syntax is either a mistake or an
+  // attempt to smuggle one in. Refused rather than sanitised, so nothing
+  // downstream has to reason about a partially-cleaned value.
+  if (SELECTOR_SHAPED_NAME.test(name)) {
+    return {
+      kind: 'refused',
+      reason: 'the element’s name looked like a selector rather than a label',
+    };
+  }
+
+  // Ambiguity at record time is refused rather than pinned by position. A
+  // recording that says "the third Delete button" is a recording that clicks
+  // the wrong thing the moment a row is added.
+  if (actedOn.matchCount !== 1) {
+    return {
+      kind: 'refused',
+      reason: `${actedOn.matchCount} elements on the page shared that role and name`,
+    };
+  }
+
+  return {
+    kind: 'element',
+    binding: {
+      kind: 'element',
+      // Recorded at origin, never inferred from the value and never changed by
+      // anything above. See `BindingProvenance`.
+      provenance: 'PAGE_DERIVED',
+      purpose: 'ELEMENT_BINDING',
+      step: input.elementStep ?? '',
+      role: actedOn.role.trim().toLowerCase(),
+      name,
+      ...(actedOn.enabled && actedOn.visible ? { expect: 'editable' as const } : {}),
+    },
+  };
+}
+
+/** Selector and scheme syntax, which a label never contains. */
+const SELECTOR_SHAPED_NAME = /[<>{}()[\]$*|\\/]|^[.#]|javascript:|data:|::|=>/i;

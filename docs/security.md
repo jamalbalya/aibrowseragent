@@ -448,6 +448,21 @@ The boundary rests on four properties:
   where `KNOWN_UNTAINTED` establishes provenance and says nothing about whether
   a value is safe to keep. A task with `UNKNOWN` provenance contributes nothing
   at all.
+- **Page-derived match data stays page-derived.** A recorded click stores a
+  role and an accessible name read out of the page, tagged `PAGE_DERIVED` and
+  `ELEMENT_BINDING` permanently. Passing ARIA validation, secret detection, a
+  length check or a uniqueness check gates whether it may be stored at all;
+  none of them changes where it came from. It may be compared for equality
+  against a fresh page read and displayed in the review surface, and nothing
+  else — not a tool argument, not a selector, not a policy or permission
+  input, not a destination, not an egress payload, not audit or evidence, not
+  a permission prompt, and never model context. This is not an exception to
+  the taint model: a binding is a match predicate, not a literal, and the rule
+  governing literals is unchanged.
+- **A recording that is missing a step cannot run.** What the recorder could
+  not write down is persisted with the record, shown in position, and refuses
+  the replay — running the subset would report success having done something
+  the recording does not describe.
 - **A stored definition is the store's to identify.** The store canonicalises
   and hashes what it is about to persist; a caller cannot supply a hash. The
   hash is re-derived before every replay, so a record altered underneath the

@@ -2435,16 +2435,19 @@ also deliberately not registered — it never reaches `skills.list` and is never
 model-selectable, so replay is an explicit user action. See
 `docs/workflows.md`.
 
-It is PARTIAL for one reason, which is a gap against specification §49 rather
-than a missing test: element interactions are not recorded. The declarative
-role-and-name binding §49 asks for exists and replay resolves it, but the
-recorder cannot build one, because a click's argument is a page-read-scoped
-handle and the dispatch observation carries no result to convert it from. Such
-a step is left out of the recording with a reason rather than stored in a form
-that is refused as stale on every replay. Closing it needs a decision not yet
-taken: how the recorder learns an element's semantic identity without an
-observation carrying a step result, and whether a page-read accessible name may
-be stored as a literal.
+Element interactions are recorded as §49 asks. A click stores a role and an
+accessible name rather than a handle or a selector, built from a six-scalar
+descriptor the acting tool reports for the node it had already resolved — no
+new permission, no `Runtime.evaluate`, no selector engine, no second query.
+That data is tagged `PAGE_DERIVED` and `ELEMENT_BINDING` permanently: semantic
+validity gates whether it may be stored, and never changes where it came from.
+It may only be compared for equality against a fresh page read or shown in the
+review surface.
+
+It remains PARTIAL for reach rather than architecture: the §85 A–F manual
+acceptance scenarios have not been run, as for every other capability, and the
+multi-connector reference workflow of §44 cannot be recorded because those
+connectors do not exist.
 
 Shortcuts, scheduling, MCP and plugins remain NOT-STARTED. Shortcuts (P-021)
 named workflow recording as its dependency and is now unblocked.

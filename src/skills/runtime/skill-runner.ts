@@ -30,6 +30,7 @@ import { getLogger } from '@/logging/logger';
 import { newToolCallId } from '@/utils/ids';
 import { addTaint, type TaintState } from '@/security/taint/taint-state';
 import { taintSignature } from '@/security/egress/consent';
+import { REDACTED, redact } from '@/security/redaction/secret-redactor';
 import type { TaintSource } from '@/security/exfiltration/exfiltration-guard';
 import type { EvidenceReference } from '@/evidence/evidence-model';
 import type { RiskLevel } from '@/policy/risk-classifier';
@@ -539,6 +540,12 @@ export function resolveElement(binding: ElementBinding, stepResult: unknown): un
   // something stable rather than to whatever the array happened to hold.
   const matches = elements.filter((element) => {
     if (typeof element.role !== 'string' || typeof element.name !== 'string') return false;
+    // Re-checked against the page as it is now, not only as it was when the
+    // binding was recorded. A page that has since put a credential into a
+    // label must not have it read back into a comparison, so such a candidate
+    // is not considered at all — which fails the step closed rather than
+    // matching something else.
+    if (looksLikeSecret(element.name)) return false;
     if (element.role.trim().toLowerCase() !== role) return false;
     if (element.name.trim().toLowerCase() !== name) return false;
     return satisfiesExpectation(element, binding.expect);
@@ -555,6 +562,18 @@ export function resolveElement(binding: ElementBinding, stepResult: unknown): un
 
   const chosen = matches[binding.nth];
   return chosen === undefined ? undefined : idOf(chosen);
+}
+
+/**
+ * Whether a page's current label looks like it carries a credential.
+ *
+ * The same redactor the logs, evidence and audit trail use, so a binding
+ * cannot match on something they would have refused to record.
+ */
+function looksLikeSecret(value: string): boolean {
+  if (value.length === 0) return false;
+  const redacted = redact(value);
+  return redacted !== value || redacted.includes(REDACTED);
 }
 
 function satisfiesExpectation(

@@ -10,7 +10,7 @@
  * it, but the page fully controls the DOM it reads. Everything produced here
  * is therefore untrusted data.
  */
-import { ElementRegistry, extractSemanticPage } from './semantic-tree';
+import { ElementRegistry, describeActedOn, extractSemanticPage } from './semantic-tree';
 import {
   performAttachFiles,
   performClearFiles,
@@ -61,37 +61,60 @@ const handlers: Handlers = {
     if (!resolved.ok)
       throw new InteractionRejection(resolved.error.failure, resolved.error.message);
 
+    // Described before the action, because a click can navigate away or
+    // detach the node — after which there is nothing left to describe.
+    const actedOn = describeActedOn(registry, resolved.element);
+
     const before = location.href;
     performClick(resolved.element);
     // A synchronous same-document navigation shows up immediately; a network
     // navigation is detected by the caller via tab state, not here.
-    return { clicked: true as const, navigated: location.href !== before };
+    return {
+      clicked: true as const,
+      navigated: location.href !== before,
+      ...(actedOn === undefined ? {} : { actedOn }),
+    };
   },
 
   'content.type': (payload) => {
     const resolved = resolveActionable(registry, payload.elementId);
     if (!resolved.ok)
       throw new InteractionRejection(resolved.error.failure, resolved.error.message);
+    // Before the action: typing can change an element's own accessible name
+    // — a field labelled by its contents is named after whatever is in it —
+    // so describing it afterwards would describe the state the action
+    // produced rather than the one it targeted.
+    const actedOn = describeActedOn(registry, resolved.element);
+
     performType(resolved.element, payload.text, {
       ...(payload.clearFirst === undefined ? {} : { clearFirst: payload.clearFirst }),
       ...(payload.submit === undefined ? {} : { submit: payload.submit }),
     });
-    return { typed: true as const };
+    return { typed: true as const, ...(actedOn === undefined ? {} : { actedOn }) };
   },
 
   'content.select': (payload) => {
     const resolved = resolveActionable(registry, payload.elementId);
     if (!resolved.ok)
       throw new InteractionRejection(resolved.error.failure, resolved.error.message);
+    const actedOn = describeActedOn(registry, resolved.element);
     const result = performSelect(resolved.element, payload.value);
-    return { selected: true as const, value: result.value };
+    return {
+      selected: true as const,
+      value: result.value,
+      ...(actedOn === undefined ? {} : { actedOn }),
+    };
   },
 
   'content.setChecked': (payload) => {
     const resolved = resolveActionable(registry, payload.elementId);
     if (!resolved.ok)
       throw new InteractionRejection(resolved.error.failure, resolved.error.message);
-    return performSetChecked(resolved.element, payload.checked);
+    const actedOn = describeActedOn(registry, resolved.element);
+    return {
+      ...performSetChecked(resolved.element, payload.checked),
+      ...(actedOn === undefined ? {} : { actedOn }),
+    };
   },
 
   /**

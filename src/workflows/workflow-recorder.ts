@@ -28,7 +28,7 @@ import type {
   SkillStep,
 } from '@/skills/core/skill-model';
 import { MAX_STEPS_PER_SKILL } from '@/skills/core/skill-model';
-import { RECORDED_PROVENANCE } from './workflow-model';
+import { RECORDED_PROVENANCE, type DroppedStep } from './workflow-model';
 import { parameteriseArgument } from './parameteriser';
 
 const log = getLogger('agent');
@@ -44,6 +44,9 @@ const NOT_RECORDABLE: ReadonlySet<string> = new Set([
   'debugger.detach',
 ]);
 
+/** Tools whose result an element binding can be resolved against. */
+const PAGE_READS: ReadonlySet<string> = new Set(['browser.read_page']);
+
 export interface RecordedStep {
   readonly step: SkillStep;
   readonly inputs: readonly SkillInput[];
@@ -53,7 +56,8 @@ export interface RecordingSummary {
   readonly taskId: string;
   readonly startedAt: number;
   readonly stepCount: number;
-  readonly skipped: readonly { readonly tool: string; readonly reason: string }[];
+  /** What the recorder watched happen and could not write down, in position. */
+  readonly skipped: readonly DroppedStep[];
 }
 
 export interface WorkflowRecorderOptions {
@@ -67,7 +71,15 @@ interface Session {
   readonly startedAt: number;
   readonly steps: SkillStep[];
   readonly inputs: SkillInput[];
-  readonly skipped: { tool: string; reason: string }[];
+  readonly skipped: DroppedStep[];
+  /**
+   * The most recent recorded step that read the page.
+   *
+   * An element binding resolves against a page read, so it has to name one.
+   * A recording with no read before an interaction cannot express that
+   * interaction, and the step is dropped rather than bound to nothing.
+   */
+  lastPageRead: string | null;
   /** The broadest taint seen while recording, for the stored record. */
   taint: 'KNOWN_UNTAINTED' | 'TAINTED' | 'UNKNOWN';
 }
@@ -88,6 +100,7 @@ export class WorkflowRecorder {
       steps: [],
       inputs: [],
       skipped: [],
+      lastPageRead: null,
       taint: 'KNOWN_UNTAINTED',
     };
     log.info('Workflow recording started.', { taskId });
@@ -129,12 +142,12 @@ export class WorkflowRecorder {
     if (!observation.executed || observation.status !== 'success') return;
 
     if (NOT_RECORDABLE.has(observation.tool)) {
-      session.skipped.push({ tool: observation.tool, reason: 'not a recordable action' });
+      this.drop(session, observation.tool, 'not a recordable action');
       return;
     }
 
     if (session.steps.length >= MAX_STEPS_PER_SKILL) {
-      session.skipped.push({ tool: observation.tool, reason: 'the workflow is already full' });
+      this.drop(session, observation.tool, 'the workflow is already full');
       return;
     }
 
@@ -156,10 +169,22 @@ export class WorkflowRecorder {
         argument,
         value,
         taint,
+        ...(observation.actedOn === undefined ? {} : { actedOn: observation.actedOn }),
+        ...(session.lastPageRead === null ? {} : { elementStep: session.lastPageRead }),
       });
 
       if (decision.kind === 'refused') {
-        session.skipped.push({ tool: observation.tool, reason: decision.reason });
+        // The whole step goes, not just the argument. A step recorded with
+        // one argument missing would replay as something nobody did.
+        this.drop(session, observation.tool, decision.reason);
+        return;
+      }
+      if (decision.kind === 'element' && decision.binding.step.length === 0) {
+        this.drop(
+          session,
+          observation.tool,
+          'nothing read the page before this step, so the element cannot be found again',
+        );
         return;
       }
       args[argument] = decision.binding;
@@ -174,6 +199,16 @@ export class WorkflowRecorder {
       arguments: args,
     });
     session.inputs.push(...newInputs);
+    if (PAGE_READS.has(observation.tool)) session.lastPageRead = stepId;
+  }
+
+  /** Records a step that happened and could not be written down, in position. */
+  private drop(session: Session, tool: string, reason: string): void {
+    session.skipped.push({
+      afterStepId: session.steps.at(-1)?.id ?? null,
+      tool,
+      reason,
+    });
   }
 
   /**

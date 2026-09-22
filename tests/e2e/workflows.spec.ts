@@ -20,6 +20,7 @@
  * skill list and the tool list are the real ones here, so "it is not in
  * skills.list" is a statement about the product rather than about a fixture.
  */
+import type { Page } from '@playwright/test';
 import {
   connectProvider,
   expect,
@@ -27,6 +28,8 @@ import {
   waitForTask,
   type SendToWorker,
 } from './fixtures/extension';
+import type { ScriptedReply } from './fixtures/mock-provider';
+import type { PanelResponse } from '@/messaging/protocol';
 
 /** Answers every permission prompt, as the side panel would. */
 function autoAnswer(
@@ -267,17 +270,19 @@ test('a workflow whose stored definition was tampered with is refused, not run',
   expect(target.url()).not.toContain('elsewhere.test');
 });
 
-test('a click is left out of a recording rather than stored as a handle that cannot replay', async ({
-  context,
-  send,
-  provider,
-  site,
-}) => {
-  const target = await context.newPage();
-  await target.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
-  await target.bringToFront();
-
-  await connectProvider(send, provider);
+/**
+ * Records a click on the catalogue's Search button and returns the workflow.
+ *
+ * The page is marked first so a later replay can be checked against the DOM
+ * rather than against a status string: a step that reports success having
+ * clicked nothing, or having clicked something else, is exactly the failure
+ * these tests exist to catch.
+ */
+async function recordAClick(
+  send: SendToWorker,
+  provider: { script: (replies: readonly ScriptedReply[]) => void },
+  name = 'Click search',
+): Promise<PanelResponse<'workflow.recordStop'>> {
   provider.script([
     { kind: 'tool_calls', calls: [{ name: 'browser.read_page', arguments: {} }] },
     // `$lastElementId` is substituted with a handle the real page model just
@@ -289,33 +294,293 @@ test('a click is left out of a recording rather than stored as a handle that can
     { kind: 'text', text: 'Clicked.' },
   ]);
 
-  const { task } = await send('task.create', { objective: 'Read the page, then click something.' });
+  const { task } = await send('task.create', { objective: 'Read the page, then click Search.' });
   await send('workflow.recordStart', { taskId: task.id });
   const finished = await waitForTask(send, task.id, 40_000);
   expect(finished.state).toBe('COMPLETED');
 
-  const saved = await send('workflow.recordStop', {
-    name: 'Read then click',
-    description: 'Recorded from a real task that really clicked.',
+  return await send('workflow.recordStop', { name, description: 'Recorded from a real task.' });
+}
+
+/** Counts clicks per element id, so a replay can be checked against the DOM. */
+async function markClicks(target: Page): Promise<void> {
+  await target.evaluate(() => {
+    const seen: string[] = [];
+    (window as unknown as { __clicked: string[] }).__clicked = seen;
+    document.addEventListener(
+      'click',
+      (event) => {
+        const element = event.target as Element | null;
+        seen.push(element?.id ?? element?.tagName ?? 'unknown');
+      },
+      true,
+    );
   });
+}
+
+function clicksSeen(target: Page): Promise<string[]> {
+  return target.evaluate(() => (window as unknown as { __clicked: string[] }).__clicked ?? []);
+}
+
+test('a recorded click is stored as a page-derived binding, never as a handle', async ({
+  context,
+  send,
+  provider,
+  site,
+}) => {
+  const target = await context.newPage();
+  await target.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await target.bringToFront();
+  await connectProvider(send, provider);
+
+  const saved = await recordAClick(send, provider);
   expect(saved.workflow).not.toBeNull();
+  const workflow = saved.workflow!;
 
-  // The read is recorded; the click is not, and the recording says why.
-  const tools = saved.workflow!.steps.map((step) => step.tool);
-  expect(tools).toContain('browser.read_page');
-  expect(tools).not.toContain('browser.click');
-  expect(saved.skipped.map((entry) => entry.tool)).toContain('browser.click');
+  // The click is recorded, which is what §49 asks for.
+  expect(workflow.steps.map((step) => step.tool)).toEqual(['browser.read_page', 'browser.click']);
+  expect(workflow.incomplete).toBe(false);
+  expect(workflow.droppedSteps).toEqual([]);
 
-  // A handle is snapshot-scoped, so storing one would produce a step that
-  // fails on every replay. Nothing in the stored definition holds one.
-  expect(JSON.stringify(saved.workflow)).not.toMatch(/"e\d+-\d+"/);
+  // As a description of the element, not as the handle that was used. A
+  // handle names one page read and would be refused as stale on every replay.
+  const click = workflow.steps[1]!;
+  expect(click.arguments['elementId']?.kind).toBe('element');
+  expect(click.arguments['elementId']?.detail).toContain('button');
+  expect(click.arguments['elementId']?.detail).toContain('Search');
+  expect(JSON.stringify(workflow)).not.toMatch(/"e\d+-\d+"/);
+});
 
-  // And what was recorded replays cleanly, rather than stopping at a step
-  // that could never have run.
-  const replayed = await send('workflow.replay', {
-    workflowId: saved.workflow!.workflowId,
-    inputs: {},
+test('a recorded binding carries PAGE_DERIVED provenance in real extension storage', async ({
+  context,
+  send,
+  provider,
+  site,
+}) => {
+  const target = await context.newPage();
+  await target.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await target.bringToFront();
+  await connectProvider(send, provider);
+
+  await recordAClick(send, provider);
+
+  const worker = context.serviceWorkers()[0];
+  if (!worker) throw new Error('The service worker was not running.');
+  const stored = await worker.evaluate(async () => {
+    const key = 'workflows:workflows';
+    const all = await chrome.storage.local.get(key);
+    return JSON.stringify(all[key] ?? null);
   });
+
+  // The tag is on the binding, and the binding is the only place a
+  // page-derived value is allowed to be.
+  expect(stored).toContain('"provenance":"PAGE_DERIVED"');
+  expect(stored).toContain('"purpose":"ELEMENT_BINDING"');
+  expect(stored).not.toContain('KNOWN_UNTAINTED_ELEMENT');
+
+  // Every occurrence of the tag sits on an element binding, never on a
+  // literal. A literal is a value something is given; a binding is a
+  // predicate something is matched against, and only the second may hold
+  // page-derived text.
+  const parsed = JSON.parse(stored) as {
+    workflows: {
+      definition: { steps: { arguments: Record<string, { kind: string; provenance?: string }> }[] };
+    }[];
+  };
+  for (const record of parsed.workflows) {
+    for (const step of record.definition.steps) {
+      for (const binding of Object.values(step.arguments)) {
+        if (binding.provenance !== undefined) expect(binding.kind).toBe('element');
+      }
+    }
+  }
+});
+
+test('replaying a recorded click acts on the element that was originally clicked', async ({
+  context,
+  send,
+  provider,
+  site,
+}) => {
+  const target = await context.newPage();
+  await target.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await target.bringToFront();
+  await connectProvider(send, provider);
+
+  const saved = await recordAClick(send, provider);
+  const workflowId = saved.workflow!.workflowId;
+
+  // Marked after recording, so the count below covers the replay alone.
+  await markClicks(target);
+  expect(await clicksSeen(target)).toEqual([]);
+
+  const replayed = await send('workflow.replay', { workflowId, inputs: {} });
   expect(replayed.ok).toBe(true);
   expect(replayed.status).toBe('completed');
+
+  // The claim, checked against the DOM rather than against a status string:
+  // the same button really received the event.
+  expect(await clicksSeen(target)).toEqual(['submit']);
+});
+
+test('a renamed element fails the replay closed, with nothing clicked', async ({
+  context,
+  send,
+  provider,
+  site,
+}) => {
+  const target = await context.newPage();
+  await target.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await target.bringToFront();
+  await connectProvider(send, provider);
+
+  const saved = await recordAClick(send, provider);
+  const workflowId = saved.workflow!.workflowId;
+
+  // The page no longer has anything by that name. A recording that fell back
+  // to matching on role alone would click this button anyway.
+  await target.evaluate(() => {
+    const button = document.getElementById('submit');
+    if (button) button.textContent = 'Find';
+  });
+  await markClicks(target);
+
+  const replayed = await send('workflow.replay', { workflowId, inputs: {} });
+  expect(replayed.ok).toBe(false);
+  expect(await clicksSeen(target)).toEqual([]);
+});
+
+test('a duplicated element fails the replay closed, with nothing clicked', async ({
+  context,
+  send,
+  provider,
+  site,
+}) => {
+  const target = await context.newPage();
+  await target.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await target.bringToFront();
+  await connectProvider(send, provider);
+
+  const saved = await recordAClick(send, provider);
+  const workflowId = saved.workflow!.workflowId;
+
+  // Two buttons now answer to that description. Taking the first would be a
+  // coin flip dressed up as a decision, so the binding refuses.
+  await target.evaluate(() => {
+    const twin = document.createElement('button');
+    twin.id = 'submit-twin';
+    twin.textContent = 'Search';
+    document.body.appendChild(twin);
+  });
+  await markClicks(target);
+
+  const replayed = await send('workflow.replay', { workflowId, inputs: {} });
+  expect(replayed.ok).toBe(false);
+  expect(await clicksSeen(target)).toEqual([]);
+});
+
+test('a secret-shaped accessible name is never stored, and the recording says so', async ({
+  context,
+  send,
+  provider,
+  site,
+}) => {
+  const target = await context.newPage();
+  await target.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await target.bringToFront();
+  await connectProvider(send, provider);
+
+  // Assembled in the page so no scannable credential literal sits on one line
+  // of this file either.
+  const planted = await target.evaluate(() => {
+    const token = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+    const button = document.getElementById('submit');
+    if (button) button.textContent = token;
+    return token;
+  });
+
+  const saved = await recordAClick(send, provider, 'Click a badly named button');
+  expect(saved.workflow).not.toBeNull();
+  const workflow = saved.workflow!;
+
+  // Secret detection runs before anything is persisted, whatever the
+  // provenance, so the step is dropped rather than stored.
+  expect(workflow.steps.map((step) => step.tool)).toEqual(['browser.read_page']);
+  expect(workflow.incomplete).toBe(true);
+  expect(workflow.droppedSteps.map((entry) => entry.tool)).toEqual(['browser.click']);
+  // Positioned, not listed at the end: the review UI renders the gap where it
+  // actually was, and a gap between two steps means something different from
+  // one after the last.
+  expect(workflow.droppedSteps[0]?.afterStepId).toBe(workflow.steps[0]?.id);
+  expect(workflow.droppedSteps[0]?.reason).toContain('credential');
+
+  // Not truncated, not hashed, not a slot default: nowhere at all, including
+  // in what actually reached disk.
+  expect(JSON.stringify(workflow)).not.toContain(planted);
+  const worker = context.serviceWorkers()[0];
+  if (!worker) throw new Error('The service worker was not running.');
+  const stored = await worker.evaluate(async () => {
+    const all = await chrome.storage.local.get('workflows:workflows');
+    return JSON.stringify(all['workflows:workflows'] ?? null);
+  });
+  expect(stored).not.toContain(planted);
+  expect(stored).not.toContain(planted.slice(0, 12));
+});
+
+test('an incomplete recording cannot be replayed at all', async ({
+  context,
+  send,
+  provider,
+  site,
+}) => {
+  const target = await context.newPage();
+  await target.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await target.bringToFront();
+  await connectProvider(send, provider);
+
+  await target.evaluate(() => {
+    const button = document.getElementById('submit');
+    if (button) button.textContent = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+  });
+
+  const saved = await recordAClick(send, provider, 'An incomplete recording');
+  const workflowId = saved.workflow!.workflowId;
+  expect(saved.workflow!.incomplete).toBe(true);
+
+  // Reviewing says why, and runs nothing.
+  const verdict = await send('workflow.revalidate', { workflowId });
+  expect(verdict.ok).toBe(false);
+  expect(verdict.reason).toBe('INCOMPLETE_RECORDING');
+
+  await markClicks(target);
+  const replayed = await send('workflow.replay', { workflowId, inputs: {} });
+
+  // Refused, and not reported as a success. Running the steps that *were*
+  // captured would do something different from the task this came from.
+  expect(replayed.ok).toBe(false);
+  expect(replayed.reason).toBe('INCOMPLETE_RECORDING');
+  expect(replayed.status).toBeUndefined();
+  expect(await clicksSeen(target)).toEqual([]);
+});
+
+test('recording added no permission and no host access', async ({ serviceWorker }) => {
+  const manifest = await serviceWorker.evaluate(() => chrome.runtime.getManifest());
+
+  // Read out of the manifest Chrome actually loaded, not off disk.
+  expect(manifest.permissions ?? []).toEqual([
+    'sidePanel',
+    'storage',
+    'unlimitedStorage',
+    'tabs',
+    'tabGroups',
+    'scripting',
+    'debugger',
+    'notifications',
+    'activeTab',
+  ]);
+  expect(manifest.host_permissions ?? []).toEqual(['http://*/*', 'https://*/*']);
+  expect((manifest.host_permissions ?? []).includes('<all_urls>')).toBe(false);
+  for (const script of manifest.content_scripts ?? []) {
+    expect(script.all_frames ?? false).toBe(false);
+  }
 });

@@ -62,7 +62,7 @@ import { createSkillTools } from '@/tools/skills/skill-tools';
 import { WorkflowStore } from '@/workflows/workflow-store';
 import { WorkflowRecorder } from '@/workflows/workflow-recorder';
 import { WorkflowReplayer } from '@/workflows/workflow-replay';
-import type { RecordedWorkflow } from '@/workflows/workflow-model';
+import { isIncomplete, type RecordedWorkflow } from '@/workflows/workflow-model';
 import type { WorkflowSummary } from '@/messaging/protocol';
 import {
   GitHubConnector,
@@ -719,6 +719,12 @@ function summariseWorkflow(record: RecordedWorkflow): WorkflowSummary {
     recordedAt: record.recordedAt,
     updatedAt: record.updatedAt,
     taintAtCapture: record.taintAtCapture,
+    incomplete: isIncomplete(record),
+    droppedSteps: record.droppedSteps.map((dropped) => ({
+      afterStepId: dropped.afterStepId,
+      tool: dropped.tool,
+      reason: dropped.reason,
+    })),
     steps: record.definition.steps.map((step) => ({
       id: step.id,
       tool: step.kind === 'tool' ? step.tool : step.skill,
@@ -735,7 +741,7 @@ function summariseWorkflow(record: RecordedWorkflow): WorkflowSummary {
                   ? `asked for at replay (${binding.name})`
                   : binding.kind === 'step'
                     ? `from step ${binding.step}`
-                    : `the ${binding.role} named "${binding.name}"`,
+                    : `the ${binding.role} named "${binding.name}" (read from the page)`,
           },
         ]),
       ),
@@ -1290,6 +1296,9 @@ router.on('workflow.recordStop', async ({ name, description }) => {
     definition: captured.definition,
     recordedFromTaskId: captured.summary.taskId,
     taintAtCapture: captured.taint,
+    // Persisted with the record, not merely reported here: a reader opening
+    // this workflow tomorrow has to be able to see what is missing from it.
+    droppedSteps: captured.summary.skipped,
   });
   await auditLog.record({
     type: 'workflow.recorded',

@@ -264,7 +264,13 @@ export function createClickTool({ adapter }: BrowserToolDeps): AgentTool<typeof 
         const result = await adapter.callContent(tab.id, 'content.click', {
           elementId: input.elementId,
         });
-        return { success: true, data: { clicked: result.clicked, navigated: result.navigated } };
+        return {
+          success: true,
+          data: { clicked: result.clicked, navigated: result.navigated },
+          // Beside `data`, never inside it: this is page-derived text for the
+          // observation hook, and `data` is what the model reads.
+          ...(result.actedOn === undefined ? {} : { actedOn: result.actedOn }),
+        };
       } catch (error) {
         rethrowContentError(error, tab.url);
       }
@@ -319,7 +325,7 @@ export function createTypeTool({ adapter }: BrowserToolDeps): AgentTool<typeof t
     async execute(input, context): Promise<ToolExecutionResult> {
       const tab = await requireTab(adapter, context);
       try {
-        await adapter.callContent(tab.id, 'content.type', {
+        const result = await adapter.callContent(tab.id, 'content.type', {
           elementId: input.elementId,
           text: input.text,
           ...(input.clearFirst === undefined ? {} : { clearFirst: input.clearFirst }),
@@ -327,7 +333,11 @@ export function createTypeTool({ adapter }: BrowserToolDeps): AgentTool<typeof t
         });
         // The typed text is echoed back as a length, never as content: it may
         // be something the user would not want repeated into model context.
-        return { success: true, data: { typed: true, characters: input.text.length } };
+        return {
+          success: true,
+          data: { typed: true, characters: input.text.length },
+          ...(result.actedOn === undefined ? {} : { actedOn: result.actedOn }),
+        };
       } catch (error) {
         rethrowContentError(error, tab.url);
       }
@@ -371,7 +381,11 @@ export function createSelectTool({ adapter }: BrowserToolDeps): AgentTool<typeof
           elementId: input.elementId,
           value: input.value,
         });
-        return { success: true, data: { selected: true, value: result.value } };
+        return {
+          success: true,
+          data: { selected: true, value: result.value },
+          ...(result.actedOn === undefined ? {} : { actedOn: result.actedOn }),
+        };
       } catch (error) {
         rethrowContentError(error, tab.url);
       }

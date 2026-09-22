@@ -958,3 +958,25 @@ body {
   background: var(--danger-bg, #fdeaea);
   color: var(--danger, #a12222);
 }
+
+/*
+ * A step the recorder watched and could not write down.
+ *
+ * Styled as a gap rather than as an item, because that is what it is: the
+ * workflow will not do this, and a reader deciding whether to replay needs to
+ * see the difference between what was recorded and what happened.
+ */
+.workflow__dropped {
+  color: var(--danger, #a12222);
+}
+
+.workflow__droppedTag {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.workflow__droppedReason {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}

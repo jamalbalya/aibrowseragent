@@ -103,6 +103,17 @@ export class ElementRegistry {
     return this.generation;
   }
 
+  /**
+   * Every element in the current snapshot, in the order it was registered.
+   *
+   * Registration follows `querySelectorAll`, so this is document order — the
+   * same order a replay's binding resolution walks. `nth` therefore means the
+   * same thing at record time and at replay time.
+   */
+  all(): Element[] {
+    return [...this.elements.values()];
+  }
+
   register(element: Element, index: number): string {
     const handle = `e${this.generation}-${index}`;
     this.elements.set(handle, element);
@@ -343,6 +354,73 @@ export interface ExtractOptions {
   readonly maxTextLength?: number;
   readonly includeText?: boolean;
   readonly frameId?: string;
+}
+
+/**
+ * How an element the agent just acted on can be described later.
+ *
+ * Six scalars, computed from the node the interaction engine had already
+ * resolved in order to perform the action — no second query, no traversal, no
+ * evaluation. It deliberately carries no handle, no selector, no
+ * `selectorHints`, no markup, no attributes and no surrounding text: a handle
+ * is meaningless after the snapshot that minted it, and everything else would
+ * be page content going somewhere page content does not belong.
+ *
+ * `matchCount` is included because a recorder needs to know, at the moment of
+ * the action, whether a description of this element is unambiguous. It is a
+ * fact about the page at record time and nothing more — it grants nothing, and
+ * a replay recounts the candidates against the page in front of it rather
+ * than trusting this number.
+ */
+export interface ActedOnElement {
+  readonly role: string;
+  readonly name: string;
+  /** Index among same-role, same-name elements, in document order. */
+  readonly nth: number;
+  /** How many elements shared that role and name when this ran. */
+  readonly matchCount: number;
+  readonly enabled: boolean;
+  readonly visible: boolean;
+}
+
+/** The longest accessible name worth carrying. Matches the binding's limit. */
+const MAX_ACTED_ON_NAME = 200;
+
+/**
+ * Describes the element an interaction just used.
+ *
+ * The candidate set is the current snapshot's own elements, which is the same
+ * set a replay's page read will produce, so `nth` and `matchCount` describe
+ * the world the binding will later be matched against.
+ */
+export function describeActedOn(
+  registry: ElementRegistry,
+  element: Element,
+): ActedOnElement | undefined {
+  const role = roleOf(element);
+  const name = accessibleName(element).slice(0, MAX_ACTED_ON_NAME);
+  // An element with no accessible name cannot be described declaratively.
+  // Returning nothing makes the step unrecordable, which is the fail-closed
+  // direction — a nameless binding would match on role alone.
+  if (name.trim().length === 0) return undefined;
+
+  const candidates = registry
+    .all()
+    .filter(
+      (other) =>
+        roleOf(other) === role && accessibleName(other).slice(0, MAX_ACTED_ON_NAME) === name,
+    );
+  const nth = candidates.indexOf(element);
+  if (nth < 0) return undefined;
+
+  return {
+    role,
+    name,
+    nth,
+    matchCount: candidates.length,
+    enabled: isEnabled(element),
+    visible: isVisible(element),
+  };
 }
 
 /** Builds a semantic snapshot of a document. */

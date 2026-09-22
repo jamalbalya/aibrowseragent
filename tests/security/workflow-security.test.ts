@@ -25,9 +25,12 @@ import { join, resolve } from 'node:path';
 import { buildWorkflowHarness } from '../fixtures/workflow-harness';
 import { parameteriseArgument } from '@/workflows/parameteriser';
 import {
+  MisplacedProvenanceError,
   ProhibitedWorkflowFieldError,
+  assertProvenancePlacement,
   assertWorkflowSafe,
   canonicalJson,
+  isIncomplete,
   RECORDED_PROVENANCE,
   WORKFLOW_FORMAT_VERSION,
 } from '@/workflows/workflow-model';
@@ -55,6 +58,15 @@ function sources(dir: string): string[] {
     return full.endsWith('.ts') || full.endsWith('.tsx') ? [full] : [];
   });
 }
+
+/**
+ * The provenance every recorded element binding carries.
+ *
+ * Spelled out in the tests rather than defaulted, because the whole claim is
+ * that there is no default: an untagged page-derived binding must not be
+ * representable.
+ */
+const PAGE_DERIVED = { provenance: 'PAGE_DERIVED', purpose: 'ELEMENT_BINDING' } as const;
 
 const UNTAINTED = { kind: 'KNOWN_UNTAINTED' } as const;
 const TAINTED: TaintState = {
@@ -218,7 +230,9 @@ describe('an element binding cannot become a selector language', () => {
               id: 's1',
               tool: 'fake.read',
               description: 'Click something.',
-              arguments: { elementId: { kind: 'element', step: 's0', role, name } },
+              arguments: {
+                elementId: { kind: 'element' as const, ...PAGE_DERIVED, step: 's0', role, name },
+              },
             },
           ],
         },
@@ -271,30 +285,56 @@ describe('an element binding cannot become a selector language', () => {
 
     // Nothing named that.
     expect(
-      resolveElement({ kind: 'element', step: 's0', role: 'button', name: 'Nope' }, page),
+      resolveElement(
+        { kind: 'element' as const, ...PAGE_DERIVED, step: 's0', role: 'button', name: 'Nope' },
+        page,
+      ),
     ).toBeUndefined();
     // Two candidates and no nth: refused rather than guessed.
     expect(
-      resolveElement({ kind: 'element', step: 's0', role: 'button', name: 'Save' }, page),
+      resolveElement(
+        { kind: 'element' as const, ...PAGE_DERIVED, step: 's0', role: 'button', name: 'Save' },
+        page,
+      ),
     ).toBeUndefined();
     // Disambiguated by position, which is the only disambiguation there is.
     expect(
-      resolveElement({ kind: 'element', step: 's0', role: 'button', name: 'Save', nth: 1 }, page),
+      resolveElement(
+        {
+          kind: 'element' as const,
+          ...PAGE_DERIVED,
+          step: 's0',
+          role: 'button',
+          name: 'Save',
+          nth: 1,
+        },
+        page,
+      ),
     ).toBe('e2');
     // Present, but not in the state the binding requires.
     expect(
       resolveElement(
-        { kind: 'element', step: 's0', role: 'button', name: 'Delete', expect: 'enabled' },
+        {
+          kind: 'element' as const,
+          ...PAGE_DERIVED,
+          step: 's0',
+          role: 'button',
+          name: 'Delete',
+          expect: 'enabled',
+        },
         page,
       ),
     ).toBeUndefined();
     // A stale or malformed page read resolves to nothing at all.
     expect(
-      resolveElement({ kind: 'element', step: 's0', role: 'button', name: 'Save' }, null),
+      resolveElement(
+        { kind: 'element' as const, ...PAGE_DERIVED, step: 's0', role: 'button', name: 'Save' },
+        null,
+      ),
     ).toBeUndefined();
     expect(
       resolveElement(
-        { kind: 'element', step: 's0', role: 'button', name: 'Save' },
+        { kind: 'element' as const, ...PAGE_DERIVED, step: 's0', role: 'button', name: 'Save' },
         { elements: 'no' },
       ),
     ).toBeUndefined();
@@ -643,3 +683,225 @@ function definitionFixture(): SkillDefinition {
 
 /** Kept honest: the observation type is what the tests above enumerate. */
 export type _ObservationShape = DispatchObservation;
+
+// --- 17-24. provenance is a property, not a verdict ------------------------
+
+describe('a page-derived value carries where it came from, permanently', () => {
+  it('17. refuses a stored workflow whose element binding lost its tags', async () => {
+    const harness = buildWorkflowHarness({ tools: TOOLS });
+    const definition = await recordOneWorkflow(harness);
+
+    // The tag stripped off, which is the shape a value takes when something
+    // tries to launder page text into an untagged predicate.
+    const untagged = {
+      ...definition,
+      steps: [
+        {
+          kind: 'tool' as const,
+          id: 's1',
+          tool: 'fake.read',
+          description: 'Read.',
+          arguments: {},
+        },
+        {
+          kind: 'tool' as const,
+          id: 's2',
+          tool: 'fake.write',
+          description: 'Click.',
+          arguments: {
+            elementId: { kind: 'element', step: 's1', role: 'button', name: 'Save' },
+          },
+        },
+      ],
+    } as unknown as SkillDefinition;
+
+    await expect(
+      harness.store.save({
+        name: 'Untagged',
+        description: 'A binding with no provenance.',
+        definition: untagged,
+        recordedFromTaskId: 'task_skill_1',
+        taintAtCapture: 'KNOWN_UNTAINTED',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('18. refuses a page-derived tag anywhere other than an element binding', () => {
+    // The structural half of the persistence rule. A tag on a literal is how
+    // page text would arrive somewhere that reads it as a value.
+    expect(() =>
+      assertProvenancePlacement({
+        definition: {
+          steps: [
+            {
+              arguments: {
+                url: { kind: 'literal', value: 'x', provenance: 'PAGE_DERIVED' },
+              },
+            },
+          ],
+        },
+      }),
+    ).toThrow(MisplacedProvenanceError);
+
+    expect(() =>
+      assertProvenancePlacement({ note: { purpose: 'ELEMENT_BINDING', text: 'x' } }),
+    ).toThrow(MisplacedProvenanceError);
+
+    // And the legitimate shape passes.
+    expect(() =>
+      assertProvenancePlacement({
+        definition: {
+          steps: [
+            {
+              arguments: {
+                elementId: {
+                  kind: 'element',
+                  provenance: 'PAGE_DERIVED',
+                  purpose: 'ELEMENT_BINDING',
+                  step: 's1',
+                  role: 'button',
+                  name: 'Save',
+                },
+              },
+            },
+          ],
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it('19. never lets a binding field reach the audit trail or evidence', async () => {
+    const harness = buildWorkflowHarness({ tools: TOOLS });
+    const definition = await recordOneWorkflow(harness);
+    const saved = await harness.store.save({
+      name: 'Read a page',
+      description: 'A recording.',
+      definition,
+      recordedFromTaskId: 'task_skill_1',
+      taintAtCapture: 'KNOWN_UNTAINTED',
+    });
+
+    await harness.replayer.replay({
+      workflowId: saved.workflowId,
+      sessionId: 'session_skill',
+      inputs: {},
+    });
+
+    const trail = JSON.stringify(harness.audited);
+    for (const field of ['role', 'name', 'nth', 'expect', 'PAGE_DERIVED', 'ELEMENT_BINDING']) {
+      expect(trail).not.toContain(field);
+    }
+  });
+
+  it('20. compares a binding rather than assembling anything from it', () => {
+    const files = sources(WORKFLOWS_ROOT).concat(
+      sources(resolve(import.meta.dirname, '../../src/skills/runtime')),
+    );
+
+    for (const file of files) {
+      const code = readFileSync(file, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+      // No way to turn a stored string into something that runs or queries.
+      expect(code, file).not.toMatch(/new RegExp\(/);
+      expect(code, file).not.toMatch(/new Function\(/);
+      expect(code, file).not.toMatch(/\bquerySelector\b/);
+      expect(code, file).not.toMatch(/Runtime\.evaluate/);
+      expect(code, file).not.toMatch(/\beval\(/);
+      // And no interpolation of a binding field into a string that could be
+      // read as a selector.
+      expect(code, file).not.toMatch(/\$\{\s*binding\.(role|name)\s*\}/);
+    }
+  });
+
+  it('21. does not trust the record-time match count at replay', () => {
+    // The count recorded when the click happened is a fact about that page.
+    // A replay recounts against the page in front of it, so a binding written
+    // as unique still refuses when the current page has two.
+    const binding = {
+      kind: 'element' as const,
+      ...PAGE_DERIVED,
+      step: 's0',
+      role: 'button',
+      name: 'Save',
+    };
+    const oneMatch = {
+      elements: [{ elementId: 'e1-1', role: 'button', name: 'Save', visible: true, enabled: true }],
+    };
+    const twoMatches = {
+      elements: [
+        { elementId: 'e1-1', role: 'button', name: 'Save', visible: true, enabled: true },
+        { elementId: 'e1-2', role: 'button', name: 'Save', visible: true, enabled: true },
+      ],
+    };
+
+    expect(resolveElement(binding, oneMatch)).toBe('e1-1');
+    expect(resolveElement(binding, twoMatches)).toBeUndefined();
+  });
+
+  it('22. will not match an element whose current name looks like a credential', () => {
+    // Re-checked against the page as it is now: a page that has since put a
+    // token into a label must not have it read back into a comparison.
+    const token = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+    const binding = {
+      kind: 'element' as const,
+      ...PAGE_DERIVED,
+      step: 's0',
+      role: 'button',
+      name: token,
+    };
+    expect(
+      resolveElement(binding, {
+        elements: [
+          { elementId: 'e1-1', role: 'button', name: token, visible: true, enabled: true },
+        ],
+      }),
+    ).toBeUndefined();
+  });
+
+  it('23. refuses to replay a workflow that is missing a step it watched', async () => {
+    const harness = buildWorkflowHarness({ tools: TOOLS });
+    const definition = await recordOneWorkflow(harness);
+    const saved = await harness.store.save({
+      name: 'Read a page',
+      description: 'A recording with a gap.',
+      definition,
+      recordedFromTaskId: 'task_skill_1',
+      taintAtCapture: 'KNOWN_UNTAINTED',
+      droppedSteps: [{ afterStepId: 's1', tool: 'fake.write', reason: 'could not be described' }],
+    });
+
+    const before = harness.seen.length;
+    const outcome = await harness.replayer.replay({
+      workflowId: saved.workflowId,
+      sessionId: 'session_skill',
+      inputs: {},
+    });
+
+    // Not a partial success. Running the subset would report having done
+    // something the recording does not describe.
+    expect(outcome.ok).toBe(false);
+    expect(outcome.ok === false && outcome.reason).toBe('INCOMPLETE_RECORDING');
+    expect(harness.seen).toHaveLength(before);
+  });
+
+  it('24. keeps the dropped steps on the record, not only in the save reply', async () => {
+    const harness = buildWorkflowHarness({ tools: TOOLS });
+    const definition = await recordOneWorkflow(harness);
+    const saved = await harness.store.save({
+      name: 'Read a page',
+      description: 'A recording with a gap.',
+      definition,
+      recordedFromTaskId: 'task_skill_1',
+      taintAtCapture: 'KNOWN_UNTAINTED',
+      droppedSteps: [{ afterStepId: null, tool: 'fake.write', reason: 'could not be described' }],
+    });
+
+    // Read back out of storage, which is what a reviewer sees tomorrow.
+    const reloaded = await harness.store.get(saved.workflowId);
+    expect(reloaded?.droppedSteps).toEqual([
+      { afterStepId: null, tool: 'fake.write', reason: 'could not be described' },
+    ]);
+    expect(isIncomplete(reloaded!)).toBe(true);
+  });
+});

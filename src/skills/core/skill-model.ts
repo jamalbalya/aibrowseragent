@@ -79,6 +79,35 @@ export type SkillBinding =
  */
 export interface ElementBinding {
   readonly kind: 'element';
+  /**
+   * Where the role and name came from, permanently.
+   *
+   * `PAGE_DERIVED` means these strings were read out of a page's
+   * accessibility model. `AUTHORED` means a person wrote them into a bundled
+   * definition. The two are the same bytes and a different fact, which is why
+   * provenance is recorded at the point of origin rather than inferred from
+   * the value: an ARIA-valid role read from a page is page-derived, and an
+   * identical one typed by a build author is not.
+   *
+   * Nothing promotes `PAGE_DERIVED` to `AUTHORED`, and nothing derives
+   * `KNOWN_UNTAINTED` from it. Passing ARIA validation, secret detection, a
+   * length check, a shape check or a uniqueness check gates **whether the
+   * binding may be stored at all** — semantic validity. It never touches
+   * provenance, which is an independent property.
+   *
+   * Required and non-optional so an untagged page-derived binding cannot be
+   * represented: there is no default to fall through to.
+   */
+  readonly provenance: BindingProvenance;
+  /**
+   * The single sanctioned use of this data.
+   *
+   * It exists so the tag is a rule rather than a description: a
+   * `PAGE_DERIVED` value may be persisted only as the match predicate of a
+   * binding carrying this purpose, and the store refuses one anywhere else.
+   * There is exactly one purpose and no way to add another at run time.
+   */
+  readonly purpose: 'ELEMENT_BINDING';
   /** The step whose `browser.read_page` result is searched. */
   readonly step: string;
   /** ARIA role, compared exactly. */
@@ -96,6 +125,18 @@ export interface ElementBinding {
   /** Refuses a match that is not this kind of control, when it matters. */
   readonly expect?: 'enabled' | 'visible' | 'editable';
 }
+
+/**
+ * Where a binding's match data came from. Assigned at origin, never changed.
+ *
+ * Deliberately **not** a fourth state in the task taint lattice. Taint
+ * (`KNOWN_UNTAINTED` / `TAINTED` / `UNKNOWN`) is a property of a task and is
+ * compared everywhere; adding a state to it would make every one of those
+ * comparisons a question again. This is a separate, narrower property of one
+ * field of one binding type, checked by the code that stores and resolves it
+ * and by nothing else.
+ */
+export type BindingProvenance = 'AUTHORED' | 'PAGE_DERIVED';
 
 export type SkillInputType = 'string' | 'number' | 'boolean';
 
@@ -428,18 +469,59 @@ const SELECTOR_SHAPED = /[<>{}()[\]$*|\\/]|^[.#]|javascript:|data:|::|=>/i;
  *
  * `button` is a role; `button.primary`, `button[type=submit]` and
  * `//button[1]` are selectors. The shape rule above catches most of those but
- * not a plain `tag.class`, and a role is the one field where nothing outside a
- * lowercase token is ever legitimate — so it is checked against what it may
- * be rather than against what it may not.
+ * not a plain `tag.class`, so a role is checked against a closed list instead
+ * of against a pattern.
  *
- * An accessible name is not held to this: names contain dots, spaces and
- * punctuation ("Save file.txt", "Open example.com"), so the shape rule is the
- * right check there.
+ * A closed list rather than a pattern because a role is page-controlled: a
+ * page sets `role="whatever"` and the page model reports it, and for an
+ * element with no mapping the model falls back to the tag name. Neither is a
+ * value this project chose. Only the roles a recorded interaction can
+ * meaningfully target are bindable; anything else makes the step
+ * unrecordable, which is the fail-closed direction.
+ *
+ * An accessible name is not held to this — names contain dots, spaces and
+ * punctuation ("Save file.txt", "Open example.com") — so the shape rule above
+ * is the right check there.
  */
-const ROLE_TOKEN = /^[a-z][a-z-]{0,39}$/;
+const BINDABLE_ROLES: ReadonlySet<string> = new Set([
+  'button',
+  'checkbox',
+  'combobox',
+  'file',
+  'link',
+  'listbox',
+  'menuitem',
+  'menuitemcheckbox',
+  'menuitemradio',
+  'option',
+  'radio',
+  'searchbox',
+  'slider',
+  'spinbutton',
+  'switch',
+  'tab',
+  'textbox',
+  'treeitem',
+]);
+
+/** Whether a role may be bound to at all. Exported so the recorder agrees. */
+export function isBindableRole(role: string): boolean {
+  return BINDABLE_ROLES.has(role.trim().toLowerCase());
+}
 
 function validateElementBinding(binding: ElementBinding, where: string): string[] {
   const problems: string[] = [];
+
+  // Provenance first, and as an exact literal rather than a truthiness check.
+  // A binding that does not say where its match data came from is refused
+  // outright: the alternative is a default, and a default is how an untagged
+  // page-derived value would end up being treated as authored.
+  if (binding.provenance !== 'PAGE_DERIVED' && binding.provenance !== 'AUTHORED') {
+    problems.push(`${where} does not say where its match data came from`);
+  }
+  if (binding.purpose !== 'ELEMENT_BINDING') {
+    problems.push(`${where} is not tagged for the one use this data has`);
+  }
 
   for (const [field, value] of [
     ['role', binding.role],
@@ -451,7 +533,7 @@ function validateElementBinding(binding: ElementBinding, where: string): string[
     }
     if (value.length > 200) problems.push(`${where} has a ${field} that is too long`);
     if (field === 'role') {
-      if (!ROLE_TOKEN.test(value.trim().toLowerCase())) {
+      if (!isBindableRole(value)) {
         problems.push(`${where} has a role that looks like a selector or a URL scheme`);
       }
       continue;

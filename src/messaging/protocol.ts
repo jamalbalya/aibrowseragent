@@ -14,7 +14,7 @@ import type { PermissionRequest, PermissionResponse } from '@/policy/permission-
 import type { FileSelectionRequest } from '@/background/file-broker';
 import type { AuditEvent, AuditExport } from '@/audit/audit-log';
 import type { PermissionMode } from '@/policy/policy-engine';
-import type { SemanticPage } from '@/content/semantic-tree';
+import type { ActedOnElement, SemanticPage } from '@/content/semantic-tree';
 import type { EvidenceReference } from '@/evidence/evidence-model';
 import type { LogRecord } from '@/logging/logger';
 import type { SitePolicyState } from '@/policy/site-policy';
@@ -49,6 +49,19 @@ export interface WorkflowSummary {
   readonly recordedAt: number;
   readonly updatedAt: number;
   readonly taintAtCapture: string;
+  /**
+   * True when the recorder watched something it could not write down.
+   *
+   * Derived from `droppedSteps`, and the reason such a workflow cannot be
+   * replayed: it would do something different from the task it came from.
+   */
+  readonly incomplete: boolean;
+  /** What was dropped, in the positions it held. Shown in the review UI. */
+  readonly droppedSteps: readonly {
+    readonly afterStepId: string | null;
+    readonly tool: string;
+    readonly reason: string;
+  }[];
   readonly steps: readonly {
     readonly id: string;
     readonly tool: string;
@@ -315,7 +328,7 @@ export interface PanelRequestMap {
     response: {
       workflow: WorkflowSummary | null;
       /** Calls that were seen but not recorded, and why. */
-      skipped: { tool: string; reason: string }[];
+      skipped: { afterStepId: string | null; tool: string; reason: string }[];
     };
   };
   'workflow.recordCancel': { request: Record<string, never>; response: { ok: true } };
@@ -325,7 +338,7 @@ export interface PanelRequestMap {
       recording: boolean;
       taskId: string;
       stepCount: number;
-      skipped: { tool: string; reason: string }[];
+      skipped: { afterStepId: string | null; tool: string; reason: string }[];
     };
   };
   'workflow.list': { request: Record<string, never>; response: { workflows: WorkflowSummary[] } };
@@ -402,21 +415,35 @@ export interface ContentRequestMap {
     request: { maxElements?: number; includeText?: boolean };
     response: { page: SemanticPage };
   };
+  /**
+   * Interaction responses carry `actedOn`: a six-scalar description of the
+   * element the action used, computed from the node the content script had
+   * already resolved. It exists so a recording can name the element the way
+   * §49 asks — a role and an accessible name — instead of a handle that is
+   * meaningless after the snapshot that minted it. It is page-derived data
+   * and is never returned to the model; the registry routes it to the
+   * observation hook and nowhere else.
+   */
   'content.click': {
     request: { elementId: string };
-    response: { clicked: true; navigated: boolean };
+    response: { clicked: true; navigated: boolean; actedOn?: ActedOnElement };
   };
   'content.type': {
     request: { elementId: string; text: string; clearFirst?: boolean; submit?: boolean };
-    response: { typed: true };
+    response: { typed: true; actedOn?: ActedOnElement };
   };
   'content.select': {
     request: { elementId: string; value: string };
-    response: { selected: true; value: string };
+    response: { selected: true; value: string; actedOn?: ActedOnElement };
   };
   'content.setChecked': {
     request: { elementId: string; checked: boolean };
-    response: { checked: boolean; value: string; kind: 'checkbox' | 'radio' };
+    response: {
+      checked: boolean;
+      value: string;
+      kind: 'checkbox' | 'radio';
+      actedOn?: ActedOnElement;
+    };
   };
   'content.scroll': {
     request: { direction: 'up' | 'down' | 'top' | 'bottom'; amount?: number; elementId?: string };

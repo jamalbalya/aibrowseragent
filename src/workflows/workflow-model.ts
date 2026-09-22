@@ -61,7 +61,43 @@ export interface RecordedWorkflow {
    * than literals.
    */
   readonly taintAtCapture: 'KNOWN_UNTAINTED' | 'TAINTED' | 'UNKNOWN';
+  /**
+   * Steps the recorder saw but could not capture, in the positions they held.
+   *
+   * Persisted, not merely reported once at save time. A workflow missing a
+   * step does something materially different from the task it was recorded
+   * from — dropping the click out of "navigate, click Login, read" leaves
+   * something that completes successfully having never logged in — so a
+   * reader of a stored workflow has to be able to see the gap. Reporting it
+   * only at the moment of saving would leave the record looking complete to
+   * everyone who opened it afterwards.
+   */
+  readonly droppedSteps: readonly DroppedStep[];
   readonly state: WorkflowState;
+}
+
+/** One thing the recorder watched happen and could not write down. */
+export interface DroppedStep {
+  /**
+   * The recorded step this one followed, or `null` when it came first.
+   *
+   * Position rather than an index, so a reader can show the gap where it
+   * actually was rather than at the end of the list.
+   */
+  readonly afterStepId: string | null;
+  readonly tool: string;
+  /** Extension-authored, never quoting what could not be stored. */
+  readonly reason: string;
+}
+
+/**
+ * Whether a workflow is missing anything it watched.
+ *
+ * Derived rather than stored, so the two cannot disagree: there is no flag to
+ * forget to set and none to clear while the dropped steps remain.
+ */
+export function isIncomplete(record: RecordedWorkflow): boolean {
+  return record.droppedSteps.length > 0;
 }
 
 /** The provenance a recording carries. Never accepted by `SkillRegistry`. */
@@ -145,6 +181,65 @@ function keyIsAName(path: readonly string[], key: string): boolean {
   return (
     path.length === 4 && path[0] === 'definition' && path[1] === 'steps' && path[3] === 'arguments'
   );
+}
+
+export class MisplacedProvenanceError extends Error {
+  constructor(readonly path: string) {
+    super(
+      `A page-derived value appears at "${path}", which is not an element binding. ` +
+        'Data read out of a page may be stored only as the match predicate of a binding ' +
+        'tagged ELEMENT_BINDING, and never as a value anything would use.',
+    );
+    this.name = 'MisplacedProvenanceError';
+  }
+}
+
+/**
+ * Where a page-derived value is allowed to be, and nowhere else.
+ *
+ * This is the structural half of the persistence rule. The rule itself is not
+ * an exception to the taint model: an element binding is not a literal, it is
+ * a match predicate, and its strings never become a value anything is given.
+ * What this refuses is the shape that *would* be an exception — a
+ * `PAGE_DERIVED` tag turning up on a literal, an input default, an output
+ * declaration or loose metadata, where something downstream would read it as
+ * data.
+ *
+ * It refuses in both directions: a page-derived tag outside an element
+ * binding, and an element binding that lost its tag.
+ */
+export function assertProvenancePlacement(value: Record<string, unknown>): void {
+  walkProvenance(value, []);
+}
+
+function walkProvenance(value: unknown, path: readonly string[]): void {
+  if (value === null || typeof value !== 'object') return;
+
+  if (Array.isArray(value)) {
+    for (const [index, item] of value.entries()) walkProvenance(item, [...path, String(index)]);
+    return;
+  }
+
+  const record = value as Record<string, unknown>;
+  const isBinding = record['kind'] === 'element';
+  const tagged = record['provenance'] === 'PAGE_DERIVED' || record['purpose'] === 'ELEMENT_BINDING';
+
+  if (tagged && !isBinding) {
+    // A tag somewhere a tag does not belong. Whatever produced this either
+    // copied a binding's fields onto another value or is trying to launder
+    // page text through a shape that is read as data.
+    throw new MisplacedProvenanceError(path.join('.') || '(root)');
+  }
+  if (isBinding && record['provenance'] !== 'PAGE_DERIVED' && record['provenance'] !== 'AUTHORED') {
+    throw new MisplacedProvenanceError(path.join('.') || '(root)');
+  }
+  if (isBinding && record['purpose'] !== 'ELEMENT_BINDING') {
+    throw new MisplacedProvenanceError(path.join('.') || '(root)');
+  }
+
+  for (const [key, nested] of Object.entries(record)) {
+    walkProvenance(nested, [...path, key]);
+  }
 }
 
 /** Rejects a stored workflow carrying anything that must not reach disk. */

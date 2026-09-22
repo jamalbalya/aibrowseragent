@@ -314,29 +314,31 @@ form, hash and version; and replay revalidates and then runs every step
 through the one `ToolRegistry.dispatch`, so each is re-adjudicated by the same
 policy, permission and egress gates that adjudicated it when it was recorded.
 A recording is never registered, never appears in `skills.list` and is never
-model-selectable — replay is an explicit user action. Covered by a unit suite,
-an integration suite, a sixteen-case security suite and a real-Chromium E2E
-suite, with each source-scan and real-browser claim proved to fail when its
-mechanism is removed.
+model-selectable — replay is an explicit user action.
 
-PARTIAL for one reason, and it is a gap against the specification rather than
-a missing test. Specification §49 asks for recorded actions to be converted
-into semantic ones — `click button "Submit"` rather than a brittle
-`div:nth-child(7)`. **Element interactions are not recorded at all yet.** The
-semantic form exists: a declarative role-and-name binding that both the
-validator and the runner support, re-resolved against a fresh page read. What
-is missing is the conversion at record time, because a click's argument is a
-handle valid only within the page read that minted it, and the dispatch
-observation the recorder sees deliberately carries no result to convert it
-from. Rather than store a handle that is refused as stale on every replay —
-confirmed in real Chromium — such a step is left out of the recording with a
-reason. Recording therefore covers navigation, page reads, and tab and
-connector steps, and says plainly what it dropped.
+Element interactions are recorded as specification §49 asks: a click stores a
+role and an accessible name, not a handle and not a selector. That data is
+tagged `PAGE_DERIVED` permanently — passing ARIA validation, secret detection
+or a uniqueness check gates whether it may be stored, never where it came from
+— and may only ever be compared for equality against a fresh page read or
+shown in the review surface. A recording the recorder could not complete keeps
+its gaps, shows them in position, and cannot be replayed at all.
 
-Resolving it needs a decision this project has not taken: how the recorder
-learns an element's semantic identity without a dispatch observation carrying
-a step result, and whether an accessible name read from a page may be stored
-as a literal. Both are outside what P-022 was authorised to change.
+Covered by a unit suite, an integration suite, a twenty-four-case security
+suite and a twelve-test real-Chromium E2E suite, with each source-scan and
+real-browser claim proved to fail when its mechanism is removed.
+
+PARTIAL for one reason, and it is reach rather than architecture: the §85 A–F
+manual acceptance scenarios have not been run for this capability, as for
+every other row in this file (see "What the PASS column actually means"), and
+recording covers the tool surface this build ships rather than every
+interaction a reference implementation offers — checkbox and radio bindings
+ride the same path but have no dedicated recorded workflow, and the
+multi-connector reference workflow of §44 cannot be recorded because those
+connectors do not exist (see P-023).
+
+Nothing here is blocked externally. The remaining work is building more, not
+obtaining anything.
 
 **P-023 Connector framework** — The framework is implemented and one adapter
 exists, for GitHub: OAuth (authorization code + PKCE, no client secret), a

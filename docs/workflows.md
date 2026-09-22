@@ -82,38 +82,121 @@ values nobody can vouch for.
 A slot's description says what to supply. It never quotes what was captured,
 because the captured value is the thing that must not reach disk.
 
-## Element bindings, and what is not recorded yet
+## Element bindings and provenance
 
 A step may name an element declaratively — a role, an accessible name,
 optionally a position and an expected state — and the binding is re-resolved
-against a fresh page read at replay. That is the whole vocabulary. There are no
-CSS selectors, no XPath, no `javascript:` URLs, no callbacks and no
-expressions; a role is validated as an ARIA token rather than merely checked
-for selector-looking characters. A binding resolves to nothing — which fails
-the step closed — when the page has no match, when it has more than one and the
-binding did not say which, when the match is not in the state the binding
-requires, or when the page read is stale or malformed. Nothing is guessed, and
-there is no positional fallback.
+against a fresh page read at replay. That is what specification §49 asks for:
+`click button "Save"` rather than a brittle `div:nth-child(7)`.
 
-**Clicks, typing and other element interactions are not recorded yet.** This is
-a real gap against specification §49, which asks for recorded actions to be
-converted into semantic ones — `click button "Submit"` rather than a brittle
-`div:nth-child(7)`. The binding shape above is that semantic form, and both the
-validator and the runner support it; what is missing is the conversion at
-record time.
+A click's argument is an element handle such as `e1-12`, valid only within the
+page read that minted it. A replay reads the page again, which starts a new
+snapshot, so a stored handle is refused as stale every time — measured in real
+Chromium, not assumed. The handle is therefore **never stored**. What is
+stored is a description of the element, built from what the tool reported
+about the node it had already resolved in order to act on it.
 
-The obstacle is specific. A click's argument is an element handle such as
-`e1-12`, which names an element within one page read. A replay reads the page
-again, which starts a new snapshot, so a stored handle is refused as stale
-every time — measured in real Chromium, not assumed. Converting it to a role
-and a name needs the `browser.read_page` result that minted it, and a dispatch
-observation deliberately carries no result.
+### Provenance is a separate property from validity
 
-So a step naming an element is **left out of the recording**, with a reason
-shown next to it, rather than stored in a form that could never run. Recording
-a task that clicks produces a workflow of the steps that can replay, and says
-plainly which ones it dropped. What recording covers today is navigation, page
-reads, tab and connector steps.
+The description came out of a page, so it is tagged as having come out of a
+page, and stays tagged:
+
+```
+provenance: 'PAGE_DERIVED'
+purpose:    'ELEMENT_BINDING'
+```
+
+Both are required and non-optional, so an untagged page-derived binding cannot
+be represented — there is no default to fall through to.
+
+The tag never changes. Passing ARIA validation, secret detection, a length
+check, a shape check or a uniqueness check gates **whether the binding may be
+stored at all**. None of them says the value came from anywhere but a page, so
+none of them makes it authored, untainted, trusted or privileged. An
+ARIA-valid role read from a page is page-derived; an identical string typed by
+a build author into a bundled skill is not. Same bytes, different fact, and
+the fact is recorded at the point of origin rather than inferred from the
+bytes.
+
+`PAGE_DERIVED` is deliberately **not** a fourth state in the task taint
+lattice. Taint is a property of a task and is compared throughout the
+codebase; adding a state to it would make every one of those comparisons a
+question again. This is a narrower property of one field of one binding type,
+read by the code that stores and resolves it and by nothing else.
+
+### Why storing it is not an exception to the taint model
+
+The rule that a tainted value does not become a stored literal is unchanged
+and has no carve-out, because an element binding **is not a literal**. A
+literal supplies a value to a tool argument. A binding supplies nothing: it is
+a match predicate, and what reaches the tool is a handle minted by the
+replay's own page read. The stored strings are operands of an equality test.
+
+So the persistence rule is a rule about a different category:
+
+> A `PAGE_DERIVED` value may be persisted **only** as the match predicate of
+> an `ElementBinding` tagged `ELEMENT_BINDING`, and never as, or inside, a
+> literal binding, an input default, an output declaration or any other field.
+
+Enforced in three independent places: the parameteriser produces a distinct
+`element` outcome that the literal-producing path never sees; the store
+refuses a tag outside a binding, and a binding that lost its tag, before
+anything reaches disk; and the same check runs again at every replay.
+
+### What the stored values may and may not do
+
+`role`, `name`, `nth` and `expect` may be compared for equality against a
+fresh page model, and displayed in the workflow review surface. That is the
+whole list.
+
+They never become a tool argument, a CSS selector, an XPath, a
+`querySelector` argument, a `RegExp`, an input to risk classification, policy
+or the permission engine, part of a destination URL, part of an egress
+payload, an audit or evidence field, or model context. They are not shown in a
+permission prompt either: a prompt is where someone makes a trust decision
+quickly, and page-controlled text there invites a button named
+`Cancel (safe)` to read as reassurance. Prompts keep their extension-authored
+wording.
+
+### What is bindable, and what fails closed
+
+A role is page-controlled — a page sets `role="anything"`, and an element with
+no mapping reports its tag name — so only a closed list of roles a recorded
+interaction can meaningfully target is bindable. A name must be non-empty, at
+most 64 characters, free of selector and scheme syntax, and must pass secret
+detection. The element must have been unambiguous when the recording was made.
+
+Anything else and the step is not recorded. Resolution then fails closed at
+replay on: no match, more than one match without a position, a match not in
+the required state, a stale or malformed page read, a missing or invalid
+provenance tag, and a candidate whose _current_ name looks like a credential —
+re-checked against the page as it is then, so a page that has since put a
+token into a label does not have it read back into a comparison.
+
+The match count recorded when the click happened is a fact about that page and
+grants nothing. A replay recounts the candidates against the page in front of
+it.
+
+## Recordings that are missing something
+
+When the recorder watches a step it cannot write down, it keeps the gap: what
+it was, why, and where it was, persisted with the record rather than reported
+once at save time.
+
+That matters because a workflow missing a step does something materially
+different from the task it came from. Dropping the click out of "navigate,
+click Login, read" leaves something that completes successfully having never
+logged in. So the review surface shows the gap in position:
+
+```
+Step 1: browser.navigate
+Step 2: [NOT RECORDED] browser.click
+        Reason: the element's name looked like it contained a credential
+Step 3: browser.read_page
+```
+
+and **a workflow with any gap cannot be replayed at all**. Not the subset, and
+not with a success status. Record it again.
 
 ## Identity and integrity
 
@@ -179,10 +262,8 @@ outcome. Never by its steps, its arguments or anything they produced.
 
 ## Scope
 
-Recording and replay work for navigation, page reads, and tab and connector
-steps. Element interactions are not recorded — see above; that is the one
-open gap against specification §49 and it is a limitation of the recorder, not
-of replay.
+Recording and replay cover navigation, page reads, element interactions, and
+tab and connector steps.
 
 P-022 is recording and replay, and nothing else. It does not add Web AI
 inference, provider-site automation, MCP, plugins, remote execution, a

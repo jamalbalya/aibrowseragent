@@ -35,6 +35,7 @@ import type {
   ToolResultEnvelope,
 } from '@/tools/core/tool-types';
 import { errorEnvelope, successEnvelope } from '@/tools/core/tool-types';
+import type { ActedOnElement } from '@/content/semantic-tree';
 
 const log = getLogger('tool');
 
@@ -142,6 +143,16 @@ export interface ToolRegistryOptions {
  * object a control reads. Adding a field is a security decision, not a
  * convenience.
  */
+/**
+ * What `run` returns internally, before `dispatch` strips it.
+ *
+ * `actedOn` never leaves this class on the result path: `dispatch`
+ * destructures it away, so no caller — the agent runtime, the skill runner,
+ * a tool — can see it, and it cannot reach a result envelope or model
+ * context. Its only exit is the observation hook.
+ */
+type InternalDispatchResult = ToolDispatchResult & { readonly actedOn?: ActedOnElement };
+
 export interface DispatchObservation {
   readonly taskId: string;
   readonly toolCallId: string;
@@ -154,6 +165,16 @@ export interface DispatchObservation {
   /** Whether the call reached the tool implementation. */
   readonly executed: boolean;
   readonly status: 'success' | 'error';
+  /**
+   * The element this call acted on, described declaratively.
+   *
+   * Present only when a tool reported one, and page-derived when it is. It
+   * exists so a recording can name an element the way §49 asks — a role and
+   * an accessible name — rather than a handle that is meaningless after the
+   * page read that minted it. It carries no handle, no selector and no
+   * markup, and like every other field here it arrives frozen.
+   */
+  readonly actedOn?: ActedOnElement;
   /** The canonical failure code, when there was one. Never a message. */
   readonly errorCode?: string;
   /** Tab the call acted on, when one applied. */
@@ -221,8 +242,11 @@ export class ToolRegistry {
    * the ordering a convention instead of a structure.
    */
   async dispatch(invocation: ToolInvocation): Promise<ToolDispatchResult> {
-    const result = await this.run(invocation);
-    this.observe(invocation, result);
+    // Destructured away rather than passed through: `actedOn` is page-derived
+    // text for the observation hook alone, and a caller that received it
+    // could put it somewhere page text does not belong.
+    const { actedOn, ...result } = await this.run(invocation);
+    this.observe(invocation, result, actedOn);
     return result;
   }
 
@@ -244,7 +268,11 @@ export class ToolRegistry {
    * A clone that fails is not worked around: the observation is dropped
    * rather than substituted with a live reference.
    */
-  private observe(invocation: ToolInvocation, result: ToolDispatchResult): void {
+  private observe(
+    invocation: ToolInvocation,
+    result: ToolDispatchResult,
+    actedOn: ActedOnElement | undefined,
+  ): void {
     const observer = this.options.onDispatched;
     if (!observer) return;
 
@@ -260,6 +288,7 @@ export class ToolRegistry {
         status: result.envelope.status,
         ...(result.envelope.error === undefined ? {} : { errorCode: result.envelope.error.code }),
         ...(invocation.tabId === undefined ? {} : { tabId: invocation.tabId }),
+        ...(actedOn === undefined ? {} : { actedOn: structuredClone(actedOn) }),
       });
     } catch (caught) {
       log.warn('A dispatch observation could not be prepared and was dropped.', {
@@ -281,7 +310,7 @@ export class ToolRegistry {
     }
   }
 
-  private async run(invocation: ToolInvocation): Promise<ToolDispatchResult> {
+  private async run(invocation: ToolInvocation): Promise<InternalDispatchResult> {
     const canonicalName = fromWireName(invocation.name);
     const tool = this.tools.get(canonicalName);
 
@@ -509,6 +538,9 @@ export class ToolRegistry {
       policy: decision,
       taint: result.taint ?? [],
       executed: true,
+      // Not sanitised into the envelope and not part of `sanitised`: it goes
+      // to the observation hook and is dropped by `dispatch`.
+      ...(result.actedOn === undefined ? {} : { actedOn: result.actedOn }),
     };
   }
 

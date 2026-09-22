@@ -229,4 +229,59 @@ describe('a recorded workflow goes record → store → review → replay', () =
     // The second step assumed the first one happened, so it does not run.
     expect(harness.seen).toHaveLength(before);
   });
+
+  it('refuses a workflow with a gap, and says so before anything runs', async () => {
+    const harness = buildWorkflowHarness({ tools: TOOLS });
+    harness.recorder.start('task_skill_1');
+    await harness.tools.dispatch(invocation('fake.read', { url: 'https://example.test/' }));
+    const captured = harness.recorder.stop()!;
+
+    const saved = await harness.store.save({
+      name: 'Read a page',
+      description: 'A recording with a gap.',
+      definition: captured.definition,
+      recordedFromTaskId: 'task_skill_1',
+      taintAtCapture: captured.taint,
+      droppedSteps: [{ afterStepId: 's1', tool: 'fake.write', reason: 'could not be described' }],
+    });
+
+    // Reviewing says why without running anything.
+    const verdict = await harness.replayer.revalidate(saved.workflowId);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.ok === false && verdict.reason).toBe('INCOMPLETE_RECORDING');
+
+    const before = harness.seen.length;
+    const outcome = await harness.replayer.replay({
+      workflowId: saved.workflowId,
+      sessionId: 'session_skill',
+      inputs: {},
+    });
+    expect(outcome.ok).toBe(false);
+    // And no task was created for a run that never started.
+    expect(harness.seen).toHaveLength(before);
+  });
+
+  it('keeps a recording replayable when it captured everything', async () => {
+    const harness = buildWorkflowHarness({ tools: TOOLS });
+    harness.recorder.start('task_skill_1');
+    await harness.tools.dispatch(invocation('fake.read', { url: 'https://example.test/' }));
+    const captured = harness.recorder.stop()!;
+
+    const saved = await harness.store.save({
+      name: 'Read a page',
+      description: 'A complete recording.',
+      definition: captured.definition,
+      recordedFromTaskId: 'task_skill_1',
+      taintAtCapture: captured.taint,
+      droppedSteps: [],
+    });
+
+    expect(saved.droppedSteps).toEqual([]);
+    const outcome = await harness.replayer.replay({
+      workflowId: saved.workflowId,
+      sessionId: 'session_skill',
+      inputs: {},
+    });
+    expect(outcome.ok && outcome.result.status).toBe('completed');
+  });
 });

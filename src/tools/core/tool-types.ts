@@ -12,6 +12,7 @@ import type { EvidencePayload, EvidenceReference } from '@/evidence/evidence-mod
 import type { TaintSource } from '@/security/exfiltration/exfiltration-guard';
 import type { CarrierInput } from '@/security/egress/carrier';
 import type { EgressDestination } from '@/security/egress/destination';
+import type { ActedOnElement } from '@/content/semantic-tree';
 
 export type ExecutionMode =
   'immediate' | 'requires_page' | 'requires_debugger' | 'requires_connector';
@@ -58,6 +59,15 @@ export interface ToolExecutionResult<T = unknown> {
   readonly metadata?: Record<string, unknown>;
   /** Sources this call read private data from, fed to the exfiltration guard. */
   readonly taint?: readonly TaintSource[];
+  /**
+   * The element this call acted on, described declaratively.
+   *
+   * A sibling of `data` rather than part of it, and deliberately so: `data`
+   * is what becomes the model's view of the result, and this is page-derived
+   * text that must not go there. The registry reads it, forwards it to the
+   * observation hook, and drops it — it never reaches the result envelope.
+   */
+  readonly actedOn?: ActedOnElement;
 }
 
 /** An outbound transfer a call will perform. */

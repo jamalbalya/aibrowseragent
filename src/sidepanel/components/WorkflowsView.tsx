@@ -294,24 +294,43 @@ export function WorkflowsView({
                   {open ? (
                     <div className="workflow__detail">
                       <p className="field__hint">{workflow.description}</p>
+                      {workflow.incomplete ? (
+                        <p className="banner banner--error" role="alert">
+                          This recording is missing {workflow.droppedSteps.length} step
+                          {workflow.droppedSteps.length === 1 ? '' : 's'} the task actually took, so
+                          it cannot be replayed — running the rest would do something different from
+                          what was recorded. Record it again.
+                        </p>
+                      ) : null}
+
                       <ol className="workflow__steps">
-                        {workflow.steps.map((step) => (
-                          <li key={step.id}>
-                            <code>{step.tool}</code>
-                            <ul className="workflow__args">
-                              {Object.entries(step.arguments).map(([argument, binding]) => (
-                                <li key={argument}>
-                                  <span className="workflow__arg">{argument}</span>
-                                  <span
-                                    className={`workflow__binding workflow__binding--${binding.kind}`}
-                                  >
-                                    {binding.detail}
-                                  </span>
-                                </li>
-                              ))}
-                            </ul>
-                          </li>
-                        ))}
+                        {interleave(workflow).map((entry) =>
+                          entry.kind === 'step' ? (
+                            <li key={entry.step.id}>
+                              <code>{entry.step.tool}</code>
+                              <ul className="workflow__args">
+                                {Object.entries(entry.step.arguments).map(([argument, binding]) => (
+                                  <li key={argument}>
+                                    <span className="workflow__arg">{argument}</span>
+                                    <span
+                                      className={`workflow__binding workflow__binding--${binding.kind}`}
+                                    >
+                                      {binding.detail}
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </li>
+                          ) : (
+                            <li key={`dropped-${entry.index}`} className="workflow__dropped">
+                              <span className="workflow__droppedTag">[NOT RECORDED]</span>{' '}
+                              <code>{entry.dropped.tool}</code>
+                              <p className="workflow__droppedReason">
+                                Reason: {entry.dropped.reason}
+                              </p>
+                            </li>
+                          ),
+                        )}
                       </ol>
 
                       {workflow.inputs.length > 0 ? (
@@ -356,7 +375,7 @@ export function WorkflowsView({
                       <button
                         type="button"
                         className="button"
-                        disabled={busy !== null || verdict?.ok === false}
+                        disabled={busy !== null || verdict?.ok === false || workflow.incomplete}
                         onClick={() => void replay(workflow)}
                       >
                         Replay
@@ -371,6 +390,39 @@ export function WorkflowsView({
       </section>
     </div>
   );
+}
+
+/**
+ * The steps and the gaps, in the order they happened.
+ *
+ * A dropped step is shown where it was, not in a list at the end, because
+ * where it was is what tells the reader what the workflow will not do — a gap
+ * between "navigate" and "read" means something very different from a gap
+ * after the last step.
+ */
+type ReviewEntry =
+  | { readonly kind: 'step'; readonly step: WorkflowSummary['steps'][number] }
+  | {
+      readonly kind: 'dropped';
+      readonly dropped: WorkflowSummary['droppedSteps'][number];
+      readonly index: number;
+    };
+
+function interleave(workflow: WorkflowSummary): ReviewEntry[] {
+  const entries: ReviewEntry[] = [];
+  const after = (stepId: string | null): void => {
+    workflow.droppedSteps.forEach((dropped, index) => {
+      if (dropped.afterStepId === stepId) entries.push({ kind: 'dropped', dropped, index });
+    });
+  };
+
+  // Anything dropped before the first recorded step carries a null position.
+  after(null);
+  for (const step of workflow.steps) {
+    entries.push({ kind: 'step', step });
+    after(step.id);
+  }
+  return entries;
 }
 
 function describe(error: unknown): string {

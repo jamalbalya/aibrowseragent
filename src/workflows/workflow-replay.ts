@@ -48,7 +48,7 @@ import {
   type SkillRunner,
   type SkillRunResult,
 } from '@/skills/runtime/skill-runner';
-import { WORKFLOW_FORMAT_VERSION, type RecordedWorkflow } from './workflow-model';
+import { isIncomplete, WORKFLOW_FORMAT_VERSION, type RecordedWorkflow } from './workflow-model';
 import type { WorkflowStore } from './workflow-store';
 
 const log = getLogger('agent');
@@ -71,7 +71,8 @@ export type ReplayRefusal =
   | 'INTEGRITY_FAILED'
   | 'DEFINITION_INVALID'
   | 'ARGUMENTS_INVALID'
-  | 'INPUTS_INVALID';
+  | 'INPUTS_INVALID'
+  | 'INCOMPLETE_RECORDING';
 
 export type RevalidationVerdict =
   | {
@@ -175,6 +176,23 @@ export class WorkflowReplayer {
         ok: false,
         reason: 'INTEGRITY_FAILED',
         detail: 'That workflow has changed since it was saved, so it will not be run.',
+      };
+    }
+
+    // A workflow missing a step does something materially different from the
+    // task it was recorded from: dropping the click out of "navigate, click
+    // Login, read" leaves something that completes successfully having never
+    // logged in. Running the subset and reporting success would be reporting
+    // the wrong thing, so an incomplete recording does not run at all.
+    if (isIncomplete(record)) {
+      const dropped = record.droppedSteps;
+      return {
+        ok: false,
+        reason: 'INCOMPLETE_RECORDING',
+        detail:
+          `That recording is missing ${dropped.length} step${dropped.length === 1 ? '' : 's'} ` +
+          'the task actually took, so replaying it would do something different from what ' +
+          'was recorded. Record it again.',
       };
     }
 
