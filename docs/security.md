@@ -584,6 +584,44 @@ either, and a worker that starts afterwards cannot know. This raises the floor
 and a transient fault — and it is not a guarantee. It is not described as one
 in the code, and it is not described as one here.
 
+## Switching provider, and what must not come with it
+
+Switching provider or model is an explicit action, and §60 forbids a silent
+fallback. Two things this wave found were quiet substitutions rather than
+loud ones.
+
+**A capability measurement belongs to the pair it was measured on.** The
+stored connection record holds what the capability doctor observed, and
+selecting a new provider or model used to spread that record forward and
+replace two fields — so a measurement of one model became a claim about
+another. A stale claim is worse than no claim, because nothing downstream can
+tell it from a real one. A switch now drops the capabilities, the timestamp
+that dated them, and the readiness decided from them, and the record is
+configuration again until the doctor measures. Unmeasured falls back to the
+conservative set, where nothing is claimed.
+
+`ModelCapabilities` is boolean, not the SUPPORTED / UNSUPPORTED / UNKNOWN
+vocabulary of §24B — that tri-state belongs to the web-provider design, which
+is gated and unbuilt. The boolean default points the same way (unmeasured
+reads as "do not rely on it") without being able to tell an unmeasured
+capability from a measured absence, and that limit is stated rather than
+papered over.
+
+**A task does not change model underneath itself.** A task records the
+provider and model it began on, and the adapter is resolved once per
+execution rather than per turn, so a switch mid-run cannot reach the turn in
+flight. Resuming a half-finished task onto whatever is active by then is the
+case that was open: the conversation so far was produced by one model, and
+continuing it on another under a record still naming the first is exactly the
+substitution §60 rules out. It is refused, naming both models, and switching
+back or retrying on the current model are the two explicit ways forward.
+
+Credentials are per provider and are read by the provider being resolved, so
+a switch moves none. Consent is pinned to a canonical provider destination
+and a model, so changing either already invalidates the grant — the switch
+does not re-implement that, because a rule with two implementations is a rule
+with two places to be wrong.
+
 ## Route trust
 
 Every message the extension routes arrives over `chrome.runtime` or

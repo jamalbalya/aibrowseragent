@@ -206,6 +206,34 @@ export class TaskManager {
 
     try {
       const provider = await this.options.resolveProvider();
+
+      // A task records the provider and model it began on, and specification
+      // §60 forbids a silent provider fallback. Resuming a half-finished task
+      // onto whatever is active now would be exactly that: the conversation
+      // so far was produced by one model, and continuing it on another —
+      // under a record that still names the first — is a substitution nobody
+      // asked for.
+      //
+      // So it is refused rather than silently carried over. Switching back,
+      // or retrying the objective on the current provider, are both explicit
+      // actions the person can take.
+      if (provider.providerId !== task.providerId || provider.modelId !== task.modelId) {
+        await this.fail(
+          taskId,
+          createError(
+            'POLICY_BLOCKED',
+            `This task started on ${task.providerId}/${task.modelId}; ${provider.providerId}/${provider.modelId} is active now.`,
+            {
+              userMessage:
+                `This task was started with ${task.modelId}, and ${provider.modelId} is ` +
+                'active now. Switch back to continue it, or retry it on the current model.',
+              retryable: false,
+            },
+          ),
+        );
+        return;
+      }
+
       const tabId = await this.options.getActiveTabId();
 
       const started = await this.transition(taskId, 'PLANNING');

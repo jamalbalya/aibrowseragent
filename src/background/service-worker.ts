@@ -18,6 +18,7 @@ import {
   SerializedStorageArea,
 } from '@/storage/storage-area';
 import { PersistenceHealthStore } from '@/storage/persistence-health';
+import { connectionAfterSwitch, isProviderSwitch } from './provider-switch';
 import { SettingsStore, CredentialStore } from '@/config/settings';
 import { TaskStore } from '@/tasks/task-store';
 import { generateTaintSalt } from '@/tasks/task-model';
@@ -1228,17 +1229,28 @@ router.on('provider.setActive', async ({ providerId, modelId }) => {
   await settingsStore.update({ activeProviderId: providerId, activeModelId: modelId });
   await updateSession({ providerId, modelId });
 
-  const existing = await settingsStore.getConnection();
-  const connection: ProviderConnection = existing
-    ? { ...existing, providerId, modelId }
-    : {
-        providerId,
-        modelId,
-        authKind: providerRegistry.get(providerId).authKind,
-        createdAt: Date.now(),
-        status: 'connected',
-      };
+  const existing = (await settingsStore.getConnection()) ?? null;
+  const switched = isProviderSwitch(existing, providerId, modelId);
+
+  // A capability measurement belongs to the pair it was measured on. See
+  // `provider-switch.ts` for why this is a function rather than a spread.
+  const connection = connectionAfterSwitch(existing, providerId, modelId, () => ({
+    providerId,
+    modelId,
+    authKind: providerRegistry.get(providerId).authKind,
+    createdAt: Date.now(),
+    status: 'connected',
+  }));
   await settingsStore.setConnection(connection);
+  if (switched) {
+    await auditLog.record({
+      type: 'provider.selected',
+      outcome: 'info',
+      providerId,
+      modelId,
+      code: 'capabilities_invalidated',
+    });
+  }
   broadcastEvent({ type: 'provider.statusChanged', connection });
   return { connection };
 });
