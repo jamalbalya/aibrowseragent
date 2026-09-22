@@ -576,12 +576,12 @@ resembles.
 
 | Class                          | Who may send   | What it covers                                                                      |
 | ------------------------------ | -------------- | ----------------------------------------------------------------------------------- |
-| `INTERNAL_SERVICE_WORKER_ONLY` | nobody         | reserved; empty today                                                               |
-| `PANEL_CONTROL_PLANE`          | side panel     | mutates, executes, authorises, changes policy, or discloses audit, evidence or logs |
-| `PANEL_READ_ONLY`              | side panel     | reads that do none of those                                                         |
-| `CONTENT_DATA_PLANE`           | service worker | the `content.*` routes                                                              |
-| `AUTH_CALLBACK`                | nobody         | the OAuth redirect target, which carries no message path                            |
-| `EVENT_CHANNEL`                | service worker | `agent.event` broadcasts to the panel                                               |
+| `CLASS_A_INTERNAL_WORKER_ONLY` | nobody         | reserved; empty today                                                               |
+| `CLASS_B_PANEL_CONTROL_PLANE`  | side panel     | mutates, executes, authorises, changes policy, or discloses audit, evidence or logs |
+| `CLASS_E_PANEL_READ_ONLY`      | side panel     | reads that do none of those                                                         |
+| `CLASS_C_CONTENT_DATA_PLANE`   | service worker | the `content.*` routes                                                              |
+| `CLASS_D_AUTH_CALLBACK`        | nobody         | the OAuth redirect target, which carries no message path                            |
+| `CLASS_F_EVENT_CHANNEL`        | service worker | `agent.event` broadcasts to the panel                                               |
 
 Every panel route is in one of the two panel classes. The table is typed as a
 total record over the protocol's route names, so **adding a route without

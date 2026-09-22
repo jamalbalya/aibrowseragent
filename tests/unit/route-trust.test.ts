@@ -137,7 +137,7 @@ describe('classifySender', () => {
 
 describe('route class authorization', () => {
   it('admits only the side panel to both panel classes', () => {
-    for (const routeClass of ['PANEL_CONTROL_PLANE', 'PANEL_READ_ONLY'] as const) {
+    for (const routeClass of ['CLASS_B_PANEL_CONTROL_PLANE', 'CLASS_E_PANEL_READ_ONLY'] as const) {
       expect(senderMayInvokePanelRoute('SIDE_PANEL', routeClass)).toBe(true);
       for (const sender of [
         'CONTENT_SCRIPT',
@@ -153,10 +153,10 @@ describe('route class authorization', () => {
 
   it('admits nobody to the classes this listener does not serve', () => {
     const notServed: RouteClass[] = [
-      'INTERNAL_SERVICE_WORKER_ONLY',
-      'CONTENT_DATA_PLANE',
-      'AUTH_CALLBACK',
-      'EVENT_CHANNEL',
+      'CLASS_A_INTERNAL_WORKER_ONLY',
+      'CLASS_C_CONTENT_DATA_PLANE',
+      'CLASS_D_AUTH_CALLBACK',
+      'CLASS_F_EVENT_CHANNEL',
     ];
     for (const routeClass of notServed) {
       for (const sender of SENDER_CLASSES) {
@@ -183,9 +183,10 @@ describe('the route class table', () => {
 
   it('puts every route in a panel class, so none is reachable from elsewhere', () => {
     for (const [route, routeClass] of Object.entries(PANEL_ROUTE_CLASSES)) {
-      expect(['PANEL_CONTROL_PLANE', 'PANEL_READ_ONLY'], `${route} is not a panel route`).toContain(
-        routeClass,
-      );
+      expect(
+        ['CLASS_B_PANEL_CONTROL_PLANE', 'CLASS_E_PANEL_READ_ONLY'],
+        `${route} is not a panel route`,
+      ).toContain(routeClass);
     }
   });
 
@@ -214,13 +215,13 @@ describe('the route class table', () => {
       'evidence.getPayload',
     ] as const;
     for (const route of mustBeControlPlane) {
-      expect(PANEL_ROUTE_CLASSES[route], route).toBe('PANEL_CONTROL_PLANE');
+      expect(PANEL_ROUTE_CLASSES[route], route).toBe('CLASS_B_PANEL_CONTROL_PLANE');
     }
   });
 
   it('returns nothing for a route it does not know', () => {
     expect(panelRouteClass('nope')).toBeUndefined();
-    expect(panelRouteClass('audit.export')).toBe('PANEL_CONTROL_PLANE');
+    expect(panelRouteClass('audit.export')).toBe('CLASS_B_PANEL_CONTROL_PLANE');
   });
 
   it('is not fooled by inherited object properties', () => {

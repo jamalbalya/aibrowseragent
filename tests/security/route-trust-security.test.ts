@@ -265,8 +265,8 @@ describe('R2 and R11 — a request id is not an authorization token', () => {
   });
 
   it('15. classes the listing routes with the routes their ids unlock', () => {
-    expect(PANEL_ROUTE_CLASSES['permission.listPending']).toBe('PANEL_CONTROL_PLANE');
-    expect(PANEL_ROUTE_CLASSES['file.listPendingSelections']).toBe('PANEL_CONTROL_PLANE');
+    expect(PANEL_ROUTE_CLASSES['permission.listPending']).toBe('CLASS_B_PANEL_CONTROL_PLANE');
+    expect(PANEL_ROUTE_CLASSES['file.listPendingSelections']).toBe('CLASS_B_PANEL_CONTROL_PLANE');
   });
 
   it('16. still lets the panel answer its own prompt', async () => {
@@ -453,9 +453,9 @@ describe('R4 — audit.export needs an explicit, valid scope', () => {
     // makes an all-task export explicit is the scope in the request and the
     // class of the sender — both enforced in the worker, where a caller that
     // never rendered a button still meets them.
-    expect(PANEL_ROUTE_CLASSES['audit.export']).toBe('PANEL_CONTROL_PLANE');
+    expect(PANEL_ROUTE_CLASSES['audit.export']).toBe('CLASS_B_PANEL_CONTROL_PLANE');
     expect(parseAuditExportScope(undefined).ok).toBe(false);
-    expect(senderMayInvokePanelRoute('CONTENT_SCRIPT', 'PANEL_CONTROL_PLANE')).toBe(false);
+    expect(senderMayInvokePanelRoute('CONTENT_SCRIPT', 'CLASS_B_PANEL_CONTROL_PLANE')).toBe(false);
   });
 });
 

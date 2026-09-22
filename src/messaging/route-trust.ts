@@ -57,17 +57,17 @@ export type SenderClass = (typeof SENDER_CLASSES)[number];
 /** What a route is, in terms of who may reach it. */
 export const ROUTE_CLASSES = [
   /** Reachable only from inside the worker. Nothing may message it. */
-  'INTERNAL_SERVICE_WORKER_ONLY',
+  'CLASS_A_INTERNAL_WORKER_ONLY',
   /** The panel's control plane: mutates, executes, authorises or discloses. */
-  'PANEL_CONTROL_PLANE',
+  'CLASS_B_PANEL_CONTROL_PLANE',
   /** Worker → content script. Never content-originated. */
-  'CONTENT_DATA_PLANE',
+  'CLASS_C_CONTENT_DATA_PLANE',
   /** The OAuth redirect target, which carries no message path at all. */
-  'AUTH_CALLBACK',
+  'CLASS_D_AUTH_CALLBACK',
   /** Panel reads that change nothing. Still panel-only. */
-  'PANEL_READ_ONLY',
+  'CLASS_E_PANEL_READ_ONLY',
   /** Worker → panel broadcasts. */
-  'EVENT_CHANNEL',
+  'CLASS_F_EVENT_CHANNEL',
 ] as const;
 
 export type RouteClass = (typeof ROUTE_CLASSES)[number];
@@ -222,8 +222,8 @@ export function classifySender(
  * Whether a sender may invoke a panel route.
  *
  * Both panel classes require the panel. They are separated because they say
- * different things about what the route does — `PANEL_CONTROL_PLANE` mutates,
- * executes, authorises or discloses; `PANEL_READ_ONLY` does not — and because
+ * different things about what the route does — `CLASS_B_PANEL_CONTROL_PLANE` mutates,
+ * executes, authorises or discloses; `CLASS_E_PANEL_READ_ONLY` does not — and because
  * a reader deciding where a new route belongs should have to think about
  * that. The authorisation they carry today is identical, and saying so here
  * is better than implying a difference that does not exist.
@@ -233,16 +233,16 @@ export function senderMayInvokePanelRoute(
   routeClass: RouteClass,
 ): boolean {
   switch (routeClass) {
-    case 'PANEL_CONTROL_PLANE':
-    case 'PANEL_READ_ONLY':
+    case 'CLASS_B_PANEL_CONTROL_PLANE':
+    case 'CLASS_E_PANEL_READ_ONLY':
       return senderClass === 'SIDE_PANEL';
     // The rest are not served by this listener at all. They are refused here
     // rather than omitted, so that classifying a route into one of them can
     // never make it reachable over the panel channel by accident.
-    case 'INTERNAL_SERVICE_WORKER_ONLY':
-    case 'CONTENT_DATA_PLANE':
-    case 'AUTH_CALLBACK':
-    case 'EVENT_CHANNEL':
+    case 'CLASS_A_INTERNAL_WORKER_ONLY':
+    case 'CLASS_C_CONTENT_DATA_PLANE':
+    case 'CLASS_D_AUTH_CALLBACK':
+    case 'CLASS_F_EVENT_CHANNEL':
       return false;
   }
 }
@@ -282,93 +282,93 @@ export function senderMayBroadcastEvent(senderClass: SenderClass): boolean {
  * the whole mechanism behind R13, and it is why this table is exhaustive
  * rather than a list of exceptions.
  *
- * `PANEL_CONTROL_PLANE` covers anything that mutates state, starts or resumes
+ * `CLASS_B_PANEL_CONTROL_PLANE` covers anything that mutates state, starts or resumes
  * execution, answers an authorisation, changes policy, or discloses audit,
- * evidence or log material. `PANEL_READ_ONLY` is for reads that do none of
+ * evidence or log material. `CLASS_E_PANEL_READ_ONLY` is for reads that do none of
  * those. Where a route was arguable, it is in the control plane: the cost of
  * over-classifying is nothing, since both require the panel.
  */
 export const PANEL_ROUTE_CLASSES: Record<PanelRequestType, RouteClass> = {
   // Tasks. Creating, resuming and retrying all reach `ToolRegistry.dispatch`.
-  'task.create': 'PANEL_CONTROL_PLANE',
-  'task.get': 'PANEL_READ_ONLY',
-  'task.list': 'PANEL_READ_ONLY',
-  'task.pause': 'PANEL_CONTROL_PLANE',
-  'task.resume': 'PANEL_CONTROL_PLANE',
-  'task.cancel': 'PANEL_CONTROL_PLANE',
-  'task.retry': 'PANEL_CONTROL_PLANE',
+  'task.create': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'task.get': 'CLASS_E_PANEL_READ_ONLY',
+  'task.list': 'CLASS_E_PANEL_READ_ONLY',
+  'task.pause': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'task.resume': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'task.cancel': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'task.retry': 'CLASS_B_PANEL_CONTROL_PLANE',
 
   // `session.get` creates a session when none exists, so it is not a read.
-  'session.get': 'PANEL_CONTROL_PLANE',
-  'session.setPermissionMode': 'PANEL_CONTROL_PLANE',
+  'session.get': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'session.setPermissionMode': 'CLASS_B_PANEL_CONTROL_PLANE',
 
   // Providers. `listModels` and `runDoctor` mutate nothing but reach the
   // network through the guarded transport, which is not a read either.
-  'provider.list': 'PANEL_READ_ONLY',
-  'provider.connect': 'PANEL_CONTROL_PLANE',
-  'provider.disconnect': 'PANEL_CONTROL_PLANE',
-  'provider.getConnection': 'PANEL_READ_ONLY',
-  'provider.listModels': 'PANEL_CONTROL_PLANE',
-  'provider.runDoctor': 'PANEL_CONTROL_PLANE',
-  'provider.setActive': 'PANEL_CONTROL_PLANE',
+  'provider.list': 'CLASS_E_PANEL_READ_ONLY',
+  'provider.connect': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'provider.disconnect': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'provider.getConnection': 'CLASS_E_PANEL_READ_ONLY',
+  'provider.listModels': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'provider.runDoctor': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'provider.setActive': 'CLASS_B_PANEL_CONTROL_PLANE',
 
-  'connector.list': 'PANEL_READ_ONLY',
-  'connector.authorize': 'PANEL_CONTROL_PLANE',
-  'connector.disconnect': 'PANEL_CONTROL_PLANE',
-  'connector.pendingWrites': 'PANEL_READ_ONLY',
-  'connector.resolveWrite': 'PANEL_CONTROL_PLANE',
+  'connector.list': 'CLASS_E_PANEL_READ_ONLY',
+  'connector.authorize': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'connector.disconnect': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'connector.pendingWrites': 'CLASS_E_PANEL_READ_ONLY',
+  'connector.resolveWrite': 'CLASS_B_PANEL_CONTROL_PLANE',
 
   // File selection. The listing is a request-id oracle, so it is classed with
   // the route those ids unlock rather than as a harmless read.
-  'file.respondSelection': 'PANEL_CONTROL_PLANE',
-  'file.listPendingSelections': 'PANEL_CONTROL_PLANE',
-  'file.downloadsPermission': 'PANEL_READ_ONLY',
+  'file.respondSelection': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'file.listPendingSelections': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'file.downloadsPermission': 'CLASS_E_PANEL_READ_ONLY',
 
   // The same reasoning, and the sharpest case: `listPending` hands out live
   // request ids, and `respond` turns one into an approval — including
   // `approve_site`, which writes a lasting rule.
-  'permission.respond': 'PANEL_CONTROL_PLANE',
-  'permission.listPending': 'PANEL_CONTROL_PLANE',
+  'permission.respond': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'permission.listPending': 'CLASS_B_PANEL_CONTROL_PLANE',
 
-  'policy.getSitePolicy': 'PANEL_READ_ONLY',
-  'policy.removeSiteRule': 'PANEL_CONTROL_PLANE',
+  'policy.getSitePolicy': 'CLASS_E_PANEL_READ_ONLY',
+  'policy.removeSiteRule': 'CLASS_B_PANEL_CONTROL_PLANE',
 
   // Audit reads are panel-only like everything else; export is in the control
   // plane because it produces a cross-task artefact.
-  'audit.list': 'PANEL_READ_ONLY',
-  'audit.integrity': 'PANEL_READ_ONLY',
-  'audit.export': 'PANEL_CONTROL_PLANE',
+  'audit.list': 'CLASS_E_PANEL_READ_ONLY',
+  'audit.integrity': 'CLASS_E_PANEL_READ_ONLY',
+  'audit.export': 'CLASS_B_PANEL_CONTROL_PLANE',
 
   // `getPayload` returns captured page content rather than identifiers, which
   // makes it the one disclosure route that is not metadata.
-  'evidence.listForTask': 'PANEL_READ_ONLY',
-  'evidence.getPayload': 'PANEL_CONTROL_PLANE',
+  'evidence.listForTask': 'CLASS_E_PANEL_READ_ONLY',
+  'evidence.getPayload': 'CLASS_B_PANEL_CONTROL_PLANE',
 
-  'debug.getLogs': 'PANEL_CONTROL_PLANE',
-  'debug.setLogLevel': 'PANEL_CONTROL_PLANE',
+  'debug.getLogs': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'debug.setLogLevel': 'CLASS_B_PANEL_CONTROL_PLANE',
 
-  'skill.list': 'PANEL_READ_ONLY',
-  'skill.runs': 'PANEL_READ_ONLY',
-  'skill.run': 'PANEL_CONTROL_PLANE',
+  'skill.list': 'CLASS_E_PANEL_READ_ONLY',
+  'skill.runs': 'CLASS_E_PANEL_READ_ONLY',
+  'skill.run': 'CLASS_B_PANEL_CONTROL_PLANE',
 
-  'workflow.recordStart': 'PANEL_CONTROL_PLANE',
-  'workflow.recordStop': 'PANEL_CONTROL_PLANE',
-  'workflow.recordCancel': 'PANEL_CONTROL_PLANE',
-  'workflow.recordStatus': 'PANEL_READ_ONLY',
-  'workflow.list': 'PANEL_READ_ONLY',
-  'workflow.get': 'PANEL_READ_ONLY',
-  'workflow.remove': 'PANEL_CONTROL_PLANE',
-  'workflow.revalidate': 'PANEL_READ_ONLY',
-  'workflow.replay': 'PANEL_CONTROL_PLANE',
-  'workflow.cancelReplay': 'PANEL_CONTROL_PLANE',
+  'workflow.recordStart': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'workflow.recordStop': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'workflow.recordCancel': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'workflow.recordStatus': 'CLASS_E_PANEL_READ_ONLY',
+  'workflow.list': 'CLASS_E_PANEL_READ_ONLY',
+  'workflow.get': 'CLASS_E_PANEL_READ_ONLY',
+  'workflow.remove': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'workflow.revalidate': 'CLASS_E_PANEL_READ_ONLY',
+  'workflow.replay': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'workflow.cancelReplay': 'CLASS_B_PANEL_CONTROL_PLANE',
 
-  'shortcut.list': 'PANEL_READ_ONLY',
-  'shortcut.create': 'PANEL_CONTROL_PLANE',
-  'shortcut.retarget': 'PANEL_CONTROL_PLANE',
-  'shortcut.remove': 'PANEL_CONTROL_PLANE',
-  'shortcut.resolve': 'PANEL_READ_ONLY',
+  'shortcut.list': 'CLASS_E_PANEL_READ_ONLY',
+  'shortcut.create': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'shortcut.retarget': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'shortcut.remove': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'shortcut.resolve': 'CLASS_E_PANEL_READ_ONLY',
 
-  'tools.list': 'PANEL_READ_ONLY',
+  'tools.list': 'CLASS_E_PANEL_READ_ONLY',
 };
 
 /**
