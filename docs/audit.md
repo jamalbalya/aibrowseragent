@@ -92,6 +92,13 @@ the proposed name arrives at the trail. It is checked against what this build
 registered. An unrecognised name is stored as `(unknown)` and the proposed
 string is dropped, so the trail cannot become a model-writable text field.
 
+The check is supplied by the caller, and a log built without one records every
+name as `(unknown)`. That default used to point the other way: with no
+validator the name was kept as handed over, which made this paragraph describe
+a control that was not running. A caller that cannot verify a name must not
+have the trail assert the name is real, so the absence of a check is treated
+as the absence of verification rather than as permission to trust.
+
 ## Order and integrity
 
 Each record carries a sequence number allocated from what is persisted, and a

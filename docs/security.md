@@ -760,6 +760,41 @@ Route trust is a filter in front of the existing routes. It can only subtract:
 a message that passes it meets exactly the same policy, permission, egress and
 consent gates it met before.
 
+## What the counts are, and why they are tested
+
+Every control above is a control some _component_ respects. The failure that
+none of them detects is a new component that respects none of them: a second
+message receiver, a second way into `ToolRegistry.dispatch`, a second file
+that holds a network primitive. Each of those is a perfectly ordinary thing to
+add, each looks correct in its own review, and each bypasses a gate the
+feature it sits beside still passes cleanly.
+
+So the shape of the tree is asserted directly, in
+`tests/security/security-invariants.test.ts`, as a standing fact rather than
+as a property of any one feature:
+
+| Fact                                       | Now | Why it is a security fact                                  |
+| ------------------------------------------ | --- | ---------------------------------------------------------- |
+| `chrome.runtime.onMessage` receivers       | 3   | Each is a boundary, and each must classify its sender      |
+| Callers of `ToolRegistry.dispatch`         | 2   | The one execution path; a third is a second one            |
+| Callers of `authorizeEgress`               | 2   | The one egress decision; a third decides without the gate  |
+| Files holding a network primitive          | 3   | Anything else reaches the network outside the interceptor  |
+| Code-execution primitives anywhere in src/ | 0   | `eval`, `new Function`, `innerHTML` and the rest           |
+| Permissions in the manifest                | 9   | Asserted by exact contents, so one cannot arrive unnoticed |
+
+These are not lines of coverage and they are not style rules. A number here
+changing is either a deliberate architectural decision — in which case the
+test is updated in the same commit that makes it, and the reviewer sees both —
+or it is the thing this file exists to catch. There is no third case, and that
+is the whole point of stating the number rather than describing the intent.
+
+Each is proved by mutation: the receiver added, the second dispatch caller
+added, the evaluator added, the permission added, and each one caught.
+
+What this does not do is establish that the components _are_ correct. It
+establishes that there are no others. The rest of this document is the first
+claim; this section is the second, and neither substitutes for the other.
+
 ## Reporting a vulnerability
 
 Open a security advisory on the repository rather than a public issue.

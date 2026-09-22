@@ -503,6 +503,14 @@ export interface AuditLogOptions {
    * model-writable free-text field. An unrecognised name is stored as
    * `(unknown)` and the proposed string is dropped.
    */
+  /**
+   * Decides whether a tool name is one this build registered.
+   *
+   * Optional, and its absence means **no name is verified** — every one is
+   * recorded as `(unknown)`. That is the honest reading: a log with no way to
+   * check a name cannot vouch for one, and a default that vouched anyway
+   * would make the check look present while doing nothing.
+   */
   readonly knownTool?: (name: string) => boolean;
   /**
    * Where a persistence failure is recorded durably (D-3).
@@ -739,14 +747,20 @@ export class AuditLog {
       throw new AuditShapeError('outcome', 'is not a known outcome');
     }
 
-    // A tool name is the one field with model-controlled reach.
-    if (typeof supplied['tool'] === 'string') {
-      const known = this.options.knownTool?.(supplied['tool']) ?? true;
-      if (!known) supplied['tool'] = UNKNOWN_TOOL;
+    // A tool name is the one field with model-controlled reach, and the
+    // default when nobody supplies a check is **closed**: a name that nothing
+    // verified is recorded as unverified.
+    //
+    // It used to default the other way — no validator meant the proposed
+    // string was kept — which quietly contradicted what this control is for
+    // and what the documentation says it does. A caller that cannot say
+    // whether a name is real should not have the trail assert that it is.
+    const verified = (name: string): boolean => this.options.knownTool?.(name) ?? false;
+    if (typeof supplied['tool'] === 'string' && !verified(supplied['tool'])) {
+      supplied['tool'] = UNKNOWN_TOOL;
     }
-    if (typeof supplied['ran'] === 'string') {
-      const known = this.options.knownTool?.(supplied['ran']) ?? true;
-      if (!known) supplied['ran'] = UNKNOWN_TOOL;
+    if (typeof supplied['ran'] === 'string' && !verified(supplied['ran'])) {
+      supplied['ran'] = UNKNOWN_TOOL;
     }
 
     // Identifiers are opaque handles this extension minted. Anything that is

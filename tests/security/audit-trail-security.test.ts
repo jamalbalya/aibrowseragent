@@ -54,6 +54,11 @@ function sources(dir: string): string[] {
 function freshLog(options: Partial<ConstructorParameters<typeof AuditLog>[1]> = {}): AuditLog {
   return new AuditLog(new SerializedStorageArea(new MemoryStorageArea()), {
     now: () => 1_700_000_000_000,
+    // Stated rather than left to a default. With no validator the log records
+    // every name as `(unknown)` — correctly, since nothing verified it — and
+    // most cases here are about what a record carries rather than about name
+    // verification. The cases that *are* about it override this.
+    knownTool: (name) => name.startsWith('fake.') || name.startsWith('browser.'),
     ...options,
   });
 }
@@ -499,6 +504,32 @@ describe('the trail is not a model-writable field', () => {
       outcome: 'allowed',
     });
     expect(known?.tool).toBe('fake.read');
+  });
+
+  it('32b. records every tool name as unverified when nothing can verify one', async () => {
+    // The fail-open this wave closed. The default used to be that a log with
+    // no validator kept whatever name it was handed, which made the control
+    // look present while doing nothing — and contradicted what the docs say
+    // it does. A caller that cannot check a name must not have the trail
+    // assert that the name is real.
+    // Built directly rather than through `freshLog`, because the shape under
+    // test is an options object with no `knownTool` key at all — which is
+    // what a caller that never thought about it produces. Passing the key as
+    // `undefined` would be a different, and easier, thing to satisfy.
+    const audit = new AuditLog(new SerializedStorageArea(new MemoryStorageArea()), {
+      now: () => 1_700_000_000_000,
+    });
+    await audit.record({
+      type: 'tool.invoked',
+      taskId: 'task_1',
+      tool: 'browser.read_page',
+      ran: 'browser.click',
+      outcome: 'allowed',
+    });
+    const [event] = await audit.list();
+    expect(event?.tool).toBe(UNKNOWN_TOOL);
+    expect(event?.ran).toBe(UNKNOWN_TOOL);
+    expect(JSON.stringify(event)).not.toContain('browser.read_page');
   });
 
   it('33. builds a dispatch record that carries no arguments and no element', async () => {

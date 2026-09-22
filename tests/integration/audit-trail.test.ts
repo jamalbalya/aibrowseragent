@@ -29,6 +29,11 @@ const TOOLS = [
 
 function withAudit(options: Parameters<typeof buildShortcutHarness>[0] = {}) {
   const audit = new AuditLog(new SerializedStorageArea(new MemoryStorageArea()), {
+    // Stated: with no validator every tool name records as `(unknown)`,
+    // because nothing verified it. These cases exercise the wiring, not the
+    // verification, so they say which names this world knows about.
+    knownTool: (name) =>
+      name.startsWith('browser.') || name.startsWith('skills.') || name.startsWith('fake.'),
     now: () => 1_700_000_000_000,
   });
   const harness = buildShortcutHarness(options);

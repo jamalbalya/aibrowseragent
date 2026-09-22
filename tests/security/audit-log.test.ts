@@ -21,7 +21,13 @@ let audit: AuditLog;
 
 beforeEach(() => {
   area = new MemoryStorageArea();
-  audit = new AuditLog(new SerializedStorageArea(area), { now: () => 1_700_000_000_000 });
+  audit = new AuditLog(new SerializedStorageArea(area), {
+    now: () => 1_700_000_000_000,
+    // Stated rather than defaulted. With no validator the log records every
+    // name as `(unknown)` — correctly, since nothing verified it — and these
+    // cases are about what a record carries, not about name verification.
+    knownTool: (name) => name.startsWith('browser.') || name.startsWith('fake.'),
+  });
 });
 
 describe('recording', () => {
