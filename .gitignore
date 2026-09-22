@@ -2,6 +2,11 @@ node_modules/
 dist/
 coverage/
 *.zip
+# Build output. The digest is recorded in docs/testing/release/README.md
+# together with the toolchain it was measured on, because that is what makes
+# it meaningful; a bare .sha256 committed here would read as authoritative
+# for any build, which is exactly what is not being claimed.
+/release/
 .DS_Store
 .env
 .env.*

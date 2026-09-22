@@ -31,6 +31,8 @@
     "check:acceptance": "node scripts/check-acceptance.mjs",
     "build:release": "RELEASE_BUILD=1 node scripts/build.mjs",
     "validate:release": "node scripts/validate-release.mjs",
+    "package:release": "node scripts/package-release.mjs",
+    "release": "npm run build:release && node scripts/validate-package.mjs && npm run validate:release && node scripts/package-release.mjs --verify",
     "verify:release": "npm run build:release && node scripts/validate-package.mjs && npm run validate:release"
   },
   "dependencies": {

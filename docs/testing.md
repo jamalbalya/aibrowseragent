@@ -222,6 +222,33 @@ These were found by tests during development and fixed. They are listed because
 | A caller could displace the connector's `Authorization` header     | HTTP header names are case-insensitive, so `{ authorization: 'x' }` and `{ Authorization: token }` are two object keys and one header. "Applied last" was not the guarantee it read as                                                                                                                                                                                                                                                                                                  | Every spelling is stripped from caller headers before the credential is applied                                                                                                                                                                                        |
 | Luhn alone still matched timestamps and some UUID tails            | About one digit string in ten passes Luhn by chance, and an epoch-millisecond timestamp is 13 digits, so `capturedAt 1758441192004` was redacted on every record that drew one                                                                                                                                                                                                                                                                                                          | A candidate must also stand alone as a token and carry a published issuer prefix; the regression samples rather than fixing vectors                                                                                                                                    |
 
+## Release engineering
+
+[`testing/release/`](testing/release/README.md) covers how the artifact that
+would be uploaded to the Chrome Web Store is produced and what can be said
+about it truthfully, and
+[`chrome-web-store.md`](testing/release/chrome-web-store.md) splits submission
+into what is complete in this repository and what only an account owner can
+do — a developer account, a payment, an accepted agreement, a hosted privacy
+policy URL, screenshots of a running extension.
+
+The artifact is reproducible, and that was measured rather than assumed: two
+clean builds of the same commit produce byte-identical archives. That needed
+work, because an ordinary ZIP stores a modification time per entry and takes
+whatever order the filesystem returned. `scripts/package-release.mjs` writes
+the archive itself with sorted entries, fixed timestamps and no extra fields,
+and `--verify` re-packs and compares so the pinning cannot regress quietly.
+It adds no dependency: a packaging library is an odd place to accept
+supply-chain risk for the one file that reaches users.
+
+`release-claims.test.ts` guards two things nothing else would notice — that
+no document in this repository claims a store availability that has not
+happened, and that the packer's three determinism properties are still there.
+Both are the kind of one-line change that leaves everything else passing.
+
+**The extension has not been submitted and is not published.** There is no
+listing and no developer account.
+
 ## Acceptance packages for §85–§90
 
 The specification names six sets of acceptance tests. They are not a suite
