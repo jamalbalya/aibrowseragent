@@ -408,24 +408,36 @@ is persisted.
 
 ---
 
-## Open decisions for the account owner
+## Account-owner decisions — confirmed
 
-1. **Confirm K1** (passphrase-derived end-to-end encryption) as the Cloud Sync
-   design, or accept that the backend reads task and audit content.
-2. **Confirm metadata-only Cloud Sync ships first**, with encrypted task /
-   workflow / audit sync following.
-3. **Confirm provider API keys stay `SECRET_LOCAL_ONLY`** — restored
-   connections require a reconnect on the new device.
-
-Backend work (phases 8–20) does not start until these are answered.
+1. **K1 confirmed.** Cloud Sync of sensitive user work uses client-side
+   end-to-end encryption under a passphrase-derived key. The backend must not
+   be able to read task content, page-derived summaries, workflows, sensitive
+   shortcuts, or audit/history content. The plaintext passphrase is never
+   stored on the backend. The encryption design itself is still to be written
+   and reviewed before implementation.
+2. **Metadata-only Cloud Sync is the first milestone.** Identity metadata,
+   connection metadata (`connectionId`, `providerId`, protocol, `authKind`,
+   `accountLabel`, model and safe capability metadata), safe preferences,
+   workspace metadata once it exists, and sync bookkeeping. Task bodies, page
+   content, prompts, screenshots, sensitive workflow content and audit
+   content are **not** synced until E2EE is implemented and validated.
+3. **Provider API keys remain `SECRET_LOCAL_ONLY` permanently.** Never
+   uploaded, encrypted or otherwise. After a reinstall, connection metadata is
+   restored and the credential requires a reconnect — and user work is never
+   deleted because a credential is unavailable.
 
 ---
 
-## Queued for the next design review — Browser Workspace boundary
+## Browser Workspace boundary — designed, not implemented
 
-Received after this wave's scope was fixed, and **not designed or implemented
-here**. Recorded so it is not lost, and because two of its constraints bear
-directly on identifiers this wave introduced.
+The design review has since been carried out and lives in
+[`BROWSER_WORKSPACE.md`](./BROWSER_WORKSPACE.md). **No workspace code exists
+yet**; that document is a review awaiting approval, and its §22 is the
+implementation plan.
+
+Summarised here because two of its constraints bear directly on identifiers
+this wave introduced.
 
 The requirement: activating the agent from a tab makes that tab the initial
 context of a _workspace_; tabs the agent opens join the same Chrome tab group;
