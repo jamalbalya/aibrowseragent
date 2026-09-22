@@ -505,6 +505,34 @@ The confirmation shown before a shortcut runs is **not** a security decision.
 It says which reviewed thing is about to start, not whether it may do what it
 does. See [shortcuts.md](shortcuts.md).
 
+### An audit trail that cannot become a payload store
+
+The unified trail (P-038) records every task's decisions in one place and is
+the one artefact designed to leave the extension as a file, which makes it the
+most sensitive single thing the product holds. Five properties carry it:
+
+- **It observes; it never authorises.** Nothing reads it to decide anything,
+  and the audit layer imports no gate. A write that fails is a gap in the
+  record of an execution that already happened — never a failed execution.
+- **It holds decisions, never data.** Every field is an identifier, a closed
+  vocabulary, a flag or a reference. Records are flat and bounded, anything
+  over a limit is refused rather than trimmed, and a field the redactor would
+  alter is dropped rather than marked.
+- **It is not a model-writable field.** A tool name, the one field with
+  model-controlled reach, is checked against the registered set; an
+  unrecognised one is stored as `(unknown)` and the proposed string dropped.
+- **Its order is checkable.** A persisted sequence and a digest chain detect
+  corruption, gaps, duplication and reordering. This is not tamper protection
+  and is not described as such: anyone who can rewrite extension storage can
+  rewrite the chain with it.
+- **Export is local only.** A blob of the extension's own origin, written
+  through an anchor click, needing no permission, with no network carrier and
+  no URL parameter. The default scope is one task.
+
+Eviction writes a `retention.compacted` record in the same transaction that
+removes the records, so a reader can always tell a quiet period from a
+truncated one. There is no delete in the UI. See [audit.md](audit.md).
+
 ## Reporting a vulnerability
 
 Open a security advisory on the repository rather than a public issue.

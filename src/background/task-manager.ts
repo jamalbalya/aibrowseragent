@@ -47,6 +47,23 @@ export interface TaskManagerOptions {
    * more allowance than it started with.
    */
   readonly onUsageChanged?: (taskId: string, usage: TaskUsage) => void;
+  /**
+   * Notified when a task is created, changes state or finishes.
+   *
+   * An observer, like `onUsageChanged`: it is told what happened and cannot
+   * change it. The manager does not await it and never lets it fail a
+   * transition — a record of a state change is not the state change.
+   */
+  readonly onLifecycle?: (event: {
+    readonly kind: 'created' | 'state' | 'completed';
+    readonly taskId: string;
+    readonly sessionId?: string;
+    readonly state?: TaskState;
+    readonly outcome?: string;
+    readonly providerId?: string;
+    readonly modelId?: string;
+    readonly permissionMode?: PermissionMode;
+  }) => void;
   readonly now?: () => number;
 }
 
@@ -102,6 +119,14 @@ export class TaskManager {
 
     await this.options.store.saveTask(task);
     this.emit(task);
+    this.observeLifecycle({
+      kind: 'created',
+      taskId: task.id,
+      sessionId: task.sessionId,
+      providerId: task.providerId,
+      modelId: task.modelId,
+      permissionMode: task.permissionMode,
+    });
 
     // The abort handle is registered synchronously, before execution is
     // scheduled. Registering it inside `execute` would leave a window in which
@@ -202,7 +227,34 @@ export class TaskManager {
       };
     });
     if (updated) this.emit(updated);
+    if (updated && allowed) {
+      this.observeLifecycle({
+        kind: isTerminal(next) ? 'completed' : 'state',
+        taskId,
+        state: next,
+        ...(isTerminal(next) ? { outcome: next } : {}),
+      });
+    }
     return allowed;
+  }
+
+  /**
+   * Tells the lifecycle observer what happened, and never lets it interfere.
+   *
+   * Not awaited and fully guarded: a transition that already succeeded must
+   * not be undone because something watching it threw.
+   */
+  private observeLifecycle(
+    event: Parameters<NonNullable<TaskManagerOptions['onLifecycle']>>[0],
+  ): void {
+    try {
+      this.options.onLifecycle?.(event);
+    } catch (error) {
+      log.warn('A task lifecycle observer threw and was ignored.', {
+        taskId: event.taskId,
+        error: error instanceof Error ? error.name : 'unknown',
+      });
+    }
   }
 
   /** Callbacks the runtime uses to report progress. */

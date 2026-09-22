@@ -7,11 +7,13 @@ import { PermissionPrompt } from './components/PermissionPrompt';
 import { FilePrompt } from './components/FilePrompt';
 import { SettingsView } from './components/SettingsView';
 import { WorkflowsView } from './components/WorkflowsView';
+import { AuditView } from './components/AuditView';
 
 export function App(): React.JSX.Element {
   const agent = useAgentState();
   const [showSettings, setShowSettings] = useState(false);
   const [showWorkflows, setShowWorkflows] = useState(false);
+  const [showAudit, setShowAudit] = useState(false);
 
   // A provider that has not demonstrated tool calling cannot run a task, so
   // the composer is disabled rather than letting the task fail at the first
@@ -30,6 +32,17 @@ export function App(): React.JSX.Element {
           connection={agent.connection}
           onClose={() => setShowSettings(false)}
           onChanged={() => void agent.refresh()}
+        />
+      </div>
+    );
+  }
+
+  if (showAudit) {
+    return (
+      <div className="app">
+        <AuditView
+          activeTaskId={agent.activeTask?.id ?? null}
+          onClose={() => setShowAudit(false)}
         />
       </div>
     );
@@ -58,6 +71,7 @@ export function App(): React.JSX.Element {
         onChangeMode={(mode) => void agent.changePermissionMode(mode)}
         onOpenSettings={() => setShowSettings(true)}
         onOpenWorkflows={() => setShowWorkflows(true)}
+        onOpenAudit={() => setShowAudit(true)}
       />
 
       {agent.error ? (

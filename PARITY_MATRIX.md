@@ -110,10 +110,16 @@ separate classes of error have actually occurred here: a revision that claimed
 17 PASS while its own table said 23, and a revision whose per-column coverage
 claims were not backed by any test. The check now covers both.
 
-Movement in this revision: shortcuts (P-021) move from NOT-STARTED to
-PARTIAL, taking PARTIAL from 6 to 7 and NOT-STARTED from 4 to 3. **Not** PASS:
-the §85 manual acceptance scenarios remain unexecuted, as they do for every
-row in this file.
+Movement in this revision: the audit trail (P-038) gains integration and
+security coverage and closes both of the gaps its entry named — there is now
+one unified cross-task log, and an export. **The counts do not move**: P-038
+was already PARTIAL and stays PARTIAL, because §84 condition 3 is unmet
+repository-wide. An implementation existing is not parity.
+
+### Earlier movement, kept for the record
+
+Shortcuts (P-021) moved from NOT-STARTED to PARTIAL, taking PARTIAL from 6 to
+7 and NOT-STARTED from 4 to 3.
 
 ### Earlier movement, kept for the record
 
@@ -261,7 +267,7 @@ rather than folded into the verdict.
 | P-035 | Capability doctor                    | yes  | yes  | —           | —        | yes | PASS        |
 | P-036 | Error recovery                       | yes  | yes  | yes         | —        | yes | PASS        |
 | P-037 | Loop detection                       | yes  | yes  | yes         | —        | —   | PASS        |
-| P-038 | Audit trail                          | yes  | yes  | —           | —        | yes | PARTIAL     |
+| P-038 | Audit trail                          | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-039 | Evidence model                       | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-040 | Provider/model capability detection  | yes  | yes  | —           | —        | yes | PASS        |
 
@@ -288,15 +294,36 @@ dedicated tool, and a multi-select listbox can only be set one value at a
 time. Each is incremental work on the existing interaction engine with no new
 security surface.
 
-**P-038 Audit trail** — Permission decisions are recorded with task, tool,
-site, risk, decision, reason and timestamp, capped at 500 entries, and an
-end-to-end test reads that history back out of a real browser after a real
-decision. PARTIAL for two specific reasons, both of which need code that does
-not exist yet rather than a test: tool executions live in per-task step
-records rather than one unified, queryable audit log spanning tasks, so
-"what did the agent do on this site last week" cannot be answered; and there
-is no export, so the trail cannot leave the extension. Building either is new
-functionality and is out of Stage 2 closure scope.
+**P-038 Audit trail** — One append-only stream across every task, recording
+what was proposed and what was decided. Tool executions now reach it through
+the single observation hook on `ToolRegistry.dispatch`, alongside task
+lifecycle, permission, egress, connector, file, skill, workflow and shortcut
+events — nine event types were declared from the start and never written,
+which is why the trail could say what was _decided_ but not what was _done_.
+
+The trail observes and never authorises: nothing reads it to decide anything,
+and a write that fails is a gap in the record of an execution that already
+happened rather than a failed execution. Records are flat and bounded, hold
+identifiers, closed vocabularies, flags and references only, and are refused
+rather than trimmed when they exceed a limit. A persisted sequence and a
+digest chain give corruption and reordering detection — explicitly not tamper
+protection, since anyone who can rewrite extension storage can rewrite the
+chain with it. Eviction writes a marker in the same transaction that removes
+the records. Export is local only, needs no permission, has no network
+carrier and defaults to the current task.
+
+Covered by a unit suite, an integration suite, a thirty-four-case security
+suite and an eight-test real-Chromium suite, with sixteen mutations proved to
+fail.
+
+Both reasons this row was PARTIAL are now closed. It **stays PARTIAL**, for
+the reason every row in this file does: §84 condition 3, the manual
+acceptance test, is unmet repository-wide. An implementation existing is not
+parity certification. Two smaller limits are also worth stating: deletion is
+deliberately not exposed, so a user cannot yet clear their own history from
+the panel, and the read surface scans the retained trail rather than a
+secondary index — bounded, but it would not stay so if the cap were raised
+much further.
 
 **P-024 Skills** — The skill system is implemented: a structured definition
 with no scripting engine, a validator that refuses anything that would

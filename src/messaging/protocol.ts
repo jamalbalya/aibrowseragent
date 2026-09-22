@@ -263,8 +263,26 @@ export interface PanelRequestMap {
   'policy.removeSiteRule': { request: { site: string }; response: { state: SitePolicyState } };
 
   'audit.list': {
-    request: { limit?: number; taskId?: string; site?: string };
-    response: { events: AuditEvent[] };
+    request: { limit?: number; taskId?: string; site?: string; offset?: number };
+    response: {
+      events: readonly AuditEvent[];
+      total: number;
+      offset: number;
+      limit: number;
+      /** Non-null when a write failed, so a reader can see the trail has a gap. */
+      degraded: string | null;
+    };
+  };
+  /**
+   * What the digest chain says about the stream.
+   *
+   * Corruption and reordering detection — a partial write, a dropped or
+   * duplicated record, a reordered one. Not authenticated integrity: anyone
+   * who can rewrite this extension's storage can rewrite the chain with it.
+   */
+  'audit.integrity': {
+    request: Record<string, never>;
+    response: { verdict: string; checked: number; atSeq?: number; note: string };
   };
   /**
    * Builds the export document and returns it to the side panel.
@@ -274,7 +292,14 @@ export interface PanelRequestMap {
    * elsewhere would be an egress and is not what this does.
    */
   'audit.export': {
-    request: { limit?: number };
+    request: {
+      /**
+       * Defaults to the current task. Exporting every task is a different
+       * thing to be handed and must be asked for.
+       */
+      scope?: { kind: 'task'; taskId: string } | { kind: 'all' };
+      limit?: number;
+    };
     response: { export: AuditExport };
   };
   'evidence.listForTask': {

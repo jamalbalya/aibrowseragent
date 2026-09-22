@@ -236,8 +236,13 @@
       "integration": ["tests/integration/agent-runtime.test.ts"]
     },
     "P-038": {
-      "unit": ["tests/unit/permission-engine.test.ts"],
-      "e2e": ["tests/e2e/security.spec.ts"]
+      "unit": ["tests/unit/dispatch-observers.test.ts"],
+      "integration": ["tests/integration/audit-trail.test.ts"],
+      "security": [
+        "tests/security/audit-trail-security.test.ts",
+        "tests/security/audit-log.test.ts"
+      ],
+      "e2e": ["tests/e2e/audit.spec.ts"]
     },
     "P-039": {
       "unit": ["tests/unit/evidence-store.test.ts"],

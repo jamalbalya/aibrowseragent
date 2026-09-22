@@ -35,8 +35,8 @@ describe('recording', () => {
       outcome: 'allowed',
       code: 'approved',
     });
-    expect(event.id).toMatch(/^aud_/);
-    expect(event.at).toBe(1_700_000_000_000);
+    expect(event?.id).toMatch(/^aud_/);
+    expect(event?.at).toBe(1_700_000_000_000);
     expect(await audit.list()).toHaveLength(1);
   });
 
@@ -70,14 +70,29 @@ describe('recording', () => {
     expect(await audit.list(100)).toHaveLength(25);
   });
 
-  it('caps retention and drops the oldest first', async () => {
-    const small = new AuditLog(new SerializedStorageArea(area), { maxEvents: 3 });
-    for (let i = 0; i < 6; i += 1) {
-      await small.record({ type: 'tool.invoked', taskId: `t${i}`, outcome: 'allowed', at: i });
+  it('caps retention and says what it dropped, rather than dropping silently', async () => {
+    const small = new AuditLog(new SerializedStorageArea(new MemoryStorageArea()), {
+      maxEvents: 4,
+      now: () => 1_700_000_000_000,
+    });
+    for (let index = 1; index <= 6; index += 1) {
+      await small.record({ type: 'task.state', taskId: `task_${index}`, outcome: 'info' });
     }
+
     const events = await small.list();
-    expect(events).toHaveLength(3);
-    expect(events.map((e) => e.taskId)).toEqual(['t5', 't4', 't3']);
+    // A reader can tell a quiet period from a truncated one, because the
+    // truncation is itself a record.
+    const marker = events.find((event) => event.type === 'retention.compacted');
+    expect(marker).toBeDefined();
+    expect(marker?.removedCount).toBeGreaterThan(0);
+    expect(marker?.removedFromSeq).toBeDefined();
+    expect(marker?.removedToSeq).toBeDefined();
+
+    // The newest task is retained and the oldest is gone.
+    const tasks = events.map((event) => event.taskId);
+    expect(tasks).toContain('task_6');
+    expect(tasks).not.toContain('task_1');
+    expect(events.length).toBeLessThanOrEqual(4);
   });
 });
 
@@ -139,41 +154,65 @@ describe('sensitive material is refused, not redacted after the fact', () => {
   });
 
   it('refuses the write rather than storing a stripped version', async () => {
-    await expect(
-      audit.record({
-        type: 'tool.invoked',
-        outcome: 'allowed',
-        // A caller spreading a wider object into the record.
-        ...({ password: 'hunter2' } as unknown as Record<string, never>),
-      }),
-    ).rejects.toThrow(ProhibitedAuditFieldError);
+    // The writer reports the refusal by returning nothing rather than by
+    // throwing: it is called from an observer on the dispatch path, and an
+    // exception there would reach execution. The property that matters is
+    // that nothing was stored, which is asserted directly.
+    const written = await audit.record({
+      type: 'tool.invoked',
+      taskId: 'task_1',
+      outcome: 'allowed',
+      // A caller spreading a wider object into the record.
+      ...({ password: 'hunter2' } as unknown as Record<string, never>),
+    });
 
+    expect(written).toBeNull();
     expect(await audit.list()).toHaveLength(0);
+    // And the validator itself still throws, which is what the source-level
+    // guarantee rests on.
+    expect(() => assertAuditSafe({ type: 'tool.invoked', password: 'hunter2' })).toThrow(
+      ProhibitedAuditFieldError,
+    );
   });
 
-  it('still redacts a secret-shaped value that arrives in an allowed field', async () => {
-    // `detail` is extension-authored, so this should not happen — but if it
-    // does, the value must not land in storage intact.
+  it('drops a field the redactor altered rather than storing a marker', async () => {
+    // A filename is chosen by a user, a page or a model, so it is the one
+    // allowed field a secret can arrive in. The value must not land in
+    // storage intact — and must not land as `[REDACTED]` either, because a
+    // marker tells a reader a secret was there, which is itself information.
     const event = await audit.record({
-      type: 'tool.refused',
-      outcome: 'denied',
-      detail: 'refused: sk-abcdefghijklmnopqrstuvwxyz0123456789012345',
+      type: 'file.selected',
+      outcome: 'allowed',
+      fileName: 'sk-abcdefghijklmnopqrstuvwxyz0123456789012345.txt',
     });
-    expect(event.detail).not.toContain('sk-abcdefghijklmnopqrstuvwxyz');
+    expect(JSON.stringify(event)).not.toContain('sk-abcdefghijklmnopqrstuvwxyz');
+    expect(JSON.stringify(event)).not.toContain('REDACTED');
+    expect(event?.fileName).toBeUndefined();
   });
 });
 
+/** A clean verdict, so export cases assert on the document rather than the chain. */
+const OK_REPORT = {
+  verdict: 'ok' as const,
+  checked: 0,
+  note: 'Every retained record follows the one before it.',
+};
+
 describe('export', () => {
   it('states in the document what it does not contain', () => {
-    const doc = buildAuditExport([], 1);
-    expect(doc.format).toBe('aiba-audit/1');
+    const doc = buildAuditExport([], 1, { kind: 'all' }, OK_REPORT);
+    expect(doc.format).toBe('aiba-audit/2');
+    // What was asked for is stated in the artefact: one task's records and
+    // every task's are different things to be handed.
+    expect(doc.scope).toEqual({ kind: 'all' });
+    expect(doc.integrity.verdict).toBe('ok');
     expect(doc.notice).toMatch(/no page content/i);
     expect(doc.notice).toMatch(/no credentials/i);
   });
 
   it('carries the events and their count', async () => {
     await audit.record({ type: 'task.created', taskId: 'a', outcome: 'info' });
-    const doc = buildAuditExport(await audit.list(), 2);
+    const doc = buildAuditExport(await audit.list(), 2, { kind: 'all' }, OK_REPORT);
     expect(doc.eventCount).toBe(1);
     expect(doc.events[0]!.taskId).toBe('a');
   });
@@ -182,7 +221,9 @@ describe('export', () => {
     const poisoned = [
       { id: 'x', at: 1, type: 'tool.invoked', outcome: 'allowed', cookie: 'a=b' },
     ] as never;
-    expect(() => buildAuditExport(poisoned, 1)).toThrow(ProhibitedAuditFieldError);
+    expect(() => buildAuditExport(poisoned, 1, { kind: 'all' }, OK_REPORT)).toThrow(
+      ProhibitedAuditFieldError,
+    );
   });
 
   it('writes nothing anywhere, so building an export is not itself a transfer', async () => {
@@ -190,7 +231,7 @@ describe('export', () => {
     // building the document is pure, and moving it is a separate decision.
     await audit.record({ type: 'task.created', taskId: 'a', outcome: 'info' });
     const before = JSON.stringify(await area.get('audit:audit-index'));
-    buildAuditExport(await audit.list(), 3);
+    buildAuditExport(await audit.list(), 3, { kind: 'all' }, OK_REPORT);
     const after = JSON.stringify(await area.get('audit:audit-index'));
     expect(after).toBe(before);
   });
@@ -204,7 +245,9 @@ describe('export', () => {
       outcome: 'allowed',
       evidenceIds: ['ev_page'],
     });
-    const serialised = JSON.stringify(buildAuditExport(await audit.list(), 4));
+    const serialised = JSON.stringify(
+      buildAuditExport(await audit.list(), 4, { kind: 'all' }, OK_REPORT),
+    );
     expect(serialised).toContain('ev_page');
     expect(serialised).toContain('browser.read_page');
     // The reference is there; the thing it references is not.

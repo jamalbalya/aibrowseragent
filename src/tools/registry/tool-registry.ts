@@ -123,7 +123,9 @@ export interface ToolRegistryOptions {
    * modify, block, retry or re-authorise a call that has already been
    * decided. See `observe` below.
    */
-  readonly onDispatched?: (observation: DispatchObservation) => void;
+  readonly onDispatched?:
+    | ((observation: DispatchObservation) => void)
+    | readonly ((observation: DispatchObservation) => void)[];
   readonly publishSecurityContext?: (
     taskId: string,
     context: {
@@ -273,8 +275,13 @@ export class ToolRegistry {
     result: ToolDispatchResult,
     actedOn: ActedOnElement | undefined,
   ): void {
-    const observer = this.options.onDispatched;
-    if (!observer) return;
+    const configured = this.options.onDispatched;
+    if (!configured) return;
+    // Typed explicitly: `Array.isArray` widens a readonly union to `any[]`,
+    // and an `any` here would quietly disable the checks on the call below.
+    const observers: readonly ((observation: DispatchObservation) => void)[] =
+      typeof configured === 'function' ? [configured] : configured;
+    if (observers.length === 0) return;
 
     let observation: DispatchObservation;
     try {
@@ -298,15 +305,21 @@ export class ToolRegistry {
       return;
     }
 
-    try {
-      observer(observation);
-    } catch (caught) {
-      // Swallowed on purpose. An observer is a bystander; one that throws is
-      // a broken bystander, not a veto.
-      log.warn('A dispatch observer threw and was ignored.', {
-        tool: observation.tool,
-        error: caught instanceof Error ? caught.name : 'unknown',
-      });
+    // Each observer in its own try/catch, so one broken bystander does not
+    // silence the others. Ordering is deliberately not a contract: an
+    // observer sees a result that is already final, so nothing it does — or
+    // fails to do — can reach the call it is watching.
+    for (const observer of observers) {
+      try {
+        observer(observation);
+      } catch (caught) {
+        // Swallowed on purpose. An observer is a bystander; one that throws
+        // is a broken bystander, not a veto.
+        log.warn('A dispatch observer threw and was ignored.', {
+          tool: observation.tool,
+          error: caught instanceof Error ? caught.name : 'unknown',
+        });
+      }
     }
   }
 

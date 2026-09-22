@@ -20,7 +20,8 @@
 
 import { getLogger } from '@/logging/logger';
 import { update, type StorageArea } from '@/storage/storage-area';
-import { redactValue } from '@/security/redaction/secret-redactor';
+import { hashContent } from '@/evidence/evidence-model';
+import { REDACTED, redactValue } from '@/security/redaction/secret-redactor';
 
 const log = getLogger('storage');
 
@@ -48,6 +49,11 @@ export const AUDIT_EVENT_TYPES = [
   'skill.finished',
   'workflow.recorded',
   'workflow.replay',
+  'shortcut.resolved',
+  'shortcut.launched',
+  // Written only by the log itself, when eviction removes records. It exists
+  // so a reader can tell a quiet period from a truncated one.
+  'retention.compacted',
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
@@ -64,6 +70,36 @@ export type AuditOutcome = 'allowed' | 'denied' | 'confirmed' | 'failed' | 'info
  */
 export interface AuditEvent {
   readonly id: string;
+  /**
+   * Schema version of this record.
+   *
+   * Written per event rather than per store, because a trail outlives the
+   * build that wrote it: a reader meeting a higher version reports it and
+   * does not interpret it, and a record written before versioning existed is
+   * read as `v0` and shown as such.
+   */
+  readonly eventVersion: number;
+  /**
+   * Position in the one stream, allocated from what is persisted.
+   *
+   * Order is read from this and never from `at`. Clocks move — they are
+   * adjusted, they drift, and two events in the same millisecond tie — so a
+   * timestamp cannot carry ordering. A gap in `seq` means a record is
+   * missing; a repeat means one was written twice.
+   */
+  readonly seq: number;
+  /**
+   * Digest of the previous record's canonical form.
+   *
+   * This gives **corruption and reordering detection**: a truncated write, a
+   * dropped record or a reordered one breaks the chain and is reported. It is
+   * deliberately *not* authenticated integrity. Anyone who can write this
+   * extension's storage can also read it, so they can recompute the chain as
+   * easily as they can edit a record — there is no key here that they would
+   * not also hold. Calling it tamper protection would be a claim this
+   * architecture cannot support.
+   */
+  readonly prevDigest: string;
   readonly at: number;
   readonly type: AuditEventType;
   readonly taskId?: string;
@@ -82,8 +118,6 @@ export interface AuditEvent {
   readonly outcome: AuditOutcome;
   /** Policy or decision code, e.g. `EXFILTRATION_CONFIRM`. */
   readonly code?: string;
-  /** Short extension-authored description. Never page or model text. */
-  readonly detail?: string;
   /**
    * Basename of a file the event is about. Never a path, never contents.
    *
@@ -126,6 +160,31 @@ export interface AuditEvent {
   readonly ran?: string;
   /** Evidence ids that hold the detail this record deliberately omits. */
   readonly evidenceIds?: readonly string[];
+  /** P-021 linkage. An opaque store id, never a name a user typed. */
+  readonly shortcutId?: string;
+  /** P-022 record version, alongside `skillHash` for the definition hash. */
+  readonly workflowVersion?: number;
+  /** Whether the call reached the tool at all. */
+  readonly executed?: boolean;
+  readonly cancelled?: boolean;
+  /** The mode in force when the decision was made. */
+  readonly permissionMode?: string;
+  /**
+   * The task's taint *kind* only.
+   *
+   * Never the sources. A source names a site the user visited, and a
+   * cross-task trail listing those is a browsing history by another name.
+   */
+  readonly taintKind?: string;
+  /** `api` or `none`. Web inference is gated and cannot appear here. */
+  readonly providerMode?: string;
+  readonly tabId?: number;
+  readonly stepCount?: number;
+  readonly stepIndex?: number;
+  /** Retention bookkeeping, on `retention.compacted` records only. */
+  readonly removedCount?: number;
+  readonly removedFromSeq?: number;
+  readonly removedToSeq?: number;
 }
 
 /**
@@ -174,6 +233,28 @@ const PROHIBITED_FIELD_NAMES = [
   'results',
   'arguments',
   'args',
+  // A definition, or a reference that would carry one.
+  'steps',
+  'definition',
+  'binding',
+  'bindings',
+  // Anything that would be read as a selector or an expression.
+  'selector',
+  'selectors',
+  'xpath',
+  'elementid',
+  // Model-facing text, in either direction.
+  'prompt',
+  'completion',
+  'message',
+  'messages',
+  // The generic carriers a value arrives in when a specific name is refused.
+  'text',
+  'value',
+  'values',
+  // Taint sources name sites the user visited; the signature is a consent key.
+  'sources',
+  'taintsignature',
 ];
 
 /**
@@ -188,6 +269,27 @@ const PROHIBITED_FIELD_NAMES = [
 const PROHIBITED_FIELDS: ReadonlySet<string> = new Set(
   PROHIBITED_FIELD_NAMES.map((name) => name.toLowerCase()),
 );
+
+/** Fields allowed to hold a bounded array. Everything else must be scalar. */
+const ARRAY_FIELDS: ReadonlySet<string> = new Set(['scopes', 'evidenceIds']);
+
+/** The whole record, serialised. Beyond this it is not an audit record. */
+const MAX_EVENT_BYTES = 4096;
+const MAX_STRING = 256;
+const MAX_ORIGIN = 128;
+const MAX_FILENAME = 128;
+const MAX_ARRAY_ENTRIES = 32;
+const MAX_ARRAY_STRING = 128;
+
+export class AuditShapeError extends Error {
+  constructor(
+    readonly field: string,
+    readonly why: string,
+  ) {
+    super(`An audit record's "${field}" ${why}.`);
+    this.name = 'AuditShapeError';
+  }
+}
 
 export class ProhibitedAuditFieldError extends Error {
   constructor(readonly field: string) {
@@ -242,10 +344,244 @@ function walkForProhibited(value: unknown, path: readonly string[], depth: numbe
   }
 }
 
+/**
+ * What a caller may supply.
+ *
+ * `id`, `at`, `seq`, `prevDigest` and `eventVersion` are the log's to
+ * assign, and are deliberately not in this type: a caller that could set a
+ * sequence number or a chain digest could write a record that looks like it
+ * came from somewhere else in the stream. There is no path for a caller to
+ * provide them.
+ */
+export type RecordableAuditEvent = Omit<
+  AuditEvent,
+  'id' | 'at' | 'seq' | 'prevDigest' | 'eventVersion'
+> & { readonly at?: number };
+
+/**
+ * Refuses a record whose shape is wrong, rather than trimming it to fit.
+ *
+ * Silent trimming is the failure mode worth avoiding: a reader cannot tell a
+ * truncated field from a short one, so a record that was too big becomes a
+ * record that quietly says something else. Everything here refuses.
+ *
+ * The schema is flat by contract. `assertAuditSafe` still walks recursively
+ * as defence in depth, but a nested object is not a shape this record has, so
+ * one arriving means something spread a wider value in.
+ */
+export function assertAuditShape(event: Record<string, unknown>): void {
+  for (const [key, value] of Object.entries(event)) {
+    if (value === undefined || value === null) continue;
+
+    if (Array.isArray(value)) {
+      if (!ARRAY_FIELDS.has(key)) {
+        throw new AuditShapeError(key, 'may not be a list');
+      }
+      if (value.length > MAX_ARRAY_ENTRIES) {
+        throw new AuditShapeError(key, `holds more than ${MAX_ARRAY_ENTRIES} entries`);
+      }
+      for (const entry of value) {
+        if (typeof entry !== 'string') throw new AuditShapeError(key, 'holds a non-string entry');
+        if (entry.length > MAX_ARRAY_STRING) {
+          throw new AuditShapeError(key, `holds an entry longer than ${MAX_ARRAY_STRING}`);
+        }
+      }
+      continue;
+    }
+
+    if (typeof value === 'object') {
+      // Depth beyond one is refused outright: a nested object in a flat
+      // schema is the shape a payload arrives in.
+      throw new AuditShapeError(key, 'may not be a nested object');
+    }
+
+    if (typeof value === 'string') {
+      const limit =
+        key === 'origin' || key === 'site'
+          ? MAX_ORIGIN
+          : key === 'fileName'
+            ? MAX_FILENAME
+            : MAX_STRING;
+      if (value.length > limit) {
+        throw new AuditShapeError(key, `is longer than ${limit} characters`);
+      }
+    }
+  }
+
+  const size = JSON.stringify(event)?.length ?? 0;
+  if (size > MAX_EVENT_BYTES) {
+    throw new AuditShapeError('(record)', `is larger than ${MAX_EVENT_BYTES} bytes`);
+  }
+}
+
+/**
+ * Removes any field the redactor would have altered.
+ *
+ * Dropped rather than replaced with a marker. A `[REDACTED]` left in an audit
+ * record tells a reader that a secret was there, which is itself information
+ * — and in an exportable artefact it is information that travels. A field
+ * whose value cannot be kept is a field the record does not have.
+ */
+function dropRedactedFields<T extends Record<string, unknown>>(event: T): T {
+  const kept: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(event)) {
+    if (typeof value !== 'string' || value.length === 0) {
+      kept[key] = value;
+      continue;
+    }
+    const redacted = redactValue(value);
+    if (redacted !== value || (typeof redacted === 'string' && redacted.includes(REDACTED))) {
+      log.warn('An audit field was dropped because it looked like a credential.', { field: key });
+      continue;
+    }
+    kept[key] = value;
+  }
+  return kept as T;
+}
+
+export interface AuditQuery {
+  readonly taskId?: string;
+  readonly site?: string;
+  readonly offset?: number;
+  readonly limit?: number;
+}
+
+export interface AuditPage {
+  readonly events: readonly AuditEvent[];
+  readonly total: number;
+  readonly offset: number;
+  readonly limit: number;
+  /** Non-null when a write failed; the trail has a gap the reader should see. */
+  readonly degraded: string | null;
+}
+
+function matches(event: AuditEvent, query: AuditQuery): boolean {
+  if (query.taskId !== undefined && event.taskId !== query.taskId) return false;
+  if (query.site !== undefined && (event.site ?? '').toLowerCase() !== query.site.toLowerCase()) {
+    return false;
+  }
+  return true;
+}
+
 export interface AuditLogOptions {
   /** Retained events. Older ones are dropped first. */
   readonly maxEvents?: number;
+  /** Total serialised size of the trail. */
+  readonly maxBytes?: number;
+  /** How long a record is kept, whichever bound is reached first. */
+  readonly retentionMs?: number;
+  /**
+   * Whether a tool name is one this build registered.
+   *
+   * A tool name has model-controlled reach: a model can propose any string,
+   * and the registry refuses it — but the refusal is exactly the event worth
+   * recording, so the name arrives here. Without this the trail would be a
+   * model-writable free-text field. An unrecognised name is stored as
+   * `(unknown)` and the proposed string is dropped.
+   */
+  readonly knownTool?: (name: string) => boolean;
   readonly now?: () => number;
+}
+
+/** What a reader can be told about the state of the stream. */
+export type IntegrityVerdict =
+  | 'ok'
+  | 'empty'
+  | 'gap'
+  | 'reordered'
+  | 'chain-broken'
+  | 'truncated'
+  | 'future-version'
+  | 'corrupt';
+
+export interface IntegrityReport {
+  readonly verdict: IntegrityVerdict;
+  readonly checked: number;
+  /** The first sequence number at which something is wrong. */
+  readonly atSeq?: number;
+  readonly note: string;
+}
+
+/** Recorded in place of a tool name this build does not recognise. */
+export const UNKNOWN_TOOL = '(unknown)';
+
+/** Bumped when the stored record shape changes. Written on every record. */
+export const AUDIT_EVENT_VERSION = 1;
+
+/** The chain's starting value, for the first record in a stream. */
+const GENESIS_DIGEST = '0'.repeat(64);
+
+export const AUDIT_OUTCOMES: readonly AuditOutcome[] = [
+  'allowed',
+  'denied',
+  'confirmed',
+  'failed',
+  'info',
+];
+
+/**
+ * Types that must name the task they belong to.
+ *
+ * Left off this list are the events that genuinely have no task: connector
+ * authorization happens before any task, provider selection is a setting, and
+ * a retention marker is the log talking about itself. Requiring a task id for
+ * those would mean inventing one, which is worse than admitting there is none.
+ */
+const TASK_SCOPED: ReadonlySet<string> = new Set([
+  'task.created',
+  'task.state',
+  'task.completed',
+  'tool.invoked',
+  'tool.refused',
+  'permission.decided',
+  'egress.decided',
+  'skill.started',
+  'skill.step',
+  'skill.finished',
+  'workflow.replay',
+  'shortcut.launched',
+]);
+
+/** An identifier this extension minted, rather than a value from elsewhere. */
+function isOpaqueId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && /^[A-Za-z0-9_.:-]{1,80}$/.test(value);
+}
+
+function mintId(at: number, seq: number): string {
+  return `aud_${at.toString(36)}_${seq.toString(36)}`;
+}
+
+/**
+ * The canonical form a record is hashed over.
+ *
+ * Keys sorted and the digest field itself excluded, so the same record always
+ * produces the same digest and a reformat never reads as a change.
+ */
+function canonicalForm(event: AuditEvent): string {
+  const entries = Object.entries(event as unknown as Record<string, unknown>)
+    .filter(([key, value]) => key !== 'prevDigest' && value !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([key, value]) => `${JSON.stringify(key)}:${JSON.stringify(value) ?? 'null'}`);
+  return `{${entries.join(',')}}`;
+}
+
+async function digestOf(event: AuditEvent): Promise<string> {
+  return await hashContent(canonicalForm(event));
+}
+
+/** Whether a stored record still has the shape this build can read. */
+function isUsableEvent(value: unknown): value is AuditEvent {
+  if (value === null || typeof value !== 'object') return false;
+  const entry = value as Partial<AuditEvent>;
+  return (
+    typeof entry.id === 'string' &&
+    typeof entry.at === 'number' &&
+    typeof entry.seq === 'number' &&
+    Number.isInteger(entry.seq) &&
+    typeof entry.prevDigest === 'string' &&
+    typeof entry.eventVersion === 'number' &&
+    typeof entry.type === 'string'
+  );
 }
 
 interface AuditIndex {
@@ -261,14 +597,31 @@ interface AuditIndex {
  */
 export class AuditLog {
   private readonly maxEvents: number;
+  private readonly maxBytes: number;
+  private readonly retentionMs: number;
   private readonly now: () => number;
+  /**
+   * Whether the last write reached storage.
+   *
+   * Read by the panel so a person can see that the trail is incomplete. It is
+   * never used to change what a tool did: a write that failed is a gap in the
+   * record of an execution that already happened, not a failed execution.
+   */
+  private degraded: string | null = null;
 
   constructor(
     private readonly area: StorageArea,
-    options: AuditLogOptions = {},
+    private readonly options: AuditLogOptions = {},
   ) {
-    this.maxEvents = options.maxEvents ?? 2000;
+    this.maxEvents = options.maxEvents ?? 5000;
+    this.maxBytes = options.maxBytes ?? 8 * 1024 * 1024;
+    this.retentionMs = options.retentionMs ?? 30 * 24 * 60 * 60 * 1000;
     this.now = options.now ?? (() => Date.now());
+  }
+
+  /** What the last write did, for the panel to show. `null` when healthy. */
+  degradedReason(): string | null {
+    return this.degraded;
   }
 
   /**
@@ -277,28 +630,321 @@ export class AuditLog {
    * Inside the storage mutator, so two tool calls finishing together cannot
    * drop one of their records — the same reason taint is appended that way.
    */
-  async record(event: Omit<AuditEvent, 'id' | 'at'> & { at?: number }): Promise<AuditEvent> {
-    assertAuditSafe(event);
+  async record(event: RecordableAuditEvent): Promise<AuditEvent | null> {
+    let prepared: RecordableAuditEvent;
+    try {
+      prepared = this.prepare(event);
+    } catch (error) {
+      // Refused, and the refusal is *not* itself an audit event: recording a
+      // failure to record would be a recursion whose base case is the same
+      // validator that just said no. It goes to the redacted worker log.
+      this.degraded = 'A record was refused because its shape was not usable.';
+      log.error('An audit record was refused.', {
+        type: String(event.type),
+        error: error instanceof Error ? error.name : 'unknown',
+      });
+      return null;
+    }
 
-    const at = event.at ?? this.now();
-    const full: AuditEvent = {
-      ...(redactValue(event) as Omit<AuditEvent, 'id' | 'at'>),
-      id: `aud_${at.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-      at,
-    };
+    try {
+      return await this.append(prepared);
+    } catch (error) {
+      // One retry, after a compaction, because quota is the failure this is
+      // most likely to be. A second failure is reported as a gap rather than
+      // pretended away — and neither changes what the tool already did.
+      log.warn('An audit write failed; compacting and retrying once.', {
+        error: error instanceof Error ? error.name : 'unknown',
+      });
+      try {
+        await this.compact();
+        return await this.append(prepared);
+      } catch {
+        this.degraded = 'The audit trail could not be written to; records are missing.';
+        log.error('An audit write failed after compaction; the trail has a gap.');
+        return null;
+      }
+    }
+  }
 
-    await update<AuditIndex>(this.area, INDEX_KEY, { events: [] }, (index) => {
-      const events = [full, ...index.events];
-      return { events: events.slice(0, this.maxEvents) };
+  /**
+   * Validates and normalises what a caller supplied.
+   *
+   * Everything here can refuse. Nothing here writes, so a refusal costs
+   * nothing and leaves no partial record.
+   */
+  private prepare(event: RecordableAuditEvent): RecordableAuditEvent {
+    // A caller cannot supply the log's own fields — the type forbids it — but
+    // a plain object cast through `unknown` could, so they are stripped.
+    const supplied = { ...event } as Record<string, unknown>;
+    for (const owned of ['id', 'seq', 'prevDigest', 'eventVersion']) {
+      if (owned in supplied) {
+        log.warn('An audit record tried to supply a field the log owns.', { field: owned });
+        delete supplied[owned];
+      }
+    }
+
+    if (!(AUDIT_EVENT_TYPES as readonly string[]).includes(String(supplied['type']))) {
+      throw new AuditShapeError('type', 'is not one this build records');
+    }
+    if (!AUDIT_OUTCOMES.includes(supplied['outcome'] as AuditOutcome)) {
+      throw new AuditShapeError('outcome', 'is not a known outcome');
+    }
+
+    // A tool name is the one field with model-controlled reach.
+    if (typeof supplied['tool'] === 'string') {
+      const known = this.options.knownTool?.(supplied['tool']) ?? true;
+      if (!known) supplied['tool'] = UNKNOWN_TOOL;
+    }
+    if (typeof supplied['ran'] === 'string') {
+      const known = this.options.knownTool?.(supplied['ran']) ?? true;
+      if (!known) supplied['ran'] = UNKNOWN_TOOL;
+    }
+
+    // Identifiers are opaque handles this extension minted. Anything that is
+    // not one is a value that arrived from somewhere it should not have.
+    for (const field of ['taskId', 'sessionId', 'workflowId', 'shortcutId', 'connectorId']) {
+      const value = supplied[field];
+      if (value !== undefined && !isOpaqueId(value)) {
+        throw new AuditShapeError(field, 'is not a usable identifier');
+      }
+    }
+    if (TASK_SCOPED.has(String(supplied['type'])) && !isOpaqueId(supplied['taskId'])) {
+      // Without this a task-scoped record could not be filtered out of a
+      // cross-task view, which is the whole isolation story.
+      throw new AuditShapeError('taskId', 'is required for this kind of record');
+    }
+
+    assertAuditSafe(supplied);
+    const kept = dropRedactedFields(supplied);
+    assertAuditShape(kept);
+    return kept as unknown as RecordableAuditEvent;
+  }
+
+  /**
+   * Appends one record, atomically.
+   *
+   * Everything that has to agree happens inside a single storage
+   * transaction: the sequence is allocated from what is persisted, eviction
+   * decides what leaves, the retention marker is written with the eviction
+   * that caused it, the record is appended, and the chain digest is computed
+   * over the canonical form. There is no committed state in which records
+   * have been removed and the marker explaining it does not exist.
+   *
+   * The sequence comes from storage and never from a module-scope counter,
+   * because this worker is evicted constantly and a counter in memory would
+   * restart at zero beside a trail that did not.
+   */
+  private async append(event: RecordableAuditEvent): Promise<AuditEvent> {
+    let written: AuditEvent | null = null;
+
+    await update<AuditIndex>(this.area, INDEX_KEY, { events: [] }, async (index) => {
+      const existing = index.events;
+      const at = event.at ?? this.now();
+
+      // Eviction first, so the sequence is allocated against the trail that
+      // will actually hold this record.
+      //
+      // Compaction happens in batches rather than one record at a time. A
+      // trail at its limit would otherwise evict on every append and write a
+      // marker each time, and a stream that is half retention markers is a
+      // worse record than one with occasional, larger gaps described
+      // precisely.
+      const cutoff = at - this.retentionMs;
+      const expired = existing.filter((entry) => entry.at < cutoff);
+      const fresh = existing.filter((entry) => entry.at >= cutoff);
+      const overCapacity = fresh.length + 2 > this.maxEvents;
+      // Two slots are always reserved: one for the record being appended and
+      // one for the marker explaining what left. Without the reserve a
+      // compaction down to 90% could still overflow on a small cap.
+      const headroom = Math.max(0, this.maxEvents - 2);
+      const keepCount = overCapacity
+        ? Math.min(Math.floor(this.maxEvents * 0.9), headroom)
+        : Math.min(fresh.length, headroom);
+
+      const survivors = fresh.slice(0, keepCount);
+      const evicted = [...fresh.slice(keepCount), ...expired];
+
+      // `events` is newest-first, so the tail of the array is the oldest and
+      // the head carries the highest sequence.
+      const highest = Math.max(0, ...existing.map((entry) => entry.seq));
+      let seq = highest;
+      let prevDigest = existing[0]?.prevDigest ?? GENESIS_DIGEST;
+      if (existing[0]) prevDigest = await digestOf(existing[0]);
+
+      const additions: AuditEvent[] = [];
+
+      if (evicted.length > 0) {
+        // Written with the eviction, in the same transaction, so a reader can
+        // always tell a quiet period from a truncated one.
+        seq += 1;
+        const removedSeqs = evicted.map((entry) => entry.seq);
+        const marker: AuditEvent = {
+          type: 'retention.compacted',
+          outcome: 'info',
+          removedCount: evicted.length,
+          removedFromSeq: Math.min(...removedSeqs),
+          removedToSeq: Math.max(...removedSeqs),
+          eventVersion: AUDIT_EVENT_VERSION,
+          seq,
+          prevDigest,
+          id: mintId(at, seq),
+          at,
+        };
+        prevDigest = await digestOf(marker);
+        additions.push(marker);
+      }
+
+      seq += 1;
+      const full: AuditEvent = {
+        ...(event as Omit<AuditEvent, 'id' | 'at' | 'seq' | 'prevDigest' | 'eventVersion'>),
+        eventVersion: AUDIT_EVENT_VERSION,
+        seq,
+        prevDigest,
+        id: mintId(at, seq),
+        at,
+      };
+      additions.push(full);
+      written = full;
+
+      // Newest first, and the additions are in ascending sequence, so they go
+      // on the front in reverse.
+      const events = [...additions.reverse(), ...survivors];
+      return { events: this.withinBytes(events) };
     });
 
-    return full;
+    if (!written) throw new Error('audit_append_produced_nothing');
+    this.degraded = null;
+    return written;
+  }
+
+  /** Drops the oldest records until the trail fits its byte bound. */
+  private withinBytes(events: readonly AuditEvent[]): AuditEvent[] {
+    let kept = [...events];
+    while (kept.length > 1 && (JSON.stringify(kept)?.length ?? 0) > this.maxBytes) {
+      kept = kept.slice(0, Math.max(1, Math.floor(kept.length * 0.9)));
+    }
+    return kept;
+  }
+
+  /** Forces an eviction pass, used once before a retried write. */
+  private async compact(): Promise<void> {
+    await update<AuditIndex>(this.area, INDEX_KEY, { events: [] }, (index) => ({
+      events: index.events.slice(0, Math.floor(this.maxEvents / 2)),
+    }));
+  }
+
+  /**
+   * Reports what the stream looks like, without repairing anything.
+   *
+   * This is **corruption and reordering detection**, not authenticated
+   * integrity: the chain is an unkeyed digest, so anything that can rewrite
+   * storage can rewrite the chain with it. What it catches is a partial
+   * write, a dropped or duplicated record, a reordered one, and a record from
+   * a format this build cannot read — which is what actually goes wrong.
+   */
+  async verifyIntegrity(): Promise<IntegrityReport> {
+    const index = (await this.area.get<AuditIndex>(INDEX_KEY)) ?? { events: [] };
+    const events = index.events;
+    if (events.length === 0) {
+      return { verdict: 'empty', checked: 0, note: 'The trail holds no records.' };
+    }
+
+    // Oldest first, which is the order the chain was built in.
+    const ordered = [...events].reverse();
+    let previous: AuditEvent | undefined;
+
+    for (const entry of ordered) {
+      if (!isUsableEvent(entry)) {
+        return {
+          verdict: 'corrupt',
+          checked: ordered.length,
+          note: 'A stored record is not a record this build can read.',
+        };
+      }
+      if (entry.eventVersion > AUDIT_EVENT_VERSION) {
+        return {
+          verdict: 'future-version',
+          checked: ordered.length,
+          atSeq: entry.seq,
+          note: 'A record was written by a newer version and is not interpreted here.',
+        };
+      }
+      if (previous) {
+        if (entry.seq === previous.seq) {
+          return {
+            verdict: 'reordered',
+            checked: ordered.length,
+            atSeq: entry.seq,
+            note: 'Two records share a sequence number.',
+          };
+        }
+        if (entry.seq < previous.seq) {
+          return {
+            verdict: 'reordered',
+            checked: ordered.length,
+            atSeq: entry.seq,
+            note: 'Records are not in sequence order.',
+          };
+        }
+        if (entry.seq !== previous.seq + 1) {
+          return {
+            verdict: 'gap',
+            checked: ordered.length,
+            atSeq: entry.seq,
+            note: `Records between ${previous.seq} and ${entry.seq} are missing.`,
+          };
+        }
+        if (entry.prevDigest !== (await digestOf(previous))) {
+          return {
+            verdict: 'chain-broken',
+            checked: ordered.length,
+            atSeq: entry.seq,
+            note: 'A record does not follow the one before it.',
+          };
+        }
+      }
+      previous = entry;
+    }
+
+    // The oldest retained record naturally does not chain to anything once
+    // eviction has run, which is expected rather than a fault.
+    const truncated = ordered[0] !== undefined && ordered[0].seq > 1;
+    return {
+      verdict: truncated ? 'truncated' : 'ok',
+      checked: ordered.length,
+      ...(truncated ? { atSeq: ordered[0]?.seq ?? 0 } : {}),
+      note: truncated
+        ? 'Older records have been evicted; retention markers record what left.'
+        : 'Every retained record follows the one before it.',
+    };
   }
 
   /** Newest first. */
   async list(limit = 200): Promise<AuditEvent[]> {
     const index = (await this.area.get<AuditIndex>(INDEX_KEY)) ?? { events: [] };
-    return [...index.events].slice(0, limit);
+    return [...index.events].filter(isUsableEvent).slice(0, limit);
+  }
+
+  /**
+   * One page, newest first, with the total so a reader knows what they have.
+   *
+   * Scanning is bounded by the retained trail, which is itself bounded — the
+   * alternative, a secondary index per task and per site, is a second source
+   * of truth about what happened, and those diverge.
+   */
+  async page(query: AuditQuery): Promise<AuditPage> {
+    const index = (await this.area.get<AuditIndex>(INDEX_KEY)) ?? { events: [] };
+    const usable = index.events.filter(isUsableEvent);
+    const matching = usable.filter((event) => matches(event, query));
+    const offset = Math.max(0, query.offset ?? 0);
+    const size = Math.min(Math.max(1, query.limit ?? 50), 200);
+    return {
+      events: matching.slice(offset, offset + size),
+      total: matching.length,
+      offset,
+      limit: size,
+      degraded: this.degraded,
+    };
   }
 
   async forTask(taskId: string, limit = 200): Promise<AuditEvent[]> {
@@ -319,9 +965,29 @@ export class AuditLog {
   }
 }
 
+export type AuditExportScope =
+  { readonly kind: 'task'; readonly taskId: string } | { readonly kind: 'all' };
+
 export interface AuditExport {
-  readonly format: 'aiba-audit/1';
+  readonly format: 'aiba-audit/2';
   readonly exportedAt: number;
+  /**
+   * What was asked for, stated in the artefact.
+   *
+   * A file holding one task's records and a file holding every task's are
+   * very different things to be handed, and a reader must not have to infer
+   * which one they have.
+   */
+  readonly scope: AuditExportScope;
+  /** The oldest and newest record retained, so a gap is visible as a gap. */
+  readonly window: { readonly fromSeq: number; readonly toSeq: number } | null;
+  /**
+   * What the chain says about the stream, carried with the records.
+   *
+   * Corruption and reordering detection, not authenticated integrity — see
+   * `AuditEvent.prevDigest`.
+   */
+  readonly integrity: IntegrityReport;
   readonly eventCount: number;
   readonly events: readonly AuditEvent[];
   /**
@@ -347,13 +1013,30 @@ const EXPORT_NOTICE =
  * gate's to authorise — keeping the two apart is what stops "export" from
  * becoming an unguarded way out.
  */
-export function buildAuditExport(events: readonly AuditEvent[], at: number): AuditExport {
+export function buildAuditExport(
+  events: readonly AuditEvent[],
+  at: number,
+  scope: AuditExportScope,
+  integrity: IntegrityReport,
+): AuditExport {
+  // Re-run on the way out as well as on the way in. The records were checked
+  // when they were written, but an export is the one artefact that leaves,
+  // and checking it again costs nothing against a record that was edited
+  // underneath the store.
   for (const event of events) {
     assertAuditSafe(event as unknown as Record<string, unknown>);
+    assertAuditShape(event as unknown as Record<string, unknown>);
   }
+  const sequences = events.map((event) => event.seq);
   return {
-    format: 'aiba-audit/1',
+    format: 'aiba-audit/2',
     exportedAt: at,
+    scope,
+    window:
+      sequences.length === 0
+        ? null
+        : { fromSeq: Math.min(...sequences), toSeq: Math.max(...sequences) },
+    integrity,
     eventCount: events.length,
     events,
     notice: EXPORT_NOTICE,

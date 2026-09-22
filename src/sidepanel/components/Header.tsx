@@ -8,6 +8,7 @@ interface HeaderProps {
   readonly onChangeMode: (mode: PermissionMode) => void;
   readonly onOpenSettings: () => void;
   readonly onOpenWorkflows: () => void;
+  readonly onOpenAudit: () => void;
 }
 
 /**
@@ -23,6 +24,7 @@ export function Header({
   onChangeMode,
   onOpenSettings,
   onOpenWorkflows,
+  onOpenAudit,
 }: HeaderProps): React.JSX.Element {
   const status = describeStatus(connection);
 
@@ -33,6 +35,9 @@ export function Header({
         <span className="header__actions">
           <button type="button" className="button button--ghost" onClick={onOpenWorkflows}>
             Workflows
+          </button>
+          <button type="button" className="button button--ghost" onClick={onOpenAudit}>
+            Activity
           </button>
           <button type="button" className="button button--ghost" onClick={onOpenSettings}>
             Settings

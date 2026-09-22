@@ -347,14 +347,22 @@ test('a unified audit trail records decisions and exports without page text', as
   const { events } = await send('audit.list', { taskId: task.id });
   expect(events.length).toBeGreaterThan(0);
   expect(events.some((e) => e.type === 'egress.decided')).toBe(true);
+  // Since P-038 the execution itself is recorded, not only the decisions
+  // around it.
+  expect(events.some((e) => e.type === 'tool.invoked')).toBe(true);
   // Every egress record points at evidence rather than repeating it.
   const egress = events.find((e) => e.type === 'egress.decided')!;
   expect(egress.evidenceIds?.length).toBeGreaterThan(0);
 
   const exported = await send('audit.export', {});
   const serialised = JSON.stringify(exported.export);
-  expect(exported.export.format).toBe('aiba-audit/1');
+  // `/2` since P-038: the artefact now states its scope, the sequence window
+  // it covers and the integrity verdict, so a reader knows what they hold.
+  expect(exported.export.format).toBe('aiba-audit/2');
   expect(exported.export.eventCount).toBeGreaterThan(0);
+  expect(exported.export.scope).toBeDefined();
+  expect(exported.export.window).not.toBeNull();
+  expect(exported.export.integrity.verdict).toBeDefined();
   // The trail describes what happened; it does not carry what was read.
   expect(serialised).not.toContain('Widget Catalogue');
   expect(serialised).not.toContain('hunter2');

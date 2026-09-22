@@ -22,7 +22,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { MemoryStorageArea } from '@/storage/storage-area';
 import { recentLogs } from '@/logging/logger';
-import { AuditLog, ProhibitedAuditFieldError } from '@/audit/audit-log';
+import { AuditLog, ProhibitedAuditFieldError, assertAuditSafe } from '@/audit/audit-log';
 import { type ToolError } from '@/types/result';
 import { authorizeEgress } from '@/security/egress/egress-gate';
 import { ConsentStore } from '@/security/egress/consent';
@@ -136,15 +136,19 @@ describe('the credential reaches the service and nowhere else', () => {
     // The event types have nowhere to put a token; this is the backstop for
     // a caller that spread a wider object into a record.
     for (const field of ['access_token', 'accessToken', 'refresh_token', 'code_verifier']) {
-      await expect(
-        audit.record({
-          type: 'connector.auth',
-          outcome: 'info',
-          connectorId: 'github',
-          [field]: TOKEN,
-        } as never),
-      ).rejects.toBeInstanceOf(ProhibitedAuditFieldError);
+      const written = await audit.record({
+        type: 'connector.auth',
+        outcome: 'info',
+        connectorId: 'github',
+        [field]: TOKEN,
+      } as never);
+      // Nothing stored, and the validator names why.
+      expect(written, field).toBeNull();
+      expect(() => assertAuditSafe({ type: 'connector.auth', [field]: TOKEN }), field).toThrow(
+        ProhibitedAuditFieldError,
+      );
     }
+    expect(await audit.list()).toHaveLength(0);
   });
 
   it('records a connector operation with the operation name and no arguments', async () => {

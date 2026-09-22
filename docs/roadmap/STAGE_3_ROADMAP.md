@@ -2459,6 +2459,20 @@ path: resolving is a read, and what it names runs through `workflow.replay` or
 refused rather than merged, and targets are re-checked at every resolution.
 See `docs/shortcuts.md`.
 
+**The unified audit trail (P-038) is implemented and PARTIAL.** Tool
+executions reach the trail through the single observation hook on
+`ToolRegistry.dispatch`, joining the decision events that were already there;
+nine declared event types had never been written, which is why the trail could
+say what was decided but not what was done. It observes and never authorises,
+holds identifiers and decisions rather than data, detects corruption and
+reordering through a persisted sequence and a digest chain — not tamper
+protection, and not described as such — evicts only with a marker written in
+the same transaction, and exports to a local file with no new permission and
+no network carrier. See `docs/audit.md`.
+
+It stays PARTIAL because §84 condition 3 is unmet repository-wide, and
+because deletion is deliberately not exposed yet.
+
 Scheduling (P-020), MCP and plugins remain NOT-STARTED. Scheduling now has its
 dependencies met but not its security prerequisite: every control in this
 architecture terminates in a person who can answer a prompt, and an unattended

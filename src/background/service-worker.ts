@@ -24,6 +24,7 @@ import { EvidenceStore } from '@/evidence/evidence-store';
 import { ProviderRegistry, type ProviderConnection } from '@/providers/registry/provider-registry';
 import { ConsentStore } from '@/security/egress/consent';
 import { AuditLog, buildAuditExport } from '@/audit/audit-log';
+import { createDispatchAuditObserver } from '@/audit/dispatch-audit';
 import { createGuardedTransport, guardedSend } from '@/security/egress/provider-transport';
 import { installNetworkInterceptor } from '@/security/egress/network-interceptor';
 import { buildEgressEvidence } from '@/security/egress/egress-evidence';
@@ -116,7 +117,13 @@ const settingsStore = new SettingsStore(new NamespacedStorageArea(local, 'settin
 const credentialStore = new CredentialStore(local);
 const taskStore = new TaskStore(new NamespacedStorageArea(local, 'tasks'));
 const evidenceStore = new EvidenceStore(new NamespacedStorageArea(local, 'evidence'));
-const auditLog = new AuditLog(new NamespacedStorageArea(local, 'audit'));
+const auditLog = new AuditLog(new NamespacedStorageArea(local, 'audit'), {
+  // A tool name reaches the trail from a model proposal, so it is checked
+  // against what this build actually registered. An unrecognised name is
+  // recorded as unknown and the proposed string is dropped, which stops the
+  // trail being a model-writable text field.
+  knownTool: (name) => toolRegistry.has(name),
+});
 const policyArea = new NamespacedStorageArea(local, 'policy');
 const connectorTokens = new TokenVault(new NamespacedStorageArea(session, 'connector-tokens'));
 const connectorWrites = new WriteGuard(new NamespacedStorageArea(local, 'connector-writes'));
@@ -133,6 +140,9 @@ const saveSitePolicy = async (state: SitePolicyState): Promise<void> => {
 
 const loadPolicyContext = async (): Promise<PolicyContext> => {
   const settings = await settingsStore.get();
+  // Kept for the audit observer, which cannot await storage on the dispatch
+  // path. It labels a record; it decides nothing.
+  currentPermissionMode = settings.permissionMode;
   return {
     mode: settings.permissionMode,
     sitePolicy: await loadSitePolicy(),
@@ -264,7 +274,6 @@ const permissionEngine = new PermissionEngine({
       outcome:
         entry.decision === 'approved' || entry.decision === 'auto_approved' ? 'allowed' : 'denied',
       code: entry.decision,
-      detail: entry.reason,
     });
   },
   prompter: permissionBroker,
@@ -294,9 +303,17 @@ const toolRegistry = new ToolRegistry({
    * affect the call it is watching, grant it anything, or start another one.
    * When no recording is running it does nothing at all.
    */
-  onDispatched: (observation) => {
-    workflowRecorder.observe(observation);
-  },
+  onDispatched: [
+    (observation) => {
+      workflowRecorder.observe(observation);
+    },
+    // The one place a tool execution becomes an audit record. Each observer
+    // runs in its own try/catch inside the registry, so a failure in either
+    // leaves the other working.
+    (observation) => {
+      dispatchAuditObserver(observation);
+    },
+  ],
   egress: {
     consent: consentStore,
     record: async (input) => {
@@ -551,6 +568,33 @@ registerConnector(githubConnector);
  */
 const connectorEgressContexts = new Map<string, ConnectorCallContext>();
 
+/**
+ * The audit observer the tool registry calls after every dispatch.
+ *
+ * Declared here, beside the security contexts it reads, because the record it
+ * writes carries the task's permission mode and taint *kind* — never its
+ * sources, which name sites the user visited.
+ */
+const dispatchAuditObserver = createDispatchAuditObserver({
+  audit: auditLog,
+  contextFor: (taskId) => {
+    const security = connectorEgressContexts.get(taskId);
+    return {
+      ...(security === undefined ? {} : { taintKind: security.taintState.kind }),
+      ...(currentPermissionMode === null ? {} : { permissionMode: currentPermissionMode }),
+    };
+  },
+});
+
+/**
+ * The permission mode as of the last settings read.
+ *
+ * Cached rather than awaited, because an audit observer must not make the
+ * dispatch path wait on storage. A stale value is a label on a record, not an
+ * input to a decision — the policy engine reads settings itself.
+ */
+let currentPermissionMode: string | null = null;
+
 toolRegistry.registerAll(
   createFileTools({
     adapter: browserAdapter,
@@ -592,6 +636,27 @@ const skillRuns = new SkillRunStore(new NamespacedStorageArea(local, 'skill-runs
 const skillRunner = new SkillRunner({
   tools: toolRegistry,
   skills: skillRegistry,
+  /**
+   * Per-step progress into the audit trail.
+   *
+   * `skill.step` was declared from the start and never written. The progress
+   * hook already carries the task id, the pinned version and the definition
+   * hash, and carries no step result — which is exactly the shape an audit
+   * record needs and exactly what a step record must not grow into.
+   */
+  onProgress: async (progress) => {
+    await auditLog.record({
+      type: 'skill.step',
+      taskId: progress.taskId,
+      outcome: 'info',
+      skillId: progress.skillId,
+      skillVersion: progress.skillVersion,
+      skillHash: progress.skillHash,
+      stepIndex: progress.stepIndex,
+      stepCount: progress.totalSteps,
+      code: progress.status,
+    });
+  },
   // The task's own remaining allowance. A skill gets no budget of its own,
   // because a second budget is a way past the first.
   remainingToolCalls: (taskId) => skillBudgetRemaining.get(taskId) ?? DEFAULT_BUDGET.maxToolCalls,
@@ -914,6 +979,30 @@ const taskManager = new TaskManager({
   // already exhausted.
   onUsageChanged: (taskId, usage) => {
     skillBudgetRemaining.set(taskId, Math.max(0, DEFAULT_BUDGET.maxToolCalls - usage.toolCalls));
+  },
+  // Task lifecycle into the one trail. These three types were declared from
+  // the start and never written, which is why the trail could say what was
+  // *decided* but not what was *done*.
+  onLifecycle: (event) => {
+    void auditLog
+      .record({
+        type:
+          event.kind === 'created'
+            ? 'task.created'
+            : event.kind === 'completed'
+              ? 'task.completed'
+              : 'task.state',
+        taskId: event.taskId,
+        outcome: event.kind === 'completed' ? 'info' : 'info',
+        ...(event.sessionId === undefined ? {} : { sessionId: event.sessionId }),
+        ...(event.state === undefined ? {} : { taskState: event.state }),
+        ...(event.outcome === undefined ? {} : { code: event.outcome }),
+        ...(event.providerId === undefined ? {} : { providerId: event.providerId }),
+        ...(event.modelId === undefined ? {} : { modelId: event.modelId }),
+        ...(event.providerId === undefined ? {} : { providerMode: 'api' }),
+        ...(event.permissionMode === undefined ? {} : { permissionMode: event.permissionMode }),
+      })
+      .catch(() => undefined);
   },
 });
 
@@ -1244,14 +1333,12 @@ router.on('file.respondSelection', async ({ requestId, response }) => {
         fileName: safeDisplayName(file.name),
         mimeType: file.mimeType,
         byteLength: file.byteLength,
-        detail: 'The user chose this file in the browser’s file picker.',
       });
     }
   } else if (accepted) {
     await auditLog.record({
       type: 'file.selected',
       outcome: 'denied',
-      detail: 'The user did not choose a file.',
     });
   }
 
@@ -1283,10 +1370,25 @@ router.on('policy.removeSiteRule', async ({ site }) => {
   return { state: next };
 });
 
-router.on('audit.list', async ({ limit, taskId, site }) => {
-  if (taskId !== undefined) return { events: await auditLog.forTask(taskId, limit) };
-  if (site !== undefined) return { events: await auditLog.forSite(site, limit) };
-  return { events: await auditLog.list(limit) };
+router.on(
+  'audit.list',
+  async ({ limit, taskId, site, offset }) =>
+    await auditLog.page({
+      ...(taskId === undefined ? {} : { taskId }),
+      ...(site === undefined ? {} : { site }),
+      ...(offset === undefined ? {} : { offset }),
+      ...(limit === undefined ? {} : { limit }),
+    }),
+);
+
+router.on('audit.integrity', async () => {
+  const report = await auditLog.verifyIntegrity();
+  return {
+    verdict: report.verdict,
+    checked: report.checked,
+    ...(report.atSeq === undefined ? {} : { atSeq: report.atSeq }),
+    note: report.note,
+  };
 });
 
 /**
@@ -1297,9 +1399,27 @@ router.on('audit.list', async ({ limit, taskId, site }) => {
  * the same document to a file or a server would cross it, and would have to
  * go through the gate like anything else.
  */
-router.on('audit.export', async ({ limit }) => ({
-  export: buildAuditExport(await auditLog.list(limit ?? 2000), Date.now()),
-}));
+/**
+ * Builds the export and hands it back over extension messaging.
+ *
+ * It produces a value; it writes no file and reaches no network. Turning that
+ * value into a file is the panel's job, with a blob of this extension's own
+ * origin — so there is no URL here for anything to supply and no carrier that
+ * could reach a destination.
+ *
+ * The scope defaults to one task. A file holding every task's records is a
+ * different thing to be handed, and has to be asked for.
+ */
+router.on('audit.export', async ({ scope, limit }) => {
+  const chosen = scope ?? { kind: 'all' as const };
+  const page = await auditLog.page({
+    ...(chosen.kind === 'task' ? { taskId: chosen.taskId } : {}),
+    limit: Math.min(limit ?? 2000, 5000),
+  });
+  return {
+    export: buildAuditExport(page.events, Date.now(), chosen, await auditLog.verifyIntegrity()),
+  };
+});
 
 router.on('evidence.listForTask', async ({ taskId }) => ({
   evidence: await evidenceStore.listForTask(taskId),
@@ -1527,6 +1647,17 @@ router.on('shortcut.remove', async ({ shortcutId }) => {
 
 router.on('shortcut.resolve', async ({ typed }) => {
   const verdict = await shortcutResolver.resolveTyped(typed);
+  if (verdict.ok) {
+    // The shortcut's own id and the kind of target it found. Never the name
+    // the user typed, which is free text they chose.
+    await auditLog.record({
+      type: 'shortcut.resolved',
+      outcome: 'info',
+      shortcutId: verdict.record.shortcutId,
+      code: verdict.resolution.targetKind,
+      risk: verdict.resolution.risk,
+    });
+  }
   return verdict.ok
     ? { ok: true, resolution: verdict.resolution }
     : { ok: false, reason: verdict.reason, detail: verdict.detail };

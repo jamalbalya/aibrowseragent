@@ -1016,3 +1016,31 @@ body {
 .shortcut--broken {
   color: var(--danger, #a12222);
 }
+
+/* Audit trail ----------------------------------------------------- */
+
+/*
+ * A retention marker is rendered as a gap rather than as a record, because
+ * that is what it is: the trail saying something used to be here.
+ */
+.audit--gap {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.badge--allowed {
+  background: var(--ok-bg, #e7f6ec);
+  color: var(--ok, #1c7c3f);
+}
+
+.badge--denied,
+.badge--failed {
+  background: var(--danger-bg, #fdeaea);
+  color: var(--danger, #a12222);
+}
+
+.badge--confirmed,
+.badge--info {
+  background: var(--warn-bg, #fdf3e0);
+  color: var(--warn, #8a5a00);
+}

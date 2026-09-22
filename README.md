@@ -75,6 +75,12 @@ What works today:
   the same permission prompts. Names that collide, or merely look alike, are
   refused rather than merged ([docs/shortcuts.md](docs/shortcuts.md)).
 
+- An audit trail: one stream across every task of what was proposed and what
+  was decided, holding identifiers and decisions rather than arguments,
+  results or page content. Order and corruption are checkable; eviction says
+  what it removed; export writes a local file and needs no permission. The
+  model cannot read, write or export it ([docs/audit.md](docs/audit.md)).
+
 Not yet implemented: further connectors (Jira, Confluence, Figma, Sheets),
 MCP, plugins, scheduling, and OpenAI's Responses API. Their interfaces exist;
 their implementations do not, and the code raises `NOT_IMPLEMENTED` rather than

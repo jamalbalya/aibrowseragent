@@ -23,7 +23,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { MemoryStorageArea, SerializedStorageArea } from '@/storage/storage-area';
-import { AuditLog, ProhibitedAuditFieldError } from '@/audit/audit-log';
+import {
+  AuditLog,
+  AuditShapeError,
+  ProhibitedAuditFieldError,
+  assertAuditSafe,
+  assertAuditShape,
+} from '@/audit/audit-log';
 import { SkillRegistry } from '@/skills/core/skill-registry';
 import { FORBIDDEN_CAPABILITY_NAMES, validateSkillDefinition } from '@/skills/core/skill-model';
 import {
@@ -864,32 +870,42 @@ describe('sanitisation is recursive, not top-level', () => {
     // recursive and catches those at any depth — but a page's text under a
     // nested `inputs` is not credential-shaped.
     const audit = new AuditLog(new MemoryStorageArea());
-    await expect(
-      audit.record({ type: 'skill.finished', outcome: 'allowed', ...extra } as never),
-    ).rejects.toBeInstanceOf(ProhibitedAuditFieldError);
+    // The writer reports a refusal by storing nothing rather than by
+    // throwing: it is reached from the dispatch observation path, and an
+    // exception there would travel into execution. The validator still
+    // throws, and both properties are asserted.
+    const written = await audit.record({
+      type: 'skill.finished',
+      taskId: 'task_1',
+      outcome: 'allowed',
+      ...extra,
+    } as never);
+    expect(written).toBeNull();
+    expect(await audit.list()).toHaveLength(0);
+    expect(() => assertAuditSafe({ type: 'skill.finished', ...extra })).toThrow(
+      ProhibitedAuditFieldError,
+    );
   });
 
   it('names the path it found, not just the leaf', async () => {
-    const audit = new AuditLog(new MemoryStorageArea());
     try {
-      await audit.record({
+      assertAuditSafe({
         type: 'skill.finished',
         outcome: 'allowed',
-        detail: { nested: { result: PAGE } },
-      } as never);
+        meta: { nested: { result: PAGE } },
+      });
       expect.unreachable('should have refused');
     } catch (error) {
-      expect((error as ProhibitedAuditFieldError).field).toBe('detail.nested.result');
+      expect((error as ProhibitedAuditFieldError).field).toBe('meta.nested.result');
     }
   });
 
   it('refuses a structure too deep to check rather than giving up partway', async () => {
-    const audit = new AuditLog(new MemoryStorageArea());
     let deep: Record<string, unknown> = { result: PAGE };
     for (let i = 0; i < 12; i += 1) deep = { nest: deep };
-    await expect(
-      audit.record({ type: 'skill.finished', outcome: 'allowed', ...deep } as never),
-    ).rejects.toBeInstanceOf(ProhibitedAuditFieldError);
+    expect(() => assertAuditSafe({ type: 'skill.finished', outcome: 'allowed', ...deep })).toThrow(
+      ProhibitedAuditFieldError,
+    );
   });
 
   it.each([
@@ -916,33 +932,41 @@ describe('sanitisation is recursive, not top-level', () => {
     ).not.toThrow();
   });
 
-  it('a credential-shaped value is still redacted at any depth, under any name', async () => {
-    // Which was never the gap, and is worth keeping visible: redaction is
-    // recursive and matches on the value as well as the field name, so a
-    // token under a name nothing refuses is still not stored.
+  it('drops a credential-shaped value rather than storing a redaction marker', async () => {
+    // Redaction was never the gap and is worth keeping visible. What changed
+    // is what happens after it fires: the field is dropped, because a
+    // `[REDACTED]` left in an exportable record still tells a reader that a
+    // secret was there.
     const audit = new AuditLog(new MemoryStorageArea());
     const event = await audit.record({
-      type: 'skill.finished',
+      type: 'file.selected',
       outcome: 'allowed',
-      detail: { nested: { note: TOKEN } },
-    } as never);
+      fileName: TOKEN,
+    });
     expect(JSON.stringify(event)).not.toContain(TOKEN);
-    expect(JSON.stringify(event)).toContain('REDACTED');
+    expect(JSON.stringify(event)).not.toContain('REDACTED');
+    expect(event?.fileName).toBeUndefined();
   });
 
-  it('but a benign field name still carries ordinary text, which the closed event type is what prevents', async () => {
+  it('has nowhere to put an arbitrary field, nested or otherwise', async () => {
     // Stated rather than implied. The denylist covers the names a caller
-    // reaches for when spreading a wider object in; it is not a content
-    // filter, and `AuditEvent` being a closed type is what stops arbitrary
-    // fields existing in the first place. A test that pretended otherwise
-    // would be claiming a control that is not there.
+    // reaches for when spreading a wider object in, but it is not a content
+    // filter — what stops arbitrary text existing at all is that the record
+    // is a closed, flat shape. A nested object is refused whatever it holds,
+    // even something entirely ordinary.
     const audit = new AuditLog(new MemoryStorageArea());
-    const event = await audit.record({
+    const written = await audit.record({
       type: 'skill.finished',
+      taskId: 'task1',
       outcome: 'allowed',
-      detail: { note: 'ordinary text' },
+      meta: { note: 'ordinary text' },
     } as never);
-    expect(JSON.stringify(event)).toContain('ordinary text');
+
+    expect(written).toBeNull();
+    expect(await audit.list()).toHaveLength(0);
+    expect(() =>
+      assertAuditShape({ type: 'skill.finished', meta: { note: 'ordinary text' } }),
+    ).toThrow(AuditShapeError);
   });
 });
 
@@ -963,29 +987,37 @@ describe('the audit trail', () => {
   it('refuses a skill record carrying a credential', async () => {
     const audit = new AuditLog(new MemoryStorageArea());
     for (const field of ['access_token', 'accessToken', 'apiKey', 'password']) {
-      await expect(
-        audit.record({
-          type: 'skill.finished',
-          outcome: 'allowed',
-          skillId: 'test.skill',
-          [field]: 'secret-value',
-        } as never),
-      ).rejects.toBeInstanceOf(ProhibitedAuditFieldError);
+      const written = await audit.record({
+        type: 'skill.finished',
+        taskId: 'task1',
+        outcome: 'allowed',
+        skillId: 'test.skill',
+        [field]: 'secret-value',
+      } as never);
+      expect(written, field).toBeNull();
+      expect(() => assertAuditSafe({ type: 'skill.finished', [field]: 'x' }), field).toThrow(
+        ProhibitedAuditFieldError,
+      );
     }
+    expect(await audit.list()).toHaveLength(0);
   });
 
   it("refuses a skill record carrying the run's inputs or results", async () => {
     const audit = new AuditLog(new MemoryStorageArea());
     for (const field of ['inputs', 'outputs', 'result', 'payload', 'content']) {
-      await expect(
-        audit.record({
-          type: 'skill.finished',
-          outcome: 'allowed',
-          skillId: 'test.skill',
-          [field]: 'whatever the page said',
-        } as never),
-      ).rejects.toBeInstanceOf(ProhibitedAuditFieldError);
+      const written = await audit.record({
+        type: 'skill.finished',
+        taskId: 'task1',
+        outcome: 'allowed',
+        skillId: 'test.skill',
+        [field]: 'whatever the page said',
+      } as never);
+      expect(written, field).toBeNull();
+      expect(() => assertAuditSafe({ type: 'skill.finished', [field]: 'x' }), field).toThrow(
+        ProhibitedAuditFieldError,
+      );
     }
+    expect(await audit.list()).toHaveLength(0);
   });
 });
 
