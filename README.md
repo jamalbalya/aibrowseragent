@@ -259,6 +259,7 @@ conventions to follow when adding a tool, a provider, or a connector.
 | [PARITY_MATRIX.md](PARITY_MATRIX.md)                                                                           | Per-capability implementation status                 |
 | [docs/repository-state.md](docs/repository-state.md)                                                           | Repository-level issues that code cannot fix         |
 | [CHANGELOG.md](CHANGELOG.md)                                                                                   | What this version is, and what it is not             |
+| [docs/release/OWNER-CHECKLIST.md](docs/release/OWNER-CHECKLIST.md)                                             | The twenty-four steps from here to a public listing  |
 | [docs/release/README.md](docs/release/README.md)                                                               | How the production artifact is built and hashed      |
 | [docs/release/chrome-web-store-submission-checklist.md](docs/release/chrome-web-store-submission-checklist.md) | What publishing needs, and who can do each part      |
 | [docs/release/store-listing.md](docs/release/store-listing.md)                                                 | Listing copy, permission justifications, disclosures |

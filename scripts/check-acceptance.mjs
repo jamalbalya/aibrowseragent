@@ -32,6 +32,16 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dir = join(root, 'docs/testing/acceptance');
 
 const VERDICTS = ['AUTOMATED', 'MANUAL', 'NOT POSSIBLE HERE'];
+
+/**
+ * Documents that record what happened rather than where evidence lives.
+ *
+ * They carry execution classifications — PASS, FAIL, BLOCKED — CREDENTIAL and
+ * the rest — which the package rules exist to keep out of the packages. The
+ * rule that applies to them instead is that a status is one of the declared
+ * classifications and never a hedge.
+ */
+const EXECUTION_RECORDS = ['RESULTS.md', 'MATRIX.md'];
 const problems = [];
 
 /**
@@ -77,7 +87,32 @@ for (const name of documents) {
     }
   }
 
-  if (name === 'README.md' || name === 'RESULTS.md') continue;
+  // Execution records, not packages.
+  //
+  // A package says where evidence comes from — AUTOMATED, MANUAL, NOT
+  // POSSIBLE HERE — and deliberately never awards a PASS, so that a verdict
+  // cannot drift into a claim. An execution record answers the other
+  // question: what happened when somebody ran it. That needs a vocabulary
+  // the package rules forbid, so these files are checked by their own rule
+  // below rather than exempted from checking.
+  if (EXECUTION_RECORDS.includes(name)) {
+    for (const [index, line] of text.split('\n').entries()) {
+      const vague =
+        /\b(mostly|partially|largely|broadly|roughly|more or less|good enough|nearly (?:complete|done)|should (?:work|be fine))\b/i.exec(
+          line,
+        );
+      // A line naming the rule is allowed to quote the words it forbids.
+      if (vague && !/never|not use|no vague|forbidden/i.test(line)) {
+        problems.push(
+          `${name}:${index + 1}: hedges with “${vague[0]}” — a status is one of the declared ` +
+            `classifications, or it is not a status`,
+        );
+      }
+    }
+    continue;
+  }
+
+  if (name === 'README.md') continue;
 
   // 2-3. Each item's verdict, and what that verdict obliges it to carry.
   //      An item is a `## ` heading; its body runs to the next one.

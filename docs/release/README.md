@@ -7,6 +7,18 @@ Nothing here publishes anything. See
 [chrome-web-store-submission-checklist.md](chrome-web-store-submission-checklist.md) for what is complete in this
 repository and what only an account owner can do.
 
+## The handoff documents
+
+| Document                                                                             | For                                                                                      |
+| ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| [OWNER-CHECKLIST.md](OWNER-CHECKLIST.md)                                             | The twenty-four steps from here to a public listing, marked repository-complete or yours |
+| [chrome-web-store-submission-checklist.md](chrome-web-store-submission-checklist.md) | The same split, by topic rather than in order                                            |
+| [store-listing.md](store-listing.md)                                                 | Name, both descriptions, eleven permission justifications, twelve disclosure answers     |
+| [data-flows.md](data-flows.md)                                                       | Every data category: collected when, stored where, leaving to whom                       |
+| [privacy-policy-outline.md](privacy-policy-outline.md)                               | What a hosted policy must say, from those flows                                          |
+| [screenshot-plan.md](screenshot-plan.md)                                             | What to capture, and what must never appear in a published image                         |
+| [../testing/acceptance/MATRIX.md](../testing/acceptance/MATRIX.md)                   | Every §85–§90 procedure, one classification each                                         |
+
 ## Producing the artifact
 
 ```bash
