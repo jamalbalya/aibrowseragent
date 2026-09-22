@@ -61,6 +61,17 @@ export interface EgressDestination {
   readonly identity: string | null;
   readonly origin?: string;
   readonly providerId?: string;
+  /**
+   * The connected account this request belongs to.
+   *
+   * Separate from `identity`, and the reason is the whole point of having it.
+   * `identity` is `providerId@origin`, which is a property of the *endpoint*:
+   * two OpenAI accounts both resolve to `openai-compatible@https://api.openai.com`.
+   * Without this field a task pinned to one account would match the other, so
+   * consent granted for a personal key would silently authorise a work key —
+   * different entitlements, different billing, different data agreement.
+   */
+  readonly connectionId?: string;
   readonly modelId?: string;
   /** Tab the transfer acts on, for evidence. Not part of the consent key. */
   readonly tabId?: number;
@@ -128,6 +139,7 @@ export function providerDestination(
   providerId: string,
   baseUrl: string,
   modelId?: string,
+  connectionId?: string,
 ): EgressDestination {
   const info = parseOrigin(baseUrl);
   return {
@@ -135,6 +147,7 @@ export function providerDestination(
     identity: canonicalProviderIdentity(providerId, baseUrl),
     ...(info ? { origin: info.origin } : {}),
     providerId,
+    ...(connectionId === undefined ? {} : { connectionId }),
     ...(modelId === undefined ? {} : { modelId }),
   };
 }

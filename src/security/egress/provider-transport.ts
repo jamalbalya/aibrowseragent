@@ -40,6 +40,14 @@ export interface EgressContext {
   readonly saltEpoch: number;
   readonly taintSignature: string;
   readonly providerId: string;
+  /**
+   * The connected account this request belongs to.
+   *
+   * Without it the pin is keyed on `providerId@origin`, which is a property
+   * of the endpoint: two accounts at `api.openai.com` are indistinguishable,
+   * and consent granted for one authorises the other.
+   */
+  readonly connectionId?: string;
   readonly modelId: string;
   /**
    * Set for connection and capability probes, which carry no task data.
@@ -238,7 +246,12 @@ export function createGuardedTransport(options: GuardedTransportOptions): Provid
         {
           url,
           init,
-          destination: providerDestination(context.providerId, url, context.modelId),
+          destination: providerDestination(
+            context.providerId,
+            url,
+            context.modelId,
+            context.connectionId,
+          ),
           taskId: context.taskId,
           taintState: context.taintState,
           taintSalt: context.taintSalt,

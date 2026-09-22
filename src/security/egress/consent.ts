@@ -43,6 +43,15 @@ export interface ConsentKey {
 /** The provider destination, including model, a task is bound to. */
 export interface ProviderPin {
   readonly identity: string;
+  /**
+   * The connected account, when the request carries one.
+   *
+   * Optional only because a destination built before accounts existed has
+   * none; a pin that has one compares it. Two accounts at the same endpoint
+   * share an `identity`, so without this the pin would treat them as the same
+   * recipient — which they are not.
+   */
+  readonly connectionId?: string;
   readonly modelId: string;
 }
 
@@ -164,6 +173,13 @@ export class ConsentStore {
   matchesPin(taskId: string, pin: ProviderPin): boolean {
     const existing = this.providerPins.get(taskId);
     if (existing === undefined) return false;
+    // The account is compared first because it is the check the other two
+    // cannot stand in for: the same endpoint and the same model on a
+    // different account is a different credential, a different entitlement
+    // and a different billing relationship. `??` rather than a plain
+    // comparison so a pin taken before accounts existed still matches
+    // itself rather than being permanently unmatched.
+    if ((existing.connectionId ?? null) !== (pin.connectionId ?? null)) return false;
     return existing.identity === pin.identity && existing.modelId === pin.modelId;
   }
 

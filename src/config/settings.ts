@@ -101,6 +101,29 @@ export class CredentialStore {
     await this.area.remove(`config:${providerId}`);
   }
 
+  /**
+   * A connected account's credential, keyed by connection.
+   *
+   * Separate methods rather than `getApiKey` with a doctored argument,
+   * because the stored key is what matters and it must read as what it is.
+   * `apiKey:<providerId>` is the legacy single-connection scheme and is
+   * keyed by *provider*, so two accounts on one provider collide there —
+   * which is the whole defect this replaces. `conn:<connectionId>` cannot
+   * collide, and nothing has to remember to keep the two apart because they
+   * are different call sites.
+   */
+  getConnectionKey(connectionId: string): Promise<string | undefined> {
+    return this.area.get<string>(`conn:${connectionId}`);
+  }
+
+  async setConnectionKey(connectionId: string, apiKey: string): Promise<void> {
+    await this.area.set(`conn:${connectionId}`, apiKey);
+  }
+
+  async clearConnectionKey(connectionId: string): Promise<void> {
+    await this.area.remove(`conn:${connectionId}`);
+  }
+
   getConfig(providerId: string): Promise<StoredProviderConfig | undefined> {
     return this.area.get<StoredProviderConfig>(`config:${providerId}`);
   }

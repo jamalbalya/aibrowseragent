@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { sendToBackground, MessagingError } from '@/messaging/bus';
+import { ConnectedAccounts } from './ConnectedAccounts';
 import type { CapabilityReport } from '@/providers/capability-doctor/capability-doctor';
 import type { ProviderConnection } from '@/providers/registry/provider-registry';
 import type { SitePolicyState } from '@/policy/site-policy';
@@ -79,7 +80,10 @@ export function SettingsView({
     setBusy('connect');
     setMessage(null);
     try {
-      const result = await sendToBackground('provider.connect', {
+      // The same fields as before, now creating a *connected account* with its
+      // own `connectionId` and its own credential key. Connecting a second
+      // OpenAI key no longer overwrites the first: that was the whole point.
+      const result = await sendToBackground('accounts.connect', {
         providerId,
         // Omitted rather than sent empty, so the adapter applies its own
         // documented default instead of being handed a blank endpoint.
@@ -96,8 +100,12 @@ export function SettingsView({
       setApiKey('');
       setMessage({ tone: 'ok', text: 'Connected. Now choose a model and run the check.' });
 
-      const modelList = await sendToBackground('provider.listModels', { providerId });
-      setModels(modelList.models);
+      if (result.account) {
+        const modelList = await sendToBackground('accounts.listModels', {
+          connectionId: result.account.connectionId,
+        });
+        setModels(modelList.models);
+      }
       onChanged();
     } catch (error) {
       setMessage({ tone: 'error', text: describe(error) });
@@ -216,8 +224,15 @@ export function SettingsView({
         </button>
       </div>
 
+      <ConnectedAccounts
+        onMessage={(tone, text) => setMessage({ tone, text })}
+        onChanged={onChanged}
+      />
+
       <section className="settings__section">
-        <h3>AI provider</h3>
+        {/* The same form as before, unchanged, now reached as one way to add
+            an account rather than as the only connection there can be. */}
+        <h3>Connect AI provider</h3>
 
         <label className="field">
           <span>Provider</span>

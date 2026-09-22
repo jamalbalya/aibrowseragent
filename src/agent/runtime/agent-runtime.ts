@@ -221,6 +221,7 @@ export class AgentRuntime {
           saltEpoch,
           taintSignature: await taintSignature(taintState),
           providerId: task.providerId,
+          ...(task.connectionId === undefined ? {} : { connectionId: task.connectionId }),
           modelId: task.modelId,
         },
       });

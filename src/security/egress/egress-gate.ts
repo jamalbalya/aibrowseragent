@@ -240,7 +240,13 @@ export function authorizeEgress(
   // destination mid-task falls through to consent below.
   const pin: ProviderPin | undefined =
     request.destination.channel === 'ai_provider' && request.destination.identity !== null
-      ? { identity: request.destination.identity, modelId: request.destination.modelId ?? '' }
+      ? {
+          identity: request.destination.identity,
+          ...(request.destination.connectionId === undefined
+            ? {}
+            : { connectionId: request.destination.connectionId }),
+          modelId: request.destination.modelId ?? '',
+        }
       : undefined;
   const pinned =
     request.destination.channel === 'ai_provider'

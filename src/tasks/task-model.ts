@@ -155,6 +155,14 @@ export interface AgentTask {
   readonly objective: string;
   readonly state: TaskState;
   readonly providerId: string;
+  /**
+   * The connected account this task is bound to.
+   *
+   * Optional because tasks created before multi-account existed have none,
+   * and a task without one still runs — it simply pins on the endpoint the
+   * way it always did. New tasks always carry it.
+   */
+  readonly connectionId?: string;
   readonly modelId: string;
   readonly permissionMode: PermissionMode;
   readonly createdAt: number;
@@ -220,6 +228,7 @@ export interface CreateTaskInput {
   readonly sessionId: string;
   readonly objective: string;
   readonly providerId: string;
+  readonly connectionId?: string;
   readonly modelId: string;
   readonly permissionMode: PermissionMode;
   readonly now: number;
@@ -255,6 +264,7 @@ export function createTask(input: CreateTaskInput): AgentTask {
     id: input.id,
     sessionId: input.sessionId,
     objective: input.objective,
+    ...(input.connectionId === undefined ? {} : { connectionId: input.connectionId }),
     state: 'QUEUED',
     providerId: input.providerId,
     modelId: input.modelId,

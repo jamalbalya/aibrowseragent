@@ -312,6 +312,25 @@ export const PANEL_ROUTE_CLASSES: Record<PanelRequestType, RouteClass> = {
   'provider.runDoctor': 'CLASS_B_PANEL_CONTROL_PLANE',
   'provider.setActive': 'CLASS_B_PANEL_CONTROL_PLANE',
 
+  // Connected AI accounts. Reads are CLASS_E; anything that creates, removes,
+  // re-homes or selects an account is control plane, because each of those
+  // moves a credential or changes which one a task will use. No content
+  // script or page may reach any of them.
+  'accounts.list': 'CLASS_E_PANEL_READ_ONLY',
+  'accounts.connect': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'accounts.disconnect': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'accounts.listModels': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'accounts.runDoctor': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'accounts.setBrain': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'accounts.associationOffer': 'CLASS_E_PANEL_READ_ONLY',
+  // Taking ownership of someone else's unowned connections is exactly the
+  // kind of thing that must come from a deliberate click in the panel.
+  'accounts.associate': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'accounts.declineAssociation': 'CLASS_B_PANEL_CONTROL_PLANE',
+
+  'storage.getPreference': 'CLASS_E_PANEL_READ_ONLY',
+  'storage.setPreference': 'CLASS_B_PANEL_CONTROL_PLANE',
+
   'connector.list': 'CLASS_E_PANEL_READ_ONLY',
   'connector.authorize': 'CLASS_B_PANEL_CONTROL_PLANE',
   'connector.disconnect': 'CLASS_B_PANEL_CONTROL_PLANE',

@@ -50,6 +50,8 @@ export interface TaskManagerOptions {
     adapter: AIProviderAdapter;
     capabilities: ModelCapabilities;
     providerId: string;
+    /** The connected account behind this provider, when there is one. */
+    connectionId?: string;
     modelId: string;
   }>;
   readonly getPermissionMode: () => Promise<PermissionMode>;
@@ -153,6 +155,7 @@ export class TaskManager {
       sessionId,
       objective: trimmed,
       providerId: provider.providerId,
+      ...(provider.connectionId === undefined ? {} : { connectionId: provider.connectionId }),
       modelId: provider.modelId,
       permissionMode: await this.options.getPermissionMode(),
       now: this.now(),
@@ -217,7 +220,16 @@ export class TaskManager {
       // So it is refused rather than silently carried over. Switching back,
       // or retrying the objective on the current provider, are both explicit
       // actions the person can take.
-      if (provider.providerId !== task.providerId || provider.modelId !== task.modelId) {
+      // The account is part of that identity, not just the provider family.
+      // Two OpenAI accounts differ in entitlement, billing and data
+      // agreement, so resuming a task started on one onto the other is the
+      // same substitution as resuming it onto a different provider — and
+      // until connections existed it was indistinguishable from a match.
+      if (
+        provider.providerId !== task.providerId ||
+        provider.modelId !== task.modelId ||
+        (task.connectionId !== undefined && provider.connectionId !== task.connectionId)
+      ) {
         await this.fail(
           taskId,
           createError(

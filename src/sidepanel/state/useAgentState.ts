@@ -139,6 +139,13 @@ export function useAgentState() {
         case 'provider.statusChanged':
           setConnection(event.connection);
           break;
+        case 'accounts.changed':
+          // The settings view owns the account list and refreshes itself.
+          // Nothing in the main panel reads it, so there is nothing to do
+          // here — stated as a case rather than left to the default, because
+          // the exhaustiveness check is what will make the next event someone
+          // adds get a decision instead of silence.
+          break;
         case 'task.streamDelta':
         case 'log':
           break;

@@ -20,6 +20,8 @@ import type { EvidenceReference } from '@/evidence/evidence-model';
 import type { LogRecord } from '@/logging/logger';
 import type { SitePolicyState } from '@/policy/site-policy';
 import type { ProviderConnection } from '@/providers/registry/provider-registry';
+import type { ModelCapabilities } from '@/providers/core/types';
+import type { DataStorageMode } from '@/storage/data-classification';
 
 export interface ExtensionMessage<TType extends string = string, TPayload = unknown> {
   readonly id: string;
@@ -168,6 +170,67 @@ export interface PanelRequestMap {
   'provider.setActive': {
     request: { providerId: string; modelId: string };
     response: { connection: ProviderConnection };
+  };
+
+  /**
+   * Connected AI accounts.
+   *
+   * Alongside `provider.*` rather than replacing it. The provider routes
+   * describe *provider families* — which adapters exist, what they need — and
+   * remain exactly as they were. These describe the user's own connected
+   * accounts, of which there may be several per family, each with its own
+   * `connectionId`, its own credential and its own capability measurement.
+   */
+  'accounts.list': {
+    request: Record<string, never>;
+    response: {
+      accounts: readonly ConnectedAccountView[];
+      brain: { connectionId: string; modelId: string | null } | null;
+    };
+  };
+  'accounts.connect': {
+    request: {
+      providerId: string;
+      baseUrl?: string;
+      apiKey: string;
+      model?: string;
+      displayName?: string;
+    };
+    response: { account: ConnectedAccountView | null; error?: AgentError };
+  };
+  'accounts.disconnect': { request: { connectionId: string }; response: { ok: true } };
+  'accounts.listModels': {
+    request: { connectionId: string };
+    response: { models: { id: string; displayName: string }[] };
+  };
+  'accounts.runDoctor': {
+    request: { connectionId: string; modelId: string; quick?: boolean };
+    response: { report: CapabilityReport };
+  };
+  'accounts.setBrain': {
+    request: { connectionId: string; modelId: string };
+    response: { account: ConnectedAccountView; error?: AgentError };
+  };
+  'accounts.associationOffer': {
+    request: Record<string, never>;
+    response: { accounts: readonly ConnectedAccountView[]; declined: boolean };
+  };
+  'accounts.associate': {
+    request: Record<string, never>;
+    response: { associated: number; refused: number };
+  };
+  'accounts.declineAssociation': { request: Record<string, never>; response: { ok: true } };
+
+  'storage.getPreference': {
+    request: Record<string, never>;
+    response: {
+      mode: DataStorageMode;
+      shouldPrompt: boolean;
+    };
+  };
+  'storage.setPreference': {
+    request: { mode: 'local' | 'cloud' | 'dismiss' };
+    response: { mode: DataStorageMode };
   };
 
   'permission.respond': {
@@ -564,6 +627,33 @@ export interface PanelRequestMap {
   };
 }
 
+/**
+ * A connected account as the panel sees it.
+ *
+ * Deliberately not `ConnectedAccount`: the panel has no business with
+ * `abaUserId` or `capabilityScope`, and a view type means a field added to the
+ * stored record does not reach the UI — or any event broadcast — merely by
+ * existing. No credential field exists here or in the stored record.
+ */
+export interface ConnectedAccountView {
+  readonly connectionId: string;
+  readonly providerId: string;
+  readonly protocol: string;
+  readonly displayName: string;
+  /** Endpoint plus the key's last four characters. Never the key. */
+  readonly accountLabel: string;
+  readonly authKind: string;
+  readonly baseUrl?: string;
+  readonly modelId: string | null;
+  readonly capabilities: ModelCapabilities | null;
+  readonly status: string;
+  readonly statusReason?: string;
+  readonly lastValidated: number | null;
+  readonly createdAt: number;
+  /** True when this account is the current AI brain. */
+  readonly isBrain: boolean;
+}
+
 export type PanelRequestType = keyof PanelRequestMap;
 export type PanelRequest<T extends PanelRequestType> = PanelRequestMap[T]['request'];
 export type PanelResponse<T extends PanelRequestType> = PanelRequestMap[T]['response'];
@@ -676,6 +766,11 @@ export type AgentEvent =
   | { readonly type: 'file.selectionRequested'; readonly request: FileSelectionRequest }
   | { readonly type: 'file.selectionResolved'; readonly requestId: string }
   | { readonly type: 'provider.statusChanged'; readonly connection: ProviderConnection | null }
+  | {
+      readonly type: 'accounts.changed';
+      readonly accounts: readonly ConnectedAccountView[];
+      readonly brain: { readonly connectionId: string; readonly modelId: string | null } | null;
+    }
   | { readonly type: 'log'; readonly record: LogRecord };
 
 export const EVENT_MESSAGE_TYPE = 'agent.event';

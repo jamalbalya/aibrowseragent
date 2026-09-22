@@ -127,9 +127,50 @@ void chrome.storage.session
  * serialized area, so a report is written under the same mutex as the writes
  * it describes.
  */
+import { AccountStore } from '@/providers/accounts/account-store';
+import {
+  accountAfterSelection,
+  credentialKeyFor,
+  UNASSIGNED_ABA_USER,
+  type ConnectedAccount,
+} from '@/providers/accounts/account-model';
+import { migrateLegacyConnection } from '@/providers/accounts/migrate-legacy';
+import { protocolForLegacyProvider } from '@/providers/accounts/migrate-legacy';
+import { deriveAccountLabel } from '@/providers/accounts/account-model';
+import { IdentityProfileStore } from '@/identity/identity-profile';
+import { DataStoragePreferenceStore } from '@/storage/data-storage-preference';
+import type { ConnectedAccountView } from '@/messaging/protocol';
+
 const persistenceHealth = new PersistenceHealthStore(new NamespacedStorageArea(local, 'health'));
 const settingsStore = new SettingsStore(new NamespacedStorageArea(local, 'settings'));
 const credentialStore = new CredentialStore(local);
+/**
+ * Connected AI accounts, the identity profile, and where data should live.
+ *
+ * Three separate namespaces with three separate lifetimes. The account store
+ * holds persistent user data and the identity store holds who that user is;
+ * neither is reachable from the code that ends an authentication session,
+ * which is what keeps a session expiring from ever looking like a reset.
+ */
+const accountStore = new AccountStore(new NamespacedStorageArea(local, 'accounts'));
+const identityProfile = new IdentityProfileStore(
+  new NamespacedStorageArea(local, 'identity-profile'),
+);
+const dataStoragePreference = new DataStoragePreferenceStore(
+  new NamespacedStorageArea(local, 'settings'),
+);
+
+/**
+ * Whose accounts to read.
+ *
+ * `unassigned` until someone signs in, which is every installation today
+ * because there is no authentication yet. Accounts connected now are unowned
+ * and stay unowned until a user explicitly takes ownership of them.
+ */
+async function currentAbaUserId(): Promise<string> {
+  return (await identityProfile.abaUserId()) ?? UNASSIGNED_ABA_USER;
+}
+
 const taskStore = new TaskStore(new NamespacedStorageArea(local, 'tasks'), {
   health: persistenceHealth,
 });
@@ -939,12 +980,74 @@ async function summariseShortcut(record: ShortcutRecord): Promise<ShortcutSummar
  * Throws rather than substituting a different provider: silent fallback is
  * forbidden (specification section 60).
  */
-async function resolveProvider(): Promise<{
+interface ResolvedProvider {
   adapter: ReturnType<ProviderRegistry['get']>;
   capabilities: typeof UNKNOWN_CAPABILITIES;
   providerId: string;
+  connectionId?: string;
   modelId: string;
-}> {
+}
+
+/**
+ * Resolves the adapter for one connected account.
+ *
+ * The credential is read from `credentials:conn:<connectionId>`, so two
+ * accounts on the same provider never reach for the same key. The adapter is
+ * reconnected on every call because the worker may have restarted, and
+ * because the previous call may have connected it as a *different* account —
+ * a single adapter instance per provider family is shared, and leaving the
+ * last account's credential in it is exactly the cross-account leak this
+ * wave exists to prevent.
+ */
+async function resolveFromAccount(account: ConnectedAccount): Promise<ResolvedProvider> {
+  if (!account.modelId) {
+    throw new ProviderUnavailable(
+      `${account.displayName} has no model selected. Choose one in Settings.`,
+    );
+  }
+  const apiKey = await credentialStore.getConnectionKey(credentialKeyFor(account.connectionId));
+  if (apiKey === undefined) {
+    throw new ProviderUnavailable(
+      account.statusReason ??
+        `${account.displayName} needs its API key reconnected on this device.`,
+    );
+  }
+
+  const adapter = providerRegistry.get(account.providerId);
+  const auth = await adapter.connect({
+    providerId: account.providerId,
+    ...(account.baseUrl === undefined ? {} : { baseUrl: account.baseUrl }),
+    apiKey,
+    model: account.modelId,
+  });
+  if (!auth.authenticated) {
+    throw new ProviderUnavailable(
+      auth.error?.userMessage ?? 'The connected account rejected its stored credentials.',
+    );
+  }
+
+  return {
+    adapter,
+    // Only a measurement taken on *this* account and *this* model counts.
+    capabilities:
+      account.capabilityScope?.connectionId === account.connectionId &&
+      account.capabilityScope?.modelId === account.modelId
+        ? (account.capabilities ?? UNKNOWN_CAPABILITIES)
+        : UNKNOWN_CAPABILITIES,
+    providerId: account.providerId,
+    connectionId: account.connectionId,
+    modelId: account.modelId,
+  };
+}
+
+async function resolveProvider(): Promise<ResolvedProvider> {
+  // The AI brain first: a connected account the user selected, with its own
+  // credential. Falling back to the legacy single-provider settings is what
+  // keeps an installation that has not migrated — or not chosen a brain —
+  // working exactly as it did.
+  const brainAccount = await accountStore.getBrainAccount(await currentAbaUserId());
+  if (brainAccount) return await resolveFromAccount(brainAccount);
+
   const settings = await settingsStore.get();
   const connection = await settingsStore.getConnection();
 
@@ -1421,6 +1524,298 @@ router.on('file.listPendingSelections', () =>
 router.on('file.downloadsPermission', async () => ({
   granted: await downloadPort.isPermitted(),
 }));
+
+/* ------------------------------------------------------------------ *
+ * Connected AI accounts
+ *
+ * These sit alongside the `provider.*` routes, which are untouched. Those
+ * describe provider *families* — which adapters exist and what each needs.
+ * These describe the user's own connected accounts, of which there may be
+ * several per family, each with its own credential and its own measurement.
+ * ------------------------------------------------------------------ */
+
+/**
+ * The account store's window onto credentials.
+ *
+ * Connection-scoped by construction: there is no call here that could be
+ * handed a provider id, which is what makes two accounts on one provider
+ * incapable of overwriting each other.
+ */
+const connectionCredentials = {
+  read: (connectionId: string) => credentialStore.getConnectionKey(connectionId),
+  write: (connectionId: string, apiKey: string) =>
+    credentialStore.setConnectionKey(connectionId, apiKey),
+  clear: (connectionId: string) => credentialStore.clearConnectionKey(connectionId),
+};
+
+/** The panel's view of an account. Never carries a credential. */
+function accountView(account: ConnectedAccount, brainId: string | null): ConnectedAccountView {
+  return {
+    connectionId: account.connectionId,
+    providerId: account.providerId,
+    protocol: account.protocol,
+    displayName: account.displayName,
+    accountLabel: account.accountLabel,
+    authKind: account.authKind,
+    ...(account.baseUrl === undefined ? {} : { baseUrl: account.baseUrl }),
+    modelId: account.modelId,
+    capabilities: account.capabilities,
+    status: account.status,
+    ...(account.statusReason === undefined ? {} : { statusReason: account.statusReason }),
+    lastValidated: account.lastValidated,
+    createdAt: account.createdAt,
+    isBrain: account.connectionId === brainId,
+  };
+}
+
+async function visibleAccounts(): Promise<{
+  accounts: readonly ConnectedAccount[];
+  brainId: string | null;
+  abaUserId: string;
+}> {
+  const abaUserId = await currentAbaUserId();
+  const brain = await accountStore.getBrain(abaUserId);
+  const all = await accountStore.list();
+  // Another user's accounts are hidden, never deleted, and are still there
+  // when that user signs back in.
+  const accounts = all.filter(
+    (account) => account.abaUserId === abaUserId || account.abaUserId === UNASSIGNED_ABA_USER,
+  );
+  return { accounts, brainId: brain?.connectionId ?? null, abaUserId };
+}
+
+async function broadcastAccounts(): Promise<void> {
+  const { accounts, brainId, abaUserId } = await visibleAccounts();
+  const brain = await accountStore.getBrain(abaUserId);
+  broadcastEvent({
+    type: 'accounts.changed',
+    accounts: accounts.map((account) => accountView(account, brainId)),
+    brain: brain ? { connectionId: brain.connectionId, modelId: brain.modelId } : null,
+  });
+}
+
+/**
+ * Carries a pre-multi-account installation forward, once.
+ *
+ * Runs at startup and never throws: a user whose migration failed still needs
+ * a working side panel to reconnect from, and taking startup down would leave
+ * them with neither their old configuration nor a way to rebuild it. A
+ * failure is reported and retried on the next start, with the legacy
+ * credential still in place.
+ */
+async function runLegacyMigration(): Promise<void> {
+  const outcome = await migrateLegacyConnection({
+    store: accountStore,
+    credentials: {
+      // Keyed by provider: the scheme being migrated away from.
+      readLegacy: (providerId) => credentialStore.getApiKey(providerId),
+      clearLegacy: (providerId) => credentialStore.clear(providerId),
+      // Keyed by connection: the scheme being migrated to.
+      readConnection: (connectionId) => credentialStore.getConnectionKey(connectionId),
+      writeConnection: (connectionId, apiKey) =>
+        credentialStore.setConnectionKey(connectionId, apiKey),
+    },
+    readLegacyConnection: async () => {
+      const connection = await settingsStore.getConnection();
+      if (!connection) return undefined;
+      return {
+        providerId: connection.providerId,
+        modelId: connection.modelId,
+        ...(connection.accountLabel === undefined ? {} : { accountLabel: connection.accountLabel }),
+        createdAt: connection.createdAt,
+        status: connection.status,
+      };
+    },
+    clearLegacyConnection: async () => {
+      await settingsStore.setConnection(null);
+      await settingsStore.update({ activeProviderId: null, activeModelId: null });
+    },
+  });
+  if (outcome.kind === 'migrated') await broadcastAccounts();
+}
+
+void runLegacyMigration();
+
+router.on('accounts.list', async () => {
+  const { accounts, brainId, abaUserId } = await visibleAccounts();
+  const brain = await accountStore.getBrain(abaUserId);
+  return {
+    accounts: accounts.map((account) => accountView(account, brainId)),
+    brain: brain ? { connectionId: brain.connectionId, modelId: brain.modelId } : null,
+  };
+});
+
+router.on('accounts.connect', async (request) => {
+  if (!providerRegistry.has(request.providerId)) {
+    return {
+      account: null,
+      error: createError('INVALID_ARGUMENT', `Unknown provider "${request.providerId}".`),
+    };
+  }
+  if (!request.apiKey) {
+    return { account: null, error: createError('INVALID_ARGUMENT', 'An API key is required.') };
+  }
+
+  // Proved before anything is stored, so a rejected key never becomes an
+  // account the user has to discover is broken.
+  const adapter = providerRegistry.get(request.providerId);
+  const auth = await adapter.connect({
+    providerId: request.providerId,
+    ...(request.baseUrl === undefined ? {} : { baseUrl: request.baseUrl }),
+    apiKey: request.apiKey,
+    ...(request.model === undefined ? {} : { model: request.model }),
+  });
+  if (!auth.authenticated) {
+    return {
+      account: null,
+      error: auth.error ?? createError('AUTH_REQUIRED', 'The provider rejected that API key.'),
+    };
+  }
+
+  const connectionId = accountStore.mintConnectionId();
+  // The credential first, then the record: a record whose key never landed
+  // is an account that fails at its first request, and the user cannot tell
+  // why. A key with no record is invisible but harmless, and the next
+  // connect overwrites it.
+  await credentialStore.setConnectionKey(credentialKeyFor(connectionId), request.apiKey);
+
+  const account: ConnectedAccount = {
+    connectionId,
+    abaUserId: await currentAbaUserId(),
+    providerId: request.providerId,
+    protocol: protocolForLegacyProvider(request.providerId),
+    displayName: request.displayName?.trim() || adapter.displayName,
+    accountLabel: deriveAccountLabel(request.baseUrl, request.apiKey),
+    authKind: 'api_key',
+    ...(request.baseUrl === undefined ? {} : { baseUrl: request.baseUrl }),
+    modelId: request.model ?? null,
+    capabilities: null,
+    capabilityScope: null,
+    status: 'connected',
+    lastValidated: null,
+    createdAt: Date.now(),
+  };
+  await accountStore.put(account);
+  await auditLog.record({
+    type: 'provider.selected',
+    outcome: 'info',
+    providerId: request.providerId,
+    code: 'account_connected',
+  });
+  await broadcastAccounts();
+  const { brainId } = await visibleAccounts();
+  return { account: accountView(account, brainId) };
+});
+
+router.on('accounts.disconnect', async ({ connectionId }) => {
+  // The credential goes first, then the record, then any brain pointing at
+  // it. `AccountStore.remove` owns that ordering.
+  await accountStore.remove(connectionId, connectionCredentials);
+  await broadcastAccounts();
+  return { ok: true as const };
+});
+
+router.on('accounts.listModels', async ({ connectionId }) => {
+  const account = await accountStore.get(connectionId);
+  if (!account) throw new Error('That connection no longer exists.');
+  const resolved = await resolveFromAccount({ ...account, modelId: account.modelId ?? 'probe' });
+  const models = await resolved.adapter.listModels();
+  return { models: models.map((model) => ({ id: model.id, displayName: model.displayName })) };
+});
+
+router.on('accounts.runDoctor', async ({ connectionId, modelId, quick }) => {
+  const account = await accountStore.get(connectionId);
+  if (!account) throw new Error('That connection no longer exists.');
+
+  const resolved = await resolveFromAccount({ ...account, modelId });
+  const report = await capabilityDoctor.run(resolved.adapter, modelId, {
+    ...(quick === undefined ? {} : { quick }),
+  });
+
+  // The measurement is stamped with the account and model it was taken on, so
+  // nothing downstream can mistake it for evidence about another.
+  await accountStore.put({
+    ...account,
+    modelId,
+    capabilities: report.capabilities,
+    capabilityScope: { connectionId, modelId },
+    lastValidated: report.generatedAt,
+    status:
+      report.readiness === 'AGENT_READY'
+        ? 'connected'
+        : report.readiness === 'FAILED'
+          ? 'failed'
+          : 'limited',
+  });
+  await broadcastAccounts();
+  return { report };
+});
+
+router.on('accounts.setBrain', async ({ connectionId, modelId }) => {
+  const abaUserId = await currentAbaUserId();
+  const existing = await accountStore.get(connectionId);
+  if (!existing) {
+    throw new Error('That connection no longer exists.');
+  }
+
+  // A measurement survives only when both the account and the model are the
+  // ones it was taken on — the same rule `connectionAfterSwitch` established
+  // for the single-slot world, extended to the account dimension.
+  const updated = accountAfterSelection(existing, modelId);
+  const switched = updated.capabilities === null && existing.capabilities !== null;
+  await accountStore.put(updated);
+  await accountStore.setBrain(abaUserId, connectionId, modelId);
+
+  if (switched) {
+    await auditLog.record({
+      type: 'provider.selected',
+      outcome: 'info',
+      providerId: updated.providerId,
+      modelId,
+      code: 'capabilities_invalidated',
+    });
+  }
+  await updateSession({ providerId: updated.providerId, modelId });
+  await broadcastAccounts();
+  return { account: accountView(updated, connectionId) };
+});
+
+router.on('accounts.associationOffer', async () => {
+  const offer = await accountStore.associationOffer(await currentAbaUserId());
+  return {
+    accounts: offer.accounts.map((account) => accountView(account, null)),
+    declined: offer.declined,
+  };
+});
+
+router.on('accounts.associate', async () => {
+  // Reached only from a confirmed click in the panel. Signing in does not
+  // call this, and nothing calls it on startup: taking ownership of
+  // connections somebody else set up on a shared profile has to be a
+  // decision, because `bindAccountToUser` permits no second move.
+  const outcome = await accountStore.associateUnassigned(await currentAbaUserId());
+  await broadcastAccounts();
+  return { associated: outcome.associated, refused: outcome.refused };
+});
+
+router.on('accounts.declineAssociation', async () => {
+  await accountStore.declineAssociation(await currentAbaUserId());
+  return { ok: true as const };
+});
+
+router.on('storage.getPreference', async () => ({
+  mode: await dataStoragePreference.mode(),
+  shouldPrompt: await dataStoragePreference.shouldPrompt(),
+}));
+
+router.on('storage.setPreference', async ({ mode }) => {
+  if (mode === 'dismiss') {
+    await dataStoragePreference.dismiss(Date.now());
+  } else {
+    await dataStoragePreference.choose(mode, Date.now());
+  }
+  return { mode: await dataStoragePreference.mode() };
+});
 
 router.on('permission.respond', ({ requestId, response }) => {
   permissionBroker.respond(requestId, response);
