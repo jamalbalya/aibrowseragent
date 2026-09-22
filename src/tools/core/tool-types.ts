@@ -24,6 +24,28 @@ export interface ToolExecutionContext {
   readonly toolCallId: string;
   /** Tab the task is currently focused on, when one applies. */
   readonly tabId?: number;
+  /**
+   * The tabs this task's workspace currently holds, newest activity first.
+   *
+   * Supplied by the registry from a live reading of Chrome. It is what a tool
+   * lists and what it falls back to when no tab was named — replacing "the
+   * browser's focused tab, wherever it is", which is how a task could reach a
+   * page in an unrelated window.
+   *
+   * `undefined` means no workspace narrowing is configured (unit tests, and
+   * only unit tests). An **empty array** is different and means the workspace
+   * holds nothing right now, which is a refusal rather than a licence to look
+   * elsewhere.
+   */
+  readonly workspaceTabIds?: readonly number[];
+  /**
+   * The Chrome tab group backing this task's workspace, when it has one.
+   *
+   * Supplied so a tab the agent opens joins the workspace before it loads
+   * anything — otherwise it would be created outside every workspace, holding
+   * a real page, and the agent could not then act on what it had just opened.
+   */
+  readonly workspaceGroupId?: number;
   /** URL observed when the call was authorised, for origin-drift checks. */
   readonly authorisedUrl?: string;
   /**

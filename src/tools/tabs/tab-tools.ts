@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { ToolError } from '@/types/result';
 import { checkNavigable } from '@/security/origin/origin-validator';
 import type { AgentTool, ToolExecutionResult } from '@/tools/core/tool-types';
-import type { BrowserAdapter } from '@/tools/browser/chrome-adapter';
+import type { BrowserAdapter, TabInfo } from '@/tools/browser/chrome-adapter';
 
 /** Tracks which tabs a task created, per task. */
 export class TabOwnership {
@@ -45,6 +45,27 @@ export interface TabToolDeps {
 
 const emptyInput = z.object({});
 
+/**
+ * The tab a workspace-scoped tool should act on when none was named.
+ *
+ * Prefers the browser's focused tab when it is a workspace member, so the
+ * common case — the user looking at the page they are asking about — behaves
+ * as expected. Otherwise it falls back to a member, and to nothing at all
+ * when the workspace holds none. It never returns a non-member.
+ */
+export async function activeWorkspaceTab(
+  adapter: BrowserAdapter,
+  context: { readonly workspaceTabIds?: readonly number[] },
+): Promise<TabInfo | null> {
+  const active = await adapter.getActiveTab();
+  if (context.workspaceTabIds === undefined) return active;
+  if (active && context.workspaceTabIds.includes(active.id)) return active;
+
+  const first = context.workspaceTabIds[0];
+  if (first === undefined) return null;
+  return await adapter.getTab(first);
+}
+
 export function createListTabsTool({ adapter }: TabToolDeps): AgentTool<typeof emptyInput> {
   return {
     name: 'tabs.list',
@@ -58,12 +79,21 @@ export function createListTabsTool({ adapter }: TabToolDeps): AgentTool<typeof e
     idempotent: true,
     classify: () => ({ summary: 'List open tabs.' }),
 
-    async execute(): Promise<ToolExecutionResult> {
-      const tabs = await adapter.listTabs();
+    async execute(_input, context): Promise<ToolExecutionResult> {
+      // Narrowed to the workspace. Listing every tab in the browser told the
+      // model what the user had open even where acting on those tabs would
+      // have been refused, which is an information leak in its own right.
+      // `undefined` means no narrowing is configured (unit tests only); an
+      // empty array means the workspace is genuinely empty.
+      const all = await adapter.listTabs();
+      const eligible =
+        context.workspaceTabIds === undefined
+          ? all
+          : all.filter((tab) => context.workspaceTabIds!.includes(tab.id));
       return {
         success: true,
         data: {
-          tabs: tabs.map((tab) => ({
+          tabs: eligible.map((tab) => ({
             tabId: tab.id,
             title: tab.title,
             url: tab.url,
@@ -92,9 +122,15 @@ export function createGetActiveTabTool({ adapter }: TabToolDeps): AgentTool<type
     idempotent: true,
     classify: () => ({ summary: 'Get the active tab.' }),
 
-    async execute(): Promise<ToolExecutionResult> {
-      const tab = await adapter.getActiveTab();
-      if (!tab) throw new ToolError('TAB_NOT_FOUND', 'There is no active tab.');
+    async execute(_input, context): Promise<ToolExecutionResult> {
+      // The workspace's active tab, not the browser's. The browser's focused
+      // tab may belong to another workspace or to no workspace at all, and
+      // handing it over would be the cross-workspace targeting this boundary
+      // exists to prevent.
+      const tab = await activeWorkspaceTab(adapter, context);
+      if (!tab) {
+        throw new ToolError('TAB_NOT_FOUND', 'This workspace has no tab to work with.');
+      }
       return {
         success: true,
         data: {
@@ -137,9 +173,13 @@ export function createCreateTabTool({
         });
       }
 
+      // Into the task's workspace, so the agent can actually use what it
+      // opened — and so the tab never exists outside a workspace holding a
+      // real page. See `CreateTabOptions.groupId`.
       const tab = await adapter.createTab({
         url: input.url,
         ...(input.active === undefined ? {} : { active: input.active }),
+        ...(context.workspaceGroupId === undefined ? {} : { groupId: context.workspaceGroupId }),
       });
       ownership.claim(context.taskId, tab.id);
 

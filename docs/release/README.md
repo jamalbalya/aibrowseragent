@@ -50,8 +50,8 @@ Two clean builds of the same commit, each deleting `dist/` first, produced
 byte-identical archives:
 
 ```text
-8ac438910d24492633d6789662794b6669fb7ed90922a7f9b6ec58352a6ba8dc
-8ac438910d24492633d6789662794b6669fb7ed90922a7f9b6ec58352a6ba8dc
+e0b659a8e302d1528c27f9ebcbda99f200c7495dcae05ce74091b94ee21d75cc
+e0b659a8e302d1528c27f9ebcbda99f200c7495dcae05ce74091b94ee21d75cc
 ```
 
 That did not happen by itself. An ordinary ZIP stores a modification time per
@@ -115,7 +115,7 @@ Produced from `dist/` after `npm run build:release`:
 |                  |                                                                    |
 | ---------------- | ------------------------------------------------------------------ |
 | File             | `ai-browser-agent-0.1.0.zip`                                       |
-| SHA-256          | `8ac438910d24492633d6789662794b6669fb7ed90922a7f9b6ec58352a6ba8dc` |
+| SHA-256          | `e0b659a8e302d1528c27f9ebcbda99f200c7495dcae05ce74091b94ee21d75cc` |
 | Size             | 208,798 bytes compressed, 698,629 uncompressed                     |
 | Entries          | 12                                                                 |
 | Manifest version | 3                                                                  |

@@ -55,6 +55,13 @@ export interface TaskManagerOptions {
     modelId: string;
   }>;
   readonly getPermissionMode: () => Promise<PermissionMode>;
+  /**
+   * The workspace a new task belongs to.
+   *
+   * Resolved once, at creation, and never changed: a task that could be moved
+   * between workspaces would be a task whose scope depends on when you asked.
+   */
+  readonly resolveWorkspaceId?: () => Promise<string | undefined>;
   readonly getActiveTabId: () => Promise<number | undefined>;
   /**
    * Notified whenever a task's usage changes.
@@ -150,12 +157,14 @@ export class TaskManager {
     }
 
     const provider = await this.options.resolveProvider();
+    const workspaceId = await this.options.resolveWorkspaceId?.();
     const task = createTask({
       id: newTaskId(),
       sessionId,
       objective: trimmed,
       providerId: provider.providerId,
       ...(provider.connectionId === undefined ? {} : { connectionId: provider.connectionId }),
+      ...(workspaceId === undefined ? {} : { workspaceId }),
       modelId: provider.modelId,
       permissionMode: await this.options.getPermissionMode(),
       now: this.now(),

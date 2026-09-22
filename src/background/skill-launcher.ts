@@ -63,6 +63,13 @@ export interface SkillLauncherOptions {
   readonly runner: SkillRunner;
   readonly tasks: TaskStore;
   readonly getPermissionMode: () => Promise<PermissionMode>;
+  /**
+   * The workspace this run acts in.
+   *
+   * User-initiated, so it resolves or creates a workspace around the tab the
+   * user is on, exactly as starting a task does.
+   */
+  readonly resolveWorkspaceId?: () => Promise<string | undefined>;
   readonly getActiveTabId: () => Promise<number | undefined>;
   readonly publishSecurityContext: (
     taskId: string,
@@ -108,6 +115,7 @@ export class SkillLauncher {
       };
     }
 
+    const workspaceId = await this.options.resolveWorkspaceId?.();
     const task = createTask({
       id: newTaskId(),
       sessionId: request.sessionId,
@@ -116,6 +124,13 @@ export class SkillLauncher {
       modelId: LAUNCH_MODEL_ID,
       // The mode in force now, never one carried forward from anywhere.
       permissionMode: await this.options.getPermissionMode(),
+      // A replay and a shortcut are *activations* — the user pointing at the
+      // tab in front of them — so they resolve a workspace the same way
+      // starting a task does. This is not a bypass of the boundary: the
+      // resolved workspace is a real one, and every membership check below
+      // runs against it unchanged. What it avoids is refusing the user's own
+      // deliberate action on the page they are looking at.
+      ...(workspaceId === undefined ? {} : { workspaceId }),
       now: this.now(),
     });
     await this.options.tasks.saveTask(task);

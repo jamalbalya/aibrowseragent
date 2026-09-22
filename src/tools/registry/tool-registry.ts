@@ -94,6 +94,33 @@ export interface ToolRegistryOptions {
    */
   /** Resolves a tab's current URL, so a page-write destination is knowable. */
   readonly resolveTabUrl?: (tabId: number) => Promise<string | undefined>;
+  /**
+   * Is this tab live context for this task's workspace?
+   *
+   * A **narrowing filter** and nothing more. It runs before policy,
+   * permission, consent, egress and taint, and can only subtract: a tab it
+   * admits still faces every one of them, unchanged. Membership decides
+   * eligibility; it never decides authorization.
+   *
+   * Optional so tool behaviour can be tested in isolation. Absent, no
+   * narrowing happens and every existing control still applies — the service
+   * worker always supplies it.
+   */
+  readonly checkWorkspaceMember?: (
+    taskId: string,
+    tabId: number,
+  ) => Promise<{ ok: true } | { ok: false; reason: string }>;
+  /**
+   * The tabs this task's workspace holds right now, read live from Chrome.
+   *
+   * Narrowing again, in the other direction: it bounds what a tool can
+   * *enumerate*, not only what it can act on. Listing every tab in the
+   * browser told the model what the user had open even when acting on those
+   * tabs would have been refused.
+   */
+  readonly resolveWorkspaceTabs?: (taskId: string) => Promise<readonly number[]>;
+  /** The Chrome group backing this task's workspace, for tab creation. */
+  readonly resolveWorkspaceGroupId?: (taskId: string) => Promise<number | undefined>;
   readonly egress?: {
     readonly consent: ConsentStore;
     readonly record: (input: EgressEvidenceInput) => Promise<void>;
@@ -361,6 +388,37 @@ export class ToolRegistry {
       });
     }
 
+    // 1a. Workspace scope.
+    //
+    //     Before anything is classified, authorised or executed: is this tab
+    //     even in scope for this task? Until workspaces existed the answer
+    //     was always yes, because `listTabs()` was `chrome.tabs.query({})`
+    //     and a tool acted on whatever id it was handed — so a task started
+    //     from one page could reach an unrelated tab in another window.
+    //
+    //     This only ever subtracts. Everything below still runs on a tab it
+    //     admits, and nothing here can turn a "deny" from policy, consent or
+    //     the egress gate into an allow.
+    if (invocation.tabId !== undefined && this.options.checkWorkspaceMember) {
+      const scope = await this.options.checkWorkspaceMember(invocation.taskId, invocation.tabId);
+      if (!scope.ok) {
+        log.warn('A tool was refused a tab outside its workspace.', {
+          taskId: invocation.taskId,
+          tool: fromWireName(invocation.name),
+        });
+        return this.refuse(
+          invocation,
+          createError('POLICY_BLOCKED', scope.reason, { userMessage: scope.reason }),
+          tool.risk,
+        );
+      }
+    }
+
+    const workspaceTabIds = this.options.resolveWorkspaceTabs
+      ? await this.options.resolveWorkspaceTabs(invocation.taskId)
+      : undefined;
+    const workspaceGroupId = await this.options.resolveWorkspaceGroupId?.(invocation.taskId);
+
     const recorded: { reference: RecordedEvidence; payload: Omit<EvidencePayload, 'id'> }[] = [];
     const currentUrl =
       invocation.tabId !== undefined && this.options.resolveTabUrl
@@ -373,6 +431,8 @@ export class ToolRegistry {
       ...(invocation.tabId === undefined ? {} : { tabId: invocation.tabId }),
       ...(invocation.plannedUrl === undefined ? {} : { authorisedUrl: invocation.plannedUrl }),
       ...(currentUrl === undefined ? {} : { currentUrl }),
+      ...(workspaceTabIds === undefined ? {} : { workspaceTabIds }),
+      ...(workspaceGroupId === undefined ? {} : { workspaceGroupId }),
       signal: invocation.signal,
       recordEvidence: (reference, payload) => recorded.push({ reference, payload }),
     };

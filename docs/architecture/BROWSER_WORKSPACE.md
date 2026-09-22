@@ -1,9 +1,24 @@
 # Browser Workspace — Architecture Review
 
-Status: **design review. Nothing here is implemented.** No production code was
-changed to produce this document. The audit below is from the tree at
-`a3cafad`; the Chrome API findings were measured in real Chromium, not
-recalled.
+Status: **design review, now partly implemented.** Steps W-1 to W-5 and W-7 of
+§22 are built and validated; **W-6 (workspace routes and side-panel UI) is
+not**. The audit in §2 is from the tree at `a3cafad`, before any of it was
+built; the Chrome API findings in §3 were measured in real Chromium.
+
+| Step                                                         | State           |
+| ------------------------------------------------------------ | --------------- |
+| W-1 model and membership predicate                           | **done**        |
+| W-2 store: durable record, session-scoped binding            | **done**        |
+| W-3 reconciliation from real Chrome events                   | **done**        |
+| W-4 the guard, narrowed enumeration, `AgentTask.workspaceId` | **done**        |
+| W-5 agent-created tab lifecycle                              | **done**        |
+| W-6 `workspace.*` routes and side-panel UI                   | **not started** |
+| W-7 security suite, mutations, real Chromium                 | **done**        |
+
+Because W-6 is absent, a workspace is created implicitly from the tab the user
+activates the agent on (§9), and there is no UI yet to switch workspaces,
+re-attach a detached one, or add the current tab deliberately. The boundary is
+live and enforced; what is missing is the user's control surface over it.
 
 ---
 
@@ -618,13 +633,26 @@ boundary exists before anything invites the user to rely on it.
 
 ---
 
-## Open questions for the account owner
+## Account-owner decisions — confirmed
 
-1. **Resumable legacy tasks are refused browser operations after upgrade**
-   (§19). The alternative is exempting them, which leaves the hole open on the
-   tasks most likely to have used it. Confirm the refusal.
-2. **Ungrouping the last member detaches a workspace** rather than deleting it
-   (§8). Confirm that a detached-but-intact workspace is the wanted behaviour
-   rather than an implicit close.
-3. **One workspace per window is not enforced** (§9). Confirm that two
-   workspaces in one window is acceptable.
+1. **Legacy tasks without a `workspaceId`: REFUSE browser operations.** The
+   task, its history, workflows and every other persistent record are kept
+   untouched; only live browser targeting is refused. Continuing requires an
+   explicit migration or restart into a valid workspace. This closes the
+   boundary on exactly the tasks most likely to have used it, which exempting
+   them would not.
+
+2. **Tab or group removal DETACHES, it never deletes.** Removing a tab from a
+   workspace removes that tab's _live membership_ and nothing else. The
+   workspace, its tasks, history, workflows and persistent data all survive.
+   A workspace whose group was ungrouped or whose last tab closed is
+   `detached` — a normal state with a **Re-attach** action, never an implicit
+   close.
+
+3. **Multiple workspaces may share one Chrome window.** Two independent
+   workspaces coexisting in one window is supported and not an error.
+   `chromeWindowId` is recorded for display and focus only: **window identity
+   is never workspace identity**, and no membership decision reads it.
+
+These three confirm §14 (the guard's ambiguous cases), §8 (detach semantics)
+and §9 (multiple workspaces). Implementation proceeds per §22.

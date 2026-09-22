@@ -24,6 +24,16 @@ export interface CreateTabOptions {
   readonly url: string;
   readonly active?: boolean;
   readonly windowId?: number;
+  /**
+   * The Chrome tab group the new tab must join before it loads anything.
+   *
+   * Measured: `chrome.tabs.create` returns `groupId: -1`, so a tab created
+   * with a URL is briefly outside every workspace **with a page in it**. The
+   * ordering that closes that is to create it blank, group it, verify the
+   * group took, and only then navigate — so the window in which it is
+   * ungrouped contains `about:blank` and nothing else.
+   */
+  readonly groupId?: number;
 }
 
 /**
@@ -102,12 +112,40 @@ export class ChromeBrowserAdapter implements BrowserAdapter {
   }
 
   async createTab(options: CreateTabOptions): Promise<TabInfo> {
-    const tab = await chrome.tabs.create({
-      url: options.url,
+    if (options.groupId === undefined) {
+      const tab = await chrome.tabs.create({
+        url: options.url,
+        active: options.active ?? false,
+        ...(options.windowId === undefined ? {} : { windowId: options.windowId }),
+      });
+      return toTabInfo(tab);
+    }
+
+    // Blank first. Chrome cannot create a tab directly into a group, so this
+    // is the only ordering in which the ungrouped window holds no page.
+    const created = await chrome.tabs.create({
       active: options.active ?? false,
       ...(options.windowId === undefined ? {} : { windowId: options.windowId }),
     });
-    return toTabInfo(tab);
+    const tabId = created.id;
+    if (tabId === undefined) throw new Error('The new tab has no id.');
+
+    try {
+      await chrome.tabs.group({ tabIds: [tabId], groupId: options.groupId });
+      // Verified, not assumed: a grouping that silently did not take would
+      // leave a tab the workspace does not own and the agent cannot use.
+      const grouped = await chrome.tabs.get(tabId);
+      if (grouped.groupId !== options.groupId) {
+        throw new Error('The new tab did not join the workspace group.');
+      }
+      await chrome.tabs.update(tabId, { url: options.url });
+      return toTabInfo(await chrome.tabs.get(tabId));
+    } catch (error) {
+      // Never leave a half-placed tab behind: it would be outside every
+      // workspace, invisible to the agent, and holding whatever it loaded.
+      await chrome.tabs.remove(tabId).catch(() => undefined);
+      throw error;
+    }
   }
 
   async closeTab(tabId: number): Promise<void> {

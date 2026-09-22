@@ -163,6 +163,19 @@ export interface AgentTask {
    * way it always did. New tasks always carry it.
    */
   readonly connectionId?: string;
+  /**
+   * The browser workspace this task may act in.
+   *
+   * Optional because tasks created before workspaces existed have none — and
+   * those are **refused** browser operations rather than exempted from the
+   * boundary, because exempting them would leave it open on exactly the tasks
+   * most likely to have already used it. Nothing is deleted: the task, its
+   * steps and its history stay, and it continues after an explicit restart.
+   *
+   * Independent of `connectionId`. Switching the AI brain never changes the
+   * workspace, and switching workspace never changes the brain.
+   */
+  readonly workspaceId?: string;
   readonly modelId: string;
   readonly permissionMode: PermissionMode;
   readonly createdAt: number;
@@ -229,6 +242,7 @@ export interface CreateTaskInput {
   readonly objective: string;
   readonly providerId: string;
   readonly connectionId?: string;
+  readonly workspaceId?: string;
   readonly modelId: string;
   readonly permissionMode: PermissionMode;
   readonly now: number;
@@ -265,6 +279,7 @@ export function createTask(input: CreateTaskInput): AgentTask {
     sessionId: input.sessionId,
     objective: input.objective,
     ...(input.connectionId === undefined ? {} : { connectionId: input.connectionId }),
+    ...(input.workspaceId === undefined ? {} : { workspaceId: input.workspaceId }),
     state: 'QUEUED',
     providerId: input.providerId,
     modelId: input.modelId,

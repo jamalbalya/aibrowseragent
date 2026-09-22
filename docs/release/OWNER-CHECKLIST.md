@@ -119,7 +119,7 @@ sha256sum -c release/ai-browser-agent-0.1.0.zip.sha256
 Expect:
 
 ```text
-8ac438910d24492633d6789662794b6669fb7ed90922a7f9b6ec58352a6ba8dc
+e0b659a8e302d1528c27f9ebcbda99f200c7495dcae05ce74091b94ee21d75cc
 ```
 
 Two clean builds of commit `a3da142` produce byte-identical archives on the
@@ -187,7 +187,7 @@ A listing that installs but does not work is worse than no listing.
 **24. Verify the installed version matches what you shipped — YOU**
 Confirm the installed version reads `0.1.0` and that its behaviour matches the
 build you tested. Chrome re-signs the package, so the installed CRX will not
-hash to `8ac43891…` — that digest identifies **what you uploaded**, not what
+hash to `e0b659a8…` — that digest identifies **what you uploaded**, not what
 Chrome distributes. Compare the version and the manifest contents, not the
 archive hash.
 

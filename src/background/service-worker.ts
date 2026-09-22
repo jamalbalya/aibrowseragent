@@ -127,6 +127,9 @@ void chrome.storage.session
  * serialized area, so a report is written under the same mutex as the writes
  * it describes.
  */
+import { WorkspaceStore } from '@/workspaces/workspace-store';
+import { WorkspaceReconciler } from '@/workspaces/workspace-reconciler';
+import { checkMembership, deriveWorkspaceTitle } from '@/workspaces/workspace-model';
 import { AccountStore } from '@/providers/accounts/account-store';
 import {
   accountAfterSelection,
@@ -343,7 +346,153 @@ const permissionEngine = new PermissionEngine({
   saveSitePolicy,
 });
 
+/**
+ * Browser workspaces: which tabs are in scope for a task.
+ *
+ * The durable record is in `local`; the Chrome handles are in `session`,
+ * because a tab-group id is deleted by Chrome when its last tab leaves and is
+ * not stable across a browser restart. Persisting one to disk would mean
+ * restoring a handle that now names something else.
+ */
+const workspaceStore = new WorkspaceStore(
+  new NamespacedStorageArea(local, 'workspaces'),
+  new NamespacedStorageArea(session, 'workspaces'),
+);
+
+/** Does this Chrome tab group still exist? A deleted group detaches its workspace. */
+async function groupExists(chromeTabGroupId: number): Promise<boolean> {
+  try {
+    await chrome.tabGroups.get(chromeTabGroupId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Is this tab live context for this task?
+ *
+ * Every reading is taken from Chrome **now**. Nothing cached takes part, which
+ * is what makes a tab the user has just dragged out stop being context on the
+ * very next operation rather than at the next event — and what stops a
+ * recycled tab id inheriting the membership of the tab that used to hold it.
+ */
+async function checkWorkspaceMember(
+  taskId: string,
+  tabId: number,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const task = await taskStore.getTask(taskId);
+  const workspaceId = task?.workspaceId;
+  const binding = workspaceId ? await workspaceStore.binding(workspaceId) : null;
+  const verdict = checkMembership({
+    taskWorkspaceId: workspaceId,
+    binding,
+    groupExists: binding === null ? false : await groupExists(binding.chromeTabGroupId),
+    tab: await browserAdapter.getTab(tabId),
+  });
+  return verdict.ok ? { ok: true } : { ok: false, reason: verdict.reason };
+}
+
+/**
+ * The workspace a new task runs in, creating one if there is none.
+ *
+ * Requirement one of the feature: activating the agent from a tab makes that
+ * tab the initial context. So the first task on a fresh install adopts the
+ * tab the user is looking at, groups it, and binds the workspace to that
+ * group — the user gets a scope without having to think about scopes.
+ *
+ * Creating is the *only* thing derived from the active tab. Which workspace
+ * is **active** thereafter changes only on an explicit selection: inferring it
+ * from whatever tab is in front would mean a stray click on another
+ * workspace's tab silently re-pointed a running task, which is precisely the
+ * cross-workspace targeting this boundary exists to prevent.
+ */
+async function ensureActiveWorkspace(): Promise<string | undefined> {
+  const existingId = await workspaceStore.getActiveId();
+  if (existingId) {
+    const binding = await workspaceStore.binding(existingId);
+    // Attached and still real: use it.
+    if (binding && (await groupExists(binding.chromeTabGroupId))) return existingId;
+    // Detached. Re-attach it around the tab the user is on rather than
+    // silently starting a second workspace beside it.
+    const reattached = await attachWorkspaceToActiveTab(existingId);
+    if (reattached) return existingId;
+    return existingId;
+  }
+
+  const active = await browserAdapter.getActiveTab();
+  if (!active) return undefined;
+
+  const workspaceId = workspaceStore.mintWorkspaceId();
+  await workspaceStore.put({
+    workspaceId,
+    abaUserId: await currentAbaUserId(),
+    title: deriveWorkspaceTitle(active.url),
+    members: [],
+    createdAt: Date.now(),
+    lastActiveAt: Date.now(),
+  });
+  const attached = await attachWorkspaceToActiveTab(workspaceId);
+  if (!attached) {
+    // Tab groups are a desktop-Chrome feature. Where they are unavailable the
+    // workspace cannot bind, and the honest outcome is a workspace with no
+    // scope — which refuses browser work — rather than silently falling back
+    // to unrestricted targeting.
+    log.warn('A workspace could not be attached to a tab group.', { workspaceId });
+  }
+  await workspaceStore.setActiveId(workspaceId);
+  return workspaceId;
+}
+
+/** Puts the user's current tab into this workspace's group, creating it. */
+async function attachWorkspaceToActiveTab(workspaceId: string): Promise<boolean> {
+  const active = await browserAdapter.getActiveTab();
+  if (!active) return false;
+  try {
+    const chromeTabGroupId = await chrome.tabs.group({ tabIds: [active.id] });
+    await chrome.tabGroups.update(chromeTabGroupId, {
+      title: (await workspaceStore.get(workspaceId))?.title ?? 'Workspace',
+    });
+    await workspaceStore.bind({
+      workspaceId,
+      chromeTabGroupId,
+      // Recorded for display and focus only. Window identity is never
+      // workspace identity: two workspaces may share one window.
+      chromeWindowId: active.windowId,
+      boundAt: Date.now(),
+    });
+    await workspaceReconciler.handleGroupChanged(active.id, chromeTabGroupId);
+    return true;
+  } catch (error) {
+    log.warn('Attaching a workspace to a tab group failed.', {
+      workspaceId,
+      error: error instanceof Error ? error.name : 'unknown',
+    });
+    return false;
+  }
+}
+
+/** The tabs this task's workspace holds right now, read live from Chrome. */
+async function resolveWorkspaceTabs(taskId: string): Promise<readonly number[]> {
+  const task = await taskStore.getTask(taskId);
+  if (!task?.workspaceId) return [];
+  const binding = await workspaceStore.binding(task.workspaceId);
+  if (binding === null) return [];
+  if (!(await groupExists(binding.chromeTabGroupId))) return [];
+  const tabs = await chrome.tabs.query({ groupId: binding.chromeTabGroupId });
+  return tabs.map((tab) => tab.id).filter((id): id is number => id !== undefined);
+}
+
 const toolRegistry = new ToolRegistry({
+  checkWorkspaceMember,
+  resolveWorkspaceTabs,
+  resolveWorkspaceGroupId: async (taskId) => {
+    const task = await taskStore.getTask(taskId);
+    if (!task?.workspaceId) return undefined;
+    const bound = await workspaceStore.binding(task.workspaceId);
+    if (bound === null) return undefined;
+    return (await groupExists(bound.chromeTabGroupId)) ? bound.chromeTabGroupId : undefined;
+  },
   // A page write's destination is the page itself, so the tab's URL has to be
   // known before the call is classified rather than found inside the tool.
   resolveTabUrl: async (tabId) => {
@@ -810,6 +959,7 @@ const workflowReplayer = new WorkflowReplayer({
   tools: toolRegistry,
   tasks: taskStore,
   getPermissionMode: async () => (await settingsStore.get()).permissionMode,
+  resolveWorkspaceId: ensureActiveWorkspace,
   getActiveTabId: async () => (await browserAdapter.getActiveTab())?.id,
   publishSecurityContext: (taskId, context) => {
     connectorEgressContexts.set(taskId, context);
@@ -945,6 +1095,7 @@ const skillLauncher = new SkillLauncher({
   runner: skillRunner,
   tasks: taskStore,
   getPermissionMode: async () => (await settingsStore.get()).permissionMode,
+  resolveWorkspaceId: ensureActiveWorkspace,
   getActiveTabId: async () => (await browserAdapter.getActiveTab())?.id,
   publishSecurityContext: (taskId, context) => {
     connectorEgressContexts.set(taskId, context);
@@ -1098,6 +1249,9 @@ const taskManager = new TaskManager({
   health: persistenceHealth,
   resolveProvider,
   getPermissionMode: async () => (await settingsStore.get()).permissionMode,
+  // Resolved once, at creation. A task whose workspace could change later
+  // would be a task whose scope depends on when you asked.
+  resolveWorkspaceId: ensureActiveWorkspace,
   getActiveTabId: async () => (await browserAdapter.getActiveTab())?.id,
   // Keeps the skill runner's view of the remaining allowance current, so a
   // skill stops partway through rather than spending a budget the task has
@@ -2217,8 +2371,71 @@ chrome.runtime.onInstalled.addListener(() => {
     });
 });
 
+/**
+ * Keeping the workspace mirror in step with Chrome.
+ *
+ * Observation only: the mirror feeds the panel and the audit trail, and the
+ * guard above reads Chrome live regardless — so a missed event can at worst
+ * show something stale and can never authorise anything.
+ */
+const workspaceReconciler = new WorkspaceReconciler({
+  store: workspaceStore,
+  getTab: async (tabId) => {
+    const tab = await browserAdapter.getTab(tabId);
+    return tab === null
+      ? null
+      : { id: tab.id, url: tab.url, title: tab.title, groupId: tab.groupId };
+  },
+  onChange: async (change) => {
+    await auditLog.record({
+      type: 'workspace.membership',
+      outcome: 'info',
+      origin: change.origin,
+      code: change.kind,
+    });
+  },
+});
+
+/** Last known origin per tab, so a closed tab can be found in the mirror. */
+const lastKnownOrigin = new Map<number, string>();
+
+/**
+ * The drag signal.
+ *
+ * Measured in real Chromium: there is no `tabs.onGroupChanged`. Grouping a tab
+ * emits `tabs.onUpdated` with `changeInfo.groupId` set to the new group, and
+ * ungrouping emits the same event with `-1`. That single fact is what makes
+ * drag-and-drop membership detectable at all.
+ */
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (tab.url) {
+    try {
+      lastKnownOrigin.set(tabId, new URL(tab.url).origin);
+    } catch {
+      lastKnownOrigin.delete(tabId);
+    }
+  }
+  if (changeInfo.groupId === undefined) return;
+  void workspaceReconciler.handleGroupChanged(tabId, changeInfo.groupId).catch(() => undefined);
+});
+
+/**
+ * Chrome deleted a tab group.
+ *
+ * Measured: a group ceases to exist when its last tab leaves, so this fires
+ * without the user doing anything they would describe as closing it. The
+ * workspace **detaches** — nothing is deleted, and re-attaching is a
+ * deliberate action.
+ */
+chrome.tabGroups.onRemoved.addListener((group) => {
+  void workspaceReconciler.handleGroupRemoved(group.id).catch(() => undefined);
+});
+
 chrome.tabs.onRemoved.addListener((tabId) => {
   lifecycle.handleTabClosed(tabId);
+  const origin = lastKnownOrigin.get(tabId);
+  lastKnownOrigin.delete(tabId);
+  void workspaceReconciler.handleTabRemoved(tabId, origin).catch(() => undefined);
 });
 
 chrome.runtime.onSuspend?.addListener(() => {

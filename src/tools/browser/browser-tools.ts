@@ -14,6 +14,7 @@ import { urlDestination } from '@/security/egress/destination';
 import { checkNavigable, evaluateTransition } from '@/security/origin/origin-validator';
 import { scanForInjection, wrapUntrusted } from '@/security/prompt-injection/untrusted-content';
 import type { AgentTool, ToolExecutionContext, ToolExecutionResult } from '@/tools/core/tool-types';
+import { activeWorkspaceTab } from '@/tools/tabs/tab-tools';
 import type { BrowserAdapter, TabInfo } from './chrome-adapter';
 import type { DebuggerManager } from '@/tools/debugger/debugger-manager';
 import { MessagingError } from '@/messaging/bus';
@@ -27,9 +28,13 @@ async function requireTab(
 ): Promise<TabInfo> {
   const tabId = context.tabId;
   if (tabId === undefined) {
-    const active = await adapter.getActiveTab();
+    // The workspace's tab, not the browser's focused one. The focused tab may
+    // belong to another workspace or to none, and acting on it because it
+    // happened to be in front is exactly the cross-workspace targeting the
+    // boundary exists to prevent.
+    const active = await activeWorkspaceTab(adapter, context);
     if (!active) {
-      throw new ToolError('TAB_NOT_FOUND', 'There is no active tab to work with.');
+      throw new ToolError('TAB_NOT_FOUND', 'There is no tab in this workspace to work with.');
     }
     return assertAutomatable(active, context);
   }

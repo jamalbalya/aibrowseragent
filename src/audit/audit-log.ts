@@ -49,6 +49,9 @@ export const AUDIT_EVENT_TYPES = [
   'skill.step',
   'skill.finished',
   'workflow.recorded',
+  // A tab joined or left a workspace. Membership is scope, never authority —
+  // the record exists so a change of scope is visible after the fact.
+  'workspace.membership',
   'workflow.replay',
   'shortcut.resolved',
   'shortcut.launched',
