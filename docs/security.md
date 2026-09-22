@@ -395,6 +395,36 @@ impossible to audit.
 
 ---
 
+## Skills, and why they are not a bypass
+
+A workflow is "several privileged things in a row", and the obvious way to
+build one is an engine that runs them. That engine would be a second path from
+a proposal to a real effect, and a second path is a bypass whatever its author
+intended.
+
+So there is no second path. Every step a skill takes goes through
+`ToolRegistry.dispatch` — the same function the agent runtime calls for a
+model-proposed tool call — which means policy, the permission prompt, the
+egress gate, sanitisation and evidence all apply, **per step**.
+
+Three properties carry the boundary:
+
+- **A skill cannot be created, only chosen.** Only definitions that shipped in
+  the build register; a model, a page or a connector can produce a
+  definition-shaped object and none of them can produce a registered one. There
+  is no installer and no `skill.register` message.
+- **There is nowhere to put code.** No expression language, no template, no
+  literal with behaviour. A test fails if anything under `src/skills/` gains an
+  evaluator, a `fetch` or a filesystem import.
+- **A declaration grants nothing.** `requiredTools` and the declared risk state
+  intent, which the registry checks; authorization still comes from the policy
+  engine and the user. The declared risk is a floor, so understating it makes a
+  skill stricter to approve.
+
+Running a workflow costs an approval for the run **plus** whatever its steps
+would have cost individually — measured in real Chromium, not asserted. See
+[skills.md](skills.md).
+
 ## Reporting a vulnerability
 
 Open a security advisory on the repository rather than a public issue.

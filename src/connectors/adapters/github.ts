@@ -350,6 +350,20 @@ export class GitHubConnector implements Connector {
           data: {
             totalCount: body.total_count ?? items.length,
             returned: items.length,
+            // The issue numbers on their own, typed and validated.
+            //
+            // Everything a stranger wrote is in `items`, wrapped, and nothing
+            // may be read out of it mechanically. An issue number is not
+            // something a stranger wrote in any meaningful sense: it is an
+            // integer the service assigned, and an integer cannot carry an
+            // instruction. Publishing them separately is what lets a workflow
+            // say "read the first match" without any part of it parsing
+            // untrusted text.
+            numbers: items.flatMap((issue) =>
+              typeof issue.number === 'number' && Number.isInteger(issue.number) && issue.number > 0
+                ? [issue.number]
+                : [],
+            ),
             items: wrapUntrusted(
               JSON.stringify(items),
               connectorProvenance(this.descriptor.site, 'search_issues'),

@@ -43,6 +43,9 @@ export const AUDIT_EVENT_TYPES = [
   'connector.configured',
   'connector.auth',
   'connector.operation',
+  'skill.started',
+  'skill.step',
+  'skill.finished',
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
@@ -96,6 +99,21 @@ export interface AuditEvent {
   readonly scopes?: readonly string[];
   /** Connector authorization state, e.g. `READY`. */
   readonly connectorState?: string;
+  /** Skill identity, for a workflow run. Never its inputs or its results. */
+  readonly skillId?: string;
+  readonly skillVersion?: string;
+  /**
+   * The definition hash at the moment the run started.
+   *
+   * Recorded so a reader can tell that two runs executed the same definition,
+   * and so an edited-but-unversioned skill is visible in the trail. It is
+   * evidence, not authorization — see `skill-model.ts`.
+   */
+  readonly skillHash?: string;
+  /** The step id within a skill. */
+  readonly step?: string;
+  /** What that step ran: a tool name, or a composed skill. */
+  readonly ran?: string;
   /** Evidence ids that hold the detail this record deliberately omits. */
   readonly evidenceIds?: readonly string[];
 }
@@ -137,6 +155,15 @@ const PROHIBITED_FIELD_NAMES = [
   'payload',
   'content',
   'body',
+  // A workflow's inputs and step results are the same kind of thing as a
+  // payload: they can contain anything the task has read. The trail records
+  // which skill ran and how it ended, never what passed through it.
+  'inputs',
+  'outputs',
+  'result',
+  'results',
+  'arguments',
+  'args',
 ];
 
 /**

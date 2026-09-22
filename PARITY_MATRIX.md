@@ -99,9 +99,9 @@ capability, not necessarily a test of the capability itself.
 | Status          | Count  |
 | --------------- | ------ |
 | PASS            | 30     |
-| PARTIAL         | 4      |
+| PARTIAL         | 5      |
 | INTERFACES-ONLY | 0      |
-| NOT-STARTED     | 6      |
+| NOT-STARTED     | 5      |
 | **Total**       | **40** |
 
 These counts are checked against the table below, and the table against
@@ -110,10 +110,15 @@ separate classes of error have actually occurred here: a revision that claimed
 17 PASS while its own table said 23, and a revision whose per-column coverage
 claims were not backed by any test. The check now covers both.
 
-Movement in this revision: the connector framework (P-023) moves from
-INTERFACES-ONLY to PARTIAL, taking PARTIAL from 3 to 4 and emptying the
-INTERFACES-ONLY category. It is **not** PASS, for a reason stated below that
-is external rather than architectural.
+Movement in this revision: skills (P-024) move from NOT-STARTED to PARTIAL,
+taking PARTIAL from 4 to 5 and NOT-STARTED from 6 to 5. **Not** PASS, for a
+reason stated below.
+
+### Earlier movement, kept for the record
+
+The connector framework (P-023) moved from INTERFACES-ONLY to PARTIAL, taking
+PARTIAL from 3 to 4 and emptying the INTERFACES-ONLY category. It is **not**
+PASS, for a reason stated below that is external rather than architectural.
 
 ### Earlier movement, kept for the record
 
@@ -206,48 +211,48 @@ rather than folded into the verdict.
 
 ## Matrix
 
-| ID    | Capability                           | Impl       | Unit | Integration | Security | E2E | Status          |
-| ----- | ------------------------------------ | ---------- | ---- | ----------- | -------- | --- | --------------- |
-| P-001 | Side panel                           | yes        | —    | —           | —        | yes | PASS            |
-| P-002 | Read page                            | yes        | yes  | yes         | yes      | yes | PASS            |
-| P-003 | Click                                | yes        | yes  | yes         | yes      | yes | PASS            |
-| P-004 | Type                                 | yes        | yes  | yes         | yes      | yes | PASS            |
-| P-005 | Navigate                             | yes        | yes  | yes         | yes      | yes | PASS            |
-| P-006 | Forms                                | yes        | yes  | yes         | yes      | yes | PARTIAL         |
-| P-007 | Scroll                               | yes        | yes  | yes         | —        | yes | PASS            |
-| P-008 | Screenshot                           | yes        | yes  | yes         | yes      | yes | PASS            |
-| P-009 | Image upload                         | yes        | yes  | yes         | yes      | yes | PASS            |
-| P-010 | File upload                          | yes        | yes  | yes         | yes      | yes | PASS            |
-| P-011 | Download                             | yes        | yes  | yes         | yes      | yes | PARTIAL         |
-| P-012 | Multi-tab                            | yes        | yes  | —           | yes      | yes | PASS            |
-| P-013 | Tab grouping                         | yes        | yes  | —           | —        | yes | PASS            |
-| P-014 | DOM inspection                       | yes        | yes  | —           | yes      | yes | PASS            |
-| P-015 | Console inspection                   | yes        | yes  | —           | yes      | yes | PASS            |
-| P-016 | Network inspection                   | yes        | yes  | —           | yes      | yes | PASS            |
-| P-017 | Long-running task                    | yes        | —    | yes         | —        | yes | PASS            |
-| P-018 | Background task while Chrome is open | yes        | —    | yes         | —        | yes | PASS            |
-| P-019 | Notifications                        | yes        | yes  | —           | —        | —   | PASS            |
-| P-020 | Scheduled tasks                      | no         | —    | —           | —        | —   | NOT-STARTED     |
-| P-021 | Shortcuts                            | no         | —    | —           | —        | —   | NOT-STARTED     |
-| P-022 | Workflow recording                   | no         | —    | —           | —        | —   | NOT-STARTED     |
-| P-023 | Connector framework                  | yes        | yes  | yes         | yes      | yes | PARTIAL         |
-| P-024 | Skills                               | no         | —    | —           | —        | —   | NOT-STARTED     |
-| P-025 | Plugins                              | no         | —    | —           | —        | —   | NOT-STARTED     |
-| P-026 | MCP                                  | no         | —    | —           | —        | —   | NOT-STARTED     |
-| P-027 | Permission modes                     | yes        | yes  | yes         | yes      | yes | PASS            |
-| P-028 | Site permissions                     | yes        | yes  | —           | yes      | yes | PASS            |
-| P-029 | Permission history                   | yes        | yes  | —           | yes      | yes | PASS            |
-| P-030 | Prompt injection defence             | yes        | yes  | yes         | yes      | yes | PASS            |
-| P-031 | Session persistence                  | yes        | yes  | yes         | —        | yes | PASS            |
-| P-032 | Task resume                          | yes        | yes  | yes         | —        | yes | PASS            |
-| P-033 | Provider switching                   | yes        | yes  | yes         | yes      | yes | PASS            |
-| P-034 | Tool calling                         | yes        | yes  | yes         | yes      | yes | PASS            |
-| P-035 | Capability doctor                    | yes        | yes  | —           | —        | yes | PASS            |
-| P-036 | Error recovery                       | yes        | yes  | yes         | —        | yes | PASS            |
-| P-037 | Loop detection                       | yes        | yes  | yes         | —        | —   | PASS            |
-| P-038 | Audit trail                          | yes        | yes  | —           | —        | yes | PARTIAL         |
-| P-039 | Evidence model                       | yes        | yes  | yes         | yes      | yes | PASS            |
-| P-040 | Provider/model capability detection  | yes        | yes  | —           | —        | yes | PASS            |
+| ID    | Capability                           | Impl | Unit | Integration | Security | E2E | Status      |
+| ----- | ------------------------------------ | ---- | ---- | ----------- | -------- | --- | ----------- |
+| P-001 | Side panel                           | yes  | —    | —           | —        | yes | PASS        |
+| P-002 | Read page                            | yes  | yes  | yes         | yes      | yes | PASS        |
+| P-003 | Click                                | yes  | yes  | yes         | yes      | yes | PASS        |
+| P-004 | Type                                 | yes  | yes  | yes         | yes      | yes | PASS        |
+| P-005 | Navigate                             | yes  | yes  | yes         | yes      | yes | PASS        |
+| P-006 | Forms                                | yes  | yes  | yes         | yes      | yes | PARTIAL     |
+| P-007 | Scroll                               | yes  | yes  | yes         | —        | yes | PASS        |
+| P-008 | Screenshot                           | yes  | yes  | yes         | yes      | yes | PASS        |
+| P-009 | Image upload                         | yes  | yes  | yes         | yes      | yes | PASS        |
+| P-010 | File upload                          | yes  | yes  | yes         | yes      | yes | PASS        |
+| P-011 | Download                             | yes  | yes  | yes         | yes      | yes | PARTIAL     |
+| P-012 | Multi-tab                            | yes  | yes  | —           | yes      | yes | PASS        |
+| P-013 | Tab grouping                         | yes  | yes  | —           | —        | yes | PASS        |
+| P-014 | DOM inspection                       | yes  | yes  | —           | yes      | yes | PASS        |
+| P-015 | Console inspection                   | yes  | yes  | —           | yes      | yes | PASS        |
+| P-016 | Network inspection                   | yes  | yes  | —           | yes      | yes | PASS        |
+| P-017 | Long-running task                    | yes  | —    | yes         | —        | yes | PASS        |
+| P-018 | Background task while Chrome is open | yes  | —    | yes         | —        | yes | PASS        |
+| P-019 | Notifications                        | yes  | yes  | —           | —        | —   | PASS        |
+| P-020 | Scheduled tasks                      | no   | —    | —           | —        | —   | NOT-STARTED |
+| P-021 | Shortcuts                            | no   | —    | —           | —        | —   | NOT-STARTED |
+| P-022 | Workflow recording                   | no   | —    | —           | —        | —   | NOT-STARTED |
+| P-023 | Connector framework                  | yes  | yes  | yes         | yes      | yes | PARTIAL     |
+| P-024 | Skills                               | yes  | yes  | yes         | yes      | yes | PARTIAL     |
+| P-025 | Plugins                              | no   | —    | —           | —        | —   | NOT-STARTED |
+| P-026 | MCP                                  | no   | —    | —           | —        | —   | NOT-STARTED |
+| P-027 | Permission modes                     | yes  | yes  | yes         | yes      | yes | PASS        |
+| P-028 | Site permissions                     | yes  | yes  | —           | yes      | yes | PASS        |
+| P-029 | Permission history                   | yes  | yes  | —           | yes      | yes | PASS        |
+| P-030 | Prompt injection defence             | yes  | yes  | yes         | yes      | yes | PASS        |
+| P-031 | Session persistence                  | yes  | yes  | yes         | —        | yes | PASS        |
+| P-032 | Task resume                          | yes  | yes  | yes         | —        | yes | PASS        |
+| P-033 | Provider switching                   | yes  | yes  | yes         | yes      | yes | PASS        |
+| P-034 | Tool calling                         | yes  | yes  | yes         | yes      | yes | PASS        |
+| P-035 | Capability doctor                    | yes  | yes  | —           | —        | yes | PASS        |
+| P-036 | Error recovery                       | yes  | yes  | yes         | —        | yes | PASS        |
+| P-037 | Loop detection                       | yes  | yes  | yes         | —        | —   | PASS        |
+| P-038 | Audit trail                          | yes  | yes  | —           | —        | yes | PARTIAL     |
+| P-039 | Evidence model                       | yes  | yes  | yes         | yes      | yes | PASS        |
+| P-040 | Provider/model capability detection  | yes  | yes  | —           | —        | yes | PASS        |
 
 ---
 
@@ -269,6 +274,30 @@ records rather than one unified, queryable audit log spanning tasks, so
 "what did the agent do on this site last week" cannot be answered; and there
 is no export, so the trail cannot leave the extension. Building either is new
 functionality and is out of Stage 2 closure scope.
+
+**P-024 Skills** — The skill system is implemented: a structured definition
+with no scripting engine, a validator that refuses anything that would
+describe a privilege into being, a trusted registry that takes only
+definitions shipped in the build, a step runner where every step dispatches
+through the one `ToolRegistry` so policy, permission, egress and evidence
+apply per step, composition with pinned versions and a depth limit, a
+definition hash for audit, and run persistence that deliberately stores no
+step data. Covered by two unit suites, an integration suite, a security suite
+covering the wave's twenty threat cases, and a real-Chromium E2E suite that
+measures the per-step approval property rather than asserting it.
+
+PARTIAL for two reasons, both about reach rather than architecture. Three
+workflows ship and all three are read-only: a write workflow is a reasonable
+thing to want and a bad thing to make the easiest path through a brand-new
+feature, so writes stay individually requested for now. And specification §44
+names a reference QA workflow spanning Jira, Confluence, Figma and Google
+Sheets as "the primary reference integration workflow for validating the
+multi-tool architecture" — none of those connectors exists (see P-023), so
+that workflow cannot be built and the multi-connector case is untested against
+anything real.
+
+Nothing here is blocked externally. Both reasons resolve by building more, not
+by obtaining anything.
 
 **P-023 Connector framework** — The framework is implemented and one adapter
 exists, for GitHub: OAuth (authorization code + PKCE, no client secret), a

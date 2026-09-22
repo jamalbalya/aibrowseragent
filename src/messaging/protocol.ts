@@ -226,6 +226,48 @@ export interface PanelRequestMap {
     request: Record<string, never>;
     response: { tools: { name: string; description: string; risk: string }[] };
   };
+
+  /**
+   * The workflows this build ships.
+   *
+   * Read-only. There is deliberately no `skill.register`, `skill.install` or
+   * `skill.update` route: a skill is trusted because it shipped in the build,
+   * and a message that could add one would make the side panel — and anything
+   * that can talk to it — a way to grant that trust.
+   */
+  'skill.list': {
+    request: Record<string, never>;
+    response: {
+      skills: {
+        id: string;
+        version: string;
+        name: string;
+        description: string;
+        risk: string;
+        hash: string;
+        steps: number;
+        tools: string[];
+        connectors: string[];
+        inputs: { name: string; type: string; required: boolean; description: string }[];
+      }[];
+    };
+  };
+  /** Skill runs for a task, so an interrupted one is visible rather than lost. */
+  'skill.runs': {
+    request: { taskId?: string };
+    response: {
+      runs: {
+        runId: string;
+        taskId: string;
+        skillId: string;
+        skillVersion: string;
+        stepIndex: number;
+        totalSteps: number;
+        state: string;
+        startedAt: number;
+      }[];
+    };
+  };
 }
 
 export type PanelRequestType = keyof PanelRequestMap;

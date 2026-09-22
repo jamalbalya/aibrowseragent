@@ -2412,8 +2412,21 @@ registers no OAuth application, so no live authorization has been performed.
 The framework is exercised against a local mock authorization server and API
 over real HTTP, and the extension refuses to start a flow it cannot finish.
 
-Skills, workflow, recording, shortcuts, scheduling, MCP and plugins remain
-NOT-STARTED.
+**Skills (Phase 7) are implemented.** `src/skills/` holds the definition
+model and validator, the trusted registry, the step runner over
+`ToolRegistry`, and run persistence; `src/tools/skills/` exposes `skills.list`
+and `skills.run` into the one tool registry. Three read-only workflows ship.
+See `docs/skills.md`.
+
+A skill is structured data with no scripting engine, and it is not a second
+execution path: every step dispatches through the same gate a model-proposed
+tool call does, so running a workflow costs an approval for the run plus
+whatever its steps would have cost alone. Only definitions that shipped in the
+build register — there is no installer, and no message that can add one.
+
+Workflow recording, shortcuts, scheduling, MCP and plugins remain NOT-STARTED.
+Workflow recording (P-022) named skills as its dependency and is now
+unblocked.
 
 Skills (Phase 7) depended on connectors and are now unblocked. Workflow,
 recording, shortcuts and scheduling (Phase 8) depend on skills and on

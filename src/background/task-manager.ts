@@ -38,6 +38,15 @@ export interface TaskManagerOptions {
   }>;
   readonly getPermissionMode: () => Promise<PermissionMode>;
   readonly getActiveTabId: () => Promise<number | undefined>;
+  /**
+   * Notified whenever a task's usage changes.
+   *
+   * A read-only observer, so something outside the manager can track how much
+   * of a task's budget is left without polling storage. It cannot change the
+   * usage or the budget — a hook that could would be a way to grant a task
+   * more allowance than it started with.
+   */
+  readonly onUsageChanged?: (taskId: string, usage: TaskUsage) => void;
   readonly now?: () => number;
 }
 
@@ -276,6 +285,7 @@ export class TaskManager {
           usage,
           updatedAt: this.now(),
         }));
+        this.options.onUsageChanged?.(taskId, usage);
       },
       onEvidence: async (taskId, evidence: readonly EvidenceReference[]) => {
         await this.options.store.updateTask(taskId, (task) => ({

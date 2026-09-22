@@ -165,6 +165,9 @@ tests, not just convention — see `tests/unit/policy-engine.test.ts`.
 | `src/connectors/oauth/`            | PKCE, callback validation, token vault, tab-based auth flow    |
 | `src/connectors/transport/`        | Guarded connector egress; delegates to the shared gate         |
 | `src/connectors/adapters/`         | Service adapters. GitHub                                       |
+| `src/skills/core/`                 | Skill definition, validator, trusted registry, definition hash |
+| `src/skills/runtime/`              | Step runner over ToolRegistry, run persistence                 |
+| `src/skills/bundled/`              | The workflows this build ships. The trust boundary             |
 | `src/messaging/`                   | Typed protocol and bus                                         |
 | `src/storage/`                     | Storage abstraction with atomic read-modify-write              |
 | `src/logging/`                     | Structured, categorised, redacting logger                      |

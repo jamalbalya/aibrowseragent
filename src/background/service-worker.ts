@@ -53,6 +53,12 @@ import { TokenVault } from '@/connectors/oauth/token-vault';
 import { WriteGuard } from '@/connectors/core/write-guard';
 import { TabAuthFlow, chromeTabs } from '@/connectors/oauth/auth-flow-port';
 import { createConnectorTransport } from '@/connectors/transport/connector-transport';
+import { DEFAULT_BUDGET } from '@/agent/budget/budget';
+import { SkillRegistry } from '@/skills/core/skill-registry';
+import { SkillRunner } from '@/skills/runtime/skill-runner';
+import { SkillRunStore } from '@/skills/runtime/skill-run-store';
+import { BUNDLED_SKILLS } from '@/skills/bundled';
+import { createSkillTools } from '@/tools/skills/skill-tools';
 import {
   GitHubConnector,
   githubDescriptor,
@@ -545,6 +551,85 @@ toolRegistry.registerAll(
 );
 
 // ---------------------------------------------------------------------------
+// Skills
+// ---------------------------------------------------------------------------
+
+/**
+ * The trusted skill registry.
+ *
+ * Constructed after every tool is registered, and not before: a skill is only
+ * registrable if every tool it names already exists, so registering skills
+ * first would reject all of them. The dependency runs one way — skills know
+ * about tools, tools know nothing about skills.
+ */
+const skillRegistry = new SkillRegistry({
+  riskOfTool: (name) => toolRegistry.get(name)?.risk,
+});
+
+const skillRuns = new SkillRunStore(new NamespacedStorageArea(local, 'skill-runs'));
+
+const skillRunner = new SkillRunner({
+  tools: toolRegistry,
+  skills: skillRegistry,
+  // The task's own remaining allowance. A skill gets no budget of its own,
+  // because a second budget is a way past the first.
+  remainingToolCalls: (taskId) => skillBudgetRemaining.get(taskId) ?? DEFAULT_BUDGET.maxToolCalls,
+});
+
+/**
+ * Tool calls each running task has left.
+ *
+ * Maintained from the task manager's usage observer, which fires as a task
+ * spends its allowance. A task nobody has reported usage for yet has spent
+ * nothing, so it gets the full budget — and every step still passes through
+ * the registry, which enforces the real limits regardless of what this says.
+ */
+const skillBudgetRemaining = new Map<string, number>();
+
+toolRegistry.registerAll(
+  createSkillTools({
+    registry: skillRegistry,
+    runner: skillRunner,
+    runs: skillRuns,
+    securityFor: (taskId) => connectorEgressContexts.get(taskId),
+    audit: async (event) => {
+      await auditLog.record({
+        type: event.type,
+        taskId: event.taskId,
+        outcome: event.outcome,
+        skillId: event.skillId,
+        skillVersion: event.skillVersion,
+        skillHash: event.skillHash,
+        ...(event.step === undefined ? {} : { step: event.step }),
+        ...(event.ran === undefined ? {} : { ran: event.ran }),
+        ...(event.code === undefined ? {} : { code: event.code }),
+      });
+    },
+  }),
+);
+
+/**
+ * Registers the bundled skills.
+ *
+ * A definition that will not validate is left out and logged, rather than
+ * thrown at module scope: an uncaught throw here would stop the rest of this
+ * file evaluating and take every message route with it, which is a failure
+ * this worker has had once already and will not have again.
+ */
+async function registerBundledSkills(): Promise<void> {
+  for (const definition of BUNDLED_SKILLS) {
+    try {
+      await skillRegistry.register(definition);
+    } catch (error) {
+      log.error('A bundled skill could not be registered and has been left out.', {
+        skillId: definition.id,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Agent runtime and task management
 // ---------------------------------------------------------------------------
 
@@ -610,6 +695,12 @@ const taskManager = new TaskManager({
   resolveProvider,
   getPermissionMode: async () => (await settingsStore.get()).permissionMode,
   getActiveTabId: async () => (await browserAdapter.getActiveTab())?.id,
+  // Keeps the skill runner's view of the remaining allowance current, so a
+  // skill stops partway through rather than spending a budget the task has
+  // already exhausted.
+  onUsageChanged: (taskId, usage) => {
+    skillBudgetRemaining.set(taskId, Math.max(0, DEFAULT_BUDGET.maxToolCalls - usage.toolCalls));
+  },
 });
 
 taskManager.setRuntime(
@@ -1015,6 +1106,41 @@ router.on('debug.setLogLevel', async ({ level }) => {
   return { ok: true as const };
 });
 
+router.on('skill.list', () =>
+  Promise.resolve({
+    skills: skillRegistry.list().map((entry) => ({
+      id: entry.definition.id,
+      version: entry.definition.version,
+      name: entry.definition.name,
+      description: entry.definition.description,
+      risk: entry.risk,
+      hash: entry.hash,
+      steps: entry.definition.steps.length,
+      tools: [...entry.tools],
+      connectors: [...entry.definition.requiredConnectors],
+      inputs: entry.definition.inputs.map((input) => ({
+        name: input.name,
+        type: input.type,
+        required: input.required,
+        description: input.description,
+      })),
+    })),
+  }),
+);
+
+router.on('skill.runs', async ({ taskId }) => ({
+  runs: (await skillRuns.list(taskId)).map((run) => ({
+    runId: run.runId,
+    taskId: run.taskId,
+    skillId: run.skillId,
+    skillVersion: run.skillVersion,
+    stepIndex: run.stepIndex,
+    totalSteps: run.totalSteps,
+    state: run.state,
+    startedAt: run.startedAt,
+  })),
+}));
+
 router.on('tools.list', () =>
   Promise.resolve({
     tools: toolRegistry.list().map((tool) => ({
@@ -1069,6 +1195,14 @@ async function startup(): Promise<void> {
     providerRegistry.setActive(settings.activeProviderId);
   }
 
+  await registerBundledSkills();
+
+  // A run still marked `running` in a fresh worker generation is one whose
+  // worker died. Marking it interrupted stops a later reader concluding that
+  // something is still executing it; it is not resumed, because the step
+  // results it would need were deliberately never persisted.
+  const interruptedRuns = await skillRuns.reconcileAfterRestart();
+
   const report = await lifecycle.recoverInterruptedTasks();
   if (report.recovered > 0) {
     for (const taskId of report.taskIds) {
@@ -1079,7 +1213,9 @@ async function startup(): Promise<void> {
   log.info('Service worker ready.', {
     tools: toolRegistry.list().length,
     providers: providerRegistry.list().length,
+    skills: skillRegistry.size,
     recoveredTasks: report.recovered,
+    interruptedSkillRuns: interruptedRuns.length,
   });
 }
 

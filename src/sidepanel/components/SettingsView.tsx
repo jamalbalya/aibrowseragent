@@ -49,6 +49,7 @@ export function SettingsView({
   const [busy, setBusy] = useState<string | null>(null);
   const [downloadsGranted, setDownloadsGranted] = useState(false);
   const [connectors, setConnectors] = useState<PanelResponse<'connector.list'>['connectors']>([]);
+  const [skills, setSkills] = useState<PanelResponse<'skill.list'>['skills']>([]);
   const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
 
   const model = modelOverride ?? connection?.modelId ?? '';
@@ -66,6 +67,7 @@ export function SettingsView({
         setSitePolicy(policy.state);
         setDownloadsGranted((await sendToBackground('file.downloadsPermission', {})).granted);
         setConnectors((await sendToBackground('connector.list', {})).connectors);
+        setSkills((await sendToBackground('skill.list', {})).skills);
         setProviderId((current) => current || (list.providers[0]?.id ?? ''));
       } catch (error) {
         setMessage({ tone: 'error', text: describe(error) });
@@ -389,6 +391,38 @@ export function SettingsView({
                 cannot be connected. That is missing configuration, not a fault.
               </p>
             )}
+          </div>
+        ))}
+      </section>
+
+      <section className="settings__section">
+        <h3>Workflows</h3>
+        <p className="field__hint">
+          A workflow is a fixed sequence of steps the agent can run in one go. Every step still asks
+          for whatever it would have asked for on its own, so a workflow never turns several
+          approvals into one.
+        </p>
+        <p className="field__hint">
+          Workflows ship with the extension and cannot be added, edited or created while it is
+          running — not by you, and not by the model.
+        </p>
+
+        {skills.length === 0 ? <p className="field__hint">This build ships no workflows.</p> : null}
+
+        {skills.map((skill) => (
+          <div key={`${skill.id}@${skill.version}`} className="skill">
+            <div className="skill__header">
+              <strong>{skill.name}</strong>
+              <span className="skill__risk">{skill.risk}</span>
+            </div>
+            <p className="field__hint">{skill.description}</p>
+            <p className="field__hint">
+              {skill.steps} {skill.steps === 1 ? 'step' : 'steps'}, using{' '}
+              {skill.tools.map((tool) => (
+                <code key={tool}>{tool} </code>
+              ))}
+              {skill.connectors.length > 0 ? `via ${skill.connectors.join(', ')}` : null}
+            </p>
           </div>
         ))}
       </section>

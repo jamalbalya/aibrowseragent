@@ -52,8 +52,14 @@ What works today:
   application, so nothing can actually be connected** — it says so rather
   than offering a button that cannot work.
 
+- Skills: reusable workflows that run several steps in one go, where every
+  step still passes the same gate it would have passed alone — so a workflow
+  never turns several approvals into one. A skill is structured data, not code:
+  there is no scripting engine, and workflows ship with the extension rather
+  than being created at run time ([docs/skills.md](docs/skills.md)).
+
 Not yet implemented: further connectors (Jira, Confluence, Figma, Sheets),
-MCP, skills, workflows, scheduling, and OpenAI's Responses API. Their
+MCP, plugins, workflow recording, scheduling, and OpenAI's Responses API. Their
 interfaces exist; their implementations do not, and the code raises
 `NOT_IMPLEMENTED` rather than faking a result.
 

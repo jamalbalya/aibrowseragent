@@ -258,6 +258,19 @@ Everything a connector returns is wrapped as untrusted external content. A
 response cannot grant a scope, authorise a tool, or steer a later request's
 destination. See [connectors.md](connectors.md).
 
+### Skills — `src/tools/skills/`
+
+| Tool          | Risk       | Notes                                               |
+| ------------- | ---------- | --------------------------------------------------- |
+| `skills.list` | R0         | What workflows exist and what each one reaches      |
+| `skills.run`  | R1 / skill | Classified from the named skill, not from this tool |
+
+A skill is reached only through these, and `skills.run` takes an **id**, never
+a definition — nothing in its schema accepts steps, tools or code. Each step
+inside then dispatches through this same registry, so running a workflow costs
+an approval for the run plus whatever its steps would have cost alone. See
+[skills.md](skills.md).
+
 ## Not implemented
 
 `browser.execute_script` is named in the specification but is not implemented,
