@@ -23,11 +23,12 @@
     "test:integration": "vitest run tests/integration",
     "test:security": "vitest run tests/security",
     "test:coverage": "vitest run --coverage",
-    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build && node scripts/validate-package.mjs && npm run check:parity",
+    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build && node scripts/validate-package.mjs && npm run check:parity && npm run check:acceptance",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "verify:full": "npm run verify && npm run test:e2e",
     "check:parity": "node scripts/check-parity.mjs",
+    "check:acceptance": "node scripts/check-acceptance.mjs",
     "build:release": "RELEASE_BUILD=1 node scripts/build.mjs",
     "validate:release": "node scripts/validate-release.mjs",
     "verify:release": "npm run build:release && node scripts/validate-package.mjs && npm run validate:release"

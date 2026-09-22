@@ -64,6 +64,13 @@ jobs:
       - name: Check capability matrix consistency
         run: npm run check:parity
 
+      # An acceptance document is a claim about where evidence lives, and a
+      # claim about a file goes stale silently: a renamed test leaves the
+      # citation pointing at nothing while the document still reads as
+      # covered. Failing the build is the only way that stays true.
+      - name: Check acceptance citations resolve
+        run: npm run check:acceptance
+
       - name: Upload unpacked extension
         if: success()
         uses: actions/upload-artifact@v4

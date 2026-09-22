@@ -222,6 +222,35 @@ These were found by tests during development and fixed. They are listed because
 | A caller could displace the connector's `Authorization` header     | HTTP header names are case-insensitive, so `{ authorization: 'x' }` and `{ Authorization: token }` are two object keys and one header. "Applied last" was not the guarantee it read as                                                                                                                                                                                                                                                                                                  | Every spelling is stripped from caller headers before the credential is applied                                                                                                                                                                                        |
 | Luhn alone still matched timestamps and some UUID tails            | About one digit string in ten passes Luhn by chance, and an epoch-millisecond timestamp is 13 digits, so `capturedAt 1758441192004` was redacted on every record that drew one                                                                                                                                                                                                                                                                                                          | A candidate must also stand alone as a token and carry a published issuer prefix; the regression samples rather than fixing vectors                                                                                                                                    |
 
+## Acceptance packages for §85–§90
+
+The specification names six sets of acceptance tests. They are not a suite
+that can simply be run: some items are established by tests that already
+exist, some need a person and a browser, and some need a service this
+repository does not implement. Flattening those three into one status is how
+an acceptance document ends up overstating what was shown.
+
+So they live in [`testing/acceptance/`](testing/acceptance/README.md), one
+package per section, with exactly three verdicts per item — `AUTOMATED`,
+`MANUAL`, `NOT POSSIBLE HERE` — and deliberately no `PASS`. Whether a manual
+item was ever executed is recorded in
+[`RESULTS.md`](testing/acceptance/RESULTS.md) and nowhere else, so editing a
+procedure cannot quietly edit a verdict.
+
+An `AUTOMATED` item cites its evidence as a file and a test title.
+`scripts/check-acceptance.mjs` resolves every citation against the repository
+and fails the build when one does not, so a renamed or deleted test breaks CI
+rather than leaving a citation pointing at nothing. It runs in
+`scripts/verify.sh` and in CI. What it cannot do is read the cited test and
+judge whether it proves the claim — that is a review question, and the
+citation exists so a reviewer has an exact place to look.
+
+As it stands: 187 citations, all resolving. Fifteen manual procedures are
+written and **none has been executed**. Five of those need nothing but a
+person and a browser — popup handling, SPA navigation, modal dialogs, browser
+restart and extension reload — and they cover behaviour no automated test here
+exercises.
+
 ## Coverage
 
 Coverage is reported but is not the acceptance criterion. A test that asserts a

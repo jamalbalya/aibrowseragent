@@ -30,6 +30,7 @@ run 'unit + integration + security' npx vitest run
 run 'build'             npm run build
 run 'package'           node scripts/validate-package.mjs
 run 'parity'            node scripts/check-parity.mjs
+run 'acceptance'        node scripts/check-acceptance.mjs
 
 if [ "${1:-}" = '--e2e' ]; then
   run 'real Chromium'   npx playwright test
