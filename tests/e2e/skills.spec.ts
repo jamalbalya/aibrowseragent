@@ -22,8 +22,11 @@
  * dispatch path into the real conversation.
  */
 import {
+  ask,
   connectProvider,
   expect,
+  killServiceWorker,
+  openPanel,
   test,
   waitForTask,
   type SendToWorker,
@@ -503,12 +506,12 @@ test('a skill run records no page content in the audit trail', async ({
   expect(events.some((event) => event.type.startsWith('skill.'))).toBe(true);
 });
 
-test('taint survives a real worker restart and still gates a later skill step', async ({
+test("a real worker termination does not reduce a skill task's security state", async ({
   context,
   send,
   provider,
   site,
-  collector,
+  extensionId,
   serviceWorker,
 }) => {
   const target = await context.newPage();
@@ -524,22 +527,78 @@ test('taint survives a real worker restart and still gates a later skill step', 
     { kind: 'text', text: 'Read it.' },
   ]);
 
+  // 1-3. Run a workflow that really reads the page, so the task acquires
+  //      taint through the ordinary path and it is persisted.
   const { task } = await send('task.create', { objective: 'Inspect the page.' });
   await waitForTask(send, task.id, 40_000);
 
-  // Kill the real service worker, as Chrome does routinely.
-  await serviceWorker
-    .evaluate(() => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).registration?.unregister?.();
-    })
-    .catch(() => undefined);
+  // 4. Confirm the state exists before termination. Asserted rather than
+  //    assumed: a task that was never tainted would make everything below
+  //    vacuous.
+  const before = await send('task.get', { taskId: task.id });
+  expect(before.task?.taintState.kind).toBe('TAINTED');
+  const sourcesBefore =
+    before.task?.taintState.kind === 'TAINTED' ? before.task.taintState.sources : [];
+  expect(sourcesBefore.length).toBeGreaterThan(0);
+  expect(sourcesBefore.some((source) => source.sourceType === 'web_page')).toBe(true);
 
-  const after = await send('task.get', { taskId: task.id });
-  // The task's record still says what it read: taint is persisted, not held
-  // in the worker's memory.
-  expect(after.task?.taintState.kind).not.toBe('UNKNOWN');
-  expect(collector.requests).toEqual([]);
+  // Put the stored record back into a live state, exactly as an eviction
+  // mid-execution would leave it, so the restart has something to recover.
+  await serviceWorker.evaluate(async (taskId) => {
+    const key = `tasks:task:${taskId}`;
+    const stored = await chrome.storage.local.get(key);
+    const record = stored[key] as { state: string; finishedAt?: number };
+    record.state = 'RUNNING';
+    delete record.finishedAt;
+    await chrome.storage.local.set({ [key]: record });
+  }, task.id);
+
+  // 5. Terminate the worker for real, by closing its CDP target. Not a
+  //    reload, not a new context, not a sleep — the worker's global scope is
+  //    destroyed and Chrome spins up a fresh one on the next event.
+  await killServiceWorker(context, serviceWorker);
+
+  // 6-7. Wake it and rehydrate the same task. The `send` fixture is bound to
+  //      the old panel, whose port died with the worker, so a fresh panel is
+  //      the only way to talk to the new one.
+  const panel = await openPanel(context, extensionId);
+  const after = await ask<{
+    task: {
+      id: string;
+      state: string;
+      currentStepSummary?: string;
+      providerId: string;
+      modelId: string;
+      taintSalt: string;
+      saltEpoch: number;
+      taintState: { kind: string; sources?: { sourceType: string; site?: string }[] };
+    };
+  }>(panel, 'task.get', { taskId: task.id });
+
+  // **The negative assertion.** This summary is written by
+  // `lifecycle.recoverInterruptedTasks()`, which runs only from the worker's
+  // `startup()`. A reload, a new panel, a fresh task or simply waiting cannot
+  // produce it, so the test fails if the worker was not genuinely restarted —
+  // which is exactly how the previous version of this test passed while
+  // terminating nothing.
+  expect(after.task.state).toBe('PAUSED');
+  expect(after.task.currentStepSummary).toContain('restarted');
+
+  // 8-9. The lifecycle contract is park-and-recover, not blind continuation,
+  //      and the security state came through it intact.
+  expect(after.task.id).toBe(task.id);
+  expect(after.task.providerId).toBe(before.task?.providerId);
+  expect(after.task.modelId).toBe(before.task?.modelId);
+  expect(after.task.taintSalt).toBe(before.task?.taintSalt);
+  expect(after.task.saltEpoch).toBe(before.task?.saltEpoch);
+
+  // 10. And no weaker state was produced. Eviction must not turn "this task
+  //     read the intranet" into "this task read nothing", which is the Stage 2
+  //     defect this whole line of testing exists for.
+  expect(after.task.taintState.kind).toBe('TAINTED');
+  expect(after.task.taintState.kind).not.toBe('KNOWN_UNTAINTED');
+  expect(after.task.taintState.sources).toEqual(sourcesBefore);
+  expect(after.task.taintState.sources?.length).toBe(sourcesBefore.length);
 });
 
 // --- what skills did not add ------------------------------------------------

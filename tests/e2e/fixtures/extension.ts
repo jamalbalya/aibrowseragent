@@ -247,3 +247,76 @@ export async function waitForTask(
     await new Promise((r) => setTimeout(r, 150));
   }
 }
+
+// ---------------------------------------------------------------------------
+// Real MV3 lifecycle
+// ---------------------------------------------------------------------------
+
+/**
+ * Kills the service worker the way Chrome's eviction does.
+ *
+ * `chrome.runtime.reload()` is not usable here: for an extension loaded with
+ * `--load-extension` it unloads the extension permanently rather than
+ * restarting it. Closing the worker's CDP target terminates just the worker,
+ * leaving the extension installed, its storage intact, and Chrome free to
+ * spin up a fresh worker on the next event — which is exactly the MV3
+ * lifecycle the runtime has to survive.
+ *
+ * Shared rather than copied per suite: a duplicate would drift, and a test
+ * that believes it terminated the worker while doing nothing of the kind is
+ * worse than no test at all. That has happened once already — see the header
+ * of `skills.spec.ts`.
+ */
+export async function killServiceWorker(context: BrowserContext, worker: Worker): Promise<void> {
+  const cdp = await context.browser()!.newBrowserCDPSession();
+  const { targetInfos } = await cdp.send('Target.getTargets');
+  const target = targetInfos.find(
+    (info) => info.type === 'service_worker' && info.url === worker.url(),
+  );
+  if (!target) throw new Error('No service worker target to terminate.');
+
+  await cdp.send('Target.closeTarget', { targetId: target.targetId });
+  await cdp.detach();
+  await new Promise((r) => setTimeout(r, 800));
+}
+
+/**
+ * Opens a fresh side panel, which wakes the worker if it is not running, and
+ * returns it. The previous panel's port dies with the worker, so a restarted
+ * test cannot keep using it — nor can it keep using the `send` fixture, which
+ * is bound to that panel.
+ */
+export async function openPanel(context: BrowserContext, extensionId: string): Promise<Page> {
+  const panel = await context.newPage();
+  await panel.goto(`chrome-extension://${extensionId}/src/sidepanel/index.html`);
+  await panel.waitForSelector('.app', { timeout: 15_000 });
+  // Give the revived worker's startup() time to finish recovery.
+  await new Promise((r) => setTimeout(r, 1200));
+  return panel;
+}
+
+interface PanelEnvelope {
+  readonly ok: boolean;
+  readonly value?: unknown;
+  readonly error?: { readonly code: string; readonly userMessage: string };
+}
+
+/** Sends one message from a specific panel page, for use after a restart. */
+export async function ask<T>(panel: Page, type: string, payload: unknown = {}): Promise<T> {
+  const envelope: PanelEnvelope = await panel.evaluate(
+    ([messageType, messagePayload]) =>
+      chrome.runtime.sendMessage({
+        id: `e2e_${Math.random().toString(36).slice(2)}`,
+        type: messageType,
+        timestamp: Date.now(),
+        payload: messagePayload,
+      }),
+    [type, payload] as const,
+  );
+  if (!envelope?.ok) {
+    throw new Error(
+      `${type} failed: ${envelope?.error?.code} ${envelope?.error?.userMessage ?? ''}`,
+    );
+  }
+  return envelope.value as T;
+}
