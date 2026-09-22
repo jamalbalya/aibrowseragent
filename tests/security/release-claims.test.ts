@@ -24,6 +24,9 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+// @ts-expect-error — a build script, plain JS with JSDoc types, imported here so
+// the rule is exercised rather than read.
+import { checkWebAccessibleResources } from '../../scripts/release-rules.mjs';
 
 const root = resolve(import.meta.dirname, '../..');
 const read = (relative: string): string => readFileSync(resolve(root, relative), 'utf8');
@@ -78,7 +81,7 @@ describe('the repository does not claim a publication that has not happened', ()
     // The absence of a false claim is not the presence of a true one. A
     // reader looking for the answer should find it stated, not inferred from
     // nothing being said.
-    const store = read('docs/testing/release/chrome-web-store.md');
+    const store = read('docs/release/chrome-web-store-submission-checklist.md');
     expect(store).toContain('has not been submitted and is not published');
     expect(store).toContain('ACCOUNT OWNER ACTION REQUIRED');
     // And the thing that cannot be done here is named as such rather than
@@ -87,11 +90,95 @@ describe('the repository does not claim a publication that has not happened', ()
   });
 
   it('keeps the two halves of the checklist apart', () => {
-    const store = read('docs/testing/release/chrome-web-store.md');
+    const store = read('docs/release/chrome-web-store-submission-checklist.md');
     const complete = store.indexOf('## REPOSITORY COMPLETE');
     const owner = store.indexOf('## ACCOUNT OWNER ACTION REQUIRED');
     expect(complete).toBeGreaterThan(-1);
     expect(owner).toBeGreaterThan(complete);
+  });
+});
+
+describe('a release build ships nothing that only a test needed', () => {
+  const BUILD = read('scripts/build.mjs');
+  const VALIDATOR = read('scripts/validate-release.mjs');
+
+  it('keeps the loopback matches in the development manifest, where the suite needs them', () => {
+    // Stated as the starting point, so the narrowing below is visibly a
+    // change rather than a description of something that was already true.
+    const manifest = JSON.parse(read('public/manifest.json')) as {
+      web_accessible_resources: { resources: string[]; matches: string[] }[];
+    };
+    const entry = manifest.web_accessible_resources[0];
+    expect(entry?.resources).toEqual(['oauth/callback.html']);
+    expect(entry?.matches).toContain('https://github.com/*');
+    expect(entry?.matches).toContain('http://127.0.0.1/*');
+  });
+
+  it('narrows them to https origins when the build is a release', () => {
+    // The mock authorization server runs on loopback, so the end-to-end suite
+    // genuinely needs the wider set. A shipped build does not, and leaving it
+    // there would let any page served from loopback load an extension page —
+    // and confirm the extension is installed.
+    expect(BUILD).toContain("process.env.RELEASE_BUILD === '1'");
+    expect(BUILD).toContain('web_accessible_resources');
+    expect(BUILD).toContain("match.startsWith('https://')");
+  });
+
+  it('refuses to produce an entry that matches nothing', () => {
+    // Narrowing to the empty set would be a manifest Chrome rejects, and
+    // failing at build time says so in one line instead.
+    expect(BUILD).toContain('left no match for');
+  });
+
+  it('gates the narrowing by running the rule, not by reading its source', () => {
+    // An earlier version of this asserted the rule's text appeared in the
+    // validator, and a mutation walked through it: two rules in that file
+    // open with the same words, so removing one left the assertion satisfied
+    // by the other. The rule is now a function, and the question asked of it
+    // is what it says about a hostile manifest.
+    expect(VALIDATOR).toContain('checkWebAccessibleResources(manifest)');
+
+    const loopback = checkWebAccessibleResources({
+      web_accessible_resources: [
+        {
+          resources: ['oauth/callback.html'],
+          matches: ['https://github.com/*', 'http://127.0.0.1/*'],
+        },
+      ],
+    });
+    expect(loopback).toHaveLength(1);
+    expect(loopback[0]).toContain('http://127.0.0.1/*');
+    expect(loopback[0]).toContain('development affordance');
+  });
+
+  it('accepts the manifest a release build actually produces', () => {
+    // The positive control. A rule that refused everything would satisfy the
+    // case above and be useless.
+    expect(
+      checkWebAccessibleResources({
+        web_accessible_resources: [
+          { resources: ['oauth/callback.html'], matches: ['https://github.com/*'] },
+        ],
+      }),
+    ).toEqual([]);
+  });
+
+  it('refuses an entry that reaches every site, however it is spelled', () => {
+    for (const match of ['<all_urls>', 'https://*/*', 'http://*/*']) {
+      const failures = checkWebAccessibleResources({
+        web_accessible_resources: [{ resources: ['oauth/callback.html'], matches: [match] }],
+      });
+      expect(failures, match).toHaveLength(1);
+      expect(failures[0], match).toContain('every site');
+    }
+  });
+
+  it('refuses an entry that matches nothing, which Chrome would reject anyway', () => {
+    const failures = checkWebAccessibleResources({
+      web_accessible_resources: [{ resources: ['oauth/callback.html'], matches: [] }],
+    });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain('matches no origin at all');
   });
 });
 

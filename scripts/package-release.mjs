@@ -33,7 +33,7 @@
  * This produces the artifact. It does not publish it, and nothing here can:
  * uploading needs a developer account, a paid registration and an accepted
  * agreement, none of which exist in a repository. See
- * `docs/testing/release/chrome-web-store.md`.
+ * `docs/release/chrome-web-store-submission-checklist.md`.
  */
 import { createHash } from 'node:crypto';
 import { deflateRawSync } from 'node:zlib';
@@ -184,7 +184,7 @@ if (process.argv.includes('--verify')) {
   // same bytes. That covers what this script controls — ordering,
   // timestamps, compression. It does not cover whether `vite build` is
   // itself reproducible, which is checked by the two-build comparison in
-  // `docs/testing/release/README.md` and is a different claim.
+  // `docs/release/README.md` and is a different claim.
   const again = createHash('sha256').update(buildArchive(collect())).digest('hex');
   if (again !== digest) {
     console.error(`✗ Archive is not deterministic: ${digest} then ${again}.`);

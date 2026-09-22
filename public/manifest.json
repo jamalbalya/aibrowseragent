@@ -33,7 +33,7 @@
     "notifications",
     "activeTab"
   ],
-  "optional_permissions": ["alarms", "downloads"],
+  "optional_permissions": ["downloads"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "icons": {
     "16": "icons/icon-16.png",

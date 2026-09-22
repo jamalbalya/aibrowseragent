@@ -46,6 +46,36 @@ if (!found) {
 }
 
 manifest.side_panel = { ...manifest.side_panel, default_path: found };
+
+// A release build narrows `web_accessible_resources`.
+//
+// The OAuth callback page is reachable by redirect from an authorization
+// server, which is why it is web-accessible at all. The loopback matches
+// beside `https://github.com/*` exist so the end-to-end suite's mock
+// authorization server — which runs on 127.0.0.1 — can perform the same
+// redirect a real one does. That is a test affordance, and in a shipped
+// build it would widen the set of origins allowed to load an extension page
+// to every page served from loopback, and hand any of them a way to confirm
+// the extension is installed.
+//
+// So the development build keeps them and the release build drops them.
+// The difference is strictly a narrowing, it is asserted by
+// `scripts/validate-release.mjs` rather than trusted, and the callback page
+// itself carries no script in either build.
+if (process.env.RELEASE_BUILD === '1' && Array.isArray(manifest.web_accessible_resources)) {
+  manifest.web_accessible_resources = manifest.web_accessible_resources.map((entry) => {
+    const matches = (entry.matches ?? []).filter((match) => match.startsWith('https://'));
+    if (matches.length === 0) {
+      console.error(
+        `\n✗ Narrowing web_accessible_resources left no match for ${JSON.stringify(entry.resources)}.`,
+      );
+      process.exit(1);
+    }
+    return { ...entry, matches };
+  });
+  console.log('  release: web_accessible_resources narrowed to https origins');
+}
+
 writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
 console.log(`\n✓ Build complete. Side panel: ${found}`);

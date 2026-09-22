@@ -224,10 +224,10 @@ These were found by tests during development and fixed. They are listed because
 
 ## Release engineering
 
-[`testing/release/`](testing/release/README.md) covers how the artifact that
+[`release/`](release/README.md) covers how the artifact that
 would be uploaded to the Chrome Web Store is produced and what can be said
 about it truthfully, and
-[`chrome-web-store.md`](testing/release/chrome-web-store.md) splits submission
+[`chrome-web-store-submission-checklist.md`](release/chrome-web-store-submission-checklist.md) splits submission
 into what is complete in this repository and what only an account owner can
 do — a developer account, a payment, an accepted agreement, a hosted privacy
 policy URL, screenshots of a running extension.

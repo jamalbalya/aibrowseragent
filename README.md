@@ -21,7 +21,7 @@ the Chat Completions protocol, not a commercial provider. It is not yet at the
 full capability
 parity described in the specification — see
 [PARITY_MATRIX.md](PARITY_MATRIX.md) for the honest per-capability status
-(25 of 40 mandatory capabilities PASS), and [docs/testing.md](docs/testing.md)
+(30 of 40 mandatory capabilities PASS), and [docs/testing.md](docs/testing.md)
 for what is actually verified and what is not.
 
 What works today:
@@ -249,15 +249,21 @@ conventions to follow when adding a tool, a provider, or a connector.
 
 ## Documentation
 
-| Document                                                       | Contents                                     |
-| -------------------------------------------------------------- | -------------------------------------------- |
-| [docs/architecture.md](docs/architecture.md)                   | Runtime boundaries, data flow, module map    |
-| [docs/security.md](docs/security.md)                           | Threat model, controls, known limitations    |
-| [docs/testing.md](docs/testing.md)                             | Test strategy and what each suite proves     |
-| [docs/provider-architecture.md](docs/provider-architecture.md) | Adding a provider adapter                    |
-| [docs/tool-architecture.md](docs/tool-architecture.md)         | Adding a tool                                |
-| [PARITY_MATRIX.md](PARITY_MATRIX.md)                           | Per-capability implementation status         |
-| [docs/repository-state.md](docs/repository-state.md)           | Repository-level issues that code cannot fix |
+| Document                                                                                                       | Contents                                             |
+| -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| [docs/architecture.md](docs/architecture.md)                                                                   | Runtime boundaries, data flow, module map            |
+| [docs/security.md](docs/security.md)                                                                           | Threat model, controls, known limitations            |
+| [docs/testing.md](docs/testing.md)                                                                             | Test strategy and what each suite proves             |
+| [docs/provider-architecture.md](docs/provider-architecture.md)                                                 | Adding a provider adapter                            |
+| [docs/tool-architecture.md](docs/tool-architecture.md)                                                         | Adding a tool                                        |
+| [PARITY_MATRIX.md](PARITY_MATRIX.md)                                                                           | Per-capability implementation status                 |
+| [docs/repository-state.md](docs/repository-state.md)                                                           | Repository-level issues that code cannot fix         |
+| [CHANGELOG.md](CHANGELOG.md)                                                                                   | What this version is, and what it is not             |
+| [docs/release/README.md](docs/release/README.md)                                                               | How the production artifact is built and hashed      |
+| [docs/release/chrome-web-store-submission-checklist.md](docs/release/chrome-web-store-submission-checklist.md) | What publishing needs, and who can do each part      |
+| [docs/release/store-listing.md](docs/release/store-listing.md)                                                 | Listing copy, permission justifications, disclosures |
+| [docs/release/data-flows.md](docs/release/data-flows.md)                                                       | Every data category: kept where, leaves when         |
+| [docs/PRIVACY.md](docs/PRIVACY.md)                                                                             | What the extension does with data                    |
 
 ## Chrome permissions
 
@@ -266,6 +272,19 @@ Every permission is requested for a specific reason. See
 per-permission justification, including which are optional and why `debugger`
 is requested despite its cost.
 
+## Status
+
+**Not released.** This extension has never been submitted to or published on
+the Chrome Web Store. A production artifact is built and hashed locally; see
+[docs/release/chrome-web-store-submission-checklist.md](docs/release/chrome-web-store-submission-checklist.md)
+for what submission would still require and which parts only an account owner
+can do.
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
+
+Four MIT-licensed packages are bundled into the distributed artifact — React,
+React DOM, Scheduler and Zod — and their notices travel with it in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), generated from the installed
+licences and checked on every build.

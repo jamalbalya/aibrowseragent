@@ -280,7 +280,7 @@ describe('the manifest is the one it was reviewed as', () => {
       'notifications',
       'activeTab',
     ]);
-    expect(manifest.optional_permissions).toEqual(['alarms', 'downloads']);
+    expect(manifest.optional_permissions).toEqual(['downloads']);
     expect(manifest.host_permissions).toEqual(['http://*/*', 'https://*/*']);
     expect(manifest.content_scripts[0]?.all_frames).toBe(false);
     expect(manifest.web_accessible_resources.flatMap((entry) => entry.resources)).toEqual([

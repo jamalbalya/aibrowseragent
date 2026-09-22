@@ -6,3 +6,9 @@ package-lock.json
 # The authoritative specification is committed verbatim. Formatting it would
 # modify the document of record.
 docs/spec/
+
+# Generated from the installed licences by scripts/generate-notices.mjs, and
+# compared byte-for-byte by `npm run check:notices`. Reformatting it would put
+# two gates in conflict: prettier would rewrite the file and the notices check
+# would then report it as drifted from the licences it was generated from.
+THIRD-PARTY-NOTICES.md

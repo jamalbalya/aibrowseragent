@@ -19,6 +19,7 @@
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { resolve, dirname, relative, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkWebAccessibleResources } from './release-rules.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = resolve(root, 'dist');
@@ -156,6 +157,8 @@ for (const permission of manifest.permissions ?? []) {
     fail(`permissions contains a host pattern: ${permission}`);
   }
 }
+
+for (const failure of checkWebAccessibleResources(manifest)) fail(failure);
 
 const csp = manifest.content_security_policy?.extension_pages ?? '';
 if (!csp) fail('The extension declares no content_security_policy.');

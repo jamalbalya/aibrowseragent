@@ -116,16 +116,16 @@ intent can do those things.
 
 ## Permissions, and why each exists
 
-| Permission                       | Why                                                           |
-| -------------------------------- | ------------------------------------------------------------- |
-| `tabs`, `tabGroups`, `activeTab` | see and act on the tab a task is working in                   |
-| `scripting`                      | inject the content script that reads and operates the page    |
-| `debugger`                       | screenshots, console, network and rendered markup             |
-| `storage`, `unlimitedStorage`    | keep tasks, evidence and settings on your device              |
-| `sidePanel`                      | the agent's interface                                         |
-| `notifications`                  | tell you when a task needs your approval                      |
-| `downloads`, `alarms`            | optional; requested only if a feature that needs them is used |
-| `http://*/*`, `https://*/*`      | act on ordinary websites you direct the agent to              |
+| Permission                       | Why                                                        |
+| -------------------------------- | ---------------------------------------------------------- |
+| `tabs`, `tabGroups`, `activeTab` | see and act on the tab a task is working in                |
+| `scripting`                      | inject the content script that reads and operates the page |
+| `debugger`                       | screenshots, console, network and rendered markup          |
+| `storage`, `unlimitedStorage`    | keep tasks, evidence and settings on your device           |
+| `sidePanel`                      | the agent's interface                                      |
+| `notifications`                  | tell you when a task needs your approval                   |
+| `downloads`                      | optional; requested only when a download is attempted      |
+| `http://*/*`, `https://*/*`      | act on ordinary websites you direct the agent to           |
 
 The extension deliberately does **not** request `<all_urls>`. That broader
 permission would also grant access to local files, which was demonstrated and

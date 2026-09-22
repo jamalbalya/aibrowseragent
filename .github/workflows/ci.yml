@@ -71,6 +71,13 @@ jobs:
       - name: Check acceptance citations resolve
         run: npm run check:acceptance
 
+      # Three MIT packages are bundled into the shipped artifact, and MIT
+      # requires their notices travel with it. A hand-written notice records
+      # whichever versions someone last looked at, so it is generated and this
+      # fails when a dependency bump leaves it stale.
+      - name: Check third-party notices match installed licences
+        run: npm run check:notices
+
       - name: Upload unpacked extension
         if: success()
         uses: actions/upload-artifact@v4

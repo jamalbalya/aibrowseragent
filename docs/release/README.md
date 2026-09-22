@@ -4,7 +4,7 @@ How the artifact that would be uploaded to the Chrome Web Store is produced,
 what is checked about it, and what can be said about it truthfully.
 
 Nothing here publishes anything. See
-[chrome-web-store.md](chrome-web-store.md) for what is complete in this
+[chrome-web-store-submission-checklist.md](chrome-web-store-submission-checklist.md) for what is complete in this
 repository and what only an account owner can do.
 
 ## Producing the artifact
@@ -38,8 +38,8 @@ Two clean builds of the same commit, each deleting `dist/` first, produced
 byte-identical archives:
 
 ```text
-df4d80df7b2347bb67d8d50c74d9abf07eab5196bb264b788dabca18334a68b4
-df4d80df7b2347bb67d8d50c74d9abf07eab5196bb264b788dabca18334a68b4
+b7db581850067c7d316f4db113f00936bf00652dee699b976fcf2f8399b2e5c0
+b7db581850067c7d316f4db113f00936bf00652dee699b976fcf2f8399b2e5c0
 ```
 
 That did not happen by itself. An ordinary ZIP stores a modification time per
@@ -55,6 +55,28 @@ cannot regress silently.
 Writing the archive by hand also means no dependency was added to produce the
 one file that reaches users. A packaging library is an odd place to accept
 supply-chain risk.
+
+### The one way a release build differs from a development build
+
+Two differences, both narrowings, both deliberate:
+
+|                                    | Development                                                        | Release                |
+| ---------------------------------- | ------------------------------------------------------------------ | ---------------------- |
+| Source maps                        | emitted                                                            | not emitted            |
+| `web_accessible_resources` matches | `https://github.com/*`, `http://127.0.0.1/*`, `http://localhost/*` | `https://github.com/*` |
+
+The loopback matches exist so the end-to-end suite's mock authorization server
+— which runs on 127.0.0.1 — can perform the redirect a real authorization
+server does. A shipped build does not need them, and leaving them in would let
+any page served from loopback load an extension page and confirm the extension
+is installed.
+
+This does mean the artifact that ships is not byte-identical to the one the
+end-to-end suite drove, which is worth knowing rather than glossing. The
+difference is a strict narrowing of one manifest field, it is applied by the
+build rather than by hand, `validate-release.mjs` fails if it did not happen,
+and `release-claims.test.ts` asserts both halves. Everything else — every line
+of executable code — is the same.
 
 ### The honest limit of that claim
 
@@ -81,8 +103,8 @@ Produced from `dist/` after `npm run build:release`:
 |                  |                                                                    |
 | ---------------- | ------------------------------------------------------------------ |
 | File             | `ai-browser-agent-0.1.0.zip`                                       |
-| SHA-256          | `df4d80df7b2347bb67d8d50c74d9abf07eab5196bb264b788dabca18334a68b4` |
-| Size             | 208,452 bytes compressed, 697,747 uncompressed                     |
+| SHA-256          | `b7db581850067c7d316f4db113f00936bf00652dee699b976fcf2f8399b2e5c0` |
+| Size             | 208,427 bytes compressed, 697,673 uncompressed                     |
 | Entries          | 12                                                                 |
 | Manifest version | 3                                                                  |
 
@@ -96,7 +118,7 @@ icons/icon-16.png                     122
 icons/icon-32.png                     182
 icons/icon-48.png                     242
 icons/icon-128.png                    507
-manifest.json                       1,462
+manifest.json                       1,388
 oauth/callback.html                 1,222
 service-worker.js                 365,697
 sidepanel.js                      267,497
@@ -134,6 +156,11 @@ else.
   code and is refused.
 - **The version is single-sourced** — `package.json` and the manifest must
   agree, so a published build is identifiable by one number.
+- **`web_accessible_resources` is narrowed to https origins.** The development
+  manifest allows loopback so the end-to-end suite's mock authorization server
+  can redirect to the OAuth callback; `build.mjs` removes those for a release
+  and this is where that removal stops being a convention. An entry matching
+  nothing, or matching every site, fails too.
 - **No `<all_urls>`**, no host pattern hiding in `permissions`, and a CSP that
   allows neither `unsafe-eval` nor `unsafe-inline`.
 

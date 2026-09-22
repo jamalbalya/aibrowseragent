@@ -358,12 +358,19 @@ visible, conservative trade.
 `content_scripts.matches` is unchanged at `http://*/*` and `https://*/*`, as it
 was throughout.
 
-Requested as **optional**, not granted until a person grants them:
-`alarms` (scheduling) and `downloads` (file handling).
+Requested as **optional**, not granted until a person grants it: `downloads`
+(file handling), and nothing else.
 
-`alarms` has no feature behind it yet, so it is never requested.
+`alarms` used to be declared here too, for the scheduling the specification
+describes. It was removed during release preparation, because it had no
+feature behind it: no code path called `chrome.alarms`, and P-020 is
+NOT-STARTED. An optional permission is never granted until it is requested, so
+declaring it cost a user nothing — but a store listing has to justify every
+permission against what the extension does, and "we intend to use this" is not
+a justification. It is one line to add back when the feature that needs it
+exists.
 
-`downloads` now does, and it stays optional. It is not granted at install, the
+`downloads` does have a feature behind it, and it stays optional. It is not granted at install, the
 agent cannot request it — `chrome.permissions.request` needs a user gesture in
 an extension page — and a person turns it on from Settings. Until they do,
 `browser.download` refuses with an explanation rather than failing obscurely.
