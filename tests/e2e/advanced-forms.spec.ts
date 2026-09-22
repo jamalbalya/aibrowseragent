@@ -201,8 +201,8 @@ test('a real range snaps to its step, and a real colour normalises its case', as
     shade.value = '#AABBCC';
     const normalised = shade.value;
     shade.value = 'red';
-    const rejected = shade.value;
-    return { atMax, clamped, normalised, rejected };
+    const afterNamedColour = shade.value;
+    return { atMax, clamped, normalised, afterNamedColour };
   });
   expect(behaviour.atMax).toBe('8');
   // Chromium clamps a range rather than clearing it, which is exactly why the
@@ -210,9 +210,17 @@ test('a real range snaps to its step, and a real colour normalises its case', as
   // submits a number nobody chose.
   expect(behaviour.clamped).toBe('8');
   expect(behaviour.normalised).toBe('#aabbcc');
-  // `red` is valid CSS and is not a settable colour value; the DOM falls back
-  // to black rather than keeping it.
-  expect(behaviour.rejected).toBe('#000000');
+
+  // What a colour input does with the CSS name `red` is version-dependent —
+  // older Chromium falls back to `#000000`, newer parses it to `#ff0000` —
+  // and an earlier version of this assertion pinned one of those and failed
+  // on CI's newer build. What is stable, and what actually matters, is that
+  // the DOM never keeps the name: `value` is always `#rrggbb`. So a caller
+  // that passed `red` would be told the field holds something it did not
+  // ask for, which is why `performSetValue` refuses the name before
+  // assigning rather than relying on what the browser does with it.
+  expect(behaviour.afterNamedColour).toMatch(/^#[0-9a-f]{6}$/);
+  expect(behaviour.afterNamedColour).not.toBe('red');
   await page.close();
 });
 
