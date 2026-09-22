@@ -8,7 +8,7 @@
  * a skill cannot get past dispatch.
  */
 import { z } from 'zod';
-import type { ToolRegistry } from '@/tools/registry/tool-registry';
+import type { ToolRegistry, ToolRegistryOptions } from '@/tools/registry/tool-registry';
 import { ConsentStore } from '@/security/egress/consent';
 import { noEgress, urlDestination } from '@/security/egress/destination';
 import { freshTaint, type TaintState } from '@/security/taint/taint-state';
@@ -105,6 +105,8 @@ export interface HarnessOptions {
   readonly tools?: readonly FakeToolSpec[];
   readonly permissionMode?: PermissionMode;
   readonly taintState?: TaintState;
+  /** The registry's observation hook, for the workflow recorder's tests. */
+  readonly onDispatched?: ToolRegistryOptions['onDispatched'];
 }
 
 export function buildSkillHarness(options: HarnessOptions = {}): SkillHarness {
@@ -134,6 +136,7 @@ export function buildSkillHarness(options: HarnessOptions = {}): SkillHarness {
     ...(options.permissionMode === undefined ? {} : { mode: options.permissionMode }),
     prompter,
     egress: { consent, record: () => Promise.resolve() },
+    ...(options.onDispatched === undefined ? {} : { onDispatched: options.onDispatched }),
   });
   const tools: ToolRegistry = harness.registry;
 

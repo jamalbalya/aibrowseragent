@@ -37,6 +37,7 @@ import type { ToolRegistry } from '@/tools/registry/tool-registry';
 import type { SkillRegistry, RegisteredSkill } from '@/skills/core/skill-registry';
 import {
   MAX_COMPOSITION_DEPTH,
+  type ElementBinding,
   type SkillBinding,
   type SkillDefinition,
   type SkillInput,
@@ -497,7 +498,90 @@ export function resolveBinding(
 ): unknown {
   if (binding.kind === 'literal') return binding.value;
   if (binding.kind === 'input') return inputs[binding.name];
+  if (binding.kind === 'element') return resolveElement(binding, results.get(binding.step));
   return readPath(results.get(binding.step), binding.path);
+}
+
+/** One element as the page model reports it, narrowed to what matching uses. */
+interface MatchableElement {
+  readonly elementId?: unknown;
+  readonly role?: unknown;
+  readonly name?: unknown;
+  readonly visible?: unknown;
+  readonly enabled?: unknown;
+}
+
+/**
+ * Finds the one element a binding means, or nothing at all.
+ *
+ * Every branch that is not "exactly what was asked for" returns `undefined`,
+ * which leaves the argument absent and lets the tool's own schema refuse the
+ * call. That is what fail-closed means here: there is no closest match, no
+ * relaxed comparison, no positional fallback and no "well, there was only one
+ * button" guess. A page that changed enough to make the binding ambiguous is
+ * a page the recording no longer describes.
+ *
+ * Matching reads the semantic page model — `role` and `name` compared
+ * literally after trimming. Nothing is passed to the DOM, nothing is
+ * evaluated, and `selectorHints` is deliberately not consulted: it exists as
+ * a recovery hint for a human, and using it here would reintroduce selectors
+ * through the back door.
+ */
+export function resolveElement(binding: ElementBinding, stepResult: unknown): unknown {
+  const elements = elementsOf(stepResult);
+  if (elements === null) return undefined;
+
+  const role = binding.role.trim().toLowerCase();
+  const name = binding.name.trim().toLowerCase();
+
+  // Document order, because that is the order the page model is built in —
+  // `querySelectorAll` over the interactive selector — so `nth` refers to
+  // something stable rather than to whatever the array happened to hold.
+  const matches = elements.filter((element) => {
+    if (typeof element.role !== 'string' || typeof element.name !== 'string') return false;
+    if (element.role.trim().toLowerCase() !== role) return false;
+    if (element.name.trim().toLowerCase() !== name) return false;
+    return satisfiesExpectation(element, binding.expect);
+  });
+
+  if (matches.length === 0) return undefined;
+
+  if (binding.nth === undefined) {
+    // Ambiguity is refused rather than resolved. Taking the first would be a
+    // coin flip dressed up as a decision.
+    if (matches.length > 1) return undefined;
+    return idOf(matches[0]);
+  }
+
+  const chosen = matches[binding.nth];
+  return chosen === undefined ? undefined : idOf(chosen);
+}
+
+function satisfiesExpectation(
+  element: MatchableElement,
+  expect: ElementBinding['expect'],
+): boolean {
+  if (expect === undefined) return true;
+  if (expect === 'visible') return element.visible === true;
+  if (expect === 'enabled') return element.enabled === true;
+  // `editable` is the conjunction a text entry actually needs: an invisible
+  // or disabled field accepts nothing, so typing into one is a failure that
+  // would otherwise surface much later and much less clearly.
+  return element.visible === true && element.enabled === true;
+}
+
+function idOf(element: MatchableElement | undefined): unknown {
+  return typeof element?.elementId === 'string' ? element.elementId : undefined;
+}
+
+/** The element list from a `browser.read_page` result, or `null`. */
+function elementsOf(stepResult: unknown): MatchableElement[] | null {
+  if (stepResult === null || typeof stepResult !== 'object') return null;
+  const elements = (stepResult as { elements?: unknown }).elements;
+  if (!Array.isArray(elements)) return null;
+  return elements.filter(
+    (element): element is MatchableElement => element !== null && typeof element === 'object',
+  );
 }
 
 /**

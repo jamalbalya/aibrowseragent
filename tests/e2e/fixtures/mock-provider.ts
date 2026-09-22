@@ -64,6 +64,15 @@ interface WireRequest {
  */
 const FILE_ID_PLACEHOLDER = '$lastFileId';
 
+/**
+ * The same, for an element handle.
+ *
+ * A handle is minted by `browser.read_page` and is valid only for that
+ * snapshot, so a fixed script cannot contain one. A real model reads it out of
+ * the page it was just handed, which is what this imitates.
+ */
+const ELEMENT_ID_PLACEHOLDER = '$lastElementId';
+
 /** The newest file id the conversation has carried back to the model. */
 function lastFileId(request: WireRequest): string | null {
   const ids: string[] = [];
@@ -76,18 +85,39 @@ function lastFileId(request: WireRequest): string | null {
   return ids.at(-1) ?? null;
 }
 
-/** Replaces the placeholder in a scripted reply with the real id. */
+/** The handle of the first clickable element the page model carried back. */
+function lastElementId(request: WireRequest, role: string): string | null {
+  const ids: string[] = [];
+  const pattern = new RegExp(`\\{"elementId":"(e[0-9]+-[0-9]+)","role":"${role}"`, 'g');
+  for (const message of request.messages ?? []) {
+    if (typeof message.content !== 'string') continue;
+    for (const match of message.content.matchAll(pattern)) {
+      if (match[1]) ids.push(match[1]);
+    }
+  }
+  return ids[0] ?? null;
+}
+
+/** Replaces the placeholders in a scripted reply with the real ids. */
 function resolvePlaceholders(reply: ScriptedReply, request: WireRequest): ScriptedReply {
   if (reply.kind !== 'tool_calls') return reply;
-  const id = lastFileId(request);
-  if (id === null) return reply;
+
+  const substitutions: [string, string][] = [];
+  const fileId = lastFileId(request);
+  if (fileId !== null) substitutions.push([FILE_ID_PLACEHOLDER, fileId]);
+  const elementId = lastElementId(request, 'button');
+  if (elementId !== null) substitutions.push([ELEMENT_ID_PLACEHOLDER, elementId]);
+  if (substitutions.length === 0) return reply;
 
   return {
     ...reply,
     calls: reply.calls.map((call) => ({
       ...call,
       arguments: JSON.parse(
-        JSON.stringify(call.arguments).replaceAll(FILE_ID_PLACEHOLDER, id),
+        substitutions.reduce(
+          (text, [placeholder, value]) => text.replaceAll(placeholder, value),
+          JSON.stringify(call.arguments),
+        ),
       ) as Record<string, unknown>,
     })),
   };

@@ -859,3 +859,102 @@ body {
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
 }
+
+/* Workflows ------------------------------------------------------- */
+
+/*
+ * A recorded workflow's review surface.
+ *
+ * Bindings are styled by kind so the difference is visible at a glance: a
+ * stored literal is something the workflow will use as written, while a slot
+ * is something that was deliberately not kept and will be asked for. That
+ * distinction is the whole of what the parameteriser decided, so it should be
+ * readable without reading the text.
+ */
+.header__actions {
+  display: flex;
+  gap: 6px;
+}
+
+.sites__row--stacked {
+  display: block;
+}
+
+.sites__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.workflow__detail {
+  margin: 8px 0 4px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.workflow__steps {
+  margin: 8px 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
+.workflow__steps > li {
+  margin-bottom: 6px;
+}
+
+.workflow__args {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+}
+
+.workflow__args > li {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.workflow__arg {
+  color: var(--text-muted);
+  min-width: 84px;
+}
+
+.workflow__binding {
+  word-break: break-word;
+}
+
+.workflow__binding--literal {
+  font-family: var(--mono, monospace);
+}
+
+.workflow__binding--input,
+.workflow__binding--element,
+.workflow__binding--step {
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+.workflow__inputs {
+  margin-top: 8px;
+}
+
+.badge--risk-r0,
+.badge--risk-r1 {
+  background: var(--ok-bg, #e7f6ec);
+  color: var(--ok, #1c7c3f);
+}
+
+.badge--risk-r2,
+.badge--risk-r3 {
+  background: var(--warn-bg, #fdf3e0);
+  color: var(--warn, #8a5a00);
+}
+
+.badge--risk-r4,
+.badge--risk-r5 {
+  background: var(--danger-bg, #fdeaea);
+  color: var(--danger, #a12222);
+}

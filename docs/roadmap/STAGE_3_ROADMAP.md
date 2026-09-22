@@ -2424,13 +2424,30 @@ tool call does, so running a workflow costs an approval for the run plus
 whatever its steps would have cost alone. Only definitions that shipped in the
 build register — there is no installer, and no message that can add one.
 
-Workflow recording, shortcuts, scheduling, MCP and plugins remain NOT-STARTED.
-Workflow recording (P-022) named skills as its dependency and is now
-unblocked. Its security invariant is fixed in advance and recorded in
-`docs/skills.md`: a recorded workflow goes through the existing validator, the
-existing registered tools and `ToolRegistry.dispatch`, and must not introduce a
-second execution engine. A recording earns no trust from having been performed,
-and replay is a fresh run that re-enters every gate.
+**Workflow recording (Phase 8, P-022) is implemented and PARTIAL.**
+`src/workflows/` holds the recorder, the parameteriser, the store and the
+replayer. The security invariant fixed in advance held: a recorded workflow
+goes through the existing validator, the existing registered tools and
+`ToolRegistry.dispatch`, and P-022 introduced no second execution engine and
+no execution code at all. A recording earns no trust from having been
+performed, and replay is a fresh run that re-enters every gate. A recording is
+also deliberately not registered — it never reaches `skills.list` and is never
+model-selectable, so replay is an explicit user action. See
+`docs/workflows.md`.
+
+It is PARTIAL for one reason, which is a gap against specification §49 rather
+than a missing test: element interactions are not recorded. The declarative
+role-and-name binding §49 asks for exists and replay resolves it, but the
+recorder cannot build one, because a click's argument is a page-read-scoped
+handle and the dispatch observation carries no result to convert it from. Such
+a step is left out of the recording with a reason rather than stored in a form
+that is refused as stale on every replay. Closing it needs a decision not yet
+taken: how the recorder learns an element's semantic identity without an
+observation carrying a step result, and whether a page-read accessible name may
+be stored as a literal.
+
+Shortcuts, scheduling, MCP and plugins remain NOT-STARTED. Shortcuts (P-021)
+named workflow recording as its dependency and is now unblocked.
 
 Skills (Phase 7) depended on connectors and are now unblocked. Workflow,
 recording, shortcuts and scheduling (Phase 8) depend on skills and on
@@ -2511,7 +2528,7 @@ is itself a reason to record them here rather than in `PARITY_MATRIX.md`.
 | P-011 | Download                    | NOT-STARTED     | §83                                     | implementation                                                         | `downloads` permission | none                            | side-effect consent             | unit, security, E2E                   |
 | P-020 | Scheduled tasks             | NOT-STARTED     | §83, Phase 8                            | implementation                                                         | P-022, background exec | none                            | unattended autonomy             | unit, integration, E2E, manual        |
 | P-021 | Shortcuts                   | NOT-STARTED     | §83, Phase 8                            | implementation                                                         | P-022                  | none                            | consent                         | unit, E2E                             |
-| P-022 | Workflow recording          | NOT-STARTED     | §83, Phase 8                            | implementation                                                         | P-024                  | none                            | replay safety, evidence         | unit, integration, E2E                |
+| P-022 | Workflow recording          | PARTIAL         | §49, §83, Phase 8                       | implementation                                                         | P-024                  | none                            | replay safety, evidence         | unit, integration, security, E2E      |
 | P-023 | Connector framework         | INTERFACES-ONLY | §33, §34, §88                           | implementation                                                         | OAuth store, consent   | provider APIs, OAuth apps       | credential isolation, scopes    | unit, integration, security, E2E, §88 |
 | P-024 | Skills                      | NOT-STARTED     | §43, Phase 7                            | implementation                                                         | P-023                  | connector access                | inherits connector risk         | unit, integration, E2E                |
 | P-025 | Plugins                     | NOT-STARTED     | Phase 9                                 | implementation                                                         | trust model            | none                            | third-party code execution      | unit, security, E2E                   |

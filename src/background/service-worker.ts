@@ -59,6 +59,11 @@ import { SkillRunner } from '@/skills/runtime/skill-runner';
 import { SkillRunStore } from '@/skills/runtime/skill-run-store';
 import { BUNDLED_SKILLS } from '@/skills/bundled';
 import { createSkillTools } from '@/tools/skills/skill-tools';
+import { WorkflowStore } from '@/workflows/workflow-store';
+import { WorkflowRecorder } from '@/workflows/workflow-recorder';
+import { WorkflowReplayer } from '@/workflows/workflow-replay';
+import type { RecordedWorkflow } from '@/workflows/workflow-model';
+import type { WorkflowSummary } from '@/messaging/protocol';
 import {
   GitHubConnector,
   githubDescriptor,
@@ -275,6 +280,17 @@ const toolRegistry = new ToolRegistry({
   },
   publishSecurityContext: (taskId, context) => {
     connectorEgressContexts.set(taskId, context);
+  },
+  /**
+   * The workflow recorder's observation hook (P-022).
+   *
+   * An observer, and only an observer: it is handed a frozen, deep-cloned
+   * record of a dispatch that has already completed, so nothing it does can
+   * affect the call it is watching, grant it anything, or start another one.
+   * When no recording is running it does nothing at all.
+   */
+  onDispatched: (observation) => {
+    workflowRecorder.observe(observation);
   },
   egress: {
     consent: consentStore,
@@ -627,6 +643,110 @@ async function registerBundledSkills(): Promise<void> {
       });
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Recorded workflows (P-022)
+// ---------------------------------------------------------------------------
+
+/**
+ * Recordings live here, and nowhere near the skill registry.
+ *
+ * A recording is validated by the same validator and run by the same runner
+ * as a bundled skill, but it is deliberately not registered: registration is
+ * what puts something in `skills.list` and therefore in front of a model, and
+ * nobody has reviewed the *combination* of tools a user's recording reaches.
+ * So a recorded workflow is never model-visible, never model-selectable and
+ * never replayed automatically. The only way one runs is a person choosing to
+ * run it, through the side panel's replay route.
+ */
+const workflowStore = new WorkflowStore({
+  area: new NamespacedStorageArea(local, 'workflows'),
+  riskOfTool: (name) => toolRegistry.get(name)?.risk,
+});
+
+const workflowRecorder = new WorkflowRecorder({
+  // The recording task's own taint, read at the moment each call is observed.
+  // A task whose context cannot be found is treated as unknowable rather than
+  // clean, and the parameteriser then stores none of its arguments.
+  taintFor: (taskId) => connectorEgressContexts.get(taskId)?.taintState,
+});
+
+const workflowReplayer = new WorkflowReplayer({
+  store: workflowStore,
+  runner: skillRunner,
+  tools: toolRegistry,
+  tasks: taskStore,
+  getPermissionMode: async () => (await settingsStore.get()).permissionMode,
+  getActiveTabId: async () => (await browserAdapter.getActiveTab())?.id,
+  publishSecurityContext: (taskId, context) => {
+    connectorEgressContexts.set(taskId, context);
+  },
+  audit: async (event) => {
+    await auditLog.record({
+      type: event.type,
+      taskId: event.taskId,
+      workflowId: event.workflowId,
+      skillVersion: String(event.workflowVersion),
+      skillHash: event.definitionHash,
+      outcome: event.outcome,
+      ...(event.code === undefined ? {} : { code: event.code }),
+    });
+  },
+  onTaskChanged: (task) => {
+    broadcastEvent({ type: 'task.updated', task });
+  },
+});
+
+/**
+ * A recording, as the review surface sees it.
+ *
+ * Bindings are described rather than dumped: a literal shows its value,
+ * because reviewing a workflow means seeing what it will actually do, while a
+ * slot shows only that something will be asked for. Nothing that could not be
+ * shown was stored as a literal in the first place.
+ */
+function summariseWorkflow(record: RecordedWorkflow): WorkflowSummary {
+  return {
+    workflowId: record.workflowId,
+    version: record.version,
+    formatVersion: record.formatVersion,
+    name: record.name,
+    description: record.description,
+    definitionHash: record.definitionHash,
+    risk: record.risk,
+    tools: [...record.tools],
+    recordedAt: record.recordedAt,
+    updatedAt: record.updatedAt,
+    taintAtCapture: record.taintAtCapture,
+    steps: record.definition.steps.map((step) => ({
+      id: step.id,
+      tool: step.kind === 'tool' ? step.tool : step.skill,
+      description: step.description,
+      arguments: Object.fromEntries(
+        Object.entries(step.arguments).map(([name, binding]) => [
+          name,
+          {
+            kind: binding.kind,
+            detail:
+              binding.kind === 'literal'
+                ? JSON.stringify(binding.value)
+                : binding.kind === 'input'
+                  ? `asked for at replay (${binding.name})`
+                  : binding.kind === 'step'
+                    ? `from step ${binding.step}`
+                    : `the ${binding.role} named "${binding.name}"`,
+          },
+        ]),
+      ),
+    })),
+    inputs: record.definition.inputs.map((input) => ({
+      name: input.name,
+      type: input.type,
+      required: input.required,
+      description: input.description,
+    })),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1140,6 +1260,114 @@ router.on('skill.runs', async ({ taskId }) => ({
     startedAt: run.startedAt,
   })),
 }));
+
+/**
+ * The recorded-workflow routes (P-022).
+ *
+ * Read, record, review, replay and delete. There is no route that registers a
+ * recording as a skill, and there is none that accepts a definition: a
+ * workflow can only come from the recorder observing calls that actually
+ * happened, which is what keeps a model from describing one into existence.
+ *
+ * Only `workflow.replay` executes anything, and it is reachable only from the
+ * side panel — a person, through the UI, choosing to run a workflow they have
+ * looked at.
+ */
+router.on('workflow.recordStart', ({ taskId }) => {
+  const summary = workflowRecorder.start(taskId);
+  return Promise.resolve({ recording: true, taskId: summary.taskId });
+});
+
+router.on('workflow.recordStop', async ({ name, description }) => {
+  const captured = workflowRecorder.stop();
+  if (!captured) return { workflow: null, skipped: [] };
+
+  // Storing, not running. Nothing between here and the replay route executes
+  // a single step of what was captured.
+  const record = await workflowStore.save({
+    name: name.trim().slice(0, 120) || 'Recorded workflow',
+    description: description.trim().slice(0, 500),
+    definition: captured.definition,
+    recordedFromTaskId: captured.summary.taskId,
+    taintAtCapture: captured.taint,
+  });
+  await auditLog.record({
+    type: 'workflow.recorded',
+    taskId: captured.summary.taskId,
+    workflowId: record.workflowId,
+    skillVersion: String(record.version),
+    skillHash: record.definitionHash,
+    risk: record.risk,
+    outcome: 'info',
+  });
+  return { workflow: summariseWorkflow(record), skipped: [...captured.summary.skipped] };
+});
+
+router.on('workflow.recordCancel', () => {
+  workflowRecorder.cancel();
+  return Promise.resolve({ ok: true } as const);
+});
+
+router.on('workflow.recordStatus', () => {
+  const summary = workflowRecorder.summary();
+  return Promise.resolve({
+    recording: workflowRecorder.isRecording(),
+    taskId: summary.taskId,
+    stepCount: summary.stepCount,
+    skipped: [...summary.skipped],
+  });
+});
+
+router.on('workflow.list', async () => ({
+  workflows: (await workflowStore.list()).map(summariseWorkflow),
+}));
+
+router.on('workflow.get', async ({ workflowId }) => {
+  const record = await workflowStore.get(workflowId);
+  return { workflow: record ? summariseWorkflow(record) : null };
+});
+
+router.on('workflow.remove', async ({ workflowId }) => {
+  await workflowStore.remove(workflowId);
+  return { ok: true } as const;
+});
+
+router.on('workflow.revalidate', async ({ workflowId }) => {
+  const verdict = await workflowReplayer.revalidate(workflowId);
+  return verdict.ok
+    ? {
+        ok: true,
+        risk: verdict.skill.risk,
+        tools: [...verdict.skill.tools],
+        riskChanged: verdict.riskChanged,
+      }
+    : { ok: false, reason: verdict.reason, detail: verdict.detail };
+});
+
+router.on('workflow.replay', async ({ workflowId, inputs }) => {
+  const session = await getOrCreateSession();
+  const outcome = await workflowReplayer.replay({
+    workflowId,
+    sessionId: session.id,
+    inputs: inputs ?? {},
+  });
+  if (!outcome.ok) return { ok: false, reason: outcome.reason, detail: outcome.detail };
+  return {
+    ok: outcome.result.status === 'completed',
+    taskId: outcome.taskId,
+    status: outcome.result.status,
+    summary: outcome.result.summary,
+    steps: outcome.result.steps.map((step) => ({
+      step: step.stepId,
+      ran: step.ran,
+      status: step.status,
+    })),
+  };
+});
+
+router.on('workflow.cancelReplay', ({ taskId }) =>
+  Promise.resolve({ cancelled: workflowReplayer.cancel(taskId) }),
+);
 
 router.on('tools.list', () =>
   Promise.resolve({

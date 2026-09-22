@@ -106,6 +106,23 @@ export interface ToolRegistryOptions {
    * the registry hands the context to one subscriber, so a connector inherits
    * what the task accumulated instead of inventing a clean context.
    */
+  /**
+   * Notified after a dispatch has fully resolved.
+   *
+   * Strictly observational, and the type is what makes that true rather than
+   * a rule someone has to remember. The observer receives a
+   * `DispatchObservation` — a derived, deep-cloned, recursively frozen record
+   * — and never the live `ToolInvocation` or `ToolDispatchResult`. It gets no
+   * policy object, no permission decision, no evidence payload and no
+   * `AbortSignal`, so there is nothing in its hands that authorisation could
+   * be expressed through.
+   *
+   * It is called after the result exists, on a path the `return` does not
+   * depend on, and anything it throws is caught. An observer therefore cannot
+   * modify, block, retry or re-authorise a call that has already been
+   * decided. See `observe` below.
+   */
+  readonly onDispatched?: (observation: DispatchObservation) => void;
   readonly publishSecurityContext?: (
     taskId: string,
     context: {
@@ -115,6 +132,32 @@ export interface ToolRegistryOptions {
       taintSignature: string;
     },
   ) => void;
+}
+
+/**
+ * What an observer is allowed to know about a completed dispatch.
+ *
+ * Deliberately the minimum P-022 recording needs. Every field is a value or a
+ * frozen clone; nothing here references live state, and nothing here is an
+ * object a control reads. Adding a field is a security decision, not a
+ * convenience.
+ */
+export interface DispatchObservation {
+  readonly taskId: string;
+  readonly toolCallId: string;
+  /** Canonical tool name, after wire-name translation. */
+  readonly tool: string;
+  /** The schema-validated arguments, deep-cloned and frozen. */
+  readonly arguments: Readonly<Record<string, unknown>>;
+  /** Risk actually applied, after argument-aware escalation. */
+  readonly risk: RiskLevel;
+  /** Whether the call reached the tool implementation. */
+  readonly executed: boolean;
+  readonly status: 'success' | 'error';
+  /** The canonical failure code, when there was one. Never a message. */
+  readonly errorCode?: string;
+  /** Tab the call acted on, when one applied. */
+  readonly tabId?: number;
 }
 
 export class ToolRegistry {
@@ -170,8 +213,75 @@ export class ToolRegistry {
    *
    * Never throws: every failure path returns an envelope, because an
    * unhandled exception here would become untrusted text in model context.
+   *
+   * The observation hook fires here rather than inside `run`, and that
+   * placement is the enforcement: the result already exists and is already
+   * the value this method returns, so nothing an observer does can reach it.
+   * Sprinkling the call through `run`'s several return points would have made
+   * the ordering a convention instead of a structure.
    */
   async dispatch(invocation: ToolInvocation): Promise<ToolDispatchResult> {
+    const result = await this.run(invocation);
+    this.observe(invocation, result);
+    return result;
+  }
+
+  /**
+   * Hands an observer a frozen copy of what happened.
+   *
+   * Three things make this observation-only rather than merely
+   * documented-as-observation-only:
+   *
+   *  - the observer is given a `DispatchObservation`, which has no reference
+   *    to the invocation or the result;
+   *  - every value in it is structure-cloned and then recursively frozen, so
+   *    a mutation attempt throws in strict mode and changes nothing either
+   *    way;
+   *  - it is called after the result is final, and anything it throws is
+   *    caught here. An observer cannot block a call that was already
+   *    authorised and already ran.
+   *
+   * A clone that fails is not worked around: the observation is dropped
+   * rather than substituted with a live reference.
+   */
+  private observe(invocation: ToolInvocation, result: ToolDispatchResult): void {
+    const observer = this.options.onDispatched;
+    if (!observer) return;
+
+    let observation: DispatchObservation;
+    try {
+      observation = deepFreeze({
+        taskId: invocation.taskId,
+        toolCallId: invocation.toolCallId,
+        tool: fromWireName(invocation.name),
+        arguments: structuredClone(invocation.arguments),
+        risk: result.risk,
+        executed: result.executed,
+        status: result.envelope.status,
+        ...(result.envelope.error === undefined ? {} : { errorCode: result.envelope.error.code }),
+        ...(invocation.tabId === undefined ? {} : { tabId: invocation.tabId }),
+      });
+    } catch (caught) {
+      log.warn('A dispatch observation could not be prepared and was dropped.', {
+        tool: fromWireName(invocation.name),
+        error: caught instanceof Error ? caught.name : 'unknown',
+      });
+      return;
+    }
+
+    try {
+      observer(observation);
+    } catch (caught) {
+      // Swallowed on purpose. An observer is a bystander; one that throws is
+      // a broken bystander, not a veto.
+      log.warn('A dispatch observer threw and was ignored.', {
+        tool: observation.tool,
+        error: caught instanceof Error ? caught.name : 'unknown',
+      });
+    }
+  }
+
+  private async run(invocation: ToolInvocation): Promise<ToolDispatchResult> {
     const canonicalName = fromWireName(invocation.name);
     const tool = this.tools.get(canonicalName);
 
@@ -455,6 +565,21 @@ export class ToolRegistry {
 }
 
 /** `browser.click` → `browser_click`. */
+export /**
+ * Freezes a structure all the way down.
+ *
+ * `Object.freeze` is shallow, so freezing only the top of an observation
+ * would leave `arguments.someObject.field` writable — which is precisely the
+ * field an observer would reach for.
+ */
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value;
+  for (const nested of Object.values(value as Record<string, unknown>)) {
+    deepFreeze(nested);
+  }
+  return Object.freeze(value);
+}
+
 export function toWireName(name: string): string {
   return name.replace(/\./g, '_');
 }

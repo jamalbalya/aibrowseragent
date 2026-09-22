@@ -6,10 +6,12 @@ import { TaskView } from './components/TaskView';
 import { PermissionPrompt } from './components/PermissionPrompt';
 import { FilePrompt } from './components/FilePrompt';
 import { SettingsView } from './components/SettingsView';
+import { WorkflowsView } from './components/WorkflowsView';
 
 export function App(): React.JSX.Element {
   const agent = useAgentState();
   const [showSettings, setShowSettings] = useState(false);
+  const [showWorkflows, setShowWorkflows] = useState(false);
 
   // A provider that has not demonstrated tool calling cannot run a task, so
   // the composer is disabled rather than letting the task fail at the first
@@ -33,6 +35,21 @@ export function App(): React.JSX.Element {
     );
   }
 
+  if (showWorkflows) {
+    return (
+      <div className="app">
+        <WorkflowsView
+          activeTaskId={agent.activeTask?.id ?? null}
+          onClose={() => setShowWorkflows(false)}
+          onReplayStarted={(taskId) => {
+            agent.setActiveTaskId(taskId);
+            void agent.refresh();
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <Header
@@ -40,6 +57,7 @@ export function App(): React.JSX.Element {
         permissionMode={agent.permissionMode}
         onChangeMode={(mode) => void agent.changePermissionMode(mode)}
         onOpenSettings={() => setShowSettings(true)}
+        onOpenWorkflows={() => setShowWorkflows(true)}
       />
 
       {agent.error ? (

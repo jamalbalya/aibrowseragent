@@ -58,10 +58,20 @@ What works today:
   there is no scripting engine, and workflows ship with the extension rather
   than being created at run time ([docs/skills.md](docs/skills.md)).
 
+- Workflow recording: a task you already ran, saved so you can run it again.
+  A recording stores intent rather than data — anything credential-shaped or
+  page-derived becomes a value you supply at replay — and it is deliberately
+  not a skill: it is never registered, never offered to the model, and runs
+  only when you press Replay. Replaying re-asks every permission, because
+  having recorded a step authorises nothing. Clicks and typing are **not**
+  recorded yet: an element handle names one page read and could never replay,
+  so such a step is left out with a reason rather than saved in a form that
+  cannot run ([docs/workflows.md](docs/workflows.md)).
+
 Not yet implemented: further connectors (Jira, Confluence, Figma, Sheets),
-MCP, plugins, workflow recording, scheduling, and OpenAI's Responses API. Their
-interfaces exist; their implementations do not, and the code raises
-`NOT_IMPLEMENTED` rather than faking a result.
+MCP, plugins, scheduling, and OpenAI's Responses API. Their interfaces exist;
+their implementations do not, and the code raises `NOT_IMPLEMENTED` rather than
+faking a result.
 
 The three adapters have been exercised against local servers implementing each
 provider's documented wire format, including over real sockets in real

@@ -425,6 +425,40 @@ Running a workflow costs an approval for the run **plus** whatever its steps
 would have cost individually — measured in real Chromium, not asserted. See
 [skills.md](skills.md).
 
+### A recording is not a permission
+
+Workflow recording (P-022) saves the steps a task took so you can run them
+again. It reuses the skill definition, validator, runner and dispatch path
+unchanged, and adds no execution code of its own.
+
+The boundary rests on four properties:
+
+- **A recording authorises nothing.** Every step is re-adjudicated at replay,
+  against the world as it is then. A site blocked since, a connector
+  disconnected since, a tool removed since or a risk raised since each refuses
+  the replay at the moment it applies.
+- **A recording is never model-reachable.** It is not registered, does not
+  appear in `skills.list`, and there is no `workflow.*` tool. Registration is
+  what makes something model-invokable, and nobody has reviewed the combination
+  of tools a user's recording reaches. Replay is an explicit user action and
+  nothing else.
+- **A recording stores intent, never data.** Secret detection runs on every
+  value regardless of provenance, sensitivity forces a slot by argument name,
+  and taint decides the rest — three independent controls in a fixed order,
+  where `KNOWN_UNTAINTED` establishes provenance and says nothing about whether
+  a value is safe to keep. A task with `UNKNOWN` provenance contributes nothing
+  at all.
+- **A stored definition is the store's to identify.** The store canonicalises
+  and hashes what it is about to persist; a caller cannot supply a hash. The
+  hash is re-derived before every replay, so a record altered underneath the
+  store is refused rather than run.
+
+The observation hook the recorder sits on is an observer only: it receives a
+deep-cloned, recursively frozen record of a completed dispatch, carrying no
+security, policy, permission or evidence state and no live reference to
+anything the dispatch path uses, on a path the return value does not depend on,
+with exceptions caught. See [workflows.md](workflows.md).
+
 ## Reporting a vulnerability
 
 Open a security advisory on the repository rather than a public issue.

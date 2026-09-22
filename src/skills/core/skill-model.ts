@@ -55,7 +55,47 @@ export type SkillBinding =
       readonly step: string;
       /** Dotted path into that step's result, e.g. `handles.0.id`. */
       readonly path: string;
-    };
+    }
+  | ElementBinding;
+
+/**
+ * An element handle, re-resolved against a page read at run time.
+ *
+ * The fourth binding, and the only one added since P-024. It exists because
+ * an element handle is **unrecordable**: `elementId` is minted by one
+ * `browser.read_page` in one task and is deliberately refused once stale, so
+ * a workflow that stored one would be a workflow that could never replay. The
+ * alternatives were a positional index, which is silently wrong the moment a
+ * page changes, or recording no interactions at all.
+ *
+ * It is data, not a language. `role` and `name` are compared literally
+ * against the semantic page model — there is no selector syntax, no pattern,
+ * no expression, and nothing here is ever passed to the DOM or evaluated.
+ * That matters: a CSS or XPath field would have been a hidden execution
+ * language wearing a declarative hat.
+ *
+ * Every ambiguity fails closed. See `resolveElement` in the runner for what
+ * "closed" means at each point.
+ */
+export interface ElementBinding {
+  readonly kind: 'element';
+  /** The step whose `browser.read_page` result is searched. */
+  readonly step: string;
+  /** ARIA role, compared exactly. */
+  readonly role: string;
+  /** Accessible name, compared exactly after trimming. */
+  readonly name: string;
+  /**
+   * Which match to take, in the page model's own document order.
+   *
+   * Omitted means "there must be exactly one". Supplying it is how a caller
+   * says a duplicate is expected and which one is meant; it never turns an
+   * ambiguous match into a guess.
+   */
+  readonly nth?: number;
+  /** Refuses a match that is not this kind of control, when it matters. */
+  readonly expect?: 'enabled' | 'visible' | 'editable';
+}
 
 export type SkillInputType = 'string' | 'number' | 'boolean';
 
@@ -156,7 +196,7 @@ export interface SkillDefinition {
  * `SkillDefinition`-shaped object, and it must be possible to hold one without
  * it being executable.
  */
-export type SkillProvenance = 'bundled' | 'model_proposed' | 'imported' | 'unknown';
+export type SkillProvenance = 'bundled' | 'recorded' | 'model_proposed' | 'imported' | 'unknown';
 
 /** The only provenance the registry will accept. */
 export const TRUSTED_PROVENANCE: SkillProvenance = 'bundled';
@@ -202,6 +242,19 @@ export interface SkillValidationContext {
   readonly hasTool: (name: string) => boolean;
   /** An already-registered skill at this exact version, for composition. */
   readonly getSkill?: (id: string, version: string) => SkillDefinition | undefined;
+  /**
+   * Which provenances this caller will accept.
+   *
+   * Defaults to `bundled` alone, which is what `SkillRegistry` passes — a
+   * registered skill is model-invokable through `skills.list`, so only
+   * definitions a human reviewed as source belong there.
+   *
+   * The workflow store passes `recorded` instead. That is not a relaxation:
+   * a recording is never registered, never listed and never model-invokable,
+   * and it authorises nothing, because replay re-adjudicates every step.
+   * Model-written, imported and unknown definitions are accepted by neither.
+   */
+  readonly allowProvenance?: readonly SkillProvenance[];
 }
 
 /**
@@ -228,12 +281,13 @@ export function validateSkillDefinition(
   if (!RISK_LEVELS.includes(definition.risk)) {
     problems.push(`"${String(definition.risk)}" is not a risk level`);
   }
-  if (definition.provenance !== TRUSTED_PROVENANCE) {
+  const allowed = context.allowProvenance ?? [TRUSTED_PROVENANCE];
+  if (!allowed.includes(definition.provenance)) {
     // The one check that makes a model-written definition inert. A proposal
-    // can be held, logged and shown; it cannot be registered.
+    // can be held, logged and shown; it cannot be stored as executable.
     problems.push(
-      `a skill may only be registered with "${TRUSTED_PROVENANCE}" provenance, not ` +
-        `"${definition.provenance}"`,
+      `this definition may only carry ${allowed.map((p) => `"${p}"`).join(' or ')} provenance, ` +
+        `not "${definition.provenance}"`,
     );
   }
 
@@ -348,7 +402,78 @@ function validateBindings(
       // mistake from here, and both would be a value read before it exists.
       problems.push(`${where} reads step "${binding.step}", which does not run before it`);
     }
+
+    if (binding.kind === 'element') {
+      problems.push(...validateElementBinding(binding, where));
+      continue;
+    }
+
     problems.push(...validatePath(binding.path, where));
+  }
+
+  return problems;
+}
+
+/**
+ * Anything that would turn a declarative match into a selector language.
+ *
+ * `role` and `name` are compared literally against the page model, so a value
+ * carrying selector or scheme syntax is either a mistake or an attempt to
+ * smuggle one in. Neither should register.
+ */
+const SELECTOR_SHAPED = /[<>{}()[\]$*|\\/]|^[.#]|javascript:|data:|::|=>/i;
+
+/**
+ * A role is an ARIA role token, so it is held to a much narrower shape.
+ *
+ * `button` is a role; `button.primary`, `button[type=submit]` and
+ * `//button[1]` are selectors. The shape rule above catches most of those but
+ * not a plain `tag.class`, and a role is the one field where nothing outside a
+ * lowercase token is ever legitimate — so it is checked against what it may
+ * be rather than against what it may not.
+ *
+ * An accessible name is not held to this: names contain dots, spaces and
+ * punctuation ("Save file.txt", "Open example.com"), so the shape rule is the
+ * right check there.
+ */
+const ROLE_TOKEN = /^[a-z][a-z-]{0,39}$/;
+
+function validateElementBinding(binding: ElementBinding, where: string): string[] {
+  const problems: string[] = [];
+
+  for (const [field, value] of [
+    ['role', binding.role],
+    ['name', binding.name],
+  ] as const) {
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      problems.push(`${where} needs a ${field} to match on`);
+      continue;
+    }
+    if (value.length > 200) problems.push(`${where} has a ${field} that is too long`);
+    if (field === 'role') {
+      if (!ROLE_TOKEN.test(value.trim().toLowerCase())) {
+        problems.push(`${where} has a role that looks like a selector or a URL scheme`);
+      }
+      continue;
+    }
+    // A CSS or XPath field would be a hidden execution language wearing a
+    // declarative hat, so the shape is refused rather than sanitised.
+    if (SELECTOR_SHAPED.test(value)) {
+      problems.push(`${where} has a name that looks like a selector or a URL scheme`);
+    }
+  }
+
+  if (binding.nth !== undefined) {
+    if (!Number.isInteger(binding.nth) || binding.nth < 0 || binding.nth > 200) {
+      problems.push(`${where} has an unusable nth`);
+    }
+  }
+
+  if (
+    binding.expect !== undefined &&
+    !['enabled', 'visible', 'editable'].includes(binding.expect)
+  ) {
+    problems.push(`${where} expects "${String(binding.expect)}", which is not a known condition`);
   }
 
   return problems;

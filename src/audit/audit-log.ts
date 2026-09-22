@@ -46,6 +46,8 @@ export const AUDIT_EVENT_TYPES = [
   'skill.started',
   'skill.step',
   'skill.finished',
+  'workflow.recorded',
+  'workflow.replay',
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
@@ -99,6 +101,14 @@ export interface AuditEvent {
   readonly scopes?: readonly string[];
   /** Connector authorization state, e.g. `READY`. */
   readonly connectorState?: string;
+  /**
+   * Recorded-workflow identity (P-022). An opaque id, never its steps.
+   *
+   * Paired with `skillVersion` for the record's version and `skillHash` for
+   * the definition hash, so a reader can tell which stored definition ran
+   * without the trail holding any of what it did.
+   */
+  readonly workflowId?: string;
   /** Skill identity, for a workflow run. Never its inputs or its results. */
   readonly skillId?: string;
   readonly skillVersion?: string;

@@ -7,6 +7,7 @@ interface HeaderProps {
   readonly permissionMode: PermissionMode;
   readonly onChangeMode: (mode: PermissionMode) => void;
   readonly onOpenSettings: () => void;
+  readonly onOpenWorkflows: () => void;
 }
 
 /**
@@ -21,6 +22,7 @@ export function Header({
   permissionMode,
   onChangeMode,
   onOpenSettings,
+  onOpenWorkflows,
 }: HeaderProps): React.JSX.Element {
   const status = describeStatus(connection);
 
@@ -28,9 +30,14 @@ export function Header({
     <header className="header">
       <div className="header__row">
         <h1 className="header__title">AI Browser Agent</h1>
-        <button type="button" className="button button--ghost" onClick={onOpenSettings}>
-          Settings
-        </button>
+        <span className="header__actions">
+          <button type="button" className="button button--ghost" onClick={onOpenWorkflows}>
+            Workflows
+          </button>
+          <button type="button" className="button button--ghost" onClick={onOpenSettings}>
+            Settings
+          </button>
+        </span>
       </div>
 
       <div className="header__row">

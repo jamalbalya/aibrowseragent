@@ -99,9 +99,9 @@ capability, not necessarily a test of the capability itself.
 | Status          | Count  |
 | --------------- | ------ |
 | PASS            | 30     |
-| PARTIAL         | 5      |
+| PARTIAL         | 6      |
 | INTERFACES-ONLY | 0      |
-| NOT-STARTED     | 5      |
+| NOT-STARTED     | 4      |
 | **Total**       | **40** |
 
 These counts are checked against the table below, and the table against
@@ -110,9 +110,15 @@ separate classes of error have actually occurred here: a revision that claimed
 17 PASS while its own table said 23, and a revision whose per-column coverage
 claims were not backed by any test. The check now covers both.
 
-Movement in this revision: skills (P-024) move from NOT-STARTED to PARTIAL,
-taking PARTIAL from 4 to 5 and NOT-STARTED from 6 to 5. **Not** PASS, for a
-reason stated below.
+Movement in this revision: workflow recording (P-022) moves from NOT-STARTED
+to PARTIAL, taking PARTIAL from 5 to 6 and NOT-STARTED from 5 to 4. **Not**
+PASS, for a reason stated below that is a genuine gap against the
+specification rather than a missing test.
+
+### Earlier movement, kept for the record
+
+Skills (P-024) moved from NOT-STARTED to PARTIAL, taking PARTIAL from 4 to 5
+and NOT-STARTED from 6 to 5. **Not** PASS, for a reason stated below.
 
 ### Earlier movement, kept for the record
 
@@ -234,7 +240,7 @@ rather than folded into the verdict.
 | P-019 | Notifications                        | yes  | yes  | —           | —        | —   | PASS        |
 | P-020 | Scheduled tasks                      | no   | —    | —           | —        | —   | NOT-STARTED |
 | P-021 | Shortcuts                            | no   | —    | —           | —        | —   | NOT-STARTED |
-| P-022 | Workflow recording                   | no   | —    | —           | —        | —   | NOT-STARTED |
+| P-022 | Workflow recording                   | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-023 | Connector framework                  | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-024 | Skills                               | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-025 | Plugins                              | no   | —    | —           | —        | —   | NOT-STARTED |
@@ -298,6 +304,39 @@ anything real.
 
 Nothing here is blocked externally. Both reasons resolve by building more, not
 by obtaining anything.
+
+**P-022 Workflow recording** — Recording and replay are implemented, on top
+of the skill definition, validator, runner and dispatch path rather than
+beside them: P-022 added no execution code. The recorder observes completed
+dispatches through a hook that hands it a deep-cloned, frozen record carrying
+no result and no authorization state; a store owns each definition's canonical
+form, hash and version; and replay revalidates and then runs every step
+through the one `ToolRegistry.dispatch`, so each is re-adjudicated by the same
+policy, permission and egress gates that adjudicated it when it was recorded.
+A recording is never registered, never appears in `skills.list` and is never
+model-selectable — replay is an explicit user action. Covered by a unit suite,
+an integration suite, a sixteen-case security suite and a real-Chromium E2E
+suite, with each source-scan and real-browser claim proved to fail when its
+mechanism is removed.
+
+PARTIAL for one reason, and it is a gap against the specification rather than
+a missing test. Specification §49 asks for recorded actions to be converted
+into semantic ones — `click button "Submit"` rather than a brittle
+`div:nth-child(7)`. **Element interactions are not recorded at all yet.** The
+semantic form exists: a declarative role-and-name binding that both the
+validator and the runner support, re-resolved against a fresh page read. What
+is missing is the conversion at record time, because a click's argument is a
+handle valid only within the page read that minted it, and the dispatch
+observation the recorder sees deliberately carries no result to convert it
+from. Rather than store a handle that is refused as stale on every replay —
+confirmed in real Chromium — such a step is left out of the recording with a
+reason. Recording therefore covers navigation, page reads, and tab and
+connector steps, and says plainly what it dropped.
+
+Resolving it needs a decision this project has not taken: how the recorder
+learns an element's semantic identity without a dispatch observation carrying
+a step result, and whether an accessible name read from a page may be stored
+as a literal. Both are outside what P-022 was authorised to change.
 
 **P-023 Connector framework** — The framework is implemented and one adapter
 exists, for GitHub: OAuth (authorization code + PKCE, no client secret), a

@@ -137,7 +137,12 @@
     },
     "P-020": {},
     "P-021": {},
-    "P-022": {},
+    "P-022": {
+      "unit": ["tests/unit/workflow-recording.test.ts"],
+      "integration": ["tests/integration/workflow-lifecycle.test.ts"],
+      "security": ["tests/security/workflow-security.test.ts"],
+      "e2e": ["tests/e2e/workflows.spec.ts"]
+    },
     "P-023": {
       "unit": [
         "tests/unit/oauth-flow.test.ts",

@@ -45,6 +45,8 @@ export function createHarness(
     /** Supplying this exercises the real egress gate inside the registry. */
     egress?: ToolRegistryOptions['egress'];
     resolveTabUrl?: ToolRegistryOptions['resolveTabUrl'];
+    /** The observation hook, for the workflow recorder's tests. */
+    onDispatched?: ToolRegistryOptions['onDispatched'];
   } = {},
 ): Harness {
   const area = new SerializedStorageArea(new MemoryStorageArea());
@@ -69,6 +71,7 @@ export function createHarness(
     loadPolicyContext,
     ...(options.egress === undefined ? {} : { egress: options.egress }),
     ...(options.resolveTabUrl === undefined ? {} : { resolveTabUrl: options.resolveTabUrl }),
+    ...(options.onDispatched === undefined ? {} : { onDispatched: options.onDispatched }),
   });
   registry.registerAll(tools);
 

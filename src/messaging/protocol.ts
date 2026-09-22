@@ -29,6 +29,40 @@ export interface ExtensionMessage<TType extends string = string, TPayload = unkn
   readonly correlationId?: string;
 }
 
+/**
+ * A recorded workflow as the side panel sees it.
+ *
+ * Carries the steps and their stored arguments, because reviewing a workflow
+ * means seeing exactly what it will do. Anything that could not be shown
+ * safely was never stored as a literal in the first place — the recorder
+ * turns it into an input the user supplies at replay.
+ */
+export interface WorkflowSummary {
+  readonly workflowId: string;
+  readonly version: number;
+  readonly formatVersion: number;
+  readonly name: string;
+  readonly description: string;
+  readonly definitionHash: string;
+  readonly risk: string;
+  readonly tools: readonly string[];
+  readonly recordedAt: number;
+  readonly updatedAt: number;
+  readonly taintAtCapture: string;
+  readonly steps: readonly {
+    readonly id: string;
+    readonly tool: string;
+    readonly description: string;
+    readonly arguments: Readonly<Record<string, { kind: string; detail: string }>>;
+  }[];
+  readonly inputs: readonly {
+    readonly name: string;
+    readonly type: string;
+    readonly required: boolean;
+    readonly description: string;
+  }[];
+}
+
 /** Request/response pairs handled by the service worker. */
 export interface PanelRequestMap {
   'task.create': {
@@ -252,6 +286,93 @@ export interface PanelRequestMap {
       }[];
     };
   };
+  /**
+   * Recorded workflows (P-022).
+   *
+   * Read, replay and delete. There is deliberately no `workflow.register`,
+   * `workflow.install` or anything that would put a recording into the skill
+   * registry: registration is what makes something model-invokable, and a
+   * recording has had no review of the *combination* of tools it reaches. A
+   * recorded workflow therefore never appears in `skills.list`, is never
+   * offered to a model, and runs only through `workflow.replay` below — which
+   * is reachable only from this surface, and only when a person asks.
+   *
+   * Recording and saving are separate from replaying on purpose: nothing in
+   * the record/stop/save/review half of this map executes a single step.
+   */
+  'workflow.recordStart': {
+    request: { taskId: string };
+    response: { recording: boolean; taskId: string };
+  };
+  /**
+   * Ends a recording and stores what it captured. Runs nothing.
+   *
+   * The name and description come from the user, at the moment they decide to
+   * keep the recording, which is the review step in the lifecycle.
+   */
+  'workflow.recordStop': {
+    request: { name: string; description: string };
+    response: {
+      workflow: WorkflowSummary | null;
+      /** Calls that were seen but not recorded, and why. */
+      skipped: { tool: string; reason: string }[];
+    };
+  };
+  'workflow.recordCancel': { request: Record<string, never>; response: { ok: true } };
+  'workflow.recordStatus': {
+    request: Record<string, never>;
+    response: {
+      recording: boolean;
+      taskId: string;
+      stepCount: number;
+      skipped: { tool: string; reason: string }[];
+    };
+  };
+  'workflow.list': { request: Record<string, never>; response: { workflows: WorkflowSummary[] } };
+  'workflow.get': {
+    request: { workflowId: string };
+    response: { workflow: WorkflowSummary | null };
+  };
+  'workflow.remove': { request: { workflowId: string }; response: { ok: true } };
+  /**
+   * Re-checks a stored workflow without running it.
+   *
+   * So the review surface can say why a workflow will not run — a removed
+   * tool, a changed schema, a record that no longer matches its hash — rather
+   * than finding out by executing half of it.
+   */
+  'workflow.revalidate': {
+    request: { workflowId: string };
+    response: {
+      ok: boolean;
+      reason?: string;
+      detail?: string;
+      /** Recomputed now, not read from the stored record. */
+      risk?: string;
+      tools?: string[];
+      riskChanged?: boolean;
+    };
+  };
+  /**
+   * Runs a stored workflow, as an explicit user action.
+   *
+   * Every step still goes through `ToolRegistry.dispatch`, so the permission
+   * prompts, policy checks and egress decisions happen again, against the
+   * world as it is now. Being stored pre-approves nothing.
+   */
+  'workflow.replay': {
+    request: { workflowId: string; inputs?: Record<string, string | number | boolean> };
+    response: {
+      ok: boolean;
+      taskId?: string;
+      status?: string;
+      summary?: string;
+      reason?: string;
+      detail?: string;
+      steps?: { step: string; ran: string; status: string }[];
+    };
+  };
+  'workflow.cancelReplay': { request: { taskId: string }; response: { cancelled: boolean } };
   /** Skill runs for a task, so an interrupted one is visible rather than lost. */
   'skill.runs': {
     request: { taskId?: string };
