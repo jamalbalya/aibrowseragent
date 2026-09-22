@@ -85,6 +85,82 @@ export function scrollIntoView(element: Element): void {
 }
 
 /**
+ * Is something covering this element?
+ *
+ * `isVisible` answers a different question. A button under a full-screen
+ * cookie dialog has a box, is displayed, is not transparent and passes
+ * `checkVisibility` — it is visible in every sense the CSS cascade knows
+ * about, and a person still cannot click it, because the overlay is what
+ * their pointer would hit.
+ *
+ * That gap was found by executing §89's modal procedure, which nothing had
+ * executed before. A synthetic click dispatched at the node reaches it
+ * regardless of what is painted on top, so the extension reported a
+ * successful click on a control no person could have operated. The report
+ * was truthful about what the code did and wrong about what happened on the
+ * page, which is the worst shape an agent's output can take.
+ *
+ * Five points are sampled rather than one, so a tooltip clipping a corner or
+ * a sticky header overlapping an edge does not make a large, genuinely
+ * clickable control unreachable. The element counts as reachable if the
+ * topmost thing at any sampled point is the element, something inside it (a
+ * button's own `<span>`), or something wrapping it (a `<label>`).
+ *
+ * When nothing can be measured — a document with no layout, every point off
+ * screen — this answers "not obscured". The check exists to stop a specific
+ * false success, and an unmeasurable page must not become an unusable one.
+ */
+export function isObscured(element: Element): boolean {
+  const owner = element.ownerDocument;
+  if (typeof owner?.elementFromPoint !== 'function') return false;
+
+  const box = element.getBoundingClientRect();
+  if (box.width === 0 || box.height === 0) return false;
+
+  // Inset from the edges, because a border or a rounded corner at the exact
+  // boundary belongs to whatever is painted behind it.
+  const insetX = Math.min(box.width / 4, 8);
+  const insetY = Math.min(box.height / 4, 8);
+  const points: readonly (readonly [number, number])[] = [
+    [box.left + box.width / 2, box.top + box.height / 2],
+    [box.left + insetX, box.top + insetY],
+    [box.right - insetX, box.top + insetY],
+    [box.left + insetX, box.bottom - insetY],
+    [box.right - insetX, box.bottom - insetY],
+  ];
+
+  let measured = 0;
+  for (const [x, y] of points) {
+    const topmost = owner.elementFromPoint(x, y);
+    if (topmost === null) continue;
+    measured += 1;
+    if (topmost === element || element.contains(topmost) || topmost.contains(element)) {
+      return false;
+    }
+  }
+  return measured > 0;
+}
+
+/**
+ * Brings an element into view and refuses it if something is covering it.
+ *
+ * Scrolling first is the whole reason this is one function rather than two:
+ * an element below the fold is obscured by nothing and off screen entirely,
+ * so hit-testing before the scroll answers a question about the wrong
+ * position.
+ */
+export function scrollIntoViewAndAssertReachable(element: Element): void {
+  scrollIntoView(element);
+  if (isObscured(element)) {
+    throw new TypeError(
+      'Something is covering this element, so a person could not click it here. ' +
+        'A dialog, cookie banner or overlay is usually the cause — deal with that first, ' +
+        'then read the page again.',
+    );
+  }
+}
+
+/**
  * Dispatches one event of a click sequence.
  *
  * Two fallbacks, both of which matter outside a plain browser tab:
@@ -121,7 +197,7 @@ function dispatchClickEvent(element: Element, type: string, init: MouseEventInit
 
 /** Clicks an element the way a user would. */
 export function performClick(element: Element): void {
-  scrollIntoView(element);
+  scrollIntoViewAndAssertReachable(element);
 
   if (element instanceof HTMLElement) {
     const rect = element.getBoundingClientRect();
@@ -174,7 +250,7 @@ export interface TypeOptions {
 }
 
 export function performType(element: Element, text: string, options: TypeOptions = {}): void {
-  scrollIntoView(element);
+  scrollIntoViewAndAssertReachable(element);
 
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
     element.focus({ preventScroll: true });
@@ -231,7 +307,7 @@ export function performSelect(element: Element, value: string): SelectResult {
   if (!(element instanceof HTMLSelectElement)) {
     throw new TypeError('This element is not a select control.');
   }
-  scrollIntoView(element);
+  scrollIntoViewAndAssertReachable(element);
   element.focus({ preventScroll: true });
 
   const options = [...element.options];
@@ -289,7 +365,7 @@ export function performSetChecked(element: Element, checked: boolean): CheckedRe
     );
   }
 
-  scrollIntoView(element);
+  scrollIntoViewAndAssertReachable(element);
   element.focus({ preventScroll: true });
 
   if (element.checked !== checked) {
@@ -398,7 +474,7 @@ export function performSetValue(element: Element, value: string): ValueResult {
     throw new RangeError(`${value} is later than this control's maximum of ${element.max}.`);
   }
 
-  scrollIntoView(element);
+  scrollIntoViewAndAssertReachable(element);
   element.focus({ preventScroll: true });
   // Kept so a rejection can be undone. Assigning is how the browser is asked
   // whether it will accept a value, and its way of saying no is to clear the
@@ -472,7 +548,7 @@ export function performSelectMany(element: Element, values: readonly string[]): 
     resolved.push(match);
   }
 
-  scrollIntoView(element);
+  scrollIntoViewAndAssertReachable(element);
   element.focus({ preventScroll: true });
   const chosen = new Set(resolved);
   for (const option of options) option.selected = chosen.has(option);

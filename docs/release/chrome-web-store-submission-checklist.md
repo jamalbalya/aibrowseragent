@@ -164,7 +164,7 @@ verification and the screenshots in one sitting.
 
 - Upload `release/ai-browser-agent-0.1.0.zip`.
 - Verify the dashboard reports SHA-256
-  `b7db581850067c7d316f4db113f00936bf00652dee699b976fcf2f8399b2e5c0`, or
+  `4c1ed7b9da723d070c2938af08317113af3d5b80ed2dbe67b6de7e80322088af`, or
   re-derive it locally with `sha256sum -c release/*.sha256` before uploading.
 - Complete the permission justifications — the eleven in
   [store-listing.md](store-listing.md) are written to be pasted.

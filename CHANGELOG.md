@@ -74,15 +74,45 @@ and are not implemented.
 - Acceptance packages for specification §85–§90, with 187 evidence citations
   checked against the repository on every build.
 
+### Two defects found by executing the acceptance procedures
+
+Both were invisible to the automated suite, because both were gaps in what it
+asked rather than bugs in what it checked.
+
+**A click that reached a button nobody could have clicked.** Asked to click a
+control underneath a full-screen cookie dialog, the extension did so and
+reported success. A synthetic click reaches the node whatever is painted over
+it, and `isVisible` answers a question about the element rather than about
+what is on top of it. Interactions now hit-test after scrolling and refuse an
+obscured element, naming the likely cause. This is a security property rather
+than polish: an agent that acts on what a person could not see can be steered
+by page layout.
+
+**A corrupt health record that read as a healthy one.** A truncated value took
+the same code path as an absent one, and an absent one means a clean profile —
+so the control whose whole purpose is to fail closed reported HEALTHY over
+unreadable bytes. The container shape is now checked, and an unreadable record
+blocks work with a reason distinct from a read that threw.
+
 ### Verified at this version
 
-|                                       |                        |
-| ------------------------------------- | ---------------------- |
-| Unit, integration and security        | 2098 tests in 78 files |
-| Real Chromium (Playwright)            | 173 tests              |
-| Manual acceptance procedures executed | **0 of 15**            |
-| Dependency vulnerabilities            | 0                      |
+|                                       |                               |
+| ------------------------------------- | ----------------------------- |
+| Unit, integration and security        | 2128 tests in 79 files        |
+| Real Chromium (Playwright)            | 189 tests                     |
+| Manual acceptance procedures executed | **3 of 15** — 1 failed, fixed |
+| Further procedures executed           | 2, not on the original list   |
+| Dependency vulnerabilities            | 0                             |
 
-The manual figure is the one worth reading twice. Fifteen procedures are
-written; none has been run. See
+Three of the fifteen written manual procedures were executed — §89's popup,
+SPA-navigation and modal cases — and the modal one failed. Two further
+procedures were executed that were not on that list: the iframe exclusion,
+and §90's malformed persisted state, which is where the second defect came
+from.
+
+Twelve remain unexecuted: nine need a credential this repository does not
+hold, and three need a person at a machine rather than a headless container.
+
+Executing them turned each into an automated test, so they run on every build
+rather than waiting for somebody to remember. See
 [`docs/testing/acceptance/RESULTS.md`](docs/testing/acceptance/RESULTS.md).

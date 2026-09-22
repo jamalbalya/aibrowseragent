@@ -127,6 +127,26 @@ const healthy = (domain: HealthDomain, now: number): HealthRecord => ({
  * cannot drop one of them, which is the same reason taint is appended that
  * way.
  */
+/**
+ * Is this the *container* shape `snapshot` writes?
+ *
+ * The container only. Individual records inside it are filtered by
+ * `isHealthRecord` further down, and a malformed one is deliberately dropped
+ * rather than interpreted — inventing a state from bytes that do not parse
+ * would be reading meaning into noise, and that decision is settled and
+ * tested elsewhere.
+ *
+ * This guard is about a different failure: the whole stored value not being
+ * an object with a list of records at all. That is not a record this code
+ * could have written, so something else wrote it or a write was interrupted
+ * partway, and either way the evidence must not be discarded by reading it
+ * leniently.
+ */
+function isHealthIndex(value: unknown): value is HealthIndex {
+  if (typeof value !== 'object' || value === null) return false;
+  return Array.isArray((value as { records?: unknown }).records);
+}
+
 export class PersistenceHealthStore {
   /**
    * The floor this worker has seen, which no read can go below.
@@ -208,8 +228,30 @@ export class PersistenceHealthStore {
     const at = this.now();
     let persisted: readonly HealthRecord[] = [];
     let readFailed = false;
+    let unreadableReason = 'health could not be read';
     try {
-      persisted = (await this.area.get<HealthIndex>(KEY))?.records ?? [];
+      const stored: unknown = await this.area.get<HealthIndex>(KEY);
+      if (stored === undefined) {
+        // Nothing has been written yet. A clean profile, not a fault.
+        persisted = [];
+      } else if (isHealthIndex(stored)) {
+        persisted = stored.records;
+      } else {
+        // Present, and not the shape this code writes.
+        //
+        // Found by executing §90's malformed-state procedure. Until then a
+        // corrupt record took the same path as an absent one — `?.records ??
+        // []` yields an empty list for both — so a truncated or rewritten
+        // record reported every domain HEALTHY. That is a fail-open in the
+        // one control whose whole purpose is to fail closed, and the two
+        // cases mean opposite things: nothing written is a clean profile,
+        // while something unreadable is evidence that storage misbehaved.
+        readFailed = true;
+        unreadableReason = 'the health record could not be understood';
+        log.error('Persistence health record is malformed.', {
+          type: stored === null ? 'null' : typeof stored,
+        });
+      }
     } catch (error) {
       readFailed = true;
       log.error('Persistence health could not be read.', {
@@ -227,7 +269,7 @@ export class PersistenceHealthStore {
         candidates.push({
           domain,
           state: 'IRRECOVERABLE',
-          reason: 'health could not be read',
+          reason: unreadableReason,
           since: at,
           reports: 1,
         });

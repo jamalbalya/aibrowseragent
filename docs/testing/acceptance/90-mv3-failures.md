@@ -27,6 +27,42 @@ eviction proves that the code handles the event it was written for.
 
 ---
 
+## Malformed persisted state
+
+**Verdict: `AUTOMATED`. Executed 2026-09-22 — **failed**, defect fixed,
+re-executed MET.**
+
+Not one of §90's five named items, and added because the section's real
+requirement — "task state must remain recoverable" — assumes the bytes on
+disk are well-formed, and they can stop being so. A write interrupted by an
+eviction, a quota hit mid-object, a newer build reading an older shape: none
+are exotic.
+
+- EVIDENCE: tests/e2e/persisted-state.spec.ts :: a corrupt health record does not read as healthy
+- EVIDENCE: tests/e2e/persisted-state.spec.ts :: a corrupt task index does not read back as an empty, healthy profile
+- EVIDENCE: tests/e2e/persisted-state.spec.ts :: a corrupt task record is never resumed as a task with no security state
+- EVIDENCE: tests/e2e/persisted-state.spec.ts :: an audit record edited in storage is reported by the integrity check
+- EVIDENCE: tests/unit/persistence-health.test.ts :: still reads nothing-written-yet as a clean profile
+
+**The health record failed.** It reported `HEALTHY` over a truncated value and
+did not block. The read was `(await get(KEY))?.records ?? []`, so a
+present-but-malformed value took the same path as an absent one, and an empty
+list means a clean profile. Those mean opposite things: nothing written is a
+new install; something unreadable is evidence that storage misbehaved. A
+fail-open in the one control whose whole purpose is to fail closed.
+
+The container shape is now checked, and a value that is not an object holding
+a list of records marks `storage` IRRECOVERABLE with a reason distinct from a
+read that threw — two faults with different remedies. The last citation is the
+control: an absent record must still read as a clean profile, or every first
+run would be blocked.
+
+Each case writes real garbage into real `chrome.storage.local` through the
+extension's own origin and then kills the service worker, so what is measured
+is what a revived worker believes rather than what an in-memory object holds.
+
+---
+
 ## Service worker restart
 
 **Verdict: `AUTOMATED`, against a real Chrome service-worker termination.**

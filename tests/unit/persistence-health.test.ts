@@ -215,6 +215,56 @@ describe('a malformed stored record', () => {
   });
 });
 
+describe('a stored value that is not a health record at all', () => {
+  // Found by executing §90's malformed-state procedure against real extension
+  // storage. The case above — a well-formed container holding records that do
+  // not parse — is deliberately lenient, and stays that way. This is the
+  // other one: the whole stored value is not something this code could have
+  // written. It read as an empty list, and an empty list reads as HEALTHY,
+  // so a corrupt record reported that everything was fine. That is a
+  // fail-open in the control whose only job is to fail closed.
+  const unreadable: [string, unknown][] = [
+    ['a truncated string', '{"records":['],
+    ['a bare string', 'nonsense'],
+    ['a number', 42],
+    ['null', null],
+    ['an array', [{ domain: 'audit', state: 'CORRUPT' }]],
+    ['an object with no records key', { domains: [] }],
+    ['an object whose records is not a list', { records: 'CORRUPT' }],
+  ];
+
+  it.each(unreadable)('treats %s as a storage fault, not as a clean profile', async (_, value) => {
+    const area = new SerializedStorageArea(new MemoryStorageArea());
+    await area.set('persistence-health', value);
+    const snapshot = await new PersistenceHealthStore(area).snapshot();
+
+    const storage = snapshot.records.find((record) => record.domain === 'storage');
+    expect(storage?.state).toBe('IRRECOVERABLE');
+    expect(snapshot.gating).not.toBe('HEALTHY');
+    expect(snapshot.blocked, 'work does not start over an unreadable record').toBe(true);
+  });
+
+  it('still reads nothing-written-yet as a clean profile', async () => {
+    // The positive control, and the distinction the whole fix rests on: an
+    // absent record is a new install, while an unreadable one is evidence.
+    // A guard that could not tell them apart would block every first run.
+    const area = new SerializedStorageArea(new MemoryStorageArea());
+    const snapshot = await new PersistenceHealthStore(area).snapshot();
+    expect(snapshot.records.every((record) => record.state === 'HEALTHY')).toBe(true);
+    expect(snapshot.blocked).toBe(false);
+  });
+
+  it('says the record could not be understood, not that it could not be read', async () => {
+    // Two different faults with two different remedies, and a reason that
+    // conflated them would send someone looking at the wrong one.
+    const area = new SerializedStorageArea(new MemoryStorageArea());
+    await area.set('persistence-health', 'nonsense');
+    const snapshot = await new PersistenceHealthStore(area).snapshot();
+    const storage = snapshot.records.find((record) => record.domain === 'storage');
+    expect(storage?.reason).toContain('could not be understood');
+  });
+});
+
 describe('what a blocked user is told', () => {
   it('names the situation without leaking a storage error', async () => {
     const { store } = newStore();

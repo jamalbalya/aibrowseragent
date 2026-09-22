@@ -13,9 +13,16 @@ success: clicking a different element because the intended one is gone,
 reading a page that is not the page the model read, filing an empty screenshot
 as evidence.
 
-Eight items are `AUTOMATED`. Four — iframe, popup, SPA navigation and modal —
-are not covered, and two of those are architectural limits rather than gaps.
-They are listed as unmet rather than reinterpreted into something that is.
+Eleven items are now `AUTOMATED` and one is `NOT POSSIBLE HERE`. Four of the
+eleven — popup, SPA navigation, modal and the iframe exclusion — were gaps
+until 2026-09-22, when the procedures written here were executed against the
+built extension in real Chromium.
+
+**The modal procedure failed.** It is the reason the others were worth
+executing too: the extension reported a successful click on a button
+underneath a full-screen overlay, which is the exact shape this package was
+written to catch. The defect is fixed and the procedure now passes; see
+[RESULTS.md](RESULTS.md) for what the failure was.
 
 | Item                 | Verdict                                      |
 | -------------------- | -------------------------------------------- |
@@ -116,6 +123,20 @@ three are needed: the first two without the third is an infinite loop.
   injected into frames at all. There is no iframe behaviour to test, because
   the extension does not reach inside one.
 
+**Executed 2026-09-22.** The exclusion is now demonstrated rather than
+asserted from the manifest, and against the harder case: the child document is
+_same-origin_, which the browser would otherwise allow. Frame 0 answers a
+content-script message and frame 1 does not; the page model holds the outer
+document's button and nothing from the child; an invented handle is refused
+and the child's field is untouched.
+
+- EVIDENCE: tests/e2e/browser-failures.spec.ts :: the page model holds the outer document and nothing from the frame
+- EVIDENCE: tests/e2e/browser-failures.spec.ts :: Chrome injected the content script into exactly one frame
+- EVIDENCE: tests/e2e/browser-failures.spec.ts :: the frame really loaded, so the exclusion is not an empty page
+
+The third is the control: without it, a broken page that loaded nothing would
+produce the same result as a correct exclusion.
+
 This is a deliberate security position, not an oversight. Widening
 `all_frames` would inject the content script into every cross-origin frame on
 every page — including ad frames and embedded third-party widgets — which is a
@@ -134,28 +155,19 @@ cannot see the element rather than failing in some other way, which is the
 
 ## Popup
 
-**Verdict: `MANUAL`. Not covered by any automated test.**
+**Verdict: `AUTOMATED`. Executed 2026-09-22 — MET.**
 
-No automated test opens a `window.open` popup and asserts what happens. This
-is a genuine gap, not an architectural limit: a popup is an ordinary tab, and
-the tab-ownership rules should apply to it. Whether they do has not been
-demonstrated.
+- EVIDENCE: tests/e2e/browser-failures.spec.ts :: a target=_blank link really opens a second tab, and the agent sees both
+- EVIDENCE: tests/e2e/browser-failures.spec.ts :: the content script is injected into the popup, so it is automatable
 
-### Procedure P-1 — manual
+Both routes into a second tab are exercised — a `target=_blank` link and a
+`window.open` call — and the tab count is read from `chrome.tabs` before and
+after, so the popup is established as real rather than assumed.
 
-1. Open a page with a link carrying `target="_blank"`, or a button calling
-   `window.open`.
-2. Ask the agent to click it.
-3. Observe:
-   - whether the agent notices the new tab at all;
-   - whether it treats the new tab as its own or as the user's — the
-     distinction that decides the risk level of acting in it;
-   - whether acting in the popup raises a permission prompt.
-
-Record what happened even if it was correct. This item exists precisely
-because nobody has looked.
-
----
+The second assertion is the one worth having. A popup the agent can _see_ but
+cannot _act on_ is a worse state than one it cannot see, because the failure
+arrives later and further from its cause. The content script really is
+injected, and answers a page read inside the new tab.
 
 ## Redirect
 
@@ -179,53 +191,49 @@ security side.
 
 ## SPA navigation
 
-**Verdict: `MANUAL`. Not covered by any automated test.**
+**Verdict: `AUTOMATED`. Executed 2026-09-22 — MET.**
 
-Nothing in the suite exercises a route change performed by `history.pushState`
-without a document load. The question the item is really asking is whether the
-page model goes stale silently when the URL changes but the document does not
-— which is the `stale element` failure arriving through a door nothing
-watches.
+- EVIDENCE: tests/e2e/browser-failures.spec.ts :: a handle from before a client-side route change is refused, not resolved
+- EVIDENCE: tests/e2e/browser-failures.spec.ts :: a fresh read after the route change sees the new route and not the old
 
-### Procedure S-1 — manual
+The question was whether the page model goes stale _silently_ when the URL
+changes but the document does not — the `stale element` failure arriving
+through a door nothing watched. It does not: a handle issued before the
+`pushState` is refused with `ELEMENT_NOT_FOUND` and a message telling the
+caller to read the page again, which is what makes it recoverable rather than
+a dead end.
 
-1. Open a single-page application — any React or Vue router demo, or a site
-   you know uses client-side routing.
-2. Ask the agent to read the page.
-3. Navigate within the app **yourself**, using the app's own links, without a
-   full page load.
-4. Ask the agent to click an element it saw in step 2.
-
-Met when the agent reports the element is gone or the page has changed. Not
-met if it clicks something on the new route, or reports success having clicked
-nothing. Record the URL before and after, and whether the document actually
-reloaded — some routers do force a load, which makes the test inconclusive
-rather than passing.
-
----
+Both directions are asserted. A build that refused everything after any route
+change would satisfy the first and fail the second.
 
 ## Modal
 
-**Verdict: `MANUAL`. Not covered by any automated test.**
+**Verdict: `AUTOMATED`. Executed 2026-09-22 — **failed**, defect fixed,
+re-executed MET.**
 
-The page model has no special handling for `<dialog>`, `aria-modal`, or the
-inert background a modal creates. An element behind an open modal is not
-clickable by a person, and nothing currently tells the model that.
+- EVIDENCE: tests/e2e/browser-failures.spec.ts :: clicking the obscured element: what the extension actually does
+- EVIDENCE: tests/e2e/browser-failures.spec.ts :: what the browser itself says about the obscured element
+- EVIDENCE: tests/e2e/browser-failures.spec.ts :: dismissing the modal first makes the element reachable
+- EVIDENCE: tests/unit/occlusion.test.ts :: reports obscured when an overlay is topmost at every point
+- EVIDENCE: tests/unit/occlusion.test.ts :: throws when the element is covered, naming the cause and the way out
 
-### Procedure M-1 — manual
+**This is the item that found something.** On first execution the extension
+reported a successful click on a "Buy now" button underneath a full-screen
+overlay, and the page recorded the click. A synthetic click reaches the node
+whatever is painted over it, and nothing hit-tested. `isVisible` answered
+correctly and answered a different question: the button was displayed, opaque,
+had a box and passed `checkVisibility`, none of which notice what is on top.
 
-1. Open a page with a modal dialog — a cookie consent banner that blocks the
-   page works well and is easy to find.
-2. Ask the agent to read the page, then to click something _behind_ the modal.
-3. Observe whether the click is refused, or is attempted and reported as
-   succeeding.
+The engine now samples the element's centre and four inset corners after
+scrolling, through `scrollIntoViewAndAssertReachable`, and refuses with
+`ELEMENT_NOT_INTERACTABLE` naming the likely cause. Five points rather than
+one, so a tooltip clipping a corner does not make a large control
+unreachable; an ancestor or descendant counts as the element, so a `<label>`
+or a button's own `<span>` is not mistaken for an obstruction.
 
-Met when the agent either reports the element is not interactable or
-interacts with the modal first. Not met if it reports a successful click on an
-element a person could not have clicked. This is worth doing early: a false
-success here is the shape of failure most likely to mislead a user.
-
----
+The positive control matters as much as the refusal: dismissing the dialog
+first makes the same button clickable. A build that simply refused everything
+would pass the first assertion and fail that one.
 
 ## Stale element
 

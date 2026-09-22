@@ -38,8 +38,8 @@ Two clean builds of the same commit, each deleting `dist/` first, produced
 byte-identical archives:
 
 ```text
-b7db581850067c7d316f4db113f00936bf00652dee699b976fcf2f8399b2e5c0
-b7db581850067c7d316f4db113f00936bf00652dee699b976fcf2f8399b2e5c0
+4c1ed7b9da723d070c2938af08317113af3d5b80ed2dbe67b6de7e80322088af
+4c1ed7b9da723d070c2938af08317113af3d5b80ed2dbe67b6de7e80322088af
 ```
 
 That did not happen by itself. An ordinary ZIP stores a modification time per
@@ -103,8 +103,8 @@ Produced from `dist/` after `npm run build:release`:
 |                  |                                                                    |
 | ---------------- | ------------------------------------------------------------------ |
 | File             | `ai-browser-agent-0.1.0.zip`                                       |
-| SHA-256          | `b7db581850067c7d316f4db113f00936bf00652dee699b976fcf2f8399b2e5c0` |
-| Size             | 208,427 bytes compressed, 697,673 uncompressed                     |
+| SHA-256          | `4c1ed7b9da723d070c2938af08317113af3d5b80ed2dbe67b6de7e80322088af` |
+| Size             | 208,798 bytes compressed, 698,629 uncompressed                     |
 | Entries          | 12                                                                 |
 | Manifest version | 3                                                                  |
 
@@ -113,14 +113,14 @@ Twelve files, and no thirteenth:
 ```text
 assets/sidepanel-Dp7WyO9m.css      13,177
 chunks/file-model-UVlDFDlT.js      25,728
-content-script.js                  21,437
+content-script.js                  22,148
 icons/icon-16.png                     122
 icons/icon-32.png                     182
 icons/icon-48.png                     242
 icons/icon-128.png                    507
 manifest.json                       1,388
 oauth/callback.html                 1,222
-service-worker.js                 365,697
+service-worker.js                 365,942
 sidepanel.js                      267,497
 src/sidepanel/index.html              474
 ```

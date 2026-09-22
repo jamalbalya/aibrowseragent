@@ -767,6 +767,75 @@ Route trust is a filter in front of the existing routes. It can only subtract:
 a message that passes it meets exactly the same policy, permission, egress and
 consent gates it met before.
 
+## An element a person could not have clicked
+
+Found by executing §89's modal procedure, which until then nobody had run.
+
+The extension reported a successful click on a "Buy now" button underneath a
+full-screen cookie dialog, and the page recorded the click. Nothing was lying:
+a synthetic click dispatched at a node reaches it whatever is painted on top,
+and `isVisible` had answered its own question correctly — the button was
+displayed, opaque, had a box and passed `checkVisibility`. None of those
+notice occlusion.
+
+It is worth being precise about why this is a security property and not a
+polish item. An agent that clicks what a person could not click is an agent
+that can be steered by page layout: a site that floats an invisible overlay
+over its real controls and paints decoys beneath gets the agent to act on the
+decoys. More simply, "Buy now" behind a consent banner is a purchase nobody
+authorised, and the audit trail would record it as an ordinary approved click
+because that is what the runtime observed.
+
+Every interaction now goes through `scrollIntoViewAndAssertReachable`, which
+scrolls first — hit-testing an element still below the fold answers about a
+position it is leaving — and then samples the element's centre and four inset
+corners. The element is reachable if the topmost thing at any sampled point
+is the element, something inside it (a button's own `<span>`) or something
+wrapping it (a `<label>`). Otherwise the interaction is refused with
+`ELEMENT_NOT_INTERACTABLE` and a message naming the likely cause, so a model
+has something to do about it rather than a dead end.
+
+Two deliberate limits:
+
+- **Five points, not one.** A tooltip clipping a corner or a sticky header
+  overlapping an edge must not make a large, genuinely clickable control
+  unreachable.
+- **Unmeasurable means reachable.** A document with no layout, or an element
+  whose sampled points all fall outside the viewport, reports not-obscured.
+  The check exists to stop one specific false success; an unmeasurable page
+  must not become an unusable one.
+
+The refusal is proved by mutation: disabling the check, sampling only the
+centre, treating a descendant as an obstruction, removing the scroll, and
+refusing everything are each caught.
+
+## A corrupt record that read as a healthy one
+
+Found in the same session, by executing §90's malformed-state procedure.
+
+`PersistenceHealthStore.snapshot()` read its record as
+`(await get(KEY))?.records ?? []`. A value that was present but malformed —
+a truncated write, a partially applied update — has no `records` property, so
+it took the same path as a value that was absent, and an empty list of records
+means every domain is HEALTHY.
+
+Absent and unreadable mean opposite things. Nothing written is a new install.
+Something unreadable is evidence that storage misbehaved, which is exactly the
+condition this store exists to notice, and reporting HEALTHY over it is a
+fail-open in the one control whose whole purpose is to fail closed.
+
+The container shape is now checked. A stored value that is not an object
+holding a list of records marks `storage` IRRECOVERABLE, with the reason "the
+health record could not be understood" — kept distinct from "could not be
+read", because a read that threw and a read that returned nonsense send
+someone looking in different places.
+
+Narrowed to the container on purpose. Individually malformed _records_ inside
+a well-formed container are still dropped rather than interpreted, which is a
+separate and already-settled decision: inventing a state from bytes that do
+not parse would be reading meaning into noise. That decision was not what this
+procedure tested, and it was not revisited.
+
 ## What the counts are, and why they are tested
 
 Every control above is a control some _component_ respects. The failure that

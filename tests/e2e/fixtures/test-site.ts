@@ -44,6 +44,72 @@ const PAGES: Record<string, string> = {
   '/details': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Widget Details</title></head>
 <body><h1>Widget Details</h1><p>The medium widget weighs 400 grams.</p></body></html>`,
 
+  // §89 popup. A link that opens a new tab and a button that calls
+  // `window.open`, so both routes into a second tab can be exercised.
+  '/popup': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Popup Launcher</title></head>
+<body>
+  <h1>Popup Launcher</h1>
+  <a id="blank" href="/details" target="_blank">Open details in a new tab</a>
+  <button id="opener" onclick="window.open('/details', '_blank')">Open with window.open</button>
+</body></html>`,
+
+  // §89 SPA navigation. The route changes through history.pushState and the
+  // document never reloads, so a page model taken before the change describes
+  // elements that are gone while the URL says something new.
+  '/spa': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>SPA</title></head>
+<body>
+  <h1 id="title">Route: home</h1>
+  <div id="view">
+    <button id="home-action">Home action</button>
+  </div>
+  <button id="go">Go to settings</button>
+  <script>
+    document.getElementById('go').addEventListener('click', () => {
+      history.pushState({}, '', '/spa/settings');
+      document.getElementById('title').textContent = 'Route: settings';
+      document.getElementById('view').innerHTML =
+        '<button id="settings-action">Settings action</button>';
+    });
+  </script>
+</body></html>`,
+
+  // §89 modal. An overlay covers the page and the button behind it is not
+  // clickable by a person — `elementFromPoint` returns the overlay — while
+  // the element itself is still visible and enabled in the DOM.
+  '/modal': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Modal</title>
+<style>
+  #overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 10; }
+  #dialog { position: fixed; top: 30%; left: 30%; background: #fff; padding: 2rem; z-index: 11; }
+</style></head>
+<body>
+  <h1>Catalogue</h1>
+  <button id="behind" onclick="document.getElementById('echo').textContent='behind clicked'">Buy now</button>
+  <p id="echo">nothing clicked</p>
+  <div id="overlay"></div>
+  <div id="dialog" role="dialog" aria-modal="true">
+    <p>We use cookies.</p>
+    <button id="accept" onclick="document.getElementById('overlay').remove();document.getElementById('dialog').remove()">Accept</button>
+  </div>
+</body></html>`,
+
+  // §89 iframe. The inner document is same-origin here; `all_frames` is false
+  // either way, so the content script is not injected into it and its button
+  // is not in the page model. Same-origin is the *harder* case to exclude —
+  // a cross-origin frame is excluded by the browser as well.
+  '/iframe-host': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Frame Host</title></head>
+<body>
+  <h1>Outer document</h1>
+  <button id="outer-button">Outer button</button>
+  <iframe id="frame" src="/iframe-child" width="400" height="200"></iframe>
+</body></html>`,
+
+  '/iframe-child': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Frame Child</title></head>
+<body>
+  <h1>Inner document</h1>
+  <button id="inner-button">Inner button</button>
+  <input id="inner-field" name="inner" type="text">
+</body></html>`,
+
   // A page whose visible copy tries to hijack the agent.
   '/hostile': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Offers</title></head>
 <body>
@@ -250,7 +316,8 @@ export async function startTestSite(options: TestSiteOptions = {}): Promise<Test
       return;
     }
 
-    const body = PAGES[path] ?? extra[path];
+    // The SPA pushes this path; serving it keeps a reload honest.
+    const body = PAGES[path === '/spa/settings' ? '/spa' : path] ?? extra[path];
     if (body === undefined) {
       res.writeHead(404, { 'Content-Type': 'text/html' });
       res.end('<!doctype html><title>Not found</title><h1>404</h1>');
