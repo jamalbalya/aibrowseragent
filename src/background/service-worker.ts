@@ -151,6 +151,7 @@ import { GoogleSignIn } from '@/identity/google-sign-in';
 import { IdentityTransport } from '@/identity/identity-transport';
 import { loadIdentityConfig } from '@/identity/identity-config';
 import { DataStoragePreferenceStore } from '@/storage/data-storage-preference';
+import { applyLocalExport, buildLocalExport, parseLocalExport } from '@/storage/data-export';
 import type { ConnectedAccountView } from '@/messaging/protocol';
 
 const persistenceHealth = new PersistenceHealthStore(new NamespacedStorageArea(local, 'health'));
@@ -378,6 +379,7 @@ const permissionEngine = new PermissionEngine({
 const workspaceStore = new WorkspaceStore(
   new NamespacedStorageArea(local, 'workspaces'),
   new NamespacedStorageArea(session, 'workspaces'),
+  { health: persistenceHealth },
 );
 
 /** Does this Chrome tab group still exist? A deleted group detaches its workspace. */
@@ -965,6 +967,7 @@ async function registerBundledSkills(): Promise<void> {
 const workflowStore = new WorkflowStore({
   area: new NamespacedStorageArea(local, 'workflows'),
   riskOfTool: (name) => toolRegistry.get(name)?.risk,
+  health: persistenceHealth,
 });
 
 const workflowRecorder = new WorkflowRecorder({
@@ -1072,6 +1075,7 @@ function summariseWorkflow(record: RecordedWorkflow): WorkflowSummary {
  */
 const shortcutStore = new ShortcutStore({
   area: new NamespacedStorageArea(local, 'shortcuts'),
+  health: persistenceHealth,
 });
 
 const shortcutResolver = new ShortcutResolver({
@@ -2224,18 +2228,94 @@ router.on('accounts.declineAssociation', async () => {
   return { ok: true as const };
 });
 
-router.on('storage.getPreference', async () => ({
-  mode: await dataStoragePreference.mode(),
-  shouldPrompt: await dataStoragePreference.shouldPrompt(),
+router.on('storage.getPreference', async () => {
+  const preference = await dataStoragePreference.get();
+  return { mode: preference.mode, hasChosen: preference.chosenAt !== null };
+});
+
+// Both modes are an explicit choice. Choosing local is not a no-op — it turns
+// the default into a decision — and choosing cloud uploads nothing by itself:
+// it records consent, and a sync path that does not yet exist would be what
+// acts on it.
+router.on('storage.setPreference', async ({ mode }) => {
+  await dataStoragePreference.choose(mode, Date.now());
+  return { mode: await dataStoragePreference.mode() };
+});
+
+/**
+ * Builds the export document the panel writes to a file the user chose.
+ *
+ * Reads only stores whose data classification permits it. No credential is
+ * read here — not the provider key, not a connector token, not the ABA
+ * refresh token — because none of them is reachable from these four calls.
+ */
+router.on('data.export', async () => ({
+  export: await buildLocalExport(
+    {
+      listWorkflows: () => workflowStore.list(),
+      listShortcuts: () => shortcutStore.list(),
+      listConnections: async () => {
+        const { accounts } = await visibleAccounts();
+        // Metadata only. `accountLabel` carries a key suffix and is left out
+        // along with the key itself; what survives is what you connected to.
+        return accounts.map((account) => ({
+          connectionId: account.connectionId,
+          providerId: account.providerId,
+          displayName: account.displayName,
+          modelId: account.modelId,
+          baseUrl: account.baseUrl ?? null,
+        }));
+      },
+      readSettings: async () => ({ ...(await settingsStore.get()) }),
+    },
+    Date.now(),
+  ),
 }));
 
-router.on('storage.setPreference', async ({ mode }) => {
-  if (mode === 'dismiss') {
-    await dataStoragePreference.dismiss(Date.now());
-  } else {
-    await dataStoragePreference.choose(mode, Date.now());
+/**
+ * Applies a file the user chose. Untrusted input, validated in full.
+ *
+ * Every record is applied **through the store that owns it**, so an import
+ * cannot install a workflow the recorder would have refused, cannot carry a
+ * hash it did not earn, and cannot take a shortcut name that collides with
+ * one already present. Nothing is written directly to storage from here.
+ */
+router.on('data.import', async ({ document }) => {
+  const parsed = parseLocalExport(document);
+  if (!parsed.ok) {
+    return { ok: false as const, refusal: parsed.refusal, detail: parsed.detail };
   }
-  return { mode: await dataStoragePreference.mode() };
+
+  const outcome = await applyLocalExport(parsed.document, {
+    importWorkflow: async (record) => {
+      const candidate = record as Partial<RecordedWorkflow>;
+      if (candidate.definition === undefined) throw new Error('no definition');
+      // `save` re-validates the definition, recomputes the canonical hash and
+      // re-derives the risk. A hash or a risk level in the file is ignored.
+      await workflowStore.save({
+        name: typeof candidate.name === 'string' ? candidate.name : 'Imported workflow',
+        description: typeof candidate.description === 'string' ? candidate.description : '',
+        definition: candidate.definition,
+        recordedFromTaskId: 'imported',
+        // An imported recording has no measured taint on this device. UNKNOWN
+        // is the truthful answer and is the one the replay path already
+        // handles conservatively; claiming KNOWN_UNTAINTED would be asserting
+        // something no measurement here supports.
+        taintAtCapture: 'UNKNOWN',
+      });
+    },
+    importShortcut: async (record) => {
+      const candidate = record as Partial<ShortcutRecord>;
+      if (typeof candidate.displayName !== 'string' || candidate.target === undefined) {
+        throw new Error('not a shortcut');
+      }
+      // `create` re-runs name normalisation and both collision checks, so an
+      // imported shortcut cannot take a name that already means something.
+      await shortcutStore.create(candidate.displayName, candidate.target);
+    },
+  });
+
+  return { ok: true as const, outcome };
 });
 
 router.on('permission.respond', ({ requestId, response }) => {

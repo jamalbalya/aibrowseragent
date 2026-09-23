@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { sendToBackground, MessagingError } from '@/messaging/bus';
 import { AccountPanel } from './AccountPanel';
+import { DataPanel } from './DataPanel';
 import { ConnectedAccounts } from './ConnectedAccounts';
 import { WorkspaceView } from './WorkspaceView';
 import type { CapabilityReport } from '@/providers/capability-doctor/capability-doctor';
@@ -227,6 +228,8 @@ export function SettingsView({
       </div>
 
       <AccountPanel />
+
+      <DataPanel />
 
       <WorkspaceView onMessage={(tone, text) => setMessage({ tone, text })} />
 

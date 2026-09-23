@@ -1,8 +1,17 @@
 # Cloud Sync — Protocol and Backend Data Model
 
-Status: **design, pending review. Nothing here is implemented.** No production
-code was changed to produce this document. There is no backend, no database, no
-endpoint and no sync client in the repository.
+Status: **design, pending review. Nothing here is implemented.** There is no
+sync client, no sync endpoint, no encryption code and no upload path in the
+repository, and none is planned for the current release.
+
+One correction to what this said when written: `server/` now exists, holding
+the identity and authentication domain. It holds **no sync table, no
+ciphertext and no key**, so the statement that matters here is unchanged.
+
+**Cloud Sync is optional and is not the product's storage model.** Local is.
+When sync is built it must be opt-in, must not be enabled by signing in, and
+must not upload anything while the storage mode is `local`. See
+`LOCAL_FIRST_ARCHITECTURE.md` §8.
 
 Baseline: `7e7a72b`, CI #48 green. Code baseline `f7e09e6`: 2267
 unit/integration/security and 213 real Chromium tests.

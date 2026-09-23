@@ -256,31 +256,31 @@ describe('TEST-SECURITY-037 — reinstall recovery', () => {
     expect(await reinstalled.accounts.getBrain(OTHER_USER)).toBeNull();
   });
 
-  it('09 — local-only mode has nothing to restore, and the code does not pretend', async () => {
+  it('09 — local mode has nothing to restore, and the code does not pretend', async () => {
     const reinstalled = afterReinstall();
 
     // A local-mode user's data was never uploaded, so recovery is genuinely
     // empty. The honest outcome is an empty installation plus the warning the
     // panel shows, not a fabricated one.
-    expect(await reinstalled.preference.mode()).toBe('undecided');
+    expect(await reinstalled.preference.mode()).toBe('local');
     const outcome = await restoreConnections(reinstalled.accounts, reinstalled.port, USER, [], NOW);
     expect(outcome).toEqual({ restored: [], keptLocal: [], rejected: [] });
     expect(await reinstalled.accounts.list()).toEqual([]);
   });
 
-  it('10 — a fresh install asks where data should live and uploads nothing meanwhile', async () => {
+  it('10 — a fresh install is local, has chosen nothing, and uploads nothing', async () => {
     const installed = fresh();
 
-    expect(await installed.preference.shouldPrompt()).toBe(true);
-    expect(await installed.preference.mode()).toBe('undecided');
+    // Local-first is the product default, not an unanswered question. The
+    // extension is usable immediately, with no account and no backend.
+    expect(await installed.preference.mode()).toBe('local');
+    expect(await installed.preference.hasChosen()).toBe(false);
 
-    // "Ask me later" stops the prompt without choosing cloud for them.
-    await installed.preference.dismiss(NOW);
-    expect(await installed.preference.shouldPrompt()).toBe(false);
-    expect(await installed.preference.mode()).toBe('undecided');
-
+    // Choosing local turns the default into a decision and changes nothing
+    // else — the mode was already local.
     await installed.preference.choose('local', NOW);
     expect(await installed.preference.mode()).toBe('local');
+    expect(await installed.preference.hasChosen()).toBe(true);
   });
 
   it('11 — the device id is minted once and is stable thereafter', async () => {

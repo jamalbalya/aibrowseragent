@@ -11,10 +11,11 @@
  * operations; the only thing that runs a workflow is an explicit replay, and
  * that lives elsewhere and goes through `SkillRunner`.
  */
-import { getLogger } from '@/logging/logger';
 import { newId } from '@/utils/ids';
 import { hashContent } from '@/evidence/evidence-model';
-import { update, type TransactionalStorageArea } from '@/storage/storage-area';
+import type { TransactionalStorageArea } from '@/storage/storage-area';
+import { RecordStore } from '@/storage/record-store';
+import type { PersistenceHealthStore } from '@/storage/persistence-health';
 import {
   effectiveSkillRisk,
   validateSkillDefinition,
@@ -32,13 +33,29 @@ import {
   type RecordedWorkflow,
 } from './workflow-model';
 
-const log = getLogger('agent');
-
-const INDEX_KEY = 'workflows';
 const MAX_WORKFLOWS = 50;
 
-interface WorkflowIndex {
-  readonly workflows: RecordedWorkflow[];
+/** The pre-local-first layout: one key holding every workflow. */
+const LEGACY_BLOB_KEY = 'workflows';
+
+/**
+ * Accepts a stored workflow, or does not.
+ *
+ * Deliberately shape-only. Integrity — whether the stored definition still
+ * canonicalises to its stored hash — is checked by `verifyIntegrity` before
+ * every replay, and must stay there: a record that fails it should be
+ * *listed and refused with a reason*, not silently absent from the panel.
+ */
+function isStorableWorkflow(candidate: unknown): candidate is RecordedWorkflow {
+  if (typeof candidate !== 'object' || candidate === null) return false;
+  const record = candidate as Partial<RecordedWorkflow>;
+  return (
+    typeof record.workflowId === 'string' &&
+    typeof record.definitionHash === 'string' &&
+    typeof record.formatVersion === 'number' &&
+    typeof record.definition === 'object' &&
+    record.definition !== null
+  );
 }
 
 export class WorkflowValidationError extends Error {
@@ -53,6 +70,7 @@ export interface WorkflowStoreOptions {
   /** The risk of a registered tool, or `undefined` when it does not exist. */
   readonly riskOfTool: (name: string) => RiskLevel | undefined;
   readonly now?: () => number;
+  readonly health?: PersistenceHealthStore;
 }
 
 export interface SaveWorkflowInput {
@@ -67,9 +85,42 @@ export interface SaveWorkflowInput {
 
 export class WorkflowStore {
   private readonly now: () => number;
+  private readonly records: RecordStore<RecordedWorkflow>;
 
   constructor(private readonly options: WorkflowStoreOptions) {
     this.now = options.now ?? (() => Date.now());
+    this.records = new RecordStore<RecordedWorkflow>({
+      area: options.area,
+      kind: 'workflows',
+      version: WORKFLOW_FORMAT_VERSION,
+      identify: (record) => record.workflowId,
+      validate: isStorableWorkflow,
+      max: MAX_WORKFLOWS,
+      // Upgrading from the single-value layout is automatic and happens on
+      // first read. Nothing is re-signed or re-hashed on the way through:
+      // a record moves as it was written, so `verifyIntegrity` still means
+      // what it meant before the move.
+      legacy: [
+        {
+          kind: 'blob',
+          key: LEGACY_BLOB_KEY,
+          version: WORKFLOW_FORMAT_VERSION,
+          extract: (stored) =>
+            typeof stored === 'object' &&
+            stored !== null &&
+            Array.isArray(
+              (
+                stored as {
+                  workflows?: unknown;
+                }
+              ).workflows,
+            )
+              ? (stored as { workflows: readonly unknown[] }).workflows
+              : [],
+        },
+      ],
+      ...(options.health === undefined ? {} : { health: options.health }),
+    });
   }
 
   /**
@@ -86,15 +137,7 @@ export class WorkflowStore {
     const workflowId = newId('workflow');
     const record = await this.build(workflowId, 1, input);
 
-    await update<WorkflowIndex>(this.options.area, INDEX_KEY, { workflows: [] }, (index) => ({
-      workflows: [record, ...index.workflows].slice(0, MAX_WORKFLOWS),
-    }));
-
-    log.info('Workflow recorded.', {
-      workflowId,
-      steps: record.definition.steps.length,
-      risk: record.risk,
-    });
+    await this.records.put(record);
     return record;
   }
 
@@ -113,26 +156,21 @@ export class WorkflowStore {
     if (problems.length > 0) throw new WorkflowValidationError(problems);
 
     const record = await this.build(workflowId, existing.version + 1, input);
-    await update<WorkflowIndex>(this.options.area, INDEX_KEY, { workflows: [] }, (index) => ({
-      workflows: index.workflows.map((entry) => (entry.workflowId === workflowId ? record : entry)),
-    }));
+    // In place: editing a workflow does not make it the newest one.
+    await this.records.replace(record);
     return record;
   }
 
   async get(workflowId: string): Promise<RecordedWorkflow | undefined> {
-    const index = (await this.options.area.get<WorkflowIndex>(INDEX_KEY)) ?? { workflows: [] };
-    return index.workflows.find((entry) => entry.workflowId === workflowId);
+    return this.records.get(workflowId);
   }
 
   async list(): Promise<RecordedWorkflow[]> {
-    const index = (await this.options.area.get<WorkflowIndex>(INDEX_KEY)) ?? { workflows: [] };
-    return index.workflows;
+    return [...(await this.records.list())];
   }
 
   async remove(workflowId: string): Promise<void> {
-    await update<WorkflowIndex>(this.options.area, INDEX_KEY, { workflows: [] }, (index) => ({
-      workflows: index.workflows.filter((entry) => entry.workflowId !== workflowId),
-    }));
+    await this.records.remove(workflowId);
   }
 
   /**

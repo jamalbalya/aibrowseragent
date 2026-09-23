@@ -13,9 +13,10 @@
  * points at runs through the route that already existed for that kind of
  * target.
  */
-import { getLogger } from '@/logging/logger';
 import { newId } from '@/utils/ids';
-import { update, type TransactionalStorageArea } from '@/storage/storage-area';
+import type { TransactionalStorageArea } from '@/storage/storage-area';
+import { RecordStore } from '@/storage/record-store';
+import type { PersistenceHealthStore } from '@/storage/persistence-health';
 import {
   assertShortcutSafe,
   isUsableShortcut,
@@ -25,13 +26,28 @@ import {
 } from './shortcut-model';
 import { normaliseShortcutName, type NameRefusal } from './shortcut-name';
 
-const log = getLogger('agent');
-
-const INDEX_KEY = 'shortcuts';
 const MAX_SHORTCUTS = 100;
 
-interface ShortcutIndex {
-  readonly shortcuts: ShortcutRecord[];
+/** The pre-local-first layout: one key holding every shortcut. */
+const LEGACY_BLOB_KEY = 'shortcuts';
+
+/**
+ * Accepts a stored shortcut, or does not.
+ *
+ * Both gates, in the order they were always applied: the shape check, and the
+ * prohibited-field assertion that keeps a definition or a credential out of a
+ * record whose type has nowhere to put one. A record failing either is
+ * dropped, never repaired — a half-understood reference is one that could
+ * resolve to the wrong thing.
+ */
+function isStorableShortcut(candidate: unknown): candidate is ShortcutRecord {
+  if (!isUsableShortcut(candidate)) return false;
+  try {
+    assertShortcutSafe(candidate as unknown as Record<string, unknown>);
+  } catch {
+    return false;
+  }
+  return true;
 }
 
 export type ShortcutRefusal =
@@ -55,13 +71,47 @@ export class ShortcutError extends Error {
 export interface ShortcutStoreOptions {
   readonly area: TransactionalStorageArea;
   readonly now?: () => number;
+  readonly health?: PersistenceHealthStore;
 }
 
 export class ShortcutStore {
   private readonly now: () => number;
+  private readonly records: RecordStore<ShortcutRecord>;
 
-  constructor(private readonly options: ShortcutStoreOptions) {
+  constructor(options: ShortcutStoreOptions) {
     this.now = options.now ?? (() => Date.now());
+    this.records = new RecordStore<ShortcutRecord>({
+      area: options.area,
+      kind: 'shortcuts',
+      version: SHORTCUT_FORMAT_VERSION,
+      identify: (record) => record.shortcutId,
+      validate: isStorableShortcut,
+      max: MAX_SHORTCUTS,
+      // The previous build kept every shortcut in one value. Upgrading is
+      // automatic and runs on first read; a shortcut that does not survive
+      // validation is left where it is rather than being rewritten into
+      // something this build guessed at.
+      legacy: [
+        {
+          kind: 'blob',
+          key: LEGACY_BLOB_KEY,
+          version: SHORTCUT_FORMAT_VERSION,
+          extract: (stored) =>
+            typeof stored === 'object' &&
+            stored !== null &&
+            Array.isArray(
+              (
+                stored as {
+                  shortcuts?: unknown;
+                }
+              ).shortcuts,
+            )
+              ? (stored as { shortcuts: readonly unknown[] }).shortcuts
+              : [],
+        },
+      ],
+      ...(options.health === undefined ? {} : { health: options.health }),
+    });
   }
 
   /**
@@ -115,11 +165,7 @@ export class ShortcutStore {
     // a credential, and this refuses a record that grew one anyway.
     assertShortcutSafe(record as unknown as Record<string, unknown>);
 
-    await update<ShortcutIndex>(this.options.area, INDEX_KEY, { shortcuts: [] }, (index) => ({
-      shortcuts: [record, ...index.shortcuts].slice(0, MAX_SHORTCUTS),
-    }));
-
-    log.info('Shortcut created.', { name: record.name, targetKind: target.kind });
+    await this.records.put(record);
     return record;
   }
 
@@ -136,9 +182,9 @@ export class ShortcutStore {
     const record: ShortcutRecord = { ...existing, target, updatedAt: this.now() };
     assertShortcutSafe(record as unknown as Record<string, unknown>);
 
-    await update<ShortcutIndex>(this.options.area, INDEX_KEY, { shortcuts: [] }, (index) => ({
-      shortcuts: index.shortcuts.map((entry) => (entry.shortcutId === shortcutId ? record : entry)),
-    }));
+    // In place: retargeting must not reorder the list, because the order is
+    // what the user sees and nothing about changing a target moved it.
+    await this.records.replace(record);
     return record;
   }
 
@@ -150,22 +196,7 @@ export class ShortcutStore {
    * half-understood reference is one that could resolve to the wrong thing.
    */
   async list(): Promise<ShortcutRecord[]> {
-    const index = (await this.options.area.get<ShortcutIndex>(INDEX_KEY)) ?? { shortcuts: [] };
-    const usable: ShortcutRecord[] = [];
-    for (const entry of index.shortcuts) {
-      if (!isUsableShortcut(entry)) {
-        log.warn('A stored shortcut was unusable and was ignored.');
-        continue;
-      }
-      try {
-        assertShortcutSafe(entry as unknown as Record<string, unknown>);
-      } catch {
-        log.warn('A stored shortcut carried a prohibited field and was ignored.');
-        continue;
-      }
-      usable.push(entry);
-    }
-    return usable;
+    return [...(await this.records.list())];
   }
 
   /**
@@ -182,12 +213,10 @@ export class ShortcutStore {
   }
 
   async get(shortcutId: string): Promise<ShortcutRecord | undefined> {
-    return (await this.list()).find((entry) => entry.shortcutId === shortcutId);
+    return this.records.get(shortcutId);
   }
 
   async remove(shortcutId: string): Promise<void> {
-    await update<ShortcutIndex>(this.options.area, INDEX_KEY, { shortcuts: [] }, (index) => ({
-      shortcuts: index.shortcuts.filter((entry) => entry.shortcutId !== shortcutId),
-    }));
+    await this.records.remove(shortcutId);
   }
 }

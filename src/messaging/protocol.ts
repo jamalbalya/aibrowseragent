@@ -21,7 +21,8 @@ import type { LogRecord } from '@/logging/logger';
 import type { SitePolicyState } from '@/policy/site-policy';
 import type { ProviderConnection } from '@/providers/registry/provider-registry';
 import type { ModelCapabilities } from '@/providers/core/types';
-import type { DataStorageMode } from '@/storage/data-classification';
+import type { StorageMode } from '@/storage/data-classification';
+import type { ImportOutcome, ImportRefusal, LocalExport } from '@/storage/data-export';
 
 export interface ExtensionMessage<TType extends string = string, TPayload = unknown> {
   readonly id: string;
@@ -257,13 +258,39 @@ export interface PanelRequestMap {
   'storage.getPreference': {
     request: Record<string, never>;
     response: {
-      mode: DataStorageMode;
-      shouldPrompt: boolean;
+      /** Always `local` or `cloud`. There is no third runtime state. */
+      mode: StorageMode;
+      /** Whether the user ever chose, as opposed to running on the default. */
+      hasChosen: boolean;
     };
   };
   'storage.setPreference': {
-    request: { mode: 'local' | 'cloud' | 'dismiss' };
-    response: { mode: DataStorageMode };
+    request: { mode: StorageMode };
+    response: { mode: StorageMode };
+  };
+
+  /**
+   * Local export and import.
+   *
+   * Both cross no security boundary: the document travels over extension
+   * messaging between this worker and a page of this extension. Writing it to
+   * a file, or reading one, is the panel's doing and the user's choice. There
+   * is no scheduled export, no export on sign-in and no upload anywhere.
+   *
+   * Neither is reachable by a model: both are `CLASS_B_PANEL_CONTROL_PLANE`,
+   * the same class as every other destructive or data-moving operation.
+   */
+  'data.export': {
+    request: Record<string, never>;
+    response: { export: LocalExport };
+  };
+  'data.import': {
+    request: {
+      /** The parsed file, exactly as read. Untrusted; validated in full. */
+      document: unknown;
+    };
+    response:
+      { ok: true; outcome: ImportOutcome } | { ok: false; refusal: ImportRefusal; detail: string };
   };
 
   /**

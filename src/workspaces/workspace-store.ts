@@ -22,6 +22,8 @@
  */
 import { getLogger } from '@/logging/logger';
 import { isTransactional, type StorageArea } from '@/storage/storage-area';
+import { RecordStore } from '@/storage/record-store';
+import type { PersistenceHealthStore } from '@/storage/persistence-health';
 import {
   isWorkspace,
   isWorkspaceBinding,
@@ -33,13 +35,19 @@ import {
 
 const log = getLogger('browser');
 
-const WORKSPACES_KEY = 'workspaces';
 const BINDINGS_KEY = 'bindings';
 const ACTIVE_KEY = 'active';
 
-interface WorkspaceIndex {
-  readonly workspaces: readonly Workspace[];
-}
+/** The pre-local-first layout: one key holding every workspace. */
+const LEGACY_BLOB_KEY = 'workspaces';
+
+/**
+ * The stored workspace format.
+ *
+ * Bumping this is what makes `RecordStore` run a migration, so it lives here
+ * rather than being implied by the shape of `isWorkspace`.
+ */
+export const WORKSPACE_FORMAT_VERSION = 1;
 
 interface BindingIndex {
   readonly bindings: Readonly<Record<string, WorkspaceBinding>>;
@@ -48,10 +56,12 @@ interface BindingIndex {
 export interface WorkspaceStoreOptions {
   /** Supplied so a test can produce stable ids; real use takes a UUID. */
   readonly newId?: () => string;
+  readonly health?: PersistenceHealthStore;
 }
 
 export class WorkspaceStore {
   private readonly newId: () => string;
+  private readonly records: RecordStore<Workspace>;
 
   /**
    * @param durable  `chrome.storage.local` — the workspace record.
@@ -63,6 +73,37 @@ export class WorkspaceStore {
     options: WorkspaceStoreOptions = {},
   ) {
     this.newId = options.newId ?? (() => `ws_${crypto.randomUUID()}`);
+    this.records = new RecordStore<Workspace>({
+      area: durable,
+      kind: 'workspace',
+      version: WORKSPACE_FORMAT_VERSION,
+      identify: (record) => record.workspaceId,
+      validate: (candidate): candidate is Workspace => isWorkspace(candidate),
+      // Upgrading from the single-value layout is automatic. A record that
+      // does not survive `isWorkspace` is left in place rather than rebuilt
+      // from defaults: a fabricated workspace is a scope nobody configured,
+      // and a tab could end up judged against it.
+      legacy: [
+        {
+          kind: 'blob',
+          key: LEGACY_BLOB_KEY,
+          version: WORKSPACE_FORMAT_VERSION,
+          extract: (stored) =>
+            typeof stored === 'object' &&
+            stored !== null &&
+            Array.isArray(
+              (
+                stored as {
+                  workspaces?: unknown;
+                }
+              ).workspaces,
+            )
+              ? (stored as { workspaces: readonly unknown[] }).workspaces
+              : [],
+        },
+      ],
+      ...(options.health === undefined ? {} : { health: options.health }),
+    });
   }
 
   mintWorkspaceId(): string {
@@ -77,19 +118,7 @@ export class WorkspaceStore {
    * it.
    */
   async list(): Promise<readonly Workspace[]> {
-    const stored = await this.durable.get<WorkspaceIndex>(WORKSPACES_KEY);
-    if (stored === undefined) return [];
-    if (typeof stored !== 'object' || stored === null || !Array.isArray(stored.workspaces)) {
-      log.error('The workspace index is malformed and was not read.');
-      return [];
-    }
-    const usable = stored.workspaces.filter((record) => isWorkspace(record));
-    if (usable.length !== stored.workspaces.length) {
-      log.error('Some workspace records could not be read.', {
-        dropped: stored.workspaces.length - usable.length,
-      });
-    }
-    return usable;
+    return this.records.list();
   }
 
   async get(workspaceId: string): Promise<Workspace | undefined> {
@@ -102,10 +131,7 @@ export class WorkspaceStore {
   }
 
   async put(workspace: Workspace): Promise<void> {
-    await this.mutate((workspaces) => [
-      ...workspaces.filter((existing) => existing.workspaceId !== workspace.workspaceId),
-      workspace,
-    ]);
+    await this.records.replace(workspace);
   }
 
   /**
@@ -116,9 +142,7 @@ export class WorkspaceStore {
    * tab, an ungrouped group and a browser restart all detach instead.
    */
   async remove(workspaceId: string): Promise<void> {
-    await this.mutate((workspaces) =>
-      workspaces.filter((workspace) => workspace.workspaceId !== workspaceId),
-    );
+    await this.records.remove(workspaceId);
     await this.unbind(workspaceId);
     if ((await this.getActiveId()) === workspaceId) await this.setActiveId(null);
     log.info('A workspace was deleted at the user’s request.', { workspaceId });
@@ -239,24 +263,6 @@ export class WorkspaceStore {
       if (isWorkspaceBinding(binding)) usable[id] = binding;
     }
     return usable;
-  }
-
-  private async mutate(
-    change: (workspaces: readonly Workspace[]) => readonly Workspace[],
-  ): Promise<void> {
-    if (isTransactional(this.durable)) {
-      await this.durable.transaction<WorkspaceIndex>(
-        WORKSPACES_KEY,
-        { workspaces: [] },
-        (current) => ({
-          workspaces: change((current.workspaces ?? []).filter((r) => isWorkspace(r))),
-        }),
-      );
-      return;
-    }
-    await this.durable.set<WorkspaceIndex>(WORKSPACES_KEY, {
-      workspaces: change(await this.list()),
-    });
   }
 
   private async mutateBindings(

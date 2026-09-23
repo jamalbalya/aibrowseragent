@@ -240,21 +240,21 @@ test('a workflow whose stored definition was tampered with is refused, not run',
   const worker = context.serviceWorkers()[0];
   if (!worker) throw new Error('The service worker was not running.');
   const edited = await worker.evaluate(async (id: string) => {
-    const key = 'workflows:workflows';
+    // One record, one key. The workflow is its own entry, so this edits
+    // exactly the bytes a replay would read.
+    const key = `workflows:workflows:v1:${id}`;
     const stored = await chrome.storage.local.get(key);
-    const index = stored[key] as {
-      workflows: { workflowId: string; definition: { steps: unknown[] } }[];
-    };
-    const entry = index.workflows.find((workflow) => workflow.workflowId === id);
-    if (!entry) return false;
-    entry.definition.steps.push({
+    const envelope = stored[key] as
+      { v: number; record: { definition: { steps: unknown[] } } } | undefined;
+    if (!envelope) return false;
+    envelope.record.definition.steps.push({
       kind: 'tool',
       id: 'injected',
       tool: 'browser.navigate',
       description: 'A step nobody recorded.',
       arguments: { url: { kind: 'literal', value: 'https://elsewhere.test/' } },
     });
-    await chrome.storage.local.set({ [key]: index });
+    await chrome.storage.local.set({ [key]: envelope });
     return true;
   }, workflowId);
   expect(edited).toBe(true);
@@ -367,9 +367,13 @@ test('a recorded binding carries PAGE_DERIVED provenance in real extension stora
   const worker = context.serviceWorkers()[0];
   if (!worker) throw new Error('The service worker was not running.');
   const stored = await worker.evaluate(async () => {
-    const key = 'workflows:workflows';
-    const all = await chrome.storage.local.get(key);
-    return JSON.stringify(all[key] ?? null);
+    // Every workflow record, gathered from its own key.
+    const all = await chrome.storage.local.get(null);
+    const prefix = 'workflows:workflows:v1:';
+    const records = Object.entries(all)
+      .filter(([key]) => key.startsWith(prefix) && !key.endsWith(':index'))
+      .map(([, value]) => (value as { record: unknown }).record);
+    return JSON.stringify({ workflows: records });
   });
 
   // The tag is on the binding, and the binding is the only place a

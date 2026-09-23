@@ -623,3 +623,56 @@ describe('skill keys', () => {
     expect(skillKey('a.b', '1.2.3')).toBe('a.b@1.2.3');
   });
 });
+
+describe('a definition whose bindings are not bindings', () => {
+  /**
+   * The validator runs over definitions it was not handed by the type system:
+   * one read back from storage after an update, and one carried in a file
+   * somebody chose to import. Both can hold anything.
+   *
+   * A malformed binding used to fall through every branch and reach
+   * `validatePath(undefined)`, which threw a `TypeError` rather than returning
+   * a problem. A validator that crashes on bad input is a validator that
+   * cannot refuse it, so each of these is now a refusal.
+   */
+  const withArguments = (args: unknown): SkillDefinition =>
+    ({
+      ...skillFixture(),
+      steps: [
+        {
+          id: 'step_1',
+          kind: 'tool',
+          tool: 'browser.navigate',
+          description: 'open the page',
+          arguments: args,
+        },
+      ],
+    }) as unknown as SkillDefinition;
+
+  it('refuses a raw value where a binding belongs, without throwing', () => {
+    // What a hand-written or naively generated definition looks like.
+    expect(check(withArguments({ url: 'https://example.test' }))).toContain(
+      'step "step_1" argument "url" is not a binding',
+    );
+  });
+
+  it('refuses a binding with an unknown kind', () => {
+    expect(check(withArguments({ url: { kind: 'expression', source: '1+1' } }))).toContain(
+      'step "step_1" argument "url" is not a binding',
+    );
+  });
+
+  it('refuses null, an array and a number in a binding position', () => {
+    for (const value of [null, [], 42, undefined]) {
+      expect(() => check(withArguments({ url: value }))).not.toThrow();
+      expect(check(withArguments({ url: value }))).toContain(
+        'step "step_1" argument "url" is not a binding',
+      );
+    }
+  });
+
+  it('refuses a step binding that carries no path', () => {
+    const problems = check(withArguments({ url: { kind: 'step', step: 'step_1' } }));
+    expect(problems.some((problem) => problem.includes('path'))).toBe(true);
+  });
+});

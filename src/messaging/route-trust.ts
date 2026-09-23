@@ -339,6 +339,11 @@ export const PANEL_ROUTE_CLASSES: Record<PanelRequestType, RouteClass> = {
 
   'storage.getPreference': 'CLASS_E_PANEL_READ_ONLY',
   'storage.setPreference': 'CLASS_B_PANEL_CONTROL_PLANE',
+  // Moving a user's own data in or out is a control-plane act, not a read: an
+  // import writes, and an export decides what leaves. Neither is CLASS_E, and
+  // neither is reachable from a tool.
+  'data.export': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'data.import': 'CLASS_B_PANEL_CONTROL_PLANE',
 
   // Browser workspaces. The read changes nothing and is CLASS_E; every
   // mutation is control plane, because each one changes which tabs the agent

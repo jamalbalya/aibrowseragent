@@ -9,8 +9,10 @@
  * uploaded.
  *
  * `cloudEligible` is the single question any sync path asks. It fails closed
- * in every direction that matters: an undecided user uploads nothing, a local
- * user uploads nothing, and a secret uploads nothing whatever the mode says.
+ * in every direction that matters: a local user uploads nothing, a legacy
+ * undecided record uploads nothing, and a secret uploads nothing whatever the
+ * mode says. Local is the default, so the closed direction is also the one a
+ * fresh installation is already in.
  */
 
 /** The six classifications, exactly as the requirement names them. */
@@ -102,9 +104,52 @@ export const DATA_CLASSIFICATION: Readonly<Record<PersistedDataKind, DataClass>>
  */
 export const SECURE_CREDENTIAL_RECOVERY_EXISTS = false;
 
-/** Where the user asked their data to live. `undecided` uploads nothing. */
+/**
+ * Where the user asked their data to live.
+ *
+ * `undecided` is a **legacy persisted value**, not a runtime state. Builds
+ * before the local-first correction defaulted to it, and those records still
+ * exist in real profiles, so the parser must still understand it. Nothing
+ * reads it as a mode: `resolveStorageMode` maps it to `local`, which is what
+ * it always behaved as anyway — it uploaded nothing.
+ *
+ * Keeping it readable rather than deleting it is the difference between
+ * upgrading a profile and discarding one.
+ */
 export const DATA_STORAGE_MODES = ['local', 'cloud', 'undecided'] as const;
 export type DataStorageMode = (typeof DATA_STORAGE_MODES)[number];
+
+/**
+ * The two modes that actually exist at run time.
+ *
+ * LOCAL is the product default and the only mode a fresh installation can be
+ * in. CLOUD is reachable only by an explicit choice the user makes, and this
+ * type is what makes "there is no third state" checkable rather than stated.
+ */
+export const STORAGE_MODES = ['local', 'cloud'] as const;
+export type StorageMode = (typeof STORAGE_MODES)[number];
+
+/**
+ * The mode a fresh installation runs in.
+ *
+ * Local-first is the product, not a fallback: the extension performs every
+ * browser-agent operation against `chrome.storage` alone, with no account, no
+ * backend and no database. Cloud is an addition somebody opts into later.
+ */
+export const DEFAULT_STORAGE_MODE: StorageMode = 'local';
+
+/**
+ * Collapses anything that could be stored into one of the two real modes.
+ *
+ * Every branch that is not an explicit, well-formed `cloud` resolves to
+ * `local`. That direction is deliberate and is the whole safety property:
+ * a corrupt byte, a truncated write, a value from a future build or a legacy
+ * `undecided` all mean *do not upload*, because the alternative is enrolling
+ * somebody into remote storage on the strength of damaged state.
+ */
+export function resolveStorageMode(stored: unknown): StorageMode {
+  return stored === 'cloud' ? 'cloud' : DEFAULT_STORAGE_MODE;
+}
 
 /**
  * May this kind of data be uploaded under this setting?

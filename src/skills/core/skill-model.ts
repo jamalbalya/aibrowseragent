@@ -421,6 +421,20 @@ function validateBindings(
   for (const [argument, binding] of Object.entries(step.arguments)) {
     const where = `step "${step.id}" argument "${argument}"`;
 
+    // The shape gate, before anything reads a field off it.
+    //
+    // `step.arguments` is typed as a map of bindings, but this function also
+    // runs over definitions that were never typed: one read back from
+    // storage, and one carried in an imported file. A raw value where a
+    // binding belongs used to fall through every branch below and reach
+    // `validatePath(undefined)`, which threw a TypeError instead of returning
+    // a problem — a validator that crashes on bad input is a validator that
+    // cannot refuse it.
+    if (!isBindingShaped(binding)) {
+      problems.push(`${where} is not a binding`);
+      continue;
+    }
+
     if (binding.kind === 'literal') {
       if (!isPlainData(binding.value)) {
         // A function, a class instance or anything with behaviour is not a
@@ -561,7 +575,18 @@ function validateElementBinding(binding: ElementBinding, where: string): string[
   return problems;
 }
 
+/** A binding is an object carrying one of the four known `kind` values. */
+function isBindingShaped(candidate: unknown): candidate is SkillBinding {
+  if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) return false;
+  const kind = (candidate as { kind?: unknown }).kind;
+  return kind === 'literal' || kind === 'input' || kind === 'step' || kind === 'element';
+}
+
 function validatePath(path: string, where: string): string[] {
+  // Typed as a string, checked as one anyway: `PATH_PATTERN.test` coerces,
+  // so a missing path would pass the pattern as the literal text "undefined"
+  // and then fail on `.split`.
+  if (typeof path !== 'string') return [`${where} has no path`];
   if (!PATH_PATTERN.test(path)) return [`${where} has an unusable path "${path}"`];
   const segments = path.split('.');
   if (segments.length > MAX_BINDING_PATH_SEGMENTS) {

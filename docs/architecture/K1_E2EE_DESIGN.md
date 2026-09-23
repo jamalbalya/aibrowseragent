@@ -1,9 +1,18 @@
 # K1 — Client-Side End-to-End Encryption for Cloud Sync
 
-Status: **design v3, pending review. Nothing here is implemented.** No
-production code was changed to produce this document, and none may change
-until it is reviewed and approved. There is no backend, no Cloud Sync
-transport and no encryption code in the repository.
+Status: **design v3, pending review. Nothing here is implemented.** There is
+no Cloud Sync transport and no encryption code in the repository, and none may
+be added until this document is reviewed and approved.
+
+One correction to what this said when written: `server/` now exists, holding
+the identity and authentication domain. It holds **no key and no ciphertext**,
+and no column in its schema is capable of carrying either — so the boundary
+this document describes is untouched.
+
+K1 remains the intended security boundary for Cloud Sync if and when Cloud
+Sync is built. It is not a boundary the current product relies on, because the
+current product stores everything locally and uploads nothing. See
+`LOCAL_FIRST_ARCHITECTURE.md` §8.
 
 Baseline: `67aafe9`, CI #47 green, 2267 unit/integration/security and 213 real
 Chromium tests.

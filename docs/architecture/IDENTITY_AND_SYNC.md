@@ -1,9 +1,20 @@
 # Identity, Persistence and Sync — Design Review
 
-Status: **design review.** Phases 1–7 of the foundation are implemented and
-tested; the backend (phases 8–20) is specified here and **not built**. No
-backend code exists, no authentication flow runs, and no data is uploaded
-anywhere.
+Status: **design review, partly implemented and partly superseded.**
+
+Two corrections to what this document said when it was written, both recorded
+rather than absorbed:
+
+- **The backend is no longer absent.** `server/` exists — accounts, identities,
+  sessions, devices and the Google sign-in flow — and is tested. Still true:
+  **nothing is deployed, and no data is uploaded anywhere.**
+- **The default storage mode is no longer `undecided`.** It is `local`, and
+  `undecided` survives only as a legacy value that resolves to `local`. See
+  `LOCAL_FIRST_ARCHITECTURE.md` §1, which supersedes this document on where
+  data lives and what is required to run the product.
+
+Phases 1–7 of the foundation are implemented and tested. Cloud Sync itself
+(the record model, the upload path, K1) remains **not built**.
 
 What ships in this wave: the multi-account model with `connectionId`,
 connection-scoped credentials and consent, safe legacy migration, the account

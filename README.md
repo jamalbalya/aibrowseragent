@@ -10,6 +10,33 @@ the extension. Switching model or provider changes _how the agent reasons_; it
 does not change what the agent can do, and it does not weaken any security
 control.
 
+## Local-first: nothing to install, nothing to run
+
+```
+Install the extension → Connect an AI provider → Use it
+```
+
+Everything you make — tasks, workflows, shortcuts, workspaces, settings and
+your provider connections — is stored by Chrome, on your computer. There is no
+account to create, no server to run and no database of any kind. The extension
+uploads nothing.
+
+You never need to install PostgreSQL, run Docker, start a backend, create a
+table, execute SQL or run a migration. Neither does anyone developing it:
+`npm ci && npm test && npm run build` needs no service running.
+
+There is an optional AI Browser Agent account (Google sign-in), and it is
+optional in the strong sense: a build with no backend origin configured has no
+sign-in at all, and every feature above works regardless. Signing in identifies
+your AI Browser Agent account — it does **not** connect or authorise OpenAI,
+Anthropic or Gemini, which stay where they are with their own keys.
+
+Because your data lives in this Chrome profile, deleting the profile deletes
+it. Settings → Your data → **Save a copy** writes an export file. It carries
+your workflows, shortcuts and settings, and deliberately no API keys.
+
+See [docs/architecture/LOCAL_FIRST_ARCHITECTURE.md](docs/architecture/LOCAL_FIRST_ARCHITECTURE.md).
+
 ---
 
 ## Status

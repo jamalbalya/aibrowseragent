@@ -1,11 +1,22 @@
 # Identity and Authentication Architecture
 
-Status: **design only.** Nothing here is implemented. There is no backend, no
-authentication endpoint, no database, no Google flow, no email flow, no session
-against a real server, and no Cloud Sync. What exists in the repository today
-is the local half of the model — `SessionStore`, `IdentityProfileStore`,
-`evaluateSession`, connection-scoped credentials and the legacy migration — and
-this document states the design the rest of it must satisfy.
+Status: **partly implemented.** The status line above this one used to read
+"design only", and that is no longer true.
+
+| Part of this design                                                                                   | State                                                                  |
+| ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Accounts, identities, sessions, devices (domain + schema)                                             | **implemented** in `server/`                                           |
+| Google sign-in, end to end                                                                            | **implemented** (`server/app/google-auth-service.ts`, `src/identity/`) |
+| Local half — `SessionStore`, `IdentityProfileStore`, `evaluateSession`, connection-scoped credentials | **implemented**                                                        |
+| Email OTP                                                                                             | not built                                                              |
+| Account-linking UI                                                                                    | not built                                                              |
+| Cloud Sync, K1                                                                                        | not built                                                              |
+| An HTTP transport, a deployed backend, a running database                                             | **not deployed**                                                       |
+
+Everything implemented is implemented **optionally**: a build with no
+configured backend origin has no authentication, and the extension is fully
+usable without it. See `LOCAL_FIRST_ARCHITECTURE.md` §6, which governs the
+question of what is required to run the product.
 
 This is the fourth document in the identity chain and the last one before
 implementation:
