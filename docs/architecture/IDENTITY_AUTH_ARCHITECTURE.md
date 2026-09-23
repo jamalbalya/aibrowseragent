@@ -197,15 +197,16 @@ email moved, the user's entire installation would come unbound from itself.
 
 ### 4.2 Why `abaUserId` is not any of the things it is near
 
-| Not                        | Because                                                                                                         |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| the authentication session | a session is minutes long and revocable; the account is permanent. `AUTH-2`                                     |
-| an AI provider connection  | one user has many connections, on many providers, at many endpoints (§17)                                       |
-| a provider credential      | a credential is a secret that never leaves the device; an id is a label that is sent on every request. `AUTH-6` |
-| user work                  | work outlives every session and survives sign-out entirely (§14)                                                |
-| a device                   | one account has many devices, and a device is minted locally (§11). `AUTH-7`                                    |
-| a K1 key                   | no value the backend holds is a function of the recovery key (K1 §26, K-22). `AUTH-3`, `AUTH-4`                 |
-| a Chrome runtime id        | extension id, tab, group and window ids are recycled runtime state. `AUTH-7`                                    |
+| Not                        | Because                                                                                                                |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| the authentication session | a session is minutes long and revocable; the account is permanent. `AUTH-2`                                            |
+| an AI provider connection  | one user has many connections, on many providers, at many endpoints (§17)                                              |
+| a provider credential      | a credential is a secret that never leaves the device; an id is a label that is sent on every request. `AUTH-6`        |
+| user work                  | work outlives every session and survives sign-out entirely (§14)                                                       |
+| a device                   | one account has many devices, and a device is minted locally (§11). `AUTH-7`                                           |
+| a K1 key                   | no value the backend holds is a function of the recovery key (K1 §26, K-22). `AUTH-3`, `AUTH-4`                        |
+| a Chrome runtime id        | extension id, tab, group and window ids are recycled runtime state. `AUTH-7`                                           |
+| an authentication identity | **one account may hold several** — a Google identity and an email identity resolve to the same `abaUserId` (§4.5, §20) |
 
 ### 4.3 Resolution: how an authentication becomes an `abaUserId`
 
@@ -215,7 +216,7 @@ verified authentication assertion
    ├─ google_sub matches an auth_identity ───────────────▶ return its aba_user_id
    │
    ├─ no google_sub match, and the assertion carries a
-   │  VERIFIED email matching an auth_identity ─────────▶ return its aba_user_id  (§20 linking rules)
+   │  VERIFIED email matching an EXISTING auth_identity ▶ return its aba_user_id  (a match, never a new link)
    │
    └─ no match ─────────────────────────────────────────▶ create a new aba_user
 ```
@@ -236,9 +237,28 @@ Three rules make this safe, and all three are load-bearing:
    whole reinstall-recovery path rests on (K1 §17, Cloud Sync §20), and
    `AUTH-11` asserts it.
 
-Whether a _second_ identity may later be attached to an existing account is
-account linking, and it is a separate, authenticated operation with its own
-rules (§20). Resolution never links on its own.
+**Resolution matches an identity row that already exists; it never creates
+one on an existing account.** Attaching a second identity is account linking —
+a separate, authenticated operation requiring two independent proofs (§20).
+Resolution never links on its own, and a verified email that is not already an
+`auth_identity` row creates a **new** account rather than joining one that
+happens to share the address.
+
+### 4.5 One account, many identities
+
+```
+                      ABA account  (abaUserId — one, permanent)
+                            │
+              ┌─────────────┴─────────────┐
+              ▼                           ▼
+      Google identity               Email identity
+      (auth_identity)               (auth_identity)
+      google_sub                    verified address
+```
+
+Each identity resolves to the account; neither **is** the account, and neither
+is required to exist. An external identity belongs to **at most one** ABA
+account (`AUTH-23`), which is what makes the refusal in §20.4.1 unambiguous.
 
 ### 4.4 A different user on the same installation
 
@@ -338,16 +358,16 @@ area, and the answer never depends on the order two reads resolved in.
 
 ### 6.3 Rotation and replay
 
-| Property                 | Rule                                                                                                                                        |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| **refresh rotation**     | every successful `/refresh` issues a **new** refresh token and invalidates the presented one. Refresh tokens are single-use                 |
-| **rolling window**       | the new token's expiry is `now + 30 d`, so an actively used session does not expire; an idle one does                                       |
-| **replay detection**     | presenting an _already-rotated_ refresh token is a **reuse signal**: the entire session family is revoked and re-authentication is required |
-| **why the whole family** | reuse means the token was captured. The attacker and the user both hold one; revoking only the presented one leaves the thief's valid       |
-| **storage at rest**      | the backend stores `argon2id(refresh_token)`, never the token. A stolen database yields no usable token (§2.2)                              |
-| **access token**         | not stored server-side at all; validated by signature and expiry. Short life is its revocation story                                        |
-| **binding**              | every token is bound to `(abaUserId, sessionId)`. A token is never bound to a `deviceId`, because a device is not an authenticator (§11)    |
-| **session fixation**     | the session is created **after** the identity assertion is verified, never before. No pre-issued identifier is adopted (§7.4, §8.4)         |
+| Property                 | Rule                                                                                                                                                                                                                                                                |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **refresh rotation**     | every successful `/refresh` issues a **new** refresh token and invalidates the presented one. Refresh tokens are single-use                                                                                                                                         |
+| **rolling window**       | the new token's expiry is `now + 30 d`, so an actively used session does not expire; an idle one does                                                                                                                                                               |
+| **replay detection**     | presenting an _already-rotated_ refresh token is a **reuse signal**: the entire session family is revoked and re-authentication is required                                                                                                                         |
+| **why the whole family** | reuse means the token was captured. The attacker and the user both hold one; revoking only the presented one leaves the thief's valid                                                                                                                               |
+| **storage at rest**      | the backend stores `argon2id(refresh_token)`, never the token. A stolen database yields no usable token (§2.2)                                                                                                                                                      |
+| **access token**         | not stored server-side at all; validated by signature and expiry. Short life is its revocation story                                                                                                                                                                |
+| **binding**              | every token is bound to `(abaUserId, sessionId)`. A token is never bound to a `deviceId`, because a device is not an authenticator (§11). The session **records** which identity established it, for unlink revocation only — that value authorises nothing (§20.7) |
+| **session fixation**     | the session is created **after** the identity assertion is verified, never before. No pre-issued identifier is adopted (§7.4, §8.4)                                                                                                                                 |
 
 **Rotation is not a substitute for revocation.** A user signing out, or an
 administrator revoking, marks the session row revoked server-side; every
@@ -506,15 +526,15 @@ for authentication.**
 
 ### 7.6 Subject mapping, revocation and identity change
 
-| Situation                                           | Behaviour                                                                                                                                                                          |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| first Google sign-in                                | create `aba_user` + `auth_identity{kind:'google', subject:sub}`                                                                                                                    |
-| returning                                           | match on `sub`, return the same `abaUserId`                                                                                                                                        |
-| the user changes their Google email address         | `sub` is unchanged, so the account is unchanged. The stored email is updated for display                                                                                           |
-| the user revokes the app's Google authorization     | existing ABA sessions keep working until they expire — they are ABA sessions, not Google ones. The **next** Google sign-in fails and must be re-consented                          |
-| Google account deleted                              | sign-in via Google stops working. The ABA account persists; if an email identity is linked it remains usable (§20). Otherwise the account is unreachable — an open question in §29 |
-| two Google accounts, same person                    | two `auth_identity` rows, two ABA accounts, unless explicitly linked (§20). **Never merged automatically**                                                                         |
-| a `sub` already attached to a different `abaUserId` | refused. One external subject maps to at most one ABA account                                                                                                                      |
+| Situation                                           | Behaviour                                                                                                                                                                                           |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| first Google sign-in                                | create `aba_user` + `auth_identity{kind:'google', subject:sub}`                                                                                                                                     |
+| returning                                           | match on `sub`, return the same `abaUserId`                                                                                                                                                         |
+| the user changes their Google email address         | `sub` is unchanged, so the account is unchanged. The stored email is updated for display                                                                                                            |
+| the user revokes the app's Google authorization     | existing ABA sessions keep working until they expire — they are ABA sessions, not Google ones. The **next** Google sign-in fails and must be re-consented                                           |
+| Google account deleted                              | sign-in via Google stops working. The ABA account persists; a linked email identity remains usable (§20). With no other identity the account may be unreachable — the limitation is stated in §20.8 |
+| two Google accounts, same person                    | two `auth_identity` rows, two ABA accounts, unless explicitly linked (§20). **Never merged automatically**                                                                                          |
+| a `sub` already attached to a different `abaUserId` | refused. One external subject maps to at most one ABA account                                                                                                                                       |
 
 ---
 
@@ -878,13 +898,14 @@ together in a way that suggests it is. Deletion is §15.
 Revocation is server-initiated where logout is user-initiated, and the client
 must be able to tell it from an outage (§9.1).
 
-| Trigger                                 | Scope            | Client sees                                       |
-| --------------------------------------- | ---------------- | ------------------------------------------------- |
-| user signs out                          | one session      | local clear, then `none`                          |
-| user signs out everywhere               | every session    | `401 SESSION_REVOKED` on next call                |
-| **refresh-token reuse detected** (§6.3) | the whole family | `401 SESSION_REVOKED`; re-authentication required |
-| account deletion                        | every session    | `401 ACCOUNT_DELETED`                             |
-| operator action                         | as scoped        | `401 SESSION_REVOKED`                             |
+| Trigger                                 | Scope                                               | Client sees                                                            |
+| --------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------- |
+| user signs out                          | one session                                         | local clear, then `none`                                               |
+| user signs out everywhere               | every session                                       | `401 SESSION_REVOKED` on next call                                     |
+| **refresh-token reuse detected** (§6.3) | the whole family                                    | `401 SESSION_REVOKED`; re-authentication required                      |
+| account deletion                        | every session                                       | `401 ACCOUNT_DELETED`                                                  |
+| operator action                         | as scoped                                           | `401 SESSION_REVOKED`                                                  |
+| **identity unlinked** (§20.5)           | only the sessions established through that identity | `401 SESSION_REVOKED`; sessions from a remaining identity keep working |
 
 On any of these the client clears its session and shows a sign-in prompt. It
 does **not** delete work, rotate `abaUserId`, drop the KEK or re-request the
@@ -1175,27 +1196,197 @@ attempts for this address" is an existence oracle (§8.4).
 
 ---
 
-## 20. Account linking
+## 20. Account linking — RESOLVED
 
-**Policy is open** (§29). What is _not_ open is the set of rules any policy must
-satisfy, because those are security properties rather than product taste.
+**Multiple verified authentication identities may belong to one ABA account.
+Linking is always explicit, always requires an already-authenticated ABA
+session, and always requires the second identity to complete its own
+proof-of-control flow. An identity already attached to another ABA account is
+refused, not reassigned. Account merge is not implemented and is not designed
+here.**
 
-| Rule                                                                             | Reason                                                                                                                                      |
-| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| linking requires an **authenticated session** on the ABA account being added to  | otherwise anyone who can prove control of an email could attach themselves to a stranger's account                                          |
-| linking requires **fresh proof of control** of the second identity               | a completed Google flow or a verified OTP, performed as part of the link, not a remembered one                                              |
-| a second identity already attached to a **different** ABA account is **refused** | silently moving it would detach it from an account that is still using it; merging two accounts is a destructive operation nobody asked for |
-| **no silent merge, ever**                                                        | two accounts with data cannot be combined without deciding whose data wins, and that decision is not one a server may take                  |
-| unlinking may not leave an account unreachable                                   | removing the last identity would orphan the account and its ciphertext                                                                      |
-| an unverified email is never linkable                                            | §4.3, and the pre-hijack control in `IDENTITY_AND_SYNC.md` §T                                                                               |
+### 20.1 The three models, compared
 
-`IDENTITY_AND_SYNC.md` §U already reserves `POST /v1/auth/link/start` and
-`/link/complete` for this shape, and those names are kept.
+Stated as consequences, not as a ranking.
 
-**What remains a product decision:** whether linking is offered at all in v1;
-whether a user may hold both a Google and an email identity on one account;
-and what a person who has already created two accounts is offered, given that
-merging them is refused. Recorded in §29, not decided here.
+| Dimension                | **A — one identity per account**                                                                          | **B — many verified identities per account**                                                                            | **C — no linking; each identity is its own account**                                                        |
+| ------------------------ | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| account takeover risk    | no link operation exists, so no link-shaped attack; the whole surface is the sign-in flow                 | adds one operation that attaches an identity to an account, which is an attack surface if either proof is weak          | identical to A — there is no link operation                                                                 |
+| account merge complexity | none; merge is impossible by construction                                                                 | none, if merge stays unimplemented: linking attaches an identity to an account, it does not combine two accounts' data  | none; two accounts stay two accounts                                                                        |
+| schema impact            | `auth_identity` would carry a uniqueness constraint on `aba_user_id` as well                              | **none.** The existing `auth_identity` table is already one-to-many on `aba_user_id` (§23)                              | none                                                                                                        |
+| recovery implications    | one identity is the only route back; losing it loses account access                                       | a second identity is a second route back — the only mitigation for lost-identity that does not invent a support process | same as A, per account                                                                                      |
+| UX                       | a user who signs in the "wrong way" is told this account uses Google, and cannot proceed                  | the user signs in either way and lands in the same account                                                              | a user who signs in the other way silently lands in an empty second account and believes their work is gone |
+| duplicate accounts       | prevented at the cost of refusing the second method entirely                                              | reduced, not eliminated: a user who creates the second account **before** linking still has two                         | expected and permanent; every user with two habits has two accounts                                         |
+| identity verification    | one completed flow, at sign-in                                                                            | two independent proofs for a link: the session on the target account, plus a fresh flow on the identity being added     | one completed flow, at sign-in                                                                              |
+| unlinking                | not applicable — the only identity cannot be removed                                                      | needs an explicit rule, because removing the last identity would orphan the account (§20.5)                             | not applicable                                                                                              |
+| lost identity            | account access is unreachable; the ciphertext is intact and undecryptable-by-anyone-else, but unreachable | the other linked identity still works. If **all** are lost, identical to A (§20.8)                                      | same as A                                                                                                   |
+| session implications     | nothing new                                                                                               | a link is a sensitive account change and has a defined session consequence (§20.7)                                      | nothing new                                                                                                 |
+| auditability             | one row per account; nothing to reconstruct                                                               | a link is an event with a time, an actor session and a method — reconstructable from `linked_at` and `linked_via` (§23) | one row per account                                                                                         |
+
+### 20.2 The decision
+
+**Model B**, in its conservative form. The properties that make it conservative
+are not adjustable later without re-opening this gate:
+
+| Property                                                        | Status                                  |
+| --------------------------------------------------------------- | --------------------------------------- |
+| linking is explicit — never inferred, never automatic           | **required**                            |
+| linking requires an authenticated session on the target account | **required**                            |
+| the identity being added completes its own fresh proof          | **required**                            |
+| an identity attached elsewhere is **refused**                   | **required**                            |
+| accounts are never merged                                       | **required** — merge is not implemented |
+| encrypted cloud data is never moved between accounts            | **required**                            |
+| `abaUserId` never changes                                       | **required**                            |
+
+### 20.3 What may and may not prove ownership
+
+This is the security core of the decision, and it is short on purpose.
+
+> **Ownership of an authentication identity is established by completing that
+> identity's own authentication flow. Nothing else establishes it.**
+
+| Never proves ownership of anything | Why                                                                                                                   |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| a matching email **string**        | an address is a claim until a flow verifies it. Matching strings is the pre-hijack attack (§4.3)                      |
+| a display name                     | user-supplied, non-unique, changeable at will                                                                         |
+| provider metadata                  | `name`, `picture`, `hd`, locale and the rest are attributes of an identity, not proof of control of an **account**    |
+| the browser profile                | a shared or handed-down profile belongs to whoever is sitting at it                                                   |
+| local extension state              | the cached `abaUserId`, a stored `deviceId`, a present KEK: all client-side values an attacker with the profile holds |
+| a `deviceId`                       | provenance, not an authenticator (`AUTH-20`)                                                                          |
+| holding the K1 recovery key        | it decrypts data; it is **not** an authentication credential and must never become one (§20.8, `AUTH-4`)              |
+
+`AUTH-27` asserts this as a single testable rule.
+
+### 20.4 The linking protocol
+
+Two proofs, in this order, neither substitutable for the other.
+
+```
+  authenticated session on ABA account X          ← proof 1: control of the ACCOUNT
+            │
+            ▼
+  POST /v1/auth/link/start  { method }
+            │   creates a login_challenge with purpose='link', aba_user_id = X
+            │   (Google: state + nonce + PKCE, server-side · email: OTP)
+            ▼
+  the user completes that identity's OWN flow     ← proof 2: control of the IDENTITY
+            │
+            ▼
+  POST /v1/auth/link/complete
+            │
+            ├─ identity already attached to account X          ──▶  no-op, success
+            ├─ identity attached to a DIFFERENT account        ──▶  REFUSED  (§20.4.1)
+            ├─ identity unattached, proof valid                ──▶  new auth_identity row on X
+            └─ session for X expired mid-flow                  ──▶  REFUSED; the challenge is consumed
+```
+
+| Rule                                                              | Reason                                                                                                                                |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| the session is re-checked at `link/complete`, not only at `start` | a flow can take minutes; authorising on a session that has since been revoked would let a revoked session complete a sensitive change |
+| the challenge carries `aba_user_id` server-side                   | the client never names the target account, so there is no parameter in which to name someone else's                                   |
+| the proof must be **fresh**                                       | a remembered or previously completed flow is not a proof of control _now_                                                             |
+| an unverified email is never linkable                             | §4.3, and the pre-hijack control in `IDENTITY_AND_SYNC.md` §T. `AUTH-18`                                                              |
+| the challenge is consumed before any write                        | a replayed `link/complete` finds nothing (§22.2)                                                                                      |
+| linking is idempotent for an identity already on this account     | so a retried or double-submitted link is not an error the user has to interpret                                                       |
+
+#### 20.4.1 When the identity already belongs to another account
+
+**Refuse.** Specifically, and all five at once:
+
+- do **not** merge the accounts,
+- do **not** move the identity,
+- do **not** move, copy or re-encrypt any cloud record,
+- do **not** create, rename or retire any device row,
+- do **not** reveal _which_ account holds it, or that a particular account
+  exists — the refusal is the same whichever account is on the other side
+  (§8.4, `AUTH-19`).
+
+The user is told that this sign-in method is already in use on another AI
+Browser Agent account, and that they can sign in with it directly. If a
+combine-accounts capability is ever introduced it is a separate, explicitly
+approved, high-risk operation — **not** an extension of linking, and not
+designed here.
+
+### 20.5 Unlinking
+
+| Rule                                                                                                    | Reason                                                                                                     |
+| ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| unlinking requires an authenticated session on the account                                              | it is an account change                                                                                    |
+| **an identity may not be removed if it would leave the account with no verified authentication method** | the account and its ciphertext would be unreachable by anyone, forever. `AUTH-25`                          |
+| that rule may be relaxed **only** if a separate account-recovery mechanism is explicitly approved       | and no such mechanism is designed, invented or implied here                                                |
+| unlinking is **not** account deletion                                                                   | it removes one route in. It deletes no work, no record, no device, no credential and no account. `AUTH-26` |
+| unlinking does not change `abaUserId`                                                                   | §20.6                                                                                                      |
+| unlinking an identity that is not on this account is refused without saying whose it is                 | same enumeration rule as §20.4.1                                                                           |
+
+### 20.6 What linking and unlinking must not touch
+
+| Must not                                                        | Because                                                                                             |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| change `abaUserId`                                              | every connected account, workspace, task and sync partition is bound to it. `AUTH-1`, `AUTH-24`     |
+| rotate K1, or any key                                           | **an authentication identity change is an authentication change, not an encryption change**         |
+| expose, request, derive from or verify against the recovery key | it is not an authentication credential (§20.8). `AUTH-4`                                            |
+| derive any K1 material from the new identity                    | the derivation is recovery key → HKDF → KEK, and authentication appears nowhere in it (§1, §5)      |
+| re-encrypt user records                                         | nothing about the record changed; a re-encrypt would rewrite every AAD for no reason                |
+| duplicate encrypted records                                     | the partition is keyed by `abaUserId`, which did not change                                         |
+| move records between accounts                                   | that is merge, which is not implemented                                                             |
+| alter workspace authorization                                   | membership is live Chrome state and no cloud or identity record is an input to it (§19.2, `SYNC-5`) |
+| alter provider connection identity                              | `connectionId` is device-minted and independent of the ABA account (§16)                            |
+| alter provider credentials                                      | `SECRET_LOCAL_ONLY`; the backend has never held one. `AUTH-5`                                       |
+| alter device rows or watermarks                                 | devices belong to the account, and the account did not change                                       |
+
+Stated positively: **after a link or an unlink, the only thing that differs is
+the set of rows in `auth_identity`.** Everything else in the system — locally,
+in the cloud and in the key hierarchy — is byte-identical.
+
+### 20.7 Session implications
+
+| Question                                             | Answer                                                                                                                                                                                                              |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| do existing sessions survive a link?                 | **yes.** The account is unchanged; nothing about the existing session's authority has been altered                                                                                                                  |
+| may the newly linked identity create a session?      | **yes**, from the next sign-in onwards — it resolves to the same `abaUserId` by the ordinary rules (§4.3). The link itself issues no new session                                                                    |
+| does linking issue a session for the added identity? | **no.** `link/complete` returns the updated identity list, never tokens. A link is an account change, not an authentication                                                                                         |
+| do existing sessions survive an unlink?              | **yes** — with one exception below                                                                                                                                                                                  |
+| does unlinking revoke sessions?                      | **sessions established through the unlinked identity are revoked.** Removing a route in must remove the access it granted, or unlinking a compromised identity would leave its sessions running                     |
+| does a link or unlink require re-authentication?     | linking requires the session plus a fresh identity proof (§20.4). Unlinking requires a session; whether it additionally requires a fresh proof is an implementation-review choice, and requiring one is never wrong |
+| what about account deletion?                         | unchanged and separate: `DELETE /v1/me` requires re-authentication within five minutes (§15.1), and no unlink ever performs it                                                                                      |
+
+To make the revocation rule implementable, a `session` row records the
+`auth_identity` it was established through — see §23.
+
+### 20.8 Sole-identity loss — the limitation, stated plainly
+
+Model B reduces this risk by allowing a second route in. It does not remove it.
+
+> **If a user loses every authentication identity on their ABA account, and no
+> account-recovery mechanism has been separately approved, there may be no safe
+> way to prove account ownership. Access to that account may be permanently
+> unavailable.**
+
+This is a limitation, not a defect to work around:
+
+- the ciphertext is intact, and the user's recovery key still decrypts it — but
+  nothing proves _which account_ is theirs;
+- every mechanism that could bridge that gap — a support override, a secondary
+  address, a possession challenge, an identity document — is an
+  account-takeover path unless it is designed as carefully as the primary flow,
+  and **no such mechanism is designed, invented or implied here**;
+- **the K1 recovery key must never become an authentication credential.**
+  Presenting it must never sign anyone in, and it must never be sent to the
+  backend, in any encoding, for any purpose (`AUTH-4`). It decrypts data; it
+  does not name an account, and treating it as a login factor would both
+  transmit the one secret the design says is never transmitted and make a
+  decryption key into an authorization one.
+
+Local-only data is unaffected by all of this: it never depended on an account.
+
+### 20.9 What remains a product decision
+
+Not whether linking exists — that is decided above. What is left is **surface**:
+whether the v1 UI exposes a "add another sign-in method" control at launch or
+in a later release, and what the linked-identity list shows. The architecture,
+the schema, the endpoints, the invariants and the refusal behaviour are the
+same either way, which is why this is a launch-sequencing question and not an
+open architectural one. It is **not** carried in §29.
 
 ---
 
@@ -1247,19 +1438,30 @@ and are referenced rather than redefined.
 All endpoints are HTTPS on the backend's own origin. `abaUserId` always comes
 from the session (§19.1). Every response body is JSON `{ code, ... }` on error.
 
-| Endpoint                       | Auth required                      | Authorization        | Idempotent                                    | Rate-limit category  |
-| ------------------------------ | ---------------------------------- | -------------------- | --------------------------------------------- | -------------------- |
-| `POST /v1/auth/start`          | **no**                             | —                    | no — each call mints a challenge              | authentication start |
-| `GET /v1/auth/google/callback` | **no**                             | `state` binding      | **yes** — a consumed `state` is inert         | authentication start |
-| `POST /v1/auth/email/verify`   | **no**                             | challenge + attempts | no — attempts increment                       | email OTP verify     |
-| `POST /v1/auth/exchange`       | **no** (one-time code)             | code binding         | **yes** — a consumed code is inert            | authentication start |
-| `POST /v1/auth/refresh`        | refresh token                      | session              | **no** — rotation is single-use               | token refresh        |
-| `POST /v1/auth/logout`         | access token                       | own session          | **yes**                                       | account read         |
-| `POST /v1/auth/logout-all`     | access token                       | own account          | **yes**                                       | account read         |
-| `POST /v1/auth/link/start`     | access token                       | own account          | no                                            | authentication start |
-| `POST /v1/auth/link/complete`  | access token                       | own account          | **yes** — consumed challenge                  | authentication start |
-| `GET /v1/me`                   | access token                       | own account          | **yes**                                       | account read         |
-| `DELETE /v1/me`                | access token **+ re-auth < 5 min** | own account          | **yes** — deleting twice is `ACCOUNT_DELETED` | account deletion     |
+| Endpoint                          | Auth required                      | Authorization        | Idempotent                                    | Rate-limit category  |
+| --------------------------------- | ---------------------------------- | -------------------- | --------------------------------------------- | -------------------- |
+| `POST /v1/auth/start`             | **no**                             | —                    | no — each call mints a challenge              | authentication start |
+| `GET /v1/auth/google/callback`    | **no**                             | `state` binding      | **yes** — a consumed `state` is inert         | authentication start |
+| `POST /v1/auth/email/verify`      | **no**                             | challenge + attempts | no — attempts increment                       | email OTP verify     |
+| `POST /v1/auth/exchange`          | **no** (one-time code)             | code binding         | **yes** — a consumed code is inert            | authentication start |
+| `POST /v1/auth/refresh`           | refresh token                      | session              | **no** — rotation is single-use               | token refresh        |
+| `POST /v1/auth/logout`            | access token                       | own session          | **yes**                                       | account read         |
+| `POST /v1/auth/logout-all`        | access token                       | own account          | **yes**                                       | account read         |
+| `POST /v1/auth/link/start`        | access token                       | own account          | no                                            | authentication start |
+| `POST /v1/auth/link/complete`     | access token                       | own account          | **yes** — consumed challenge                  | authentication start |
+| `DELETE /v1/auth/identities/{id}` | access token                       | own account          | **yes** — removing twice is `NOT_FOUND`       | account read         |
+| `GET /v1/me`                      | access token                       | own account          | **yes**                                       | account read         |
+| `DELETE /v1/me`                   | access token **+ re-auth < 5 min** | own account          | **yes** — deleting twice is `ACCOUNT_DELETED` | account deletion     |
+
+`/auth/link/start` and `/auth/link/complete` carry the **two-proof** linking
+protocol of §20.4; `DELETE /v1/auth/identities/{id}` is the unlink of §20.5 and
+is **refused** when it would remove the account's last verified identity. The
+identity being linked is never named by the client as belonging to any account:
+the target `aba_user_id` is written onto the `login_challenge` server-side from
+the session, so no request body can name another user's account (§19.1).
+`GET /v1/me` returns the account's identity list — `kind`, a masked `email`,
+`linked_at`, `last_used_at` — and never a `subject`, a token, or anything from
+another account.
 
 Device and sync endpoints — `POST /v1/devices`,
 `POST /v1/devices/{id}/retire`, `POST /v1/devices/{id}/reactivate`,
@@ -1342,34 +1544,53 @@ An external identity that resolves to an ABA account. `IDENTITY_AND_SYNC.md`
 §U calls this `auth_method`; the shape is identical and either name is
 acceptable at implementation time.
 
-| Field            | Type        | Notes                                              |
-| ---------------- | ----------- | -------------------------------------------------- |
-| `id`             | text PK     |                                                    |
-| `aba_user_id`    | text FK     | owner                                              |
-| `kind`           | enum        | `google` \| `email`                                |
-| `subject`        | text null   | `google_sub`. **Unique** where non-null            |
-| `email`          | citext null | stored lowercase. **Unique** where non-null (§8.3) |
-| `email_verified` | boolean     | **never `true` without a completed proof** (§4.3)  |
-| `linked_at`      | timestamptz |                                                    |
-| `last_used_at`   | timestamptz | for display and for stale-identity review only     |
+| Field            | Type        | Notes                                                                                                                                      |
+| ---------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`             | text PK     |                                                                                                                                            |
+| `aba_user_id`    | text FK     | owner                                                                                                                                      |
+| `kind`           | enum        | `google` \| `email`                                                                                                                        |
+| `subject`        | text null   | `google_sub`. **Unique** where non-null                                                                                                    |
+| `email`          | citext null | stored lowercase. **Unique** where non-null (§8.3)                                                                                         |
+| `email_verified` | boolean     | **never `true` without a completed proof** (§4.3)                                                                                          |
+| `linked_at`      | timestamptz | when this identity was attached (§20.7)                                                                                                    |
+| `linked_via`     | text null   | the `session.id` that performed the link; null for the identity the account was created with. **Audit only**, never an authorization input |
+| `last_used_at`   | timestamptz | for display and for stale-identity review only                                                                                             |
 
 Indexes: unique `(kind, subject)`, unique `(kind, email)`, and `(aba_user_id)`
 for listing. **Sensitive:** `email` and `subject` are PII. Retention: §25.
 **Deletion:** hard-deleted on account deletion (§15.1).
 
+**This shape already carries the resolved linking policy, unchanged.** It is
+one-to-many on `aba_user_id`, so a Google identity and an email identity on one
+account are two ordinary rows: **§20 requires no schema change**, and
+`linked_via` is the only addition, for auditability.
+
+Two constraints hold the security property, and neither may be relaxed:
+
+| Constraint                                          | What it enforces                                                                                                                                                                                                                  |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| unique `(kind, subject)` and unique `(kind, email)` | an external identity belongs to **at most one** ABA account. A link naming one already attached elsewhere cannot be written at all, so §20.4.1's refusal is a database property rather than only an application check (`AUTH-23`) |
+| **no** unique constraint on `aba_user_id`           | many identities per account. Model A would have added one here, and adding one later would break every linked account                                                                                                             |
+
+There is deliberately **no** `merge_source` column, no `previous_aba_user_id`
+and no nullable owner. A row's `aba_user_id` is written once at creation and is
+never updated, so moving an identity between accounts is not an operation the
+schema can express (`AUTH-23`).
+
 ### `session`
 
-| Field                | Type             | Notes                                                                  |
-| -------------------- | ---------------- | ---------------------------------------------------------------------- |
-| `id`                 | text PK          | `ses_…`                                                                |
-| `aba_user_id`        | text FK          | **the source of `abaUserId` for every authorization decision** (§19.1) |
-| `family_id`          | text             | the rotation chain; reuse revokes the whole family (§6.3)              |
-| `refresh_token_hash` | bytea            | **argon2id**. The token itself is never stored (§2.2)                  |
-| `issued_at`          | timestamptz      |                                                                        |
-| `expires_at`         | timestamptz      | issue + ~30 d, rolled forward on each rotation                         |
-| `rotated_at`         | timestamptz null | set when superseded; a presented token with this set is **reuse**      |
-| `revoked_at`         | timestamptz null | logout, `logout-all`, reuse detection, deletion                        |
-| `last_seen_at`       | timestamptz      | drives `lastContactAt` on the client and nothing else                  |
+| Field                | Type             | Notes                                                                                                                                             |
+| -------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                 | text PK          | `ses_…`                                                                                                                                           |
+| `aba_user_id`        | text FK          | **the source of `abaUserId` for every authorization decision** (§19.1)                                                                            |
+| `family_id`          | text             | the rotation chain; reuse revokes the whole family (§6.3)                                                                                         |
+| `refresh_token_hash` | bytea            | **argon2id**. The token itself is never stored (§2.2)                                                                                             |
+| `issued_at`          | timestamptz      |                                                                                                                                                   |
+| `expires_at`         | timestamptz      | issue + ~30 d, rolled forward on each rotation                                                                                                    |
+| `rotated_at`         | timestamptz null | set when superseded; a presented token with this set is **reuse**                                                                                 |
+| `revoked_at`         | timestamptz null | logout, `logout-all`, reuse detection, deletion                                                                                                   |
+| `auth_identity_id`   | text FK          | which identity established this session. Read **only** to revoke on unlink (§20.7); never an authorization input — authorization is `aba_user_id` |
+| `last_seen_at`       | timestamptz      | drives `lastContactAt` on the client and nothing else                                                                                             |
 
 Index `(aba_user_id, revoked_at)` for `logout-all` and listing; index
 `(family_id)` for reuse revocation. **Sensitive:** `refresh_token_hash` is
@@ -1441,25 +1662,29 @@ Uniform shape `{ code, message }`. Two rules govern every row:
   would confirm an account.
 - **No error carries credential or key material**, nor any hint of it.
 
-| Condition                               | Code                     | User-facing shape                                                                    | Deliberately indistinguishable from       |
-| --------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------ | ----------------------------------------- |
-| wrong OTP                               | `AUTH_CHALLENGE_INVALID` | "That code is not valid."                                                            | expired, consumed, unknown challenge      |
-| expired challenge                       | `AUTH_CHALLENGE_INVALID` | same                                                                                 | wrong code                                |
-| consumed challenge (replay)             | `AUTH_CHALLENGE_INVALID` | same                                                                                 | wrong code                                |
-| attempts exhausted                      | `AUTH_CHALLENGE_INVALID` | same, with "request a new code"                                                      | wrong code                                |
-| bad `state` / bad `nonce` / OAuth error | `AUTH_CHALLENGE_INVALID` | one terminal page, one message                                                       | each other (§7.4)                         |
-| account not found                       | — **no such error**      | `/auth/start` always answers the same (§8.4)                                         | account exists                            |
-| expired session                         | `AUTH_REQUIRED`          | "Sign in again to continue."                                                         | —                                         |
-| revoked session                         | `SESSION_REVOKED`        | "You were signed out. Sign in again."                                                | — **never** presented as an outage (§9.1) |
-| account deleted                         | `ACCOUNT_DELETED`        | "This account no longer exists."                                                     | — **never** presented as an outage        |
-| refresh reuse detected                  | `SESSION_REVOKED`        | same as revoked — the client does not need to know which                             | ordinary revocation                       |
-| authentication outage                   | — **no server error**    | "Working offline. Sign in again by <date>."                                          | — it is the **absence** of an answer      |
-| unauthorized cloud access               | `NOT_FOUND`              | nothing                                                                              | a record that does not exist (§19.1)      |
-| device retired                          | `DEVICE_RETIRED`         | "This device needs to be reactivated."                                               | — (Cloud Sync §23)                        |
-| recovery required                       | `RECOVERY_REQUIRED`      | "Enter your recovery key to restore your data."                                      | —                                         |
-| invalid recovery key                    | `WRONG_RECOVERY_KEY`     | "That recovery key does not unlock this data."                                       | — (K1 §23)                                |
-| malformed recovery key                  | `RECOVERY_KEY_MALFORMED` | "That does not look like a recovery key." — from the checksum, before any derivation | —                                         |
-| rate limited                            | `RATE_LIMITED`           | "Too many attempts. Try again later."                                                | — never says _why_ (§19.3)                |
+| Condition                                 | Code                     | User-facing shape                                                                    | Deliberately indistinguishable from           |
+| ----------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------ | --------------------------------------------- |
+| wrong OTP                                 | `AUTH_CHALLENGE_INVALID` | "That code is not valid."                                                            | expired, consumed, unknown challenge          |
+| expired challenge                         | `AUTH_CHALLENGE_INVALID` | same                                                                                 | wrong code                                    |
+| consumed challenge (replay)               | `AUTH_CHALLENGE_INVALID` | same                                                                                 | wrong code                                    |
+| attempts exhausted                        | `AUTH_CHALLENGE_INVALID` | same, with "request a new code"                                                      | wrong code                                    |
+| bad `state` / bad `nonce` / OAuth error   | `AUTH_CHALLENGE_INVALID` | one terminal page, one message                                                       | each other (§7.4)                             |
+| account not found                         | — **no such error**      | `/auth/start` always answers the same (§8.4)                                         | account exists                                |
+| expired session                           | `AUTH_REQUIRED`          | "Sign in again to continue."                                                         | —                                             |
+| revoked session                           | `SESSION_REVOKED`        | "You were signed out. Sign in again."                                                | — **never** presented as an outage (§9.1)     |
+| account deleted                           | `ACCOUNT_DELETED`        | "This account no longer exists."                                                     | — **never** presented as an outage            |
+| refresh reuse detected                    | `SESSION_REVOKED`        | same as revoked — the client does not need to know which                             | ordinary revocation                           |
+| authentication outage                     | — **no server error**    | "Working offline. Sign in again by <date>."                                          | — it is the **absence** of an answer          |
+| unauthorized cloud access                 | `NOT_FOUND`              | nothing                                                                              | a record that does not exist (§19.1)          |
+| device retired                            | `DEVICE_RETIRED`         | "This device needs to be reactivated."                                               | — (Cloud Sync §23)                            |
+| recovery required                         | `RECOVERY_REQUIRED`      | "Enter your recovery key to restore your data."                                      | —                                             |
+| invalid recovery key                      | `WRONG_RECOVERY_KEY`     | "That recovery key does not unlock this data."                                       | — (K1 §23)                                    |
+| malformed recovery key                    | `RECOVERY_KEY_MALFORMED` | "That does not look like a recovery key." — from the checksum, before any derivation | —                                             |
+| identity already linked elsewhere         | `IDENTITY_IN_USE`        | "That sign-in method is already used by another AI Browser Agent account."           | — **never names the other account** (§20.4.1) |
+| identity already on **this** account      | — **no error**           | the link is a no-op and reports success (§20.4)                                      | a first-time link                             |
+| unlink would remove the last identity     | `LAST_IDENTITY`          | "This is the only way you can sign in, so it cannot be removed."                     | —                                             |
+| unlink of an identity not on this account | `NOT_FOUND`              | nothing                                                                              | an identity that does not exist (§20.5)       |
+| rate limited                              | `RATE_LIMITED`           | "Too many attempts. Try again later."                                                | — never says _why_ (§19.3)                    |
 
 `RECOVERY_REQUIRED` and `WRONG_RECOVERY_KEY` are **client-side** conditions.
 The backend never emits them, because it has no way to evaluate them — it holds
@@ -1501,30 +1726,36 @@ it.
 Written in the style of the repository's existing invariants, so each is a test
 rather than a sentiment.
 
-| #           | Invariant                                                                                                                                                                               |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **AUTH-1**  | One ABA account has exactly one durable `abaUserId`; the backend is its only source, and a known identity never produces a new one.                                                     |
-| **AUTH-2**  | An authentication session is not the ABA identity: no session value is an input to `abaUserId`, and ending a session does not end the account.                                          |
-| **AUTH-3**  | A valid authenticated session, alone, decrypts nothing. No endpoint returns plaintext of a K1-protected record.                                                                         |
-| **AUTH-4**  | The recovery key never reaches the backend, in any encoding, hashed or as a verifier; no stored value is a function of it.                                                              |
-| **AUTH-5**  | No provider API key, OAuth secret or credential fragment appears in any authentication request, response, or backend log.                                                               |
-| **AUTH-6**  | No provider credential is an input to `abaUserId`, `deviceId`, a session token, or any K1 key.                                                                                          |
-| **AUTH-7**  | No Chrome runtime identifier — extension id, `tabId`, `windowId`, `tabGroupId` — is an input to `abaUserId` or `deviceId`, and none appears in an authentication payload.               |
-| **AUTH-8**  | Cross-user access is rejected server-side: `abaUserId` comes from the session, no endpoint accepts it as a parameter, and another user's record is `NOT_FOUND`.                         |
-| **AUTH-9**  | Logout, session expiry, revocation and a lapsed grace delete no user work — local or cloud — and delete no provider credential.                                                         |
-| **AUTH-10** | An authentication outage never rotates, recreates or re-resolves `abaUserId`.                                                                                                           |
-| **AUTH-11** | Extension reinstall followed by authentication with the same identity yields the same `abaUserId` — never a new one.                                                                    |
-| **AUTH-12** | Provider API keys are never restored from the cloud: no response field on any endpoint is capable of carrying one.                                                                      |
-| **AUTH-13** | Account deletion is the only normal destructive account operation, and it requires re-authentication within the last five minutes.                                                      |
-| **AUTH-14** | A revoked session and a deleted account are never treated as an outage: an authenticated rejection never enters `offline_grace`.                                                        |
-| **AUTH-15** | No password-hashing primitive (Argon2id, scrypt, PBKDF2, bcrypt) runs in the extension, and the CSP remains `script-src 'self'; object-src 'self'` with no `wasm-unsafe-eval`.          |
-| **AUTH-16** | A refresh token is single-use; presenting a rotated one revokes the entire session family.                                                                                              |
-| **AUTH-17** | No authentication artefact — access token, refresh token, `state`, `nonce`, PKCE verifier, OTP — is written into a task, workflow, shortcut, workspace, sync, evidence or audit record. |
-| **AUTH-18** | An unverified email never matches an existing account and never becomes a linked identity.                                                                                              |
-| **AUTH-19** | `/auth/start` responses do not vary on whether an account exists.                                                                                                                       |
-| **AUTH-20** | A `deviceId` authorises nothing: no endpoint grants access on the basis of one, and no device's state authorises another device.                                                        |
-| **AUTH-21** | Authentication requests no new Chrome permission; `chrome.identity` is not used.                                                                                                        |
-| **AUTH-22** | Two ABA accounts are never merged automatically; linking requires an authenticated session plus fresh proof of the second identity.                                                     |
+| #           | Invariant                                                                                                                                                                                                                               |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **AUTH-1**  | One ABA account has exactly one durable `abaUserId`; the backend is its only source, and a known identity never produces a new one.                                                                                                     |
+| **AUTH-2**  | An authentication session is not the ABA identity: no session value is an input to `abaUserId`, and ending a session does not end the account.                                                                                          |
+| **AUTH-3**  | A valid authenticated session, alone, decrypts nothing. No endpoint returns plaintext of a K1-protected record.                                                                                                                         |
+| **AUTH-4**  | The recovery key never reaches the backend, in any encoding, hashed or as a verifier; no stored value is a function of it.                                                                                                              |
+| **AUTH-5**  | No provider API key, OAuth secret or credential fragment appears in any authentication request, response, or backend log.                                                                                                               |
+| **AUTH-6**  | No provider credential is an input to `abaUserId`, `deviceId`, a session token, or any K1 key.                                                                                                                                          |
+| **AUTH-7**  | No Chrome runtime identifier — extension id, `tabId`, `windowId`, `tabGroupId` — is an input to `abaUserId` or `deviceId`, and none appears in an authentication payload.                                                               |
+| **AUTH-8**  | Cross-user access is rejected server-side: `abaUserId` comes from the session, no endpoint accepts it as a parameter, and another user's record is `NOT_FOUND`.                                                                         |
+| **AUTH-9**  | Logout, session expiry, revocation and a lapsed grace delete no user work — local or cloud — and delete no provider credential.                                                                                                         |
+| **AUTH-10** | An authentication outage never rotates, recreates or re-resolves `abaUserId`.                                                                                                                                                           |
+| **AUTH-11** | Extension reinstall followed by authentication with the same identity yields the same `abaUserId` — never a new one.                                                                                                                    |
+| **AUTH-12** | Provider API keys are never restored from the cloud: no response field on any endpoint is capable of carrying one.                                                                                                                      |
+| **AUTH-13** | Account deletion is the only normal destructive account operation, and it requires re-authentication within the last five minutes.                                                                                                      |
+| **AUTH-14** | A revoked session and a deleted account are never treated as an outage: an authenticated rejection never enters `offline_grace`.                                                                                                        |
+| **AUTH-15** | No password-hashing primitive (Argon2id, scrypt, PBKDF2, bcrypt) runs in the extension, and the CSP remains `script-src 'self'; object-src 'self'` with no `wasm-unsafe-eval`.                                                          |
+| **AUTH-16** | A refresh token is single-use; presenting a rotated one revokes the entire session family.                                                                                                                                              |
+| **AUTH-17** | No authentication artefact — access token, refresh token, `state`, `nonce`, PKCE verifier, OTP — is written into a task, workflow, shortcut, workspace, sync, evidence or audit record.                                                 |
+| **AUTH-18** | An unverified email never matches an existing account and never becomes a linked identity.                                                                                                                                              |
+| **AUTH-19** | `/auth/start` responses do not vary on whether an account exists.                                                                                                                                                                       |
+| **AUTH-20** | A `deviceId` authorises nothing: no endpoint grants access on the basis of one, and no device's state authorises another device.                                                                                                        |
+| **AUTH-21** | Authentication requests no new Chrome permission; `chrome.identity` is not used.                                                                                                                                                        |
+| **AUTH-22** | Two ABA accounts are never merged — automatically or otherwise. Linking requires an authenticated session on the target account **and** a fresh proof of control of the identity being added; neither alone suffices.                   |
+| **AUTH-23** | An external identity belongs to at most one ABA account. A link naming one already attached elsewhere is refused, and no identity row's `aba_user_id` is ever updated.                                                                  |
+| **AUTH-24** | Linking and unlinking change `abaUserId` for nobody, rotate no key, expose no recovery key, re-encrypt no record, duplicate no record, and move no record between accounts.                                                             |
+| **AUTH-25** | An identity cannot be unlinked if it would leave the account with no verified authentication method.                                                                                                                                    |
+| **AUTH-26** | Unlinking is not account deletion: it removes no work, no cloud record, no device row, no provider credential and no account.                                                                                                           |
+| **AUTH-27** | Account ownership is proved only by completing an authentication flow. A matching email string, a display name, provider metadata, the browser profile, local extension state, a `deviceId` and the K1 recovery key each prove nothing. |
+| **AUTH-28** | A link refusal does not reveal which account holds the identity, or that any particular account exists.                                                                                                                                 |
 
 ---
 
@@ -1581,9 +1812,13 @@ implemented.** Each is a behaviour to assert, not a feature to demonstrate.
 4. **OTP brute force** — the 6th attempt fails even with the correct code, and
    the challenge is dead; rate limits engage per email, per IP and globally.
 5. **Duplicate identity** — a `sub` or verified email already attached to
-   another `abaUserId` is refused, never moved (`AUTH-22`).
-6. **Account linking** — linking requires an authenticated session **and** fresh
-   proof of the second identity; two accounts are never merged (`AUTH-22`).
+   another `abaUserId` is refused with `IDENTITY_IN_USE`, nothing is moved, the
+   other account is not named, and the identity row's `aba_user_id` is
+   unchanged afterwards (`AUTH-23`, `AUTH-28`).
+6. **Account linking, two proofs** — `link/complete` is refused with **only** a
+   valid session and no fresh identity proof, and refused with **only** a valid
+   identity proof and no session; refused when the session is revoked between
+   `start` and `complete`; and succeeds only with both (`AUTH-22`).
 7. **Session rotation** — every `/auth/refresh` returns a new refresh token and
    invalidates the presented one (`AUTH-16`).
 8. **Refresh replay** — presenting a rotated token revokes the whole family and
@@ -1651,6 +1886,27 @@ implemented.** Each is a behaviour to assert, not a feature to demonstrate.
     task, workflow, shortcut, workspace and audit run, with every stored value
     scanned for the access token, refresh token, `state`, `nonce`, verifier and
     OTP (`AUTH-17`).
+31. **Linking is inert everywhere but `auth_identity`** — a full before/after
+    comparison across a link and an unlink: `abaUserId`, `kdSalt`, `keyVersion`,
+    `keyCheck`, every `sync_record` row and envelope, every `device` row and
+    watermark, every connection record and every local provider credential are
+    byte-identical; the only difference is the identity rows (`AUTH-24`).
+32. **Unlink safety** — removing the last verified identity is refused with
+    `LAST_IDENTITY`; removing one of two succeeds; neither deletes work, a
+    cloud record, a device row, a credential or the account (`AUTH-25`,
+    `AUTH-26`).
+33. **Unlink revokes only that identity's sessions** — sessions established
+    through the removed identity are revoked; sessions established through a
+    remaining identity keep working (§20.7).
+34. **Ownership cannot be forged** — a link attempted using a matching email
+    string, a display name, provider metadata, a supplied `abaUserId`, a
+    `deviceId`, local extension state, or the K1 recovery key is refused in
+    every case; only a completed authentication flow links (`AUTH-27`,
+    `AUTH-4`).
+35. **Newly linked identity signs in to the same account** — after linking, a
+    fresh sign-in through the added identity resolves to the **same**
+    `abaUserId`, and `link/complete` itself returns no tokens (§20.7,
+    `AUTH-11`).
 
 ---
 
@@ -1659,33 +1915,36 @@ implemented.** Each is a behaviour to assert, not a feature to demonstrate.
 Genuine product decisions only. Everything technical in this document is
 determinate.
 
-**Q1 — Account linking policy.** Whether a user may hold both a Google and an
-email identity on one ABA account, and whether linking is offered in v1 at all.
-The _rules_ any policy must satisfy are settled (§20); the policy is not. The
-hard sub-question is what to offer a person who has already created two
-accounts, since merging them is refused — and refusing to merge means telling
-someone their work is split across two accounts with no combine button.
+Account linking was Q1 and is **resolved** in §20: multiple verified identities
+may belong to one ABA account, linking requires two independent proofs, an
+identity attached elsewhere is refused, and merge is not implemented. What
+survives that decision is a launch-sequencing question about UI surface, not an
+architectural one, and it is recorded in §20.9 rather than here.
 
-**Q2 — Device naming and the device-list UX.** Whether devices carry a
+**Q1 — Device naming and the device-list UX.** Whether devices carry a
 user-supplied name, and what the list shows. If names are added they are
 encrypted record content, never a plaintext backend field and never an
 authorization input (§12) — so this is a product question about whether the
 value justifies the surface, not a technical one.
 
-**Q3 — Account-deletion grace.** Whether `DELETE /v1/me` deletes immediately or
+**Q2 — Account-deletion grace.** Whether `DELETE /v1/me` deletes immediately or
 begins a cancellable window. Immediate deletion is honest and irreversible; a
 window is kinder and means the account is not gone when the confirmation says
 it is. The 30-day tombstone in §15.1 is a **replay-safety** record and is not a
 recovery window; conflating the two would promise a recovery that does not
 exist.
 
-**Q4 — Sole-identity loss.** What is offered to a user whose only linked
-identity becomes unusable — a deleted Google account, or a lost mailbox. There
-is no cryptographic problem here: their ciphertext is intact and their recovery
-key still works. The problem is that nothing proves they are the account owner,
-and any mechanism invented to bridge that gap is an account-takeover path. Left
-open deliberately rather than answered with a support process this document has
-no standing to define.
+**Q3 — Sole-identity loss.** What is offered to a user whose only linked
+identity becomes unusable — a deleted Google account, or a lost mailbox.
+Linking (§20) narrows this: a user who has attached a second identity has a
+second route back, which is the only mitigation available that invents no
+support process. It does not close it, and §20.8 states the residual limitation
+in full. There is no cryptographic problem here — the ciphertext is intact and
+the recovery key still works — only that nothing proves they are the account
+owner, and any mechanism invented to bridge that gap is an account-takeover
+path. The K1 recovery key must not become that mechanism (`AUTH-4`). Left open
+deliberately rather than answered with a support process this document has no
+standing to define.
 
 Everything else is settled. `D` (device retirement window), the revoked-session
 retention window, the account-deletion tombstone window and the operational log
