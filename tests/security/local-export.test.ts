@@ -101,20 +101,52 @@ describe('local export', () => {
     ]);
   });
 
-  it('04 — nested credential-shaped fields are stripped from settings', async () => {
+  it('04 — settings are an allowlist, and the secret strip is the second line', async () => {
     const document_ = await buildLocalExport(
       sources({
         readSettings: () =>
-          Promise.resolve({ nested: { deeper: { refresh_token: 'rt-secret' }, keep: 1 } }),
+          Promise.resolve({
+            // Portable: survives, because it is on the list.
+            notificationsEnabled: true,
+            // Security posture: dropped, because it is not. A portable file
+            // carrying this would be a policy-injection vector waiting for
+            // whoever wires settings import next.
+            permissionMode: 'auto',
+            allowInsecureOrigins: true,
+            // Not on the list at all, so it never reaches the file — which is
+            // the point of an allowlist over a denylist: a setting somebody
+            // adds and forgets is excluded by default.
+            unknownFutureSetting: 'whatever',
+          }),
       }),
       NOW,
     );
 
+    expect(document_.settings).toEqual({ notificationsEnabled: true });
+    const serialised = JSON.stringify(document_);
+    expect(serialised).not.toContain('permissionMode');
+    expect(serialised).not.toContain('allowInsecureOrigins');
+    expect(serialised).not.toContain('unknownFutureSetting');
+  });
+
+  it('05 — a credential under an allowed key is still stripped', async () => {
+    const document_ = await buildLocalExport(
+      sources({
+        readSettings: () =>
+          Promise.resolve({
+            notificationsEnabled: { deeper: { refresh_token: 'rt-secret' }, keep: 1 },
+          }),
+      }),
+      NOW,
+    );
+
+    // The allowlist decides which keys may contribute; this is the second
+    // line, for a value arriving under one of them.
     expect(JSON.stringify(document_)).not.toContain('rt-secret');
     expect(JSON.stringify(document_)).toContain('keep');
   });
 
-  it('05 — the document says in itself what it does and does not contain', async () => {
+  it('06 — the document says in itself what it does and does not contain', async () => {
     const document_ = await buildLocalExport(sources(), NOW);
 
     // The file outlives the screen that produced it.
@@ -193,11 +225,11 @@ describe('local import', () => {
     await applyLocalExport(parsed.document, {
       importWorkflow: (record) => {
         seen.push(`workflow:${(record as { workflowId: string }).workflowId}`);
-        return Promise.resolve();
+        return Promise.resolve('IMPORTED' as const);
       },
       importShortcut: (record) => {
         seen.push(`shortcut:${(record as { shortcutId: string }).shortcutId}`);
-        return Promise.resolve();
+        return Promise.resolve('IMPORTED' as const);
       },
     });
 
@@ -216,12 +248,14 @@ describe('local import', () => {
     const outcome = await applyLocalExport(parsed.document, {
       importWorkflow: (record) => {
         if ((record as { workflowId: string }).workflowId === 'bad') {
-          // Exactly what WorkflowStore.save does for an unacceptable one.
-          throw new Error('that workflow names a tool this build does not have');
+          // What the worker reports for a record `WorkflowStore.save` judged
+          // unacceptable — a judgement about the record, not about this
+          // device.
+          return Promise.resolve('REFUSED' as const);
         }
-        return Promise.resolve();
+        return Promise.resolve('IMPORTED' as const);
       },
-      importShortcut: () => Promise.resolve(),
+      importShortcut: () => Promise.resolve('IMPORTED' as const),
     });
 
     expect(outcome.workflowsImported).toBe(2);
@@ -246,13 +280,131 @@ describe('local import', () => {
     if (!parsed.ok) throw new Error('unreachable');
 
     const outcome = await applyLocalExport(parsed.document, {
-      importWorkflow: () => Promise.resolve(),
-      importShortcut: () => Promise.resolve(),
+      importWorkflow: () => Promise.resolve('IMPORTED' as const),
+      importShortcut: () => Promise.resolve('IMPORTED' as const),
     });
 
     // A connection without its key would fail at its first request while
     // looking ready, so it is surfaced as work for the user instead.
     expect(outcome.connectionsNeedingKeys).toBe(1);
+  });
+
+  it('15 — a storage failure is not reported as a rejected record', async () => {
+    const parsed = parseLocalExport(
+      exportDocument({ workflows: [{ workflowId: 'a' }, { workflowId: 'b' }] }),
+    );
+    if (!parsed.ok) throw new Error('unreachable');
+
+    const outcome = await applyLocalExport(parsed.document, {
+      // What a full disk looks like: the record was fine, the write was not.
+      importWorkflow: () => Promise.resolve('FAILED' as const),
+      importShortcut: () => Promise.resolve('IMPORTED' as const),
+    });
+
+    // The two used to be one number, and the conflation told a user their
+    // data had been rejected when what had happened is that this device
+    // failed. One is their problem to fix in the file; the other is not their
+    // problem at all.
+    expect(outcome.failed).toBe(2);
+    expect(outcome.workflowsRefused).toBe(0);
+    expect(outcome.workflowsImported).toBe(0);
+  });
+
+  it('16 — an unexpected throw counts as a failure, never as an acceptance', async () => {
+    const parsed = parseLocalExport(exportDocument({ workflows: [{ workflowId: 'a' }] }));
+    if (!parsed.ok) throw new Error('unreachable');
+
+    const outcome = await applyLocalExport(parsed.document, {
+      importWorkflow: () => Promise.reject(new Error('something nobody predicted')),
+      importShortcut: () => Promise.resolve('IMPORTED' as const),
+    });
+
+    // Fail closed: an error shape this code does not recognise must not be
+    // read as "the record was unacceptable", and certainly not as success.
+    expect(outcome.failed).toBe(1);
+    expect(outcome.workflowsImported).toBe(0);
+  });
+
+  it('17 — a section larger than the bound is refused before anything is walked', () => {
+    const huge = Array.from({ length: 1001 }, (_, index) => ({ workflowId: `wf_${index}` }));
+    const parsed = parseLocalExport(exportDocument({ workflows: huge }));
+
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) throw new Error('unreachable');
+    expect(parsed.refusal).toBe('TOO_LARGE');
+  });
+
+  it('18 — a settings section with too many keys is refused', () => {
+    const settings = Object.fromEntries(
+      Array.from({ length: 101 }, (_, index) => [`k${index}`, index]),
+    );
+    const parsed = parseLocalExport(exportDocument({ settings }));
+
+    expect(parsed.ok === false && parsed.refusal).toBe('TOO_LARGE');
+  });
+
+  it('19 — a document at the bound is still accepted', () => {
+    const atLimit = Array.from({ length: 1000 }, (_, index) => ({ workflowId: `wf_${index}` }));
+    expect(parseLocalExport(exportDocument({ workflows: atLimit })).ok).toBe(true);
+  });
+
+  it('20 — an archive cannot carry a security posture into the parser either', () => {
+    const parsed = parseLocalExport(
+      exportDocument({
+        settings: {
+          permissionMode: 'auto',
+          allowInsecureOrigins: true,
+          notificationsEnabled: false,
+        },
+      }),
+    );
+    if (!parsed.ok) throw new Error('unreachable');
+
+    // Narrowed on the way in as well as on the way out, so a file produced
+    // elsewhere cannot present a posture to anything downstream even if a
+    // later phase starts applying settings.
+    expect(parsed.document.settings).toEqual({ notificationsEnabled: false });
+  });
+
+  it('21 — nothing that identifies this installation reaches the document', async () => {
+    const document_ = await buildLocalExport(sources(), NOW);
+    const serialised = JSON.stringify(document_);
+
+    // The installation label is this device's data-ownership partition. An
+    // archive carrying one would let an import claim to *be* another
+    // installation rather than bring records to this one.
+    expect(serialised).not.toMatch(/loc_[0-9a-f]{8}/);
+    expect(serialised).not.toMatch(/usr_[0-9a-f]{8}/);
+    for (const term of ['abaUserId', 'installationId', 'deviceId', 'unassigned']) {
+      expect(serialised, term).not.toContain(term);
+    }
+    // And the shape is closed: these eight keys and nothing else.
+    expect(Object.keys(document_).sort()).toEqual([
+      'connections',
+      'exportedAt',
+      'formatVersion',
+      'kind',
+      'notice',
+      'settings',
+      'shortcuts',
+      'workflows',
+    ]);
+  });
+
+  it('22 — a connection exports five fields, and the key suffix is not one', async () => {
+    const document_ = await buildLocalExport(sources(), NOW);
+
+    expect(Object.keys(document_.connections[0] ?? {}).sort()).toEqual([
+      'baseUrl',
+      'connectionId',
+      'displayName',
+      'modelId',
+      'providerId',
+    ]);
+    // `accountLabel` on the live view carries the key's last four characters.
+    // Four characters of a key is still four characters of a key, and a
+    // portable file is exactly where they must not be.
+    expect(JSON.stringify(document_)).not.toContain('accountLabel');
   });
 
   it('14 — a round trip preserves what it carries and drops what it must', async () => {

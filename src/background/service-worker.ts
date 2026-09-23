@@ -67,7 +67,7 @@ import { SkillRunner } from '@/skills/runtime/skill-runner';
 import { SkillRunStore } from '@/skills/runtime/skill-run-store';
 import { BUNDLED_SKILLS } from '@/skills/bundled';
 import { createSkillTools } from '@/tools/skills/skill-tools';
-import { WorkflowStore } from '@/workflows/workflow-store';
+import { WorkflowStore, WorkflowValidationError } from '@/workflows/workflow-store';
 import { WorkflowRecorder } from '@/workflows/workflow-recorder';
 import { WorkflowReplayer } from '@/workflows/workflow-replay';
 import { ShortcutStore, ShortcutError } from '@/shortcuts/shortcut-store';
@@ -2333,6 +2333,9 @@ router.on('data.export', async () => ({
           baseUrl: account.baseUrl ?? null,
         }));
       },
+      // The whole settings record is handed over; `buildLocalExport` keeps
+      // only the portable keys. Narrowing there rather than here means one
+      // allowlist governs both the file this writes and the file it reads.
       readSettings: async () => ({ ...(await settingsStore.get()) }),
     },
     Date.now(),
@@ -2356,31 +2359,53 @@ router.on('data.import', async ({ document }) => {
   const outcome = await applyLocalExport(parsed.document, {
     importWorkflow: async (record) => {
       const candidate = record as Partial<RecordedWorkflow>;
-      if (candidate.definition === undefined) throw new Error('no definition');
-      // `save` re-validates the definition, recomputes the canonical hash and
-      // re-derives the risk. A hash or a risk level in the file is ignored.
-      await workflowStore.save({
-        name: typeof candidate.name === 'string' ? candidate.name : 'Imported workflow',
-        description: typeof candidate.description === 'string' ? candidate.description : '',
-        definition: candidate.definition,
-        recordedFromTaskId: 'imported',
-        // An imported recording has no measured taint on this device. UNKNOWN
-        // is the truthful answer and is the one the replay path already
-        // handles conservatively; claiming KNOWN_UNTAINTED would be asserting
-        // something no measurement here supports.
-        taintAtCapture: 'UNKNOWN',
-      });
+      if (candidate.definition === undefined) return 'REFUSED';
+      try {
+        // `save` re-validates the definition, recomputes the canonical hash
+        // and re-derives the risk. A hash or a risk level in the file is
+        // ignored.
+        await workflowStore.save({
+          name: typeof candidate.name === 'string' ? candidate.name : 'Imported workflow',
+          description: typeof candidate.description === 'string' ? candidate.description : '',
+          definition: candidate.definition,
+          recordedFromTaskId: 'imported',
+          // An imported recording has no measured taint on this device.
+          // UNKNOWN is the truthful answer and is the one the replay path
+          // already handles conservatively; claiming KNOWN_UNTAINTED would be
+          // asserting something no measurement here supports.
+          taintAtCapture: 'UNKNOWN',
+        });
+        return 'IMPORTED';
+      } catch (error) {
+        // The store's own refusal type is the only reliable way to tell "this
+        // record is unacceptable" from "this device could not write it", and
+        // this is the one place that knows it. Anything else is a failure.
+        return error instanceof WorkflowValidationError ? 'REFUSED' : 'FAILED';
+      }
     },
     importShortcut: async (record) => {
       const candidate = record as Partial<ShortcutRecord>;
       if (typeof candidate.displayName !== 'string' || candidate.target === undefined) {
-        throw new Error('not a shortcut');
+        return 'REFUSED';
       }
-      // `create` re-runs name normalisation and both collision checks, so an
-      // imported shortcut cannot take a name that already means something.
-      await shortcutStore.create(candidate.displayName, candidate.target);
+      try {
+        // `create` re-runs name normalisation and both collision checks, so an
+        // imported shortcut cannot take a name that already means something.
+        await shortcutStore.create(candidate.displayName, candidate.target);
+        return 'IMPORTED';
+      } catch (error) {
+        return error instanceof ShortcutError ? 'REFUSED' : 'FAILED';
+      }
     },
   });
+
+  // A write that did not complete is this device's problem, not the file's,
+  // so it reaches persistence health rather than being reported as a count of
+  // rejected records. `storage` gates execution: if the disk failed partway
+  // through an import, work stops until somebody has looked at it.
+  if (outcome.failed > 0) {
+    await persistenceHealth.report('storage', 'DEGRADED', 'import writes did not complete');
+  }
 
   return { ok: true as const, outcome };
 });

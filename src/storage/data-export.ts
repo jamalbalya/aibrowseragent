@@ -72,6 +72,44 @@ export const EXPORTABLE_KINDS = [
 export type ExportableKind = (typeof EXPORTABLE_KINDS)[number];
 
 /**
+ * The settings an export carries — an allowlist, not a filter.
+ *
+ * `AppSettings` also holds `permissionMode` and `allowInsecureOrigins`, and
+ * those are this installation's **security posture** rather than a
+ * preference. Two reasons they stay out, and the second is the one that
+ * matters:
+ *
+ *  - carrying them is pointless, because an import does not apply settings;
+ *  - and a portable file that *contains* a security posture is a
+ *    policy-injection vector waiting for whoever wires settings import next.
+ *    An attacker-supplied archive that could flip `allowInsecureOrigins` to
+ *    true would be granting itself a capability. There is no such field in
+ *    the file, so there is nothing to flip.
+ *
+ * An allowlist rather than a denylist because the failure directions are not
+ * symmetric: a setting added and forgotten is excluded by default, where a
+ * denylist would export it.
+ */
+export const PORTABLE_SETTING_KEYS = [
+  'logLevel',
+  'debugMode',
+  'notificationsEnabled',
+  'activeProviderId',
+  'activeModelId',
+] as const;
+
+/**
+ * Bounds on an untrusted document.
+ *
+ * The parser walks and the applier writes, and both are driven by whatever
+ * the file says. Generous enough that no real installation meets them, small
+ * enough that a hostile file cannot make the worker chew through an
+ * unbounded structure before being refused.
+ */
+export const MAX_RECORDS_PER_SECTION = 1000;
+export const MAX_SETTING_KEYS = 100;
+
+/**
  * No exportable kind may be a secret.
  *
  * Evaluated at module load, so a reclassification that would put a credential
@@ -113,8 +151,9 @@ export interface LocalExport {
 
 export const EXPORT_NOTICE =
   'This file contains your workflows, shortcuts, connection settings and preferences. ' +
-  'It deliberately contains no API keys, no OAuth tokens and no page content. ' +
-  'After importing on another device you will need to re-enter each provider API key.';
+  'It deliberately contains no API keys, no connector credentials, no tokens, no page ' +
+  'content, and nothing that identifies the device it came from. ' +
+  'After importing on another device you will need to enter each AI account key again.';
 
 export interface ExportSources {
   listWorkflows(): Promise<readonly unknown[]>;
@@ -146,15 +185,16 @@ export async function buildLocalExport(sources: ExportSources, now: number): Pro
     workflows,
     shortcuts,
     connections,
-    // Stripped rather than trusted: a settings record that somehow grew a
-    // secret-shaped field must not carry it into a portable file.
-    settings: withoutSecretShapedFields(settings),
+    // Two passes, and both are deliberate. The allowlist decides what a
+    // settings record may contribute at all; the secret-shaped strip is the
+    // second line, for a value that arrives under an allowed key.
+    settings: withoutSecretShapedFields(onlyPortableSettings(settings)),
   };
 }
 
 /** Why an import was refused. Each is a reason a user can act on. */
 export type ImportRefusal =
-  'NOT_AN_EXPORT' | 'UNSUPPORTED_VERSION' | 'MALFORMED' | 'CONTAINS_CREDENTIAL';
+  'NOT_AN_EXPORT' | 'UNSUPPORTED_VERSION' | 'MALFORMED' | 'CONTAINS_CREDENTIAL' | 'TOO_LARGE';
 
 export interface ImportRefused {
   readonly ok: false;
@@ -232,6 +272,12 @@ export function parseLocalExport(candidate: unknown): ImportAccepted | ImportRef
     if (!Array.isArray(value)) {
       return refuse('MALFORMED', `That export's ${field} section is not readable.`);
     }
+    // Bounded here rather than later: the credential scan below and the apply
+    // loop are both driven by these lengths, so the refusal has to come before
+    // either of them to be worth anything.
+    if (value.length > MAX_RECORDS_PER_SECTION) {
+      return refuse('TOO_LARGE', `That export's ${field} section is larger than this can read.`);
+    }
   }
   if (
     typeof document_.settings !== 'object' ||
@@ -239,6 +285,10 @@ export function parseLocalExport(candidate: unknown): ImportAccepted | ImportRef
     Array.isArray(document_.settings)
   ) {
     return refuse('MALFORMED', "That export's settings section is not readable.");
+  }
+
+  if (Object.keys(document_.settings).length > MAX_SETTING_KEYS) {
+    return refuse('TOO_LARGE', "That export's settings section is larger than this can read.");
   }
 
   const credentialField = findCredentialField(candidate);
@@ -261,7 +311,12 @@ export function parseLocalExport(candidate: unknown): ImportAccepted | ImportRef
       workflows: document_.workflows ?? [],
       shortcuts: document_.shortcuts ?? [],
       connections: (document_.connections ?? []).filter(isExportedConnection),
-      settings: document_.settings,
+      // Narrowed on the way in as well as on the way out. A file produced
+      // elsewhere may carry any key it likes; what survives parsing is the
+      // same portable set this build would have written, so no key outside
+      // it can reach anything downstream even if a later phase starts
+      // applying settings.
+      settings: onlyPortableSettings(document_.settings),
     },
   };
 }
@@ -299,6 +354,22 @@ function findCredentialField(value: unknown, depth = 0): string | null {
   return null;
 }
 
+/**
+ * Keeps only the portable settings, dropping everything else.
+ *
+ * Applied in both directions — building an export and parsing one — so the
+ * set of keys that can exist in a document is the same whoever wrote it.
+ */
+function onlyPortableSettings(
+  record: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  const portable: Record<string, unknown> = {};
+  for (const key of PORTABLE_SETTING_KEYS) {
+    if (Object.hasOwn(record, key)) portable[key] = record[key];
+  }
+  return portable;
+}
+
 /** Drops credential-shaped keys from one flat record. Used on the way out. */
 function withoutSecretShapedFields(
   record: Readonly<Record<string, unknown>>,
@@ -322,12 +393,40 @@ export interface ImportOutcome {
   readonly shortcutsImported: number;
   readonly shortcutsRefused: number;
   readonly connectionsNeedingKeys: number;
+  /**
+   * Records whose write did not complete, as distinct from records the store
+   * judged unacceptable.
+   *
+   * The two used to be one number, and the conflation was a real defect: a
+   * full disk produced "2 could not be restored", which reads as *your data
+   * was rejected* when what happened is *this device failed*. One is the
+   * user's problem to fix in the file; the other is not their problem at all
+   * and must reach persistence health.
+   */
+  readonly failed: number;
 }
 
+/**
+ * Why one record did not land.
+ *
+ * `REFUSED` is the store's judgement — a workflow naming a tool this build
+ * does not have, a shortcut whose name collides. The record is the problem.
+ * `FAILED` is everything else: the write itself did not complete, and the
+ * record may have been perfectly good.
+ */
+export type ImportRecordOutcome = 'IMPORTED' | 'REFUSED' | 'FAILED';
+
 export interface ImportTargets {
-  /** Must be the real store method, so the real validation runs. */
-  importWorkflow(record: unknown): Promise<void>;
-  importShortcut(record: unknown): Promise<void>;
+  /**
+   * Must be the real store method, so the real validation runs.
+   *
+   * Returns which of the three happened rather than throwing, because only
+   * the caller knows its stores' refusal types well enough to tell a
+   * judgement from a failure — and guessing from an error message here would
+   * be exactly the conflation this replaced.
+   */
+  importWorkflow(record: unknown): Promise<ImportRecordOutcome>;
+  importShortcut(record: unknown): Promise<ImportRecordOutcome>;
 }
 
 /**
@@ -350,22 +449,28 @@ export async function applyLocalExport(
   let workflowsRefused = 0;
   let shortcutsImported = 0;
   let shortcutsRefused = 0;
+  let failed = 0;
+
+  /** An unexpected throw counts as a failure, never as an acceptance. */
+  const attempt = async (run: () => Promise<ImportRecordOutcome>): Promise<ImportRecordOutcome> => {
+    try {
+      return await run();
+    } catch {
+      return 'FAILED';
+    }
+  };
 
   for (const record of document_.workflows) {
-    try {
-      await targets.importWorkflow(record);
-      workflowsImported += 1;
-    } catch {
-      workflowsRefused += 1;
-    }
+    const outcome = await attempt(() => targets.importWorkflow(record));
+    if (outcome === 'IMPORTED') workflowsImported += 1;
+    else if (outcome === 'REFUSED') workflowsRefused += 1;
+    else failed += 1;
   }
   for (const record of document_.shortcuts) {
-    try {
-      await targets.importShortcut(record);
-      shortcutsImported += 1;
-    } catch {
-      shortcutsRefused += 1;
-    }
+    const outcome = await attempt(() => targets.importShortcut(record));
+    if (outcome === 'IMPORTED') shortcutsImported += 1;
+    else if (outcome === 'REFUSED') shortcutsRefused += 1;
+    else failed += 1;
   }
 
   if (workflowsRefused > 0 || shortcutsRefused > 0) {
@@ -374,6 +479,9 @@ export async function applyLocalExport(
       shortcutsRefused,
     });
   }
+  if (failed > 0) {
+    log.error('Some imported records could not be written to storage.', { failed });
+  }
 
   return {
     workflowsImported,
@@ -381,5 +489,6 @@ export async function applyLocalExport(
     shortcutsImported,
     shortcutsRefused,
     connectionsNeedingKeys: document_.connections.length,
+    failed,
   };
 }

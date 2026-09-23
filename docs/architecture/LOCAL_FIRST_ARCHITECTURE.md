@@ -294,19 +294,53 @@ Export is what makes that cost avoidable _if the user acts before the loss_.
 It is not a backup service and is not described as one. Nothing automatic
 creates an export, and no export is ever uploaded.
 
-**An export contains:** workflows, shortcuts, connection metadata (provider,
-model, base URL, display name) and settings.
+**An export contains:** workflows, shortcuts, connection metadata (connection
+id, provider id, display name, model id, base URL — five fields, no more) and
+the **portable** settings.
+
+**Portable settings are an allowlist, not a filter.** `PORTABLE_SETTING_KEYS`
+names the five that travel: `logLevel`, `debugMode`, `notificationsEnabled`,
+`activeProviderId`, `activeModelId`. `AppSettings` also holds `permissionMode`
+and `allowInsecureOrigins`, and those are this installation's **security
+posture** rather than a preference. They stay out for two reasons, and the
+second is the one that matters:
+
+- carrying them is pointless, because an import does not apply settings;
+- and a portable file that _contains_ a security posture is a policy-injection
+  vector waiting for whoever wires settings import next. An attacker-supplied
+  archive that could flip `allowInsecureOrigins` to true would be granting
+  itself a capability. There is no such field in the file, so there is nothing
+  to flip.
+
+An allowlist rather than a denylist because the failure directions are not
+symmetric: a setting added and forgotten is excluded by default, where a
+denylist would export it. It is applied **in both directions** — building a
+document and parsing one — so the set of keys that can exist in a file is the
+same whoever wrote it.
 
 **An export deliberately excludes:** every provider API key, every OAuth
-secret, every ABA token, and the account label that carries a key suffix. The
-document says so in itself, in a `notice` field, because a file outlives the
-screen that produced it.
+secret, every connector credential, every ABA token, the account label that
+carries a key suffix, and **the local installation identity**. The document
+says so in itself, in a `notice` field, because a file outlives the screen
+that produced it.
+
+**The local identity is never exported.** An archive that carried one would be
+an archive that could claim to _be_ another installation rather than bring
+records to this one. There is no `installationId`, no `abaUserId` and no
+device-derived identifier anywhere in the format, and an archive that asserts
+one is ignored: nothing in the import path reads an owner field. Device B
+keeps the identity it minted.
 
 **An import is untrusted input.** It is the same trust class as any downloaded
 file, because that is what it might be. So:
 
 - The document is validated structurally, and refused with a reason it is not.
 - A **newer format version is refused**, not best-effort parsed.
+- It is **bounded before it is walked**: at most `MAX_RECORDS_PER_SECTION`
+  (1000) records per section and `MAX_SETTING_KEYS` (100) settings keys, and
+  the credential scan is depth-limited to 12. The bound comes first because
+  the scan and the apply loop are both driven by these lengths, so a refusal
+  after either would not be worth anything.
 - A document carrying a credential-shaped field is **refused outright, never
   cleaned** — such a file was not produced by this exporter or was edited
   afterwards, and importing the acceptable-looking remainder is the wrong
@@ -323,7 +357,67 @@ file, because that is what it might be. So:
   fail at its first request while looking ready, so the panel reports how many
   keys to re-enter instead.
 
-> Evidence: `tests/security/local-export.test.ts` (14 cases);
+### Imported data is data
+
+An import moves records. It does not move standing. Nothing in the file
+becomes authorization, authentication, policy configuration, route trust, a
+permission, a provider or connector credential, a consent, or egress
+authorization:
+
+| What a file might assert                 | What happens                                                  |
+| ---------------------------------------- | ------------------------------------------------------------- |
+| A workflow id, version or hash           | Discarded; the store mints and recomputes its own             |
+| `taintAtCapture: KNOWN_UNTAINTED`        | Discarded; an imported recording is `UNKNOWN`                 |
+| `risk`                                   | Discarded; re-derived from the tools the steps actually reach |
+| `permissionMode`, `allowInsecureOrigins` | Cannot survive parsing; outside the portable allowlist        |
+| An owner, device or account id           | Never read; the installation keeps its own identity           |
+| A credential-shaped field                | The whole document is refused                                 |
+
+`data.export` and `data.import` are both `CLASS_B_PANEL_CONTROL_PLANE`, so
+neither is reachable by a model, and neither touches the network: an export is
+built in the worker from local storage and an import is read from a file the
+user chose.
+
+### Atomicity: the exact guarantee
+
+**An import is not a transaction, and is not described as one.** Each record
+is written through its own store, one at a time. Chrome's storage layer offers
+no cross-record transaction, so an import interrupted partway — the worker
+killed, the disk full — leaves the records written so far in place and the
+rest absent. Nothing is rolled back.
+
+What _is_ guaranteed:
+
+- **Per record, all or nothing.** A record is written by the store that owns
+  it, through the same versioned-record path as any other write. A partially
+  written record is not a state the stores can be left in.
+- **Every record is accounted for.** `ImportOutcome` counts
+  `workflowsImported`, `workflowsRefused`, `shortcutsImported`,
+  `shortcutsRefused`, `connectionsNeedingKeys` and `failed`. Nothing is
+  dropped silently, and an unexpected throw counts as `failed`, never as an
+  acceptance.
+- **A refusal and a failure are different answers.** `REFUSED` is the store's
+  judgement — a workflow naming a tool this build does not have, a shortcut
+  whose name collides. The record is the problem, and the user can act on it.
+  `FAILED` is everything else: the write did not complete and the record may
+  have been perfectly good. The two used to be one number, and the conflation
+  was a real defect — a full disk produced "2 could not be restored", which
+  reads as _your data was rejected_ when what happened is _this device
+  failed_.
+- **A failure reaches persistence health.** `failed > 0` reports
+  `('storage', 'DEGRADED', 'import writes did not complete')`. `storage` is a
+  gating domain, so a disk that failed partway through an import stops work
+  until somebody has looked at it, rather than leaving a half-restored
+  installation running.
+- **Re-importing is safe.** Records the stores already hold are refused by
+  name rather than merged or auto-renamed, so running the same file twice
+  does not silently produce duplicates.
+
+> Evidence: `tests/security/local-export.test.ts` (23 cases);
+> `tests/e2e/export-import.spec.ts` (14 cases, real Chromium: shape, key
+> absence, identity absence, posture, foreign-owner import, malformed,
+> version, credential, bounds, double import, re-validation, round trip,
+> worker termination, no network);
 > `tests/e2e/local-first.spec.ts` (export, credential refusal, unrelated file).
 
 ---

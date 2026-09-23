@@ -68,7 +68,7 @@ export function DataPanel(): React.JSX.Element {
       link.download = `ai-browser-agent-${stamp}.json`;
       link.click();
       URL.revokeObjectURL(url);
-      setMessage('Saved. Keep the file somewhere safe — it has no API keys in it.');
+      setMessage('Saved. Keep the file somewhere safe — it has no keys or credentials in it.');
     } catch {
       setMessage('The export could not be created.');
     } finally {
@@ -155,9 +155,10 @@ export function DataPanel(): React.JSX.Element {
         }}
       />
 
-      <p className="field__hint">
-        A saved copy contains your workflows, shortcuts and settings. It deliberately leaves out
-        every API key, so after restoring on another computer you will re-enter those.
+      <p className="field__hint" data-testid="data-copy-contents">
+        A saved copy contains your workflows, shortcuts and the connections you set up. It
+        deliberately leaves out your AI account keys and any private connection credentials, so
+        after restoring on another device you will enter those again.
       </p>
 
       {message ? (
@@ -177,7 +178,17 @@ function describeOutcome(outcome: ImportOutcome): string {
   const refused = outcome.workflowsRefused + outcome.shortcutsRefused;
   // Said out loud rather than rounded away. A count that quietly dropped the
   // refusals would read as a complete restore.
-  if (refused > 0) parts.push(`${refused} could not be restored`);
+  if (refused > 0) parts.push(`${refused} could not be restored from the file`);
+  // Kept separate from the line above, because they are different problems
+  // with different answers. A refused record is something about the file; a
+  // failed write is something about this device, and telling somebody their
+  // data was rejected when the disk is full sends them to fix the wrong
+  // thing.
+  if (outcome.failed > 0) {
+    parts.push(
+      `${outcome.failed} could not be saved on this device — there may not be enough space`,
+    );
+  }
   if (outcome.connectionsNeedingKeys > 0) {
     parts.push(
       `${outcome.connectionsNeedingKeys} AI connection${
