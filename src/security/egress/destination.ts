@@ -31,12 +31,29 @@ export const EGRESS_CHANNELS = [
   'clipboard',
   'download',
   'connector',
+  /**
+   * The AI Browser Agent authentication backend, and nothing else.
+   *
+   * A channel of its own rather than a reuse of `connector`, because the two
+   * are different domains with different rules: a connector is user-chosen
+   * and reaches whatever origins its descriptor declares, while this reaches
+   * exactly one pinned origin and carries a fixed, narrow payload — a
+   * challenge id, an exchange code, a refresh token. It carries no task
+   * context and no page-derived value, and there is no shape in which it
+   * could: see `src/identity/identity-transport.ts`.
+   */
+  'identity',
 ] as const;
 
 export type EgressChannel = (typeof EGRESS_CHANNELS)[number];
 
 /** Channels that reach outside the extension boundary. */
 const EXTERNAL: ReadonlySet<EgressChannel> = new Set<EgressChannel>([
+  // Authentication leaves the device, so it is external and is authorised
+  // like everything else that does. Calling it internal would be the easy
+  // mistake and would take the one request that carries a bearer token out
+  // of the gate's sight.
+  'identity',
   'ai_provider',
   'web_ai_provider',
   'page_write',
@@ -171,6 +188,28 @@ export function canonicalConnectorIdentity(connectorId: string, url: string): st
 }
 
 /** An external service destination reached through a connector. */
+/**
+ * The authentication backend, pinned to one origin.
+ *
+ * The identity is the origin itself, with no per-caller component, because
+ * there is exactly one destination and nothing chooses it. A URL that is not
+ * on that origin yields a `null` identity, which the gate denies — so an
+ * off-origin authentication request is refused by the same rule that refuses
+ * any unrecognisable destination, rather than by a check somebody has to
+ * remember to write.
+ */
+export function identityDestination(backendOrigin: string, url: string): EgressDestination {
+  const info = parseOrigin(url);
+  const expected = parseOrigin(backendOrigin);
+  const matches = info !== null && expected !== null && info.origin === expected.origin;
+  return {
+    channel: 'identity',
+    identity: matches ? `identity@${info.origin}` : null,
+    ...(info ? { origin: info.origin } : {}),
+    purpose: 'authentication',
+  };
+}
+
 export function connectorDestination(
   connectorId: string,
   url: string,

@@ -22,6 +22,7 @@ import {
   type AbaUserRow,
   type AuthIdentityRow,
   type DeviceRow,
+  type LoginChallengeRow,
   type SessionRow,
   type Store,
 } from './store';
@@ -187,6 +188,7 @@ export class MemoryStore implements Store {
   private readonly identities: MemoryTable<AuthIdentityRow>;
   private readonly sessions: MemoryTable<SessionRow>;
   private readonly devices: MemoryTable<DeviceRow>;
+  private readonly challenges: MemoryTable<LoginChallengeRow>;
 
   constructor() {
     const parent = (name: string): MemoryTable<object> | undefined => this.tables.get(name);
@@ -199,6 +201,7 @@ export class MemoryStore implements Store {
     this.identities = this.tables.get('auth_identity') as MemoryTable<AuthIdentityRow>;
     this.sessions = this.tables.get('session') as MemoryTable<SessionRow>;
     this.devices = this.tables.get('device') as MemoryTable<DeviceRow>;
+    this.challenges = this.tables.get('login_challenge') as MemoryTable<LoginChallengeRow>;
   }
 
   /**
@@ -331,6 +334,82 @@ export class MemoryStore implements Store {
 
   listSessions(abaUserId: string): Promise<SessionRow[]> {
     return Promise.resolve(this.sessions.filter((row) => row.aba_user_id === abaUserId));
+  }
+
+  // ---- login_challenge ----
+
+  insertChallenge(row: LoginChallengeRow): Promise<void> {
+    return MemoryStore.run(() => this.challenges.insert(row));
+  }
+
+  getChallenge(id: string): Promise<LoginChallengeRow | null> {
+    return MemoryStore.run(() => this.challenges.get({ id }));
+  }
+
+  findChallengeByState(state: string): Promise<LoginChallengeRow | null> {
+    return MemoryStore.run(() => this.challenges.find((row) => row.state === state));
+  }
+
+  findChallengeByExchangeDigest(digest: string): Promise<LoginChallengeRow | null> {
+    return MemoryStore.run(() => this.challenges.find((row) => row.exchange_digest === digest));
+  }
+
+  /**
+   * Marks the challenge spent, reporting whether **this** call did it.
+   *
+   * The return value is the whole point: two concurrent callbacks must not
+   * both proceed, and "was it already consumed?" read separately from the
+   * write is a race. One row, one winner.
+   */
+  consumeChallenge(id: string, at: number): Promise<boolean> {
+    return MemoryStore.run(() => {
+      const row = this.challenges.get({ id });
+      if (row === null || row.consumed_at !== null) return false;
+      this.challenges.update({ id }, { consumed_at: at });
+      return true;
+    });
+  }
+
+  attachChallengeOutcome(
+    id: string,
+    outcome: {
+      readonly exchangeDigest: string;
+      readonly abaUserId: string;
+      readonly authIdentityId: string;
+    },
+  ): Promise<void> {
+    return MemoryStore.run(() =>
+      this.challenges.update(
+        { id },
+        {
+          exchange_digest: outcome.exchangeDigest,
+          resolved_aba_user_id: outcome.abaUserId,
+          resolved_auth_identity_id: outcome.authIdentityId,
+        },
+      ),
+    );
+  }
+
+  countChallengeAttempt(id: string): Promise<number> {
+    return MemoryStore.run(() => {
+      const row = this.challenges.get({ id });
+      if (row === null) return 0;
+      const attempts = row.attempts + 1;
+      this.challenges.update({ id }, { attempts });
+      return attempts;
+    });
+  }
+
+  deleteChallenge(id: string): Promise<void> {
+    return MemoryStore.run(() => this.challenges.delete({ id }));
+  }
+
+  purgeExpiredChallenges(now: number): Promise<number> {
+    return MemoryStore.run(() => {
+      const expired = this.challenges.filter((row) => row.expires_at <= now);
+      for (const row of expired) this.challenges.delete({ id: row.id });
+      return expired.length;
+    });
   }
 
   // ---- device ----

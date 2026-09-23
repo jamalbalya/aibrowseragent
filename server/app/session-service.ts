@@ -25,6 +25,7 @@ import { newSessionFamilyId, newSessionId } from '../domain/ids';
 import { principalFromSession, type Principal } from '../domain/authorization';
 import { newRefreshToken, type TokenDigest } from './token';
 import type { Clock } from '../domain/clock';
+import { CURRENT_DIGEST_VERSION } from '../db/schema';
 import type { SessionRow, Store } from '../db/store';
 import type { ServerLogger } from '../logging';
 
@@ -105,6 +106,7 @@ export class SessionService {
       auth_identity_id: input.authIdentityId,
       family_id: newSessionFamilyId(),
       refresh_digest: await this.options.digest.compute(token),
+      digest_version: CURRENT_DIGEST_VERSION,
       issued_at: now,
       expires_at: now + this.refreshTtl,
       rotated_at: null,
@@ -171,6 +173,7 @@ export class SessionService {
       // is what lets a later reuse of any earlier member revoke the lot.
       family_id: current.family_id,
       refresh_digest: await this.options.digest.compute(token),
+      digest_version: CURRENT_DIGEST_VERSION,
       issued_at: now,
       // Rolling: an actively used session does not expire, an idle one does.
       expires_at: now + this.refreshTtl,

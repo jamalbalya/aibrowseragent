@@ -25,6 +25,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   FORBIDDEN_COLUMN_FRAGMENTS,
+  MIGRATION_COVERAGE,
   MIGRATIONS,
   SCHEMA,
   renderMigration,
@@ -40,6 +41,7 @@ describe('schema descriptor', () => {
       'auth_identity',
       'session',
       'device',
+      'login_challenge',
     ]);
   });
 
@@ -154,7 +156,7 @@ describe('linking constraints', () => {
 describe('migrations', () => {
   it('renders byte-for-byte to the checked-in migration', () => {
     const onDisk = readFileSync(resolve(migrationPath, '0001_identity_foundation.sql'), 'utf8');
-    expect(renderMigration()).toBe(onDisk);
+    expect(renderMigration(1)).toBe(onDisk);
   });
 
   it('numbers migrations contiguously from one', () => {
@@ -170,7 +172,7 @@ describe('migrations', () => {
   });
 
   it('emits the unique indexes that carry the linking policy', () => {
-    const sql = renderMigration();
+    const sql = renderMigration(1);
     expect(sql).toContain(
       'CREATE UNIQUE INDEX auth_identity_subject_key ON auth_identity (kind, subject) WHERE subject IS NOT NULL;',
     );
@@ -180,9 +182,83 @@ describe('migrations', () => {
   });
 
   it('emits no Cloud Sync table', () => {
-    const sql = renderMigration();
+    const sql = MIGRATIONS.map((entry) => renderMigration(entry.id)).join('\n');
     for (const name of ['sync_record', 'push_idempotency', 'synced_through_seq']) {
       expect(sql).not.toContain(name);
+    }
+  });
+
+  it('renders every migration byte-for-byte to its checked-in file', () => {
+    for (const migration of MIGRATIONS) {
+      const onDisk = readFileSync(resolve(migrationPath, migration.file), 'utf8');
+      expect(renderMigration(migration.id), migration.file).toBe(onDisk);
+    }
+  });
+
+  it('creates every table and column exactly once across the whole set', () => {
+    // The append-only property, checked rather than trusted. A column created
+    // by two migrations fails the second time it is applied; a column created
+    // by none is a descriptor the database does not have.
+    const created = new Map<string, number[]>();
+    for (const migration of MIGRATION_COVERAGE) {
+      for (const name of migration.createTables) {
+        const spec = table(name);
+        const addedLater = new Set(
+          MIGRATION_COVERAGE.flatMap((entry) =>
+            entry.addColumns.filter((add) => add.table === name).map((add) => add.column),
+          ),
+        );
+        for (const column of spec.columns) {
+          if (addedLater.has(column.name)) continue;
+          const key = `${name}.${column.name}`;
+          created.set(key, [...(created.get(key) ?? []), migration.id]);
+        }
+      }
+      for (const add of migration.addColumns) {
+        const key = `${add.table}.${add.column}`;
+        created.set(key, [...(created.get(key) ?? []), migration.id]);
+      }
+    }
+
+    const everyColumn = SCHEMA.flatMap((spec) =>
+      spec.columns.map((column) => `${spec.name}.${column.name}`),
+    );
+    expect([...created.keys()].sort()).toEqual([...everyColumn].sort());
+    expect([...created.entries()].filter(([, ids]) => ids.length !== 1)).toEqual([]);
+  });
+
+  it('never rewrites a migration that has already been applied', () => {
+    // A column added after a table existed must arrive by ALTER, never by
+    // reappearing inside the CREATE that made the table.
+    const first = renderMigration(1);
+    expect(first).toContain('CREATE TABLE session (');
+    expect(first).not.toContain('digest_version');
+
+    const second = renderMigration(2);
+    expect(second).toContain('ALTER TABLE session ADD COLUMN digest_version integer NOT NULL');
+    // The default is dropped again, so a future insert that forgets the column
+    // fails loudly rather than silently claiming version 1.
+    expect(second).toContain('ALTER TABLE session ALTER COLUMN digest_version DROP DEFAULT;');
+    expect(second).not.toContain('CREATE TABLE session');
+  });
+
+  it('keeps the challenge table\u2019s secrets server-side and single-use', () => {
+    const spec = table('login_challenge');
+    const names = spec.columns.map((column) => column.name);
+    for (const required of ['state', 'nonce', 'pkce_verifier', 'exchange_digest', 'consumed_at']) {
+      expect(names, required).toContain(required);
+    }
+    // The state and the exchange material must each resolve to one row.
+    expect(spec.unique.map((entry) => entry.name).sort()).toEqual([
+      'login_challenge_exchange_key',
+      'login_challenge_state_key',
+    ]);
+  });
+
+  it('stores no Google token of any kind', () => {
+    const sql = MIGRATIONS.map((entry) => renderMigration(entry.id)).join('\n');
+    for (const name of ['id_token', 'access_token', 'google_token', 'authorization_code']) {
+      expect(sql, name).not.toContain(name);
     }
   });
 });

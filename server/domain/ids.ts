@@ -22,6 +22,7 @@ const PREFIXES = {
   identity: 'aid',
   session: 'ses',
   family: 'fam',
+  challenge: 'chl',
 } as const;
 
 export type IdKind = keyof typeof PREFIXES;
@@ -38,6 +39,29 @@ export function newId(kind: IdKind): string {
 }
 
 export const newAbaUserId = (): string => newId('user');
+export const newChallengeId = (): string => newId('challenge');
+
+/**
+ * Opaque CSPRNG values that are not row identifiers.
+ *
+ * `state`, `nonce` and the one-time exchange code are all 256-bit secrets
+ * rather than 128-bit labels, and they carry **no prefix**: a prefix tells a
+ * reader what a value is for, which is helpful for an id in a log and
+ * unhelpful for a secret in a URL.
+ *
+ * The exchange code in particular is deliberately not derived from, and
+ * reveals nothing about, the account it will resolve to — the resolution is
+ * held on the challenge row, not encoded in the code (§7.1).
+ */
+function opaqueSecret(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export const newState = (): string => opaqueSecret();
+export const newNonce = (): string => opaqueSecret();
+export const newExchangeCode = (): string => opaqueSecret();
 export const newAuthIdentityId = (): string => newId('identity');
 export const newSessionId = (): string => newId('session');
 export const newSessionFamilyId = (): string => newId('family');

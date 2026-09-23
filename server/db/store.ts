@@ -16,6 +16,9 @@
  */
 import type { AccountState, AuthIdentityKind } from './schema';
 
+export type ChallengeMethod = 'google' | 'email';
+export type ChallengePurpose = 'sign_in' | 'link';
+
 export interface AbaUserRow {
   readonly id: string;
   readonly created_at: number;
@@ -41,6 +44,7 @@ export interface SessionRow {
   readonly auth_identity_id: string | null;
   readonly family_id: string;
   readonly refresh_digest: string;
+  readonly digest_version: number;
   readonly issued_at: number;
   readonly expires_at: number;
   readonly rotated_at: number | null;
@@ -56,6 +60,24 @@ export interface DeviceRow {
   readonly last_seen_at: number;
   readonly retired_at: number | null;
   readonly reactivated_at: number | null;
+}
+
+export interface LoginChallengeRow {
+  readonly id: string;
+  readonly method: ChallengeMethod;
+  readonly purpose: ChallengePurpose;
+  readonly aba_user_id: string | null;
+  readonly state: string | null;
+  readonly nonce: string | null;
+  readonly pkce_verifier: string | null;
+  readonly redirect_uri: string | null;
+  readonly exchange_digest: string | null;
+  readonly resolved_aba_user_id: string | null;
+  readonly resolved_auth_identity_id: string | null;
+  readonly attempts: number;
+  readonly created_at: number;
+  readonly expires_at: number;
+  readonly consumed_at: number | null;
 }
 
 /** Raised when a write would violate a declared constraint. */
@@ -99,6 +121,35 @@ export interface Store {
   revokeAllForUser(abaUserId: string, at: number, reason: string): Promise<number>;
   revokeForIdentity(authIdentityId: string, at: number, reason: string): Promise<number>;
   listSessions(abaUserId: string): Promise<SessionRow[]>;
+
+  // ---- login_challenge ----
+  insertChallenge(row: LoginChallengeRow): Promise<void>;
+  getChallenge(id: string): Promise<LoginChallengeRow | null>;
+  /**
+   * The callback's only lookup key.
+   *
+   * By `state` and nothing else, because a callback arrives carrying a state
+   * and a code and no other context. There is deliberately no lookup by
+   * account, by method or by time: a caller that could enumerate challenges
+   * could enumerate in-flight sign-ins.
+   */
+  findChallengeByState(state: string): Promise<LoginChallengeRow | null>;
+  findChallengeByExchangeDigest(digest: string): Promise<LoginChallengeRow | null>;
+  /** Marks the challenge spent. Idempotent: a second call changes nothing. */
+  consumeChallenge(id: string, at: number): Promise<boolean>;
+  /** Records what the callback resolved, and the exchange material it minted. */
+  attachChallengeOutcome(
+    id: string,
+    outcome: {
+      readonly exchangeDigest: string;
+      readonly abaUserId: string;
+      readonly authIdentityId: string;
+    },
+  ): Promise<void>;
+  countChallengeAttempt(id: string): Promise<number>;
+  deleteChallenge(id: string): Promise<void>;
+  /** Removes expired challenges, so credential material does not outlive its purpose. */
+  purgeExpiredChallenges(now: number): Promise<number>;
 
   // ---- device ----
   insertDevice(row: DeviceRow): Promise<void>;

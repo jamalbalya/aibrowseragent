@@ -144,6 +144,12 @@ export const FORBIDDEN_COLUMN_FRAGMENTS: readonly string[] = [
   'refresh_token',
   'access_token',
   'raw_token',
+  // Google's own tokens. The backend redeems an authorization code and reads
+  // the id_token's claims; it stores none of them, and there is no column any
+  // of them could be written to.
+  'id_token',
+  'google_token',
+  'authorization_code',
 ];
 
 /** Identity kinds the schema admits. New kinds are added here, deliberately. */
@@ -348,6 +354,19 @@ const session: TableSpec = {
       why: 'One-way verification material for the refresh token. The token itself is never stored.',
     },
     {
+      name: 'digest_version',
+      type: 'integer',
+      nullable: false,
+      // The forward-compatibility column the refresh-token review asked for.
+      // A digest cannot be recomputed without the token, so an algorithm
+      // change is prospective only: existing rows keep verifying under the
+      // version they were written with, and adopt a new one at their next
+      // rotation. Without a stored discriminator a mixed population has to be
+      // guessed at, and guessing means trying every algorithm on every
+      // request — which is how an old one stays reachable for ever.
+      why: 'Which refresh-digest algorithm produced this row. 1 = SHA-256 domain-separated (§6.6).',
+    },
+    {
       name: 'issued_at',
       type: 'timestamptz',
       nullable: false,
@@ -502,8 +521,181 @@ const device: TableSpec = {
   ],
 };
 
+/**
+ * One in-flight authentication or link.
+ *
+ * Deliberately absent from the Phase 1 foundation, and present now for the
+ * reason it was absent then: every column here exists to carry an external
+ * flow, and there was no external flow. The Google sign-in phase is what
+ * makes it real.
+ *
+ * Everything secret on this row is held **server-side only**. The client is
+ * given `id` and nothing else, and `id` alone authorises nothing: the
+ * verifier, the nonce and the exchange material never leave this table.
+ */
+const loginChallenge: TableSpec = {
+  name: 'login_challenge',
+  why: 'One in-flight authentication. Short-lived, single-use, server-side secrets only.',
+  columns: [
+    {
+      name: 'id',
+      type: 'text',
+      nullable: false,
+      writeOnce: true,
+      why: 'The only part the client holds. Opaque, and useless without the row it names.',
+    },
+    {
+      name: 'method',
+      type: 'text',
+      nullable: false,
+      writeOnce: true,
+      why: "'google' today. The column exists so a second method does not need a second table.",
+    },
+    {
+      name: 'purpose',
+      type: 'text',
+      nullable: false,
+      writeOnce: true,
+      why: "'sign_in' or 'link'. Linking reuses this row shape and must not be confused with a sign-in.",
+    },
+    {
+      name: 'aba_user_id',
+      type: 'text',
+      nullable: true,
+      writeOnce: true,
+      why: 'Non-null only for a link, where the target account is already known from the session. Never read from a request.',
+    },
+    {
+      name: 'state',
+      type: 'text',
+      nullable: true,
+      writeOnce: true,
+      why: 'CSPRNG, >= 128 bits. Binds the callback to the request that started it — the CSRF control.',
+    },
+    {
+      name: 'nonce',
+      type: 'text',
+      nullable: true,
+      writeOnce: true,
+      why: 'CSPRNG, >= 128 bits. Echoed in the id_token and compared, so a previously issued token cannot be replayed.',
+    },
+    {
+      name: 'pkce_verifier',
+      type: 'text',
+      nullable: true,
+      writeOnce: true,
+      why: 'Server-side only, never sent to the client. What makes a stolen authorization code useless.',
+    },
+    {
+      name: 'redirect_uri',
+      type: 'text',
+      nullable: true,
+      writeOnce: true,
+      why: 'Recorded at start and re-sent at redemption, so the value Google checks is the value this flow began with.',
+    },
+    {
+      name: 'exchange_digest',
+      type: 'text',
+      nullable: true,
+      why: 'One-way material for the one-time exchange code. The code itself is never stored, exactly as a refresh token is not.',
+    },
+    {
+      name: 'resolved_aba_user_id',
+      type: 'text',
+      nullable: true,
+      why: 'The account the callback resolved, held until the exchange collects it. Written by the server, never by a request.',
+    },
+    {
+      name: 'resolved_auth_identity_id',
+      type: 'text',
+      nullable: true,
+      why: 'The identity row the callback resolved, so the session records the provenance the exchange did not have to trust.',
+    },
+    {
+      name: 'attempts',
+      type: 'integer',
+      nullable: false,
+      why: 'Exchange attempts. Capped, so a guessed exchange code cannot be searched for.',
+    },
+    {
+      name: 'created_at',
+      type: 'timestamptz',
+      nullable: false,
+      writeOnce: true,
+      why: 'When the flow began. Bounds how long a challenge can sit open.',
+    },
+    {
+      name: 'expires_at',
+      type: 'timestamptz',
+      nullable: false,
+      why: 'Short. A challenge past this is inert whatever else is true of it.',
+    },
+    {
+      name: 'consumed_at',
+      type: 'timestamptz',
+      nullable: true,
+      why: 'Set before any further work, so a replayed callback finds a row that is already spent.',
+    },
+  ],
+  primaryKey: ['id'],
+  unique: [
+    {
+      name: 'login_challenge_state_key',
+      columns: ['state'],
+      requires: ['state'],
+      why: 'A callback arrives with a state and nothing else, so the lookup must resolve to exactly one row. Two rows sharing a state would make the binding ambiguous, which is the binding failing.',
+    },
+    {
+      name: 'login_challenge_exchange_key',
+      columns: ['exchange_digest'],
+      requires: ['exchange_digest'],
+      why: 'The same, for the exchange step.',
+    },
+  ],
+  foreignKeys: [
+    {
+      columns: ['aba_user_id'],
+      references: { table: 'aba_user', columns: ['id'] },
+      onDelete: 'cascade',
+    },
+  ],
+  checks: [
+    {
+      name: 'login_challenge_method_valid',
+      expression: `method IN ('google', 'email')`,
+      why: 'A method the server cannot complete is a row nothing will ever consume.',
+    },
+    {
+      name: 'login_challenge_purpose_valid',
+      expression: `purpose IN ('sign_in', 'link')`,
+      why: 'Linking and signing in have different authorization requirements; a third value would satisfy neither.',
+    },
+    {
+      name: 'login_challenge_link_has_target',
+      expression: `purpose <> 'link' OR aba_user_id IS NOT NULL`,
+      why: 'A link with no target account is a link that would have to take one from the request, which is the attack the two-proof rule exists to prevent.',
+    },
+  ],
+  indexes: [
+    {
+      name: 'login_challenge_expiry_idx',
+      columns: ['expires_at'],
+      why: 'The sweeper that deletes expired challenges, so credential material does not sit past its purpose.',
+    },
+  ],
+};
+
 /** Every table, in dependency order. The order is the migration order. */
-export const SCHEMA: readonly TableSpec[] = [abaUser, authIdentity, session, device];
+export const SCHEMA: readonly TableSpec[] = [
+  abaUser,
+  authIdentity,
+  session,
+  device,
+  loginChallenge,
+];
+
+/** The refresh-digest algorithm this build writes. See §6.6. */
+export const CURRENT_DIGEST_VERSION = 1;
 
 export function table(name: string): TableSpec {
   const found = SCHEMA.find((entry) => entry.name === name);

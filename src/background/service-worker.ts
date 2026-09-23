@@ -145,6 +145,11 @@ import { migrateLegacyConnection } from '@/providers/accounts/migrate-legacy';
 import { protocolForLegacyProvider } from '@/providers/accounts/migrate-legacy';
 import { deriveAccountLabel } from '@/providers/accounts/account-model';
 import { IdentityProfileStore } from '@/identity/identity-profile';
+import { SessionStore } from '@/identity/session-store';
+import { AuthController } from '@/identity/auth-controller';
+import { GoogleSignIn } from '@/identity/google-sign-in';
+import { IdentityTransport } from '@/identity/identity-transport';
+import { loadIdentityConfig } from '@/identity/identity-config';
 import { DataStoragePreferenceStore } from '@/storage/data-storage-preference';
 import type { ConnectedAccountView } from '@/messaging/protocol';
 
@@ -165,6 +170,18 @@ const identityProfile = new IdentityProfileStore(
 );
 const dataStoragePreference = new DataStoragePreferenceStore(
   new NamespacedStorageArea(local, 'settings'),
+);
+
+/**
+ * The authentication session.
+ *
+ * Two areas on purpose: the refresh half on disk so a browser restart does
+ * not sign anyone out, the access half in the memory-backed session area so
+ * it does not outlive the browser. Measured behaviour, not an assumption.
+ */
+const sessionStore = new SessionStore(
+  new NamespacedStorageArea(local, 'identity-session'),
+  new NamespacedStorageArea(session, 'identity-session'),
 );
 
 /**
@@ -2004,6 +2021,41 @@ router.on('workspace.reattach', async ({ workspaceId }) => {
   }
   return { attached };
 });
+
+/**
+ * Authentication, wired only when a backend origin was configured at build
+ * time.
+ *
+ * `null` is the normal state today: the backend is not deployed, so
+ * `auth.status` reports `configured: false` and the panel shows sign-in as
+ * unavailable rather than offering a button that would reach nowhere.
+ */
+const identityConfig = loadIdentityConfig();
+const authController = new AuthController({
+  sessions: sessionStore,
+  profile: identityProfile,
+  google:
+    identityConfig === null
+      ? null
+      : new GoogleSignIn({
+          config: identityConfig,
+          // No send port: `guardedSend` performs the fetch, inside the egress
+          // module, so no network primitive is created here.
+          transport: new IdentityTransport(identityConfig),
+          authFlow: new TabAuthFlow(chromeTabs()),
+        }),
+});
+
+router.on('auth.status', async () => authController.status());
+
+router.on('auth.signInWithGoogle', async () => {
+  // Bounded by the flow's own timeout; the controller aborts the tab watch
+  // when it elapses rather than leaving a tab open for ever.
+  const controller = new AbortController();
+  return authController.signInWithGoogle(controller.signal);
+});
+
+router.on('auth.signOut', async () => authController.signOut());
 
 router.on('accounts.list', async () => {
   const { accounts, brainId, abaUserId } = await visibleAccounts();

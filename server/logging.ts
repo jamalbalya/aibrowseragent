@@ -29,6 +29,11 @@ export const LOGGABLE_FIELDS = [
   'familyId',
   'identityId',
   'deviceId',
+  // The `login_challenge` row id, which the client already holds and which
+  // authorises nothing on its own. It is what makes a sign-in traceable from
+  // start to exchange. The secrets on that row — state, nonce, the PKCE
+  // verifier, the exchange code — have no entry here and must never get one.
+  'challengeId',
   'kind',
   'reason',
   'revoked',

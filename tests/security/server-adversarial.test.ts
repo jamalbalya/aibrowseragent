@@ -326,6 +326,7 @@ describe('refresh token attacks', () => {
       auth_identity_id: null,
       family_id: 'fam_11111111111111111111111111111111',
       refresh_digest: 'd'.repeat(64),
+      digest_version: 1,
       issued_at: T0,
       expires_at: T0 + 1000,
       rotated_at: null,

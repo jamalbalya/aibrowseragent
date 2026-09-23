@@ -181,6 +181,39 @@ export interface PanelRequestMap {
    * accounts, of which there may be several per family, each with its own
    * `connectionId`, its own credential and its own capability measurement.
    */
+  /**
+   * The authentication state the panel renders.
+   *
+   * Carries an `abaUserId` and an email for display, and **no token of any
+   * kind** — the panel never holds one, so there is no route through which
+   * one could reach a page.
+   */
+  'auth.status': {
+    request: Record<string, never>;
+    response: {
+      configured: boolean;
+      state: 'signed_out' | 'signed_in';
+      abaUserId: string | null;
+      email: string | null;
+    };
+  };
+  /** Starts a Google sign-in. Opens a tab; resolves when it completes. */
+  'auth.signInWithGoogle': {
+    request: Record<string, never>;
+    response: {
+      ok: boolean;
+      abaUserId: string | null;
+      email: string | null;
+      /** A safe code. Never says whether an account exists. */
+      failure: string | null;
+    };
+  };
+  /** Ends the session. Deletes nothing. */
+  'auth.signOut': {
+    request: Record<string, never>;
+    response: { ok: boolean };
+  };
+
   'accounts.list': {
     request: Record<string, never>;
     response: {

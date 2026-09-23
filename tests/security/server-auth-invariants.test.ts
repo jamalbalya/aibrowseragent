@@ -160,7 +160,7 @@ describe('AUTH-5, AUTH-6 — provider credentials never reach the auth backend',
 
 describe('AUTH-7 — Chrome runtime ids never become identity', () => {
   it('declares no column named for a Chrome runtime handle', () => {
-    const sql = renderMigration().toLowerCase();
+    const sql = renderMigration(1).toLowerCase();
     for (const fragment of ['tab_id', 'window_id', 'tab_group_id', 'extension_id']) {
       expect(sql, fragment).not.toContain(fragment);
     }
@@ -403,7 +403,7 @@ describe('AUTH-23 to AUTH-26 — linking moves and merges nothing', () => {
   it('changes no key material, because the backend holds none', () => {
     // K1 material is never transmitted, so there is nothing for a link to
     // rotate. Asserted as the absence it is (AUTH-4, AUTH-24).
-    const sql = renderMigration().toLowerCase();
+    const sql = renderMigration(1).toLowerCase();
     for (const fragment of ['recovery', 'kek', 'dek', 'kd_salt', 'key_check', 'envelope']) {
       expect(sql, fragment).not.toContain(fragment);
     }

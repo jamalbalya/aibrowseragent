@@ -312,6 +312,15 @@ export const PANEL_ROUTE_CLASSES: Record<PanelRequestType, RouteClass> = {
   'provider.runDoctor': 'CLASS_B_PANEL_CONTROL_PLANE',
   'provider.setActive': 'CLASS_B_PANEL_CONTROL_PLANE',
 
+  // Authentication. `auth.status` changes nothing and is a read; starting a
+  // sign-in opens a tab and creates a session, and signing out revokes one,
+  // so both are control plane. No content script or page may reach any of
+  // them — an authentication a page could start is an authentication a page
+  // could start without the user.
+  'auth.status': 'CLASS_E_PANEL_READ_ONLY',
+  'auth.signInWithGoogle': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'auth.signOut': 'CLASS_B_PANEL_CONTROL_PLANE',
+
   // Connected AI accounts. Reads are CLASS_E; anything that creates, removes,
   // re-homes or selects an account is control plane, because each of those
   // moves a credential or changes which one a task will use. No content
