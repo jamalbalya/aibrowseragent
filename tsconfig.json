@@ -27,8 +27,9 @@
 
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@server/*": ["server/*"]
     }
   },
-  "include": ["src", "tests", "scripts", "*.config.ts", "eslint.config.js"]
+  "include": ["src", "server", "tests", "scripts", "*.config.ts", "eslint.config.js"]
 }

@@ -3,7 +3,10 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   resolve: {
-    alias: { '@': resolve(import.meta.dirname, 'src') },
+    alias: {
+      '@': resolve(import.meta.dirname, 'src'),
+      '@server': resolve(import.meta.dirname, 'server'),
+    },
   },
   test: {
     globals: true,
@@ -14,7 +17,7 @@ export default defineConfig({
     setupFiles: ['tests/setup.ts'],
     coverage: {
       provider: 'v8',
-      include: ['src/**/*.ts'],
+      include: ['src/**/*.ts', 'server/**/*.ts'],
       exclude: ['src/**/*.d.ts', 'src/sidepanel/**'],
     },
   },

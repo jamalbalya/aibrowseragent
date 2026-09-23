@@ -28,6 +28,8 @@ const SCAN_EXTENSIONS = new Set([
   '.css',
   '.yml',
   '.md',
+  // Migrations are tracked source and could carry a seeded credential.
+  '.sql',
 ]);
 
 /**
