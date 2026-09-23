@@ -145,6 +145,7 @@ import { migrateLegacyConnection } from '@/providers/accounts/migrate-legacy';
 import { protocolForLegacyProvider } from '@/providers/accounts/migrate-legacy';
 import { deriveAccountLabel } from '@/providers/accounts/account-model';
 import { IdentityProfileStore } from '@/identity/identity-profile';
+import { LocalIdentityStore, resolveOwner } from '@/identity/local-identity';
 import { SessionStore } from '@/identity/session-store';
 import { AuthController } from '@/identity/auth-controller';
 import { GoogleSignIn } from '@/identity/google-sign-in';
@@ -186,16 +187,53 @@ const sessionStore = new SessionStore(
   new NamespacedStorageArea(session, 'identity-session'),
 );
 
+const localIdentity = new LocalIdentityStore(new NamespacedStorageArea(local, 'identity-local'));
+
 /**
- * Whose accounts to read.
+ * Whose data this is.
  *
- * `unassigned` until someone signs in, which is every installation today
- * because there is no authentication yet. Accounts connected now are unowned
- * and stay unowned until a user explicitly takes ownership of them.
+ * A signed-in profile if there is one, otherwise the installation's own
+ * locally minted identity — which every installation has, because the
+ * extension is standalone and does not wait for an account to know whose
+ * data it is holding.
+ *
+ * **`unassigned` is now a failure answer rather than the normal one.** It was
+ * the value every installation ran under while sign-in was the only source of
+ * an owner, and the account model refuses to bind anything to it by name — so
+ * returning it means ownership is genuinely unresolved, and the health report
+ * beside it stops work rather than letting rows be written under a label
+ * nothing agrees on. Callers keep the string they always had; what changed is
+ * that they now normally get a real one.
  */
 async function currentAbaUserId(): Promise<string> {
-  return (await identityProfile.abaUserId()) ?? UNASSIGNED_ABA_USER;
+  const established = await localIdentity.ensure();
+  if (!established.ok) {
+    await persistenceHealth.report('storage', 'RECOVERY_REQUIRED', established.failure);
+    return UNASSIGNED_ABA_USER;
+  }
+
+  const resolved = resolveOwner(
+    await identityProfile.abaUserId(),
+    established.identity.installationId,
+  );
+  if (!resolved.ok) {
+    await persistenceHealth.report('storage', 'RECOVERY_REQUIRED', resolved.failure);
+    return UNASSIGNED_ABA_USER;
+  }
+  return resolved.abaUserId;
 }
+
+/**
+ * Established at startup, not on first use.
+ *
+ * An installation has to know whose data it is holding *before* anything can
+ * write a row under an owner, so this runs once as the worker comes up rather
+ * than waiting for whichever route happens to ask first. It is memoised, so
+ * every later caller is a single read, and a failure reports itself into
+ * persistence health on the way through — which is what stops work rather
+ * than letting rows be written under a label nothing agrees on.
+ */
+void currentAbaUserId();
 
 const taskStore = new TaskStore(new NamespacedStorageArea(local, 'tasks'), {
   health: persistenceHealth,

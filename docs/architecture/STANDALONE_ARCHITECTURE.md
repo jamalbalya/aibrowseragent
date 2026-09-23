@@ -118,6 +118,59 @@ that produced it becomes optional.
 **No forced Google login. No forced email login. No fabricated local email
 account.**
 
+## 4a. The installation identity — IMPLEMENTED
+
+`src/identity/local-identity.ts`. A `loc_` prefix and 128 bits of
+`crypto.getRandomValues`, minted on first run, read back before it is
+believed, and stored in `chrome.storage.local`.
+
+**It replaces a placeholder, not a login.** Every workspace, connected
+provider account and active brain is stored against an owner id, and the only
+source of one was a sign-in — so with no backend deployed, every installation
+ran under the shared literal `unassigned`. The account model refuses to bind
+anything to that value by name, so a standalone user could never take
+ownership of what they connected. Now they own it from first run.
+
+| Property             | How                                                                                                              |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| locally generated    | `crypto.getRandomValues`, 16 bytes, no arguments                                                                 |
+| opaque               | a prefix and hex; no field to carry anything about a person                                                      |
+| derived from nothing | not hardware, not a Chrome runtime handle, not an address                                                        |
+| survives restart     | `chrome.storage.local`, re-read on every worker start                                                            |
+| created offline      | no network call exists on the path                                                                               |
+| never regenerated    | a valid record is returned untouched                                                                             |
+| fails closed         | a malformed record is refused, never replaced; a write that does not survive read-back is reported, not believed |
+
+**What it is not** — and each of these is asserted rather than promised:
+authentication, authorization, an encryption key, a recovery key, a provider
+credential, a human identity, a Google or email identity. It authorises
+nothing because no authorization path takes an owner id as an input: route
+trust is the sender classifier, task isolation the task record, the workspace
+boundary live Chrome state, egress the destination policy, consent the consent
+store, taint the taint state. It is a filter over local rows, applied _after_
+those checks rather than instead of them.
+
+**Reinstall.** Storage survives → the identity survives. Chrome deletes the
+extension's storage → it is gone, and a fresh install mints a new one. There
+is no hidden copy and no server holding a spare. Carrying data across an
+uninstall is what export and import are for.
+
+**Not exported.** The export allowlist is four kinds derived from the
+classification table, and an installation label is not one of them — excluded
+by construction rather than by a filter somebody has to remember. It is
+installation-specific on purpose: transferring it would leave two
+installations claiming to be one owner.
+
+**Not shown.** No route carries it and no surface renders it. A person sees
+"your data is stored on this device", never an id.
+
+**Conflict fails closed.** A profile id and an installation id that disagree —
+reachable if an installation ran standalone and later signed in — resolve to
+neither. Preferring the profile would hide every standalone row behind an
+owner that never wrote them; preferring the local id would ignore an
+authentication that did happen. Adopting one into the other is a migration
+with its own consent questions, so it is left to a person.
+
 ## 5. Security under the pivot
 
 Every control in the extension is enforced **on the device**, by the service
