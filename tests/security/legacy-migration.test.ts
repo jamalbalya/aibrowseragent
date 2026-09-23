@@ -103,11 +103,17 @@ const DEFAULT_LEGACY: LegacyConnection = {
 };
 
 /** `null` means a fresh install with no legacy connection at all. */
-function fixture(legacy: LegacyConnection | null = DEFAULT_LEGACY): Fixture {
+function fixture(legacy: LegacyConnection | null = DEFAULT_LEGACY, uniqueIds = false): Fixture {
   const credentials = new FaultyCredentials();
   if (legacy) credentials.seedLegacy(legacy.providerId, 'sk-legacy-value');
+  // `newId` is pinned by default so assertions can name the id. Cases about
+  // *recovery* pass a counting generator instead: the real store mints a
+  // fresh uuid every call, and a pinned one silently turns "the retry reused
+  // the id" into "the retry happened to get the same constant" — which is how
+  // a duplicate-account defect sat under a passing idempotency test.
+  let minted = 0;
   const store = new AccountStore(new NamespacedStorageArea(new MemoryStorageArea(), 'accounts'), {
-    newId: () => 'conn-migrated',
+    newId: uniqueIds ? () => `conn-${(minted += 1)}` : () => 'conn-migrated',
   });
   const state: { legacy: LegacyConnection | undefined } = { legacy: legacy ?? undefined };
   return {
@@ -275,7 +281,62 @@ describe('TEST-SECURITY-039 — legacy credential migration', () => {
     );
   });
 
-  it('13 — a projection of a connected account is not migrated, and not cleared', async () => {
+  it('13 — a retry after an unverifiable write reuses the account, never adds one', async () => {
+    // The seam this whole ordering exists for, run with the id generator the
+    // real store has. The first attempt writes the credential and the account
+    // and then cannot read the credential back, so it stops — correctly,
+    // leaving the legacy key untouched. What it must not do is leave an
+    // account and a second copy of the key behind for the retry to sit beside.
+    const f = fixture(DEFAULT_LEGACY, true);
+    f.credentials.failOn.getAfterSet = true;
+    expect((await migrateLegacyConnection(f.ports)).kind).toBe('failed');
+
+    f.credentials.failOn.getAfterSet = false;
+    const retry = await migrateLegacyConnection(f.ports);
+
+    expect(retry.kind).toBe('migrated');
+    // One account, not two. Before the id was reserved up front, this was
+    // `['conn-1', 'conn-2']`.
+    expect((await f.store.list()).map((a) => a.connectionId)).toEqual(['conn-1']);
+    // And one copy of the key. A second copy is a paid credential the user
+    // cannot see, cannot use and would never think to delete — disconnecting
+    // the account they *can* see would leave it on disk.
+    expect(f.credentials.snapshot()).toEqual({ 'conn:conn-1': 'sk-legacy-value' });
+    // The brain names the account that exists.
+    expect(await f.store.getBrain(UNASSIGNED_ABA_USER)).toEqual({
+      connectionId: 'conn-1',
+      modelId: 'gpt-4o',
+    });
+  });
+
+  it('14 — the reservation is dropped once migration has completed', async () => {
+    const f = fixture(DEFAULT_LEGACY, true);
+
+    expect((await migrateLegacyConnection(f.ports)).kind).toBe('migrated');
+
+    // Cleared last, after the completed record has taken over the job of
+    // stopping another run — so there is never a window with neither.
+    expect(await f.store.migrationAttempt()).toBeUndefined();
+    expect(await f.store.migrationRecord()).toBeDefined();
+  });
+
+  it('15 — a reservation for a different provider is not reused', async () => {
+    // A stale reservation from a legacy record that is no longer the one being
+    // migrated must not hand its id to a different provider's account.
+    const f = fixture(DEFAULT_LEGACY, true);
+    await f.store.recordMigrationAttempt({
+      connectionId: 'conn-from-another-provider',
+      providerId: 'gemini',
+      startedAt: NOW - 5000,
+    });
+
+    const outcome = await migrateLegacyConnection(f.ports);
+
+    expect(outcome).toEqual({ kind: 'migrated', connectionId: 'conn-1' });
+    expect((await f.store.list()).map((a) => a.connectionId)).toEqual(['conn-1']);
+  });
+
+  it('16 — a projection of a connected account is not migrated, and not cleared', async () => {
     // The settings slot has two possible authors now. The account routes
     // write it as a display projection of whichever account is the AI brain,
     // and those carry the connection id they came from; only a record from

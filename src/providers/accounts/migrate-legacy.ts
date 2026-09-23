@@ -17,10 +17,17 @@
  *  5. Only then record that migration happened.
  *
  * Interrupted between 1 and 4, the legacy credential is still there and the
- * next run migrates again — which is why step 0 checks for an account that
- * already came from this legacy record, and why re-running is a no-op rather
- * than a duplicate. Interrupted after 4, the record at step 5 is missing but
- * the legacy key is gone, so the next run finds nothing to migrate and stops.
+ * next run migrates again. Interrupted after 4, the record at step 5 is
+ * missing but the legacy key is gone, so the next run finds nothing to
+ * migrate and stops.
+ *
+ * "Migrates again" has to mean *the same account*, which is what step 0 is
+ * for: the connection id is reserved in an attempt record before anything
+ * else is written, and a retry reuses it. This comment used to claim a check
+ * that did not exist, and the test that should have caught it pinned the id
+ * generator to a constant — so a retry looked idempotent while the real store,
+ * minting a fresh uuid, produced **two accounts and two copies of the same
+ * paid API key**, one of them orphaned and unreachable from the UI.
  *
  * The one thing this never does is remove a credential it has not first
  * proved it can read back from its new home.
@@ -154,7 +161,23 @@ export async function migrateLegacyConnection(ports: MigrationPorts): Promise<Mi
       return { kind: 'skipped', reason: 'Legacy connection had no usable credential.' };
     }
 
-    const connectionId = ports.store.mintConnectionId();
+    // Step 0: reserve the id, or take back the one a previous attempt
+    // reserved for this same provider. Written before the credential and the
+    // account so that an interruption anywhere after this point converges on
+    // one account instead of adding another.
+    const previous = await ports.store.migrationAttempt();
+    const connectionId =
+      previous && previous.providerId === legacy.providerId
+        ? previous.connectionId
+        : ports.store.mintConnectionId();
+    if (!previous || previous.connectionId !== connectionId) {
+      await ports.store.recordMigrationAttempt({
+        connectionId,
+        providerId: legacy.providerId,
+        startedAt: now(),
+      });
+    }
+
     const account: ConnectedAccount = {
       connectionId,
       // Unowned, because nobody has signed in yet — migration runs at
@@ -212,6 +235,9 @@ export async function migrateLegacyConnection(ports: MigrationPorts): Promise<Mi
       migratedConnectionId: connectionId,
       note: 'Legacy single-provider connection migrated.',
     });
+    // Last, because it is the reservation: dropped only once the completed
+    // record has taken over the job of stopping another run.
+    await ports.store.clearMigrationAttempt();
     log.info('Legacy connection migrated to a connected account.', { connectionId });
     return { kind: 'migrated', connectionId };
   } catch (error) {

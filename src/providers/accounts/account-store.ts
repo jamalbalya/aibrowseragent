@@ -34,6 +34,7 @@ const log = getLogger('provider');
 const ACCOUNTS_KEY = 'accounts';
 const BRAINS_KEY = 'active-brains';
 const MIGRATION_KEY = 'legacy-migration';
+const MIGRATION_ATTEMPT_KEY = 'legacy-migration-attempt';
 const ASSOCIATION_KEY = 'association-decisions';
 
 interface AccountIndex {
@@ -64,6 +65,29 @@ export interface MigrationRecord {
   readonly completedAt: number;
   readonly migratedConnectionId: string | null;
   readonly note: string;
+}
+
+/**
+ * The connection id a migration attempt claimed, written before it writes
+ * anything else.
+ *
+ * Migration is only idempotent if a retry lands on the **same** connection id
+ * as the attempt before it. Without this, a run interrupted after the account
+ * was written — or one whose read-back verification failed — left that account
+ * and its copy of the credential behind, and the next start minted a fresh id
+ * and wrote a second of each. One provider connection, two accounts, two
+ * copies of the same paid API key, and only one of them reachable from the UI
+ * as the brain.
+ *
+ * Reserving the id first is what makes recovery converge rather than
+ * accumulate, and it is the only form that survives the worker simply dying
+ * mid-migration: a rollback on the failure path cannot run if there is no
+ * failure path left to run it.
+ */
+export interface MigrationAttempt {
+  readonly connectionId: string;
+  readonly providerId: string;
+  readonly startedAt: number;
 }
 
 /**
@@ -315,6 +339,21 @@ export class AccountStore {
 
   async recordMigration(record: MigrationRecord): Promise<void> {
     await this.area.set(MIGRATION_KEY, record);
+  }
+
+  async migrationAttempt(): Promise<MigrationAttempt | undefined> {
+    const stored = await this.area.get<MigrationAttempt>(MIGRATION_ATTEMPT_KEY);
+    return typeof stored?.connectionId === 'string' && typeof stored.providerId === 'string'
+      ? stored
+      : undefined;
+  }
+
+  async recordMigrationAttempt(attempt: MigrationAttempt): Promise<void> {
+    await this.area.set(MIGRATION_ATTEMPT_KEY, attempt);
+  }
+
+  async clearMigrationAttempt(): Promise<void> {
+    await this.area.remove(MIGRATION_ATTEMPT_KEY);
   }
 
   private async readDecisions(): Promise<AssociationDecisions> {

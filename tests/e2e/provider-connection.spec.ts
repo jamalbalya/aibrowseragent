@@ -17,6 +17,8 @@
  *
  * Everything runs against `dist/`, with no backend.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Worker } from '@playwright/test';
 import { expect, killServiceWorker, openPanel, test, waitForTask } from './fixtures/extension';
 
@@ -307,6 +309,111 @@ test('importing an archive creates no account and no authorization', async ({ se
   expect(after.accounts.length).toBe(before.accounts.length);
   expect(after.brain).toBeNull();
   expect((await send('provider.getConnection', {})).connection).toBeNull();
+});
+
+/**
+ * The four routes that write the pre-account provider slot.
+ *
+ * Kept in the worker — they serve the fallback for an installation that has
+ * not migrated, and the provider-conformance suites drive them directly — but
+ * nothing a user can click may reach them, because each writes a record the
+ * account store does not know about.
+ */
+const LEGACY_WRITE_ROUTES = [
+  'provider.connect',
+  'provider.disconnect',
+  'provider.setActive',
+  'provider.runDoctor',
+] as const;
+
+test('the shipped panel cannot reach the legacy provider write routes', async ({ extensionId }) => {
+  // Read off the built bundle rather than the sources: what ships is what a
+  // user can reach, and a source-level check would miss a route pulled in
+  // through a helper. `extensionId` is depended on so this runs against a
+  // browser that really loaded this build.
+  expect(extensionId).toMatch(/^[a-z]{32}$/);
+  const panel = readFileSync(join(process.cwd(), 'dist', 'sidepanel.js'), 'utf8');
+  const worker = readFileSync(join(process.cwd(), 'dist', 'service-worker.js'), 'utf8');
+
+  for (const route of LEGACY_WRITE_ROUTES) {
+    expect(panel.includes(route), `${route} must not be reachable from the panel`).toBe(false);
+    // And still handled, so this is a statement about the UI rather than
+    // about the routes having been quietly deleted.
+    expect(worker.includes(route), `${route} must still be handled`).toBe(true);
+  }
+
+  // The two read routes the panel legitimately uses: listing providers to
+  // populate the form, and reading the connection record the account routes
+  // now project into.
+  expect(panel).toContain('provider.list');
+  expect(panel).toContain('provider.getConnection');
+
+  // The account routes are what the panel drives instead.
+  for (const route of [
+    'accounts.connect',
+    'accounts.runDoctor',
+    'accounts.setBrain',
+    'accounts.disconnect',
+  ]) {
+    expect(panel.includes(route), route).toBe(true);
+  }
+});
+
+test('a worker restart does not resurrect a stale legacy connection', async ({
+  context,
+  extensionId,
+  send,
+  serviceWorker,
+  provider,
+}) => {
+  const connectionId = await connectThroughSettings(send, provider.baseUrl);
+
+  // Whatever a pre-account installation would have left behind, written
+  // straight into storage: a legacy credential keyed by provider and a
+  // settings record with no connection id.
+  await serviceWorker.evaluate(async () => {
+    const all = await chrome.storage.local.get(null);
+    const credentialsKey = Object.keys(all).find((key) => key.startsWith('credentials:'));
+    await chrome.storage.local.set({
+      [`${credentialsKey?.split(':')[0] ?? 'credentials'}:apiKey:openai-compatible`]:
+        'sk-stale-legacy-key',
+    });
+  });
+
+  await killServiceWorker(context, serviceWorker);
+  const panel = await openPanel(context, extensionId);
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+
+  const ask = async (type: string, payload: unknown): Promise<Record<string, unknown>> => {
+    const envelope = await panel.evaluate(
+      ([messageType, messagePayload]) =>
+        chrome.runtime.sendMessage({
+          id: `e2e_${Math.random().toString(36).slice(2)}`,
+          type: messageType,
+          timestamp: Date.now(),
+          payload: messagePayload,
+        }),
+      [type, payload] as const,
+    );
+    const result = envelope as { ok: boolean; value?: Record<string, unknown> };
+    if (!result.ok) throw new Error(`${type} failed after restart`);
+    return result.value ?? {};
+  };
+
+  // The stale key did not become an account, and did not become the brain.
+  const listed = (await ask('accounts.list', {})) as {
+    accounts: readonly { connectionId: string }[];
+    brain: { connectionId: string } | null;
+  };
+  expect(listed.accounts.map((account) => account.connectionId)).toEqual([connectionId]);
+  expect(listed.brain?.connectionId).toBe(connectionId);
+
+  // And the task still binds to the account, not to the stale provider slot.
+  const created = (await ask('task.create', { objective: 'Say hello.' })) as {
+    task: { connectionId?: string };
+  };
+  expect(created.task.connectionId).toBe(connectionId);
+  await panel.close();
 });
 
 test('connecting an account added no permission and no host access', async ({

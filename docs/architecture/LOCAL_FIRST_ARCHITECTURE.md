@@ -252,6 +252,60 @@ UI writes through them.
 
 ---
 
+### Legacy provider path: status and retirement
+
+Classified **D — SAFE FOR FUTURE REMOVAL BUT RETAINED FOR NOW.**
+
+Reachability, traced rather than assumed. In `src/`, the four write routes
+(`provider.connect`, `provider.disconnect`, `provider.setActive`,
+`provider.runDoctor`) are **declared** in the protocol, **classified** in the
+route-trust table and **handled** in the worker, and called from nowhere. The
+only provider routes any shipped surface calls are the two reads:
+`provider.list`, to populate the connect form, and `provider.getConnection`,
+which now reads the projection. This is checked against the built bundle
+rather than the sources, because what ships is what a user can reach.
+
+| Caller                                                       | Routes                                    | Kind                                                      |
+| ------------------------------------------------------------ | ----------------------------------------- | --------------------------------------------------------- |
+| `SettingsView.tsx`                                           | `provider.list`                           | read, populates the form                                  |
+| `useAgentState.ts`                                           | `provider.getConnection`                  | read, renders header and readiness                        |
+| `tests/e2e/fixtures/extension.ts`                            | connect, runDoctor, setActive             | test fixture                                              |
+| `provider-switching.spec.ts`, `provider-integration.spec.ts` | connect, runDoctor, setActive, disconnect | provider conformance                                      |
+| `route-trust.spec.ts`, `route-trust.test.ts`                 | connect, disconnect, setActive            | refusal cases — they must stay routable to stay refusable |
+
+So a production user cannot reach the write routes by clicking. They remain
+reachable in principle from a panel devtools console, which is the extension's
+own page and its own origin — the same reach that already exists for every
+`CLASS_B_PANEL_CONTROL_PLANE` route, and not a new one.
+
+**Why not remove it now.** `resolveProvider` still falls back to the
+pre-account path, and that fallback is what an installation which has not yet
+migrated runs on — including one whose migration failed and is retrying.
+Removing the routes would also remove the refusal cases that prove route trust
+holds for them, and the conformance suites' ability to drive an adapter
+without an account.
+
+**Prerequisites for removal**, all of which must hold:
+
+1. Every installation in the field has a completed migration record, which
+   cannot be known from here — so in practice, a release that has been out
+   long enough, plus a build that treats an unmigrated installation as a
+   reconnect rather than a fallback.
+2. `resolveProvider`'s fallback branch is deleted, so the pre-account path has
+   no runtime reader.
+3. The e2e fixture's `connectProvider` and the provider-conformance suites are
+   moved onto `accounts.connect`, which costs them nothing.
+4. The route-trust refusal cases are re-pointed at other `CLASS_B` routes.
+5. `apiKey:<providerId>` and `config:<providerId>` are removed by a migration
+   that proves they are empty first, rather than deleted blind.
+
+Until then the path stays, and the property that matters is enforced instead:
+no shipped UI writes through it.
+
+> Evidence: `tests/e2e/provider-connection.spec.ts` "the shipped panel cannot
+> reach the legacy provider write routes" and "a worker restart does not
+> resurrect a stale legacy connection".
+
 ## 6. Optional authentication
 
 Google sign-in exists, and it is **optional in the strong sense**: the code
@@ -482,6 +536,125 @@ table is total over `PersistedDataKind`, which is what made adding a _kind_
 safe; nothing forced a new _store_ to declare one.
 
 > Evidence: `tests/security/export-portability.test.ts` (8 cases).
+
+### Tasks and workspaces: the design, not yet the implementation
+
+Both are `REQUIRES_FURTHER_SECURITY_DESIGN` at the kind level, which is a
+decision about the record as a whole. This is the level below: what, field by
+field, would have to happen for one to arrive somewhere else without bringing
+a security assertion with it. It lives in `storage/record-portability.ts` as
+two total tables — `Record<keyof AgentTask, …>` does not compile with a field
+missing — and **nothing exports anything**: no caller builds a document from
+them, and `EXPORT_PORTABILITY` still refuses both kinds.
+
+**The rule the design follows.** An imported task or workspace is data about
+something that happened elsewhere. It is never evidence, never a measurement,
+never a permission, and never a pointer into this installation's live state.
+Where a field carries a security assertion, the destination does not read the
+incoming value at all — it starts from the conservative one and measures
+again.
+
+#### Task fields
+
+| Field                                                   | Class                         | Reason                                                                                                                          |
+| ------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `objective`                                             | PORTABLE                      | what the user wrote; the reason any of this is worth carrying                                                                   |
+| `createdAt`, `startedAt`, `finishedAt`                  | PORTABLE                      | provenance about a run that happened there                                                                                      |
+| `usage`                                                 | PORTABLE                      | eight counters that quote nothing                                                                                               |
+| `providerId`, `modelId`                                 | PORTABLE_AFTER_TRANSFORMATION | provenance, never selection                                                                                                     |
+| `error`                                                 | PORTABLE_AFTER_TRANSFORMATION | the canonical code survives; `message`, `userMessage` and `technicalDetails` are free text that quotes the page or the provider |
+| `state`                                                 | PORTABLE_AFTER_TRANSFORMATION | forced to an archived, non-resumable state whatever the file says                                                               |
+| `id`, `sessionId`, `updatedAt`, `saltEpoch`             | REGENERATED_ON_IMPORT         | a foreign id is a claim about which row this is                                                                                 |
+| `taintSalt`                                             | **SECRET**                    | 32 bytes of HMAC key behind a name that reads like a label                                                                      |
+| `taintState`                                            | **SECURITY_SENSITIVE**        | monotone by construction; an imported value could only narrow it                                                                |
+| `permissionMode`                                        | **SECURITY_SENSITIVE**        | a task arriving with `skip` is a file lowering the bar it runs under                                                            |
+| `connectionId`, `workspaceId`                           | NOT_PORTABLE_BY_DESIGN        | pointers into live local state; dangling at best, aliasing at worst                                                             |
+| `tabs`, `steps`, `plan`, `currentStepSummary`, `result` | NOT_PORTABLE_BY_DESIGN        | live handles, browsing history, generated text quoting the page, and a list of destinations actually written to                 |
+| `evidenceIds`                                           | NOT_PORTABLE_BY_DESIGN        | resolve to nothing here, and evidence is not portable either                                                                    |
+
+#### Workspace fields
+
+| Field                         | Class                  | Reason                                                                        |
+| ----------------------------- | ---------------------- | ----------------------------------------------------------------------------- |
+| `title`                       | PORTABLE               | what the user named it — the only field anybody would miss                    |
+| `createdAt`                   | PORTABLE               | provenance                                                                    |
+| `workspaceId`, `lastActiveAt` | REGENERATED_ON_IMPORT  | minted here                                                                   |
+| `abaUserId`                   | NOT_PORTABLE_BY_DESIGN | ownership is the destination's to assign                                      |
+| `members`                     | NOT_PORTABLE_BY_DESIGN | `origin` is a record of where somebody browses; `title` is page-authored text |
+
+`WorkspaceBinding` does not appear because it is not durable: it lives in
+`chrome.storage.session` and every id in it names something else by the next
+browser session.
+
+#### Task import security model
+
+1. **Association.** The imported task is owned by the destination's own local
+   identity, assigned on import. The source's identity is not read.
+2. **Provenance.** The source's owner is not retained even as a label: an
+   opaque `loc_` id means nothing to the person reading it and would be a
+   second installation identity sitting in local storage. What is retained is
+   the human-meaningful provenance — the objective, the timestamps, the
+   provider and model it ran on.
+3. **Taint.** Starts at `UNKNOWN`, which the egress gate already treats as a
+   denial. Never read from the file.
+4. **Evidence.** Not carried, and the ids are dropped. An imported task that
+   appeared to cite proof and cited nothing would be worse than one that
+   cites none.
+5. **HMAC salt.** A fresh salt is minted and `saltEpoch` starts again, so no
+   digest written under the source's salt is ever claimed to be comparable
+   here.
+6. **Provider connection.** `connectionId` is dropped. `providerId` and
+   `modelId` survive as provenance strings that select nothing.
+7. **Missing connection.** Nothing to handle: an imported task selects no
+   connection, so there is no case where the named one is absent.
+8. **Workflow references.** A task does not reference a workflow; a _replay_
+   creates a task from one. Workflows are already portable and re-validated
+   by their own store, so there is no reference to repair.
+9. **Workspace references.** `workspaceId` is dropped. An imported task is
+   bound to no workspace, and the existing rule already covers what that
+   means: a task with no `workspaceId` is **refused** browser operations
+   rather than exempted from the boundary.
+10. **Resumption.** Never automatic. An imported task arrives archived and
+    read-only.
+11. **Reset:** state, ids, session, taint, salt, epoch, evidence ids, tabs,
+    steps, plan, result, permission mode, connection and workspace.
+12. **Remeasured:** taint, and capability — both by the destination, if the
+    user ever starts new work from the imported objective.
+13. **Never crosses:** the salt, the taint value, the permission mode, the
+    connection id, the workspace id, the evidence ids, and every page-derived
+    field. `NEVER_CROSSES_INSTALLATION_BOUNDARY` is derived from the tables
+    rather than written twice.
+
+Starting new work from an imported objective is an ordinary new task: it picks
+up this installation's permission mode, its brain, its workspace and a fresh
+taint measurement, because it _is_ a new task.
+
+#### Workspace restore model
+
+An imported workspace is a **named shell**: title and creation time, no
+members, no binding, owned here. Restoring it does not reconstruct tab
+membership, and could not — the member list is origins and titles, not tabs,
+and materialising it would mean opening someone's browsing history in the
+destination's browser without being asked.
+
+It is usable rather than inert: the user switches to it and adds tabs, which
+is the same action that populates any workspace. Nothing about it is
+executable on arrival, because a workspace has never been executable — it is
+the boundary tasks run inside, and it grants nothing by existing.
+
+#### The two designs are one design
+
+They cannot be built separately. A task names a workspace and a workspace is
+where a task may act, so exporting tasks alone produces `workspaceId` values
+that dangle, and exporting workspaces alone produces boundaries no imported
+task is inside. Dropping both references is what makes each safe on its own,
+and that is a single decision about the pair rather than two decisions that
+happen to agree.
+
+No schema change was made for any of this. The tables describe the models as
+they are.
+
+> Evidence: `tests/security/record-portability.test.ts` (9 cases).
 
 ### Imported data is data
 
