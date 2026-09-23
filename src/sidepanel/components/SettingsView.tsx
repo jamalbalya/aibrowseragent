@@ -49,6 +49,11 @@ export function SettingsView({
   // effect that would fight the user's typing.
   const [modelOverride, setModelOverride] = useState<string | null>(null);
   const [models, setModels] = useState<readonly { id: string; displayName: string }[]>([]);
+  // The account this form just created. The capability check and the model
+  // selection that follows both belong to *that* account: running them
+  // against the provider id instead was how a measurement ended up on the
+  // pre-account settings slot while the account it was taken for kept none.
+  const [connectionId, setConnectionId] = useState<string | null>(connection?.connectionId ?? null);
   const [report, setReport] = useState<CapabilityReport | null>(null);
   const [sitePolicy, setSitePolicy] = useState<SitePolicyState | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -105,6 +110,7 @@ export function SettingsView({
       setMessage({ tone: 'ok', text: 'Connected. Now choose a model and run the check.' });
 
       if (result.account) {
+        setConnectionId(result.account.connectionId);
         const modelList = await sendToBackground('accounts.listModels', {
           connectionId: result.account.connectionId,
         });
@@ -169,23 +175,40 @@ export function SettingsView({
     [refreshConnectors],
   );
 
+  /**
+   * Runs the capability check against the connected account.
+   *
+   * Against the account rather than the provider id, because the measurement
+   * has to land where the runtime will look for it. `accounts.runDoctor`
+   * stamps the report onto the account with the (connection, model) pair it
+   * was taken on, which is the only form `resolveProvider` will honour; the
+   * provider-id route stored it on the pre-account settings slot, where the
+   * panel could read "ready" from a measurement the runtime was ignoring.
+   *
+   * It also makes the account the one in use when the check passes, which is
+   * what the old `provider.setActive` call was for.
+   */
   const runDoctor = useCallback(async () => {
     if (!model) {
       setMessage({ tone: 'error', text: 'Enter or choose a model first.' });
+      return;
+    }
+    if (!connectionId) {
+      setMessage({ tone: 'error', text: 'Connect an AI account first.' });
       return;
     }
     setBusy('doctor');
     setMessage(null);
     try {
       const result = await sendToBackground(
-        'provider.runDoctor',
-        { providerId, modelId: model },
+        'accounts.runDoctor',
+        { connectionId, modelId: model },
         // The doctor issues several real model round-trips.
         { timeoutMs: 180_000 },
       );
       setReport(result.report);
       if (result.report.readiness === 'AGENT_READY') {
-        await sendToBackground('provider.setActive', { providerId, modelId: model });
+        await sendToBackground('accounts.setBrain', { connectionId, modelId: model });
       }
       onChanged();
     } catch (error) {
@@ -193,22 +216,7 @@ export function SettingsView({
     } finally {
       setBusy(null);
     }
-  }, [providerId, model, onChanged]);
-
-  const disconnect = useCallback(async () => {
-    setBusy('disconnect');
-    try {
-      await sendToBackground('provider.disconnect', { providerId });
-      setReport(null);
-      setModels([]);
-      setMessage({ tone: 'ok', text: 'Disconnected and removed the stored key.' });
-      onChanged();
-    } catch (error) {
-      setMessage({ tone: 'error', text: describe(error) });
-    } finally {
-      setBusy(null);
-    }
-  }, [providerId, onChanged]);
+  }, [connectionId, model, onChanged]);
 
   const removeSite = useCallback(async (site: string) => {
     try {
@@ -335,16 +343,12 @@ export function SettingsView({
           >
             {busy === 'doctor' ? 'Checking…' : 'Run capability check'}
           </button>
-          {connection ? (
-            <button
-              type="button"
-              className="button button--danger"
-              disabled={busy !== null}
-              onClick={() => void disconnect()}
-            >
-              Disconnect
-            </button>
-          ) : null}
+          {/* No Disconnect here. It called `provider.disconnect`, which
+              clears the pre-account slot and its credential — and said "removed
+              the stored key" while the account's own key, stored under its
+              connection id, stayed exactly where it was. Connected Accounts
+              above disconnects the account and its credential together, which
+              is the only place that can honestly claim to. */}
         </div>
 
         {message ? <p className={`message message--${message.tone}`}>{message.text}</p> : null}

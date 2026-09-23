@@ -24,6 +24,7 @@ import {
 import { IdentityProfileStore } from '@/identity/identity-profile';
 import { UNASSIGNED_ABA_USER, bindAccountToUser } from '@/providers/accounts/account-model';
 import { EXPORTABLE_KINDS } from '@/storage/data-export';
+import { EXPORT_PORTABILITY } from '@/storage/data-classification';
 
 const NOW = 1_800_000_000_000;
 
@@ -255,17 +256,23 @@ describe('what the installation identity is not', () => {
   });
 
   it('16 — it is not exportable, and cannot become so by accident', () => {
-    // Export carries an explicit allowlist of four kinds derived from the
-    // classification table. An installation label is not among them and has
-    // no kind at all, so it is excluded by construction rather than by a
-    // filter somebody has to remember.
-    expect([...EXPORTABLE_KINDS]).toEqual([
-      'workflow',
-      'shortcut',
+    // Export carries four kinds, derived from the portability table rather
+    // than listed by hand. Sorted, because the set is the contract and the
+    // order is an accident of how the table is written — asserting the order
+    // would make reordering the table look like a security change.
+    expect([...EXPORTABLE_KINDS].sort()).toEqual([
       'connection-metadata',
       'preference',
+      'shortcut',
+      'workflow',
     ]);
     expect([...EXPORTABLE_KINDS]).not.toContain('identity-profile');
+    expect([...EXPORTABLE_KINDS]).not.toContain('device-id');
+    // And the reason it cannot become exportable by accident is now checkable
+    // rather than narrated: identity is classified, and the classification is
+    // what the exporter reads.
+    expect(EXPORT_PORTABILITY['identity-profile']).toBe('LOCAL_ONLY');
+    expect(EXPORT_PORTABILITY['device-id']).toBe('LOCAL_ONLY');
     // It is installation-specific on purpose: carrying it to a second
     // installation would have two of them claiming to be one owner.
   });

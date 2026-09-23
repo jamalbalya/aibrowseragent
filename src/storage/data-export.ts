@@ -40,7 +40,11 @@
  * reaches the network, and neither is reachable by a model.
  */
 import { getLogger } from '@/logging/logger';
-import { isSecret, type PersistedDataKind } from '@/storage/data-classification';
+import {
+  isSecret,
+  PORTABLE_DATA_KINDS,
+  type PersistedDataKind,
+} from '@/storage/data-classification';
 
 const log = getLogger('storage');
 
@@ -58,18 +62,15 @@ export const EXPORT_KIND = 'aba.local-export';
 /**
  * The data kinds an export carries.
  *
- * Derived from the classification table rather than listed by hand: every
- * kind here must be non-secret, and the assertion below fails the build
- * rather than the review if one ever stops being.
+ * **Derived, not listed.** It used to be a hand-written array that happened to
+ * agree with the portability decision; now it *is* the portability decision,
+ * read off `EXPORT_PORTABILITY`. Reclassifying a kind there changes what this
+ * module exports without anybody editing this module, and — more to the point
+ * — a kind newly marked portable cannot be forgotten here.
  */
-export const EXPORTABLE_KINDS = [
-  'workflow',
-  'shortcut',
-  'connection-metadata',
-  'preference',
-] as const satisfies readonly PersistedDataKind[];
+export const EXPORTABLE_KINDS: readonly PersistedDataKind[] = PORTABLE_DATA_KINDS;
 
-export type ExportableKind = (typeof EXPORTABLE_KINDS)[number];
+export type ExportableKind = PersistedDataKind;
 
 /**
  * The settings an export carries — an allowlist, not a filter.
@@ -110,6 +111,21 @@ export const MAX_RECORDS_PER_SECTION = 1000;
 export const MAX_SETTING_KEYS = 100;
 
 /**
+ * Which section of the document each portable kind is written into.
+ *
+ * The bridge between the classification and the format. A kind reclassified
+ * portable has to gain an entry here, and gaining one means deciding what its
+ * records look like in a file somebody may mail — which is the review the
+ * classification exists to force.
+ */
+const SECTION_FOR_KIND: Partial<Record<PersistedDataKind, keyof LocalExport>> = {
+  workflow: 'workflows',
+  shortcut: 'shortcuts',
+  'connection-metadata': 'connections',
+  preference: 'settings',
+};
+
+/**
  * No exportable kind may be a secret.
  *
  * Evaluated at module load, so a reclassification that would put a credential
@@ -119,6 +135,15 @@ export const MAX_SETTING_KEYS = 100;
 for (const kind of EXPORTABLE_KINDS) {
   if (isSecret(kind)) {
     throw new Error(`"${kind}" is a secret and must never be exportable`);
+  }
+  // The second half, and the one that makes reclassification a decision
+  // rather than a one-word edit: a kind marked portable that this format has
+  // nowhere to put would be a list claiming to carry something the document
+  // cannot hold. Marking `task` portable does not quietly start exporting
+  // tasks — it fails here, at module load, and the person doing it has to
+  // come and design the section.
+  if (!SECTION_FOR_KIND[kind]) {
+    throw new Error(`"${kind}" is marked portable but the export format has no section for it`);
   }
 }
 

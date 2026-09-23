@@ -46,6 +46,15 @@ export const PERSISTED_DATA_KINDS = [
   'policy',
   'device-id',
   'page-content',
+  /**
+   * Browser workspaces. Persisted since workspaces existed, and absent from
+   * this table until the portability audit went looking for them — which is
+   * the failure mode a total table is supposed to prevent and did not, because
+   * nothing forced a new *store* to declare a kind here.
+   */
+  'workspace',
+  /** Skill run progress records, reconciled after a worker restart. */
+  'skill-run',
 ] as const;
 export type PersistedDataKind = (typeof PERSISTED_DATA_KINDS)[number];
 
@@ -84,12 +93,133 @@ export const DATA_CLASSIFICATION: Readonly<Record<PersistedDataKind, DataClass>>
   preference: 'USER_SELECTABLE',
   audit: 'USER_SELECTABLE',
 
+  // Tab origins and titles the user put in a workspace: their data, and the
+  // same class as `task`, which already carries tab context.
+  workspace: 'USER_SELECTABLE',
+
   // Device-scoped and meaningless elsewhere.
+  'skill-run': 'LOCAL_ONLY',
   evidence: 'LOCAL_ONLY',
   'persistence-health': 'LOCAL_ONLY',
   policy: 'LOCAL_ONLY',
   'device-id': 'LOCAL_ONLY',
 };
+
+/**
+ * Portability: may this kind travel in a user-controlled export file?
+ *
+ * A **different question** from `cloudEligible`, and kept as its own table
+ * because conflating them would be wrong in both directions. Cloud eligibility
+ * asks whether a server the user trusts may hold something. Portability asks
+ * whether a file the user might email, sync through a third-party drive, or
+ * restore onto a machine that is not theirs may contain it — and whether the
+ * importing installation can take it without taking something else with it.
+ *
+ * Total over `PersistedDataKind` for the same reason the classification is: a
+ * new kind does not compile until somebody has decided whether it travels.
+ */
+export const PORTABILITY_CLASSES = [
+  /** Travels as-is. */
+  'PORTABLE',
+  /** Travels only after fields are dropped or rewritten on the way out. */
+  'PORTABLE_AFTER_TRANSFORMATION',
+  /** Meaningful only on the installation that wrote it. */
+  'LOCAL_ONLY',
+  /** Excluded on purpose, and not a gap waiting to be filled. */
+  'NOT_PORTABLE_BY_DESIGN',
+  /** Might travel one day; nobody has done the security work yet. */
+  'REQUIRES_FURTHER_SECURITY_DESIGN',
+] as const;
+export type PortabilityClass = (typeof PORTABILITY_CLASSES)[number];
+
+export const EXPORT_PORTABILITY: Readonly<Record<PersistedDataKind, PortabilityClass>> = {
+  // Secrets. A key in a file is a key in whatever the file is mailed through,
+  // and no transformation makes that acceptable.
+  'provider-credential': 'NOT_PORTABLE_BY_DESIGN',
+  'connector-token': 'NOT_PORTABLE_BY_DESIGN',
+  'aba-refresh-token': 'NOT_PORTABLE_BY_DESIGN',
+  'aba-access-token': 'NOT_PORTABLE_BY_DESIGN',
+  'oauth-transient': 'NOT_PORTABLE_BY_DESIGN',
+  'page-content': 'NOT_PORTABLE_BY_DESIGN',
+
+  // Evidence is a payload plus an HMAC digest under a per-task salt. Carrying
+  // the digest without the salt proves nothing; carrying the salt exports
+  // private cryptographic material.
+  evidence: 'NOT_PORTABLE_BY_DESIGN',
+
+  // Site rules are consent, not preference. An imported one would be an
+  // archive granting itself permission to automate a site — policy injection
+  // in the most literal sense.
+  policy: 'NOT_PORTABLE_BY_DESIGN',
+
+  // Health *gates execution*. A `HEALTHY` record from another device would be
+  // an archive clearing this device's own safety interlock: replay of stale
+  // security state, and the clearest authorization bypass in this table.
+  'persistence-health': 'NOT_PORTABLE_BY_DESIGN',
+
+  // Identity. Exporting either is how two installations come to claim one
+  // owner, and neither authorises anything on the device that receives it —
+  // so there is nothing to gain and an identity collision to lose.
+  'identity-profile': 'LOCAL_ONLY',
+  'device-id': 'LOCAL_ONLY',
+
+  // Names a `connectionId` whose credential deliberately does not travel, so
+  // a restored pointer would select an account that cannot run. The importing
+  // installation chooses its own brain from the accounts it actually has.
+  'ai-brain': 'LOCAL_ONLY',
+
+  // Progress through a run on a worker generation that no longer exists,
+  // naming a task id this installation does not have.
+  'skill-run': 'LOCAL_ONLY',
+
+  // Has its own scoped, user-initiated export route. The trail is a hash
+  // chain anchored to this installation; re-anchoring it elsewhere would
+  // produce a record that verifies while describing decisions this device
+  // never made.
+  audit: 'LOCAL_ONLY',
+
+  // What the export carries today.
+  workflow: 'PORTABLE',
+  shortcut: 'PORTABLE',
+  // Metadata only: the five fields that say what you connected to, never how
+  // you authenticate. The transformation is applied by the exporter.
+  'connection-metadata': 'PORTABLE_AFTER_TRANSFORMATION',
+  // The portable allowlist, not the whole settings record: `permissionMode`
+  // and `allowInsecureOrigins` are security posture and stay behind.
+  preference: 'PORTABLE_AFTER_TRANSFORMATION',
+
+  /*
+   * The two the portability audit deliberately left where they were.
+   *
+   * A task carries page-derived tab context, a monotone taint state, a
+   * per-task HMAC salt and evidence ids. Exporting one would put browsing
+   * content in a portable file, and importing one would ask an installation
+   * to accept a taint state it never measured and evidence ids that resolve
+   * to nothing — a taint downgrade dressed as a restore. The salt alone puts
+   * it out of reach without a design.
+   */
+  task: 'REQUIRES_FURTHER_SECURITY_DESIGN',
+  /*
+   * A workspace's members are tab origins and titles — browsing history in a
+   * file the user may mail — and `workspaceId` is the boundary tasks are
+   * bound to, so an imported one would name a Chrome tab group that does not
+   * exist. Neither is unsolvable; neither has been solved.
+   */
+  workspace: 'REQUIRES_FURTHER_SECURITY_DESIGN',
+};
+
+/**
+ * The kinds an export may carry, derived rather than listed.
+ *
+ * `data-export.ts` imports this instead of keeping its own list, so the
+ * portability decision lives in exactly one place and a kind reclassified
+ * here changes what the exporter does without anybody editing the exporter.
+ */
+export const PORTABLE_DATA_KINDS: readonly PersistedDataKind[] = PERSISTED_DATA_KINDS.filter(
+  (kind) =>
+    EXPORT_PORTABILITY[kind] === 'PORTABLE' ||
+    EXPORT_PORTABILITY[kind] === 'PORTABLE_AFTER_TRANSFORMATION',
+);
 
 /**
  * Does a design exist for recovering a secret to another device?

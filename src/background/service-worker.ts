@@ -142,6 +142,7 @@ import {
   type ConnectedAccount,
 } from '@/providers/accounts/account-model';
 import { migrateLegacyConnection } from '@/providers/accounts/migrate-legacy';
+import { connectionForBrain } from '@/providers/accounts/brain-projection';
 import { protocolForLegacyProvider } from '@/providers/accounts/migrate-legacy';
 import { deriveAccountLabel } from '@/providers/accounts/account-model';
 import { IdentityProfileStore } from '@/identity/identity-profile';
@@ -1837,6 +1838,10 @@ async function runLegacyMigration(): Promise<void> {
       const connection = await settingsStore.getConnection();
       if (!connection) return undefined;
       return {
+        // Passed through rather than filtered here: whether a record is a
+        // projection is a fact about the record, and the migration is what
+        // owns the rule that a projection is not migrated.
+        ...(connection.connectionId === undefined ? {} : { connectionId: connection.connectionId }),
         providerId: connection.providerId,
         modelId: connection.modelId,
         ...(connection.accountLabel === undefined ? {} : { accountLabel: connection.accountLabel }),
@@ -2128,6 +2133,35 @@ router.on('auth.refresh', async () => {
 
 router.on('auth.signOut', async () => authController.signOut());
 
+/**
+ * Re-derives the panel's connection record from the brain.
+ *
+ * Called after every write that can change which account is in use. The panel
+ * reads `settings.provider-connection` for the header status and the
+ * composer's readiness gate, and before this the account routes never wrote
+ * it — so connecting an account through Settings left the panel insisting
+ * nothing was connected while `resolveProvider` had an account it would
+ * happily have used.
+ *
+ * This is a projection, not a second decision: `resolveProvider` still reads
+ * the account store, and nothing here can make a task run against something
+ * the account store does not name. `activeProviderId` and `activeModelId` are
+ * kept in step for the same reason — they are what the export carries and
+ * what startup marks active, and a stale pair there describes an account the
+ * user may have moved on from.
+ */
+async function projectBrainToSettings(): Promise<ProviderConnection | null> {
+  const account = await accountStore.getBrainAccount(await currentAbaUserId());
+  const connection = connectionForBrain(account);
+  await settingsStore.setConnection(connection);
+  await settingsStore.update({
+    activeProviderId: connection?.providerId ?? null,
+    activeModelId: connection?.modelId || null,
+  });
+  broadcastEvent({ type: 'provider.statusChanged', connection });
+  return connection;
+}
+
 router.on('accounts.list', async () => {
   const { accounts, brainId, abaUserId } = await visibleAccounts();
   const brain = await accountStore.getBrain(abaUserId);
@@ -2194,6 +2228,29 @@ router.on('accounts.connect', async (request) => {
     providerId: request.providerId,
     code: 'account_connected',
   });
+
+  // The first account becomes the one in use.
+  //
+  // Without this, connecting an account through Settings left the brain
+  // unset, `resolveProvider` fell through to the pre-account settings slot,
+  // and the very next task failed with "Enter the endpoint base URL" — the
+  // account was connected, its key was stored, and nothing would use it. The
+  // one-time migration already made the account it carried forward the brain
+  // for exactly this reason; this restores that rule for the path that
+  // replaced it.
+  //
+  // Only when there is no brain. Connecting a second account must never
+  // silently move the user off the one they chose.
+  const abaUserId = await currentAbaUserId();
+  if ((await accountStore.getBrain(abaUserId)) === null) {
+    await accountStore.setBrain(abaUserId, connectionId, account.modelId);
+    await updateSession({
+      providerId: account.providerId,
+      ...(account.modelId === null ? {} : { modelId: account.modelId }),
+    });
+  }
+  await projectBrainToSettings();
+
   await broadcastAccounts();
   const { brainId } = await visibleAccounts();
   return { account: accountView(account, brainId) };
@@ -2203,6 +2260,10 @@ router.on('accounts.disconnect', async ({ connectionId }) => {
   // The credential goes first, then the record, then any brain pointing at
   // it. `AccountStore.remove` owns that ordering.
   await accountStore.remove(connectionId, connectionCredentials);
+  // `remove` clears a brain that pointed at it, so the projection has to be
+  // re-derived: leaving the old one would show a connection to an account
+  // whose credential has just been deleted.
+  await projectBrainToSettings();
   await broadcastAccounts();
   return { ok: true as const };
 });
@@ -2239,6 +2300,10 @@ router.on('accounts.runDoctor', async ({ connectionId, modelId, quick }) => {
           ? 'failed'
           : 'limited',
   });
+  // The measurement the panel gates the composer on. Projected here rather
+  // than left for the next brain change, because a capability check that
+  // passes should light the composer up now.
+  await projectBrainToSettings();
   await broadcastAccounts();
   return { report };
 });
@@ -2268,6 +2333,7 @@ router.on('accounts.setBrain', async ({ connectionId, modelId }) => {
     });
   }
   await updateSession({ providerId: updated.providerId, modelId });
+  await projectBrainToSettings();
   await broadcastAccounts();
   return { account: accountView(updated, connectionId) };
 });
@@ -2286,6 +2352,7 @@ router.on('accounts.associate', async () => {
   // connections somebody else set up on a shared profile has to be a
   // decision, because `bindAccountToUser` permits no second move.
   const outcome = await accountStore.associateUnassigned(await currentAbaUserId());
+  await projectBrainToSettings();
   await broadcastAccounts();
   return { associated: outcome.associated, refused: outcome.refused };
 });

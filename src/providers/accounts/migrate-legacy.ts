@@ -38,6 +38,17 @@ const log = getLogger('provider');
 
 /** The shape the previous build persisted. Read-only; never written again. */
 export interface LegacyConnection {
+  /**
+   * Set when this record is a **projection of a connected account**, not a
+   * record from before accounts existed.
+   *
+   * The settings slot now has two possible authors. The pre-account build
+   * wrote it as the one connection there could be; the account routes write it
+   * as a display projection of whichever account is the AI brain, and those
+   * carry the connection id they came from. Only the first is a thing to
+   * migrate.
+   */
+  readonly connectionId?: string;
   readonly providerId: string;
   readonly modelId: string;
   readonly authKind?: string;
@@ -102,6 +113,21 @@ export async function migrateLegacyConnection(ports: MigrationPorts): Promise<Mi
     if (already) return { kind: 'skipped', reason: 'Migration already ran.' };
 
     const legacy = await ports.readLegacyConnection();
+
+    // A projection of an account is not a record to migrate, and getting this
+    // wrong is not a no-op. Migration would mint a *second* account for a
+    // connection that already has one; it would then look for the credential
+    // under `apiKey:<providerId>`, which a projection never has, conclude the
+    // connection has no usable key, and clear the settings slot — leaving an
+    // installation whose panel shows nothing connected while the account and
+    // its key sit untouched a namespace away.
+    //
+    // Reachable because migration is fire-and-forget at worker start and the
+    // panel can write a projection while it is still running.
+    if (legacy && typeof legacy.connectionId === 'string' && legacy.connectionId.length > 0) {
+      return { kind: 'skipped', reason: 'The settings connection is a projection of an account.' };
+    }
+
     if (!legacy || typeof legacy !== 'object' || typeof legacy.providerId !== 'string') {
       // Nothing to migrate is the common case on a fresh install, and it is
       // recorded so the check does not run again on every startup.

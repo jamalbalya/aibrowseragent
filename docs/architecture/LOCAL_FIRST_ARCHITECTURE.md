@@ -178,9 +178,76 @@ is neither a prerequisite nor a trigger for anything about the provider.
 Multiple connections remain supported, each with its own credential, its own
 capability measurement and its own label.
 
+### Which store is authoritative
+
+**`AccountStore` is authoritative.** A connected AI account is an entry there,
+with its credential at `credentials:conn:<connectionId>`, and
+`resolveProvider` reads the brain from it before anything else. That is the
+only record a task can run against.
+
+`settings.provider-connection` is **not a second source of truth.** It is the
+single-slot record from before accounts existed, and it now exists in two
+roles and no others:
+
+| Role                                                                            | Written by                                           | Read by                                                                    |
+| ------------------------------------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------- |
+| A **projection** of the brain account, carrying the `connectionId` it came from | the account routes, through `projectBrainToSettings` | the panel — the header status line and the composer's readiness gate       |
+| A genuine **pre-account** record, with no `connectionId`                        | builds before accounts existed                       | the one-time migration, which turns it into an account and then deletes it |
+
+The `connectionId` is what tells them apart, and it is structural rather than
+a flag: only a projection has one. The migration skips a record that carries
+one — see **Legacy records** below for why that is not merely tidiness.
+
+`resolveProvider` still falls back to the pre-account path when there is no
+brain, which is what keeps an installation working that has not migrated.
+
+### The defect this replaced
+
+This was not a tidiness question. The shipped Settings form connected through
+`accounts.connect` and then ran the capability check and the model selection
+through the _provider_ routes, which wrote the other record. Connecting an
+account therefore left the brain unset, `resolveProvider` fell through to the
+pre-account path, and it looked there for a credential at
+`apiKey:<providerId>` that `accounts.connect` had never written.
+
+The result, measured in a real browser: connect an AI account in Settings, see
+the capability check report `AGENT_READY`, start a task, and get
+**`AUTH_REQUIRED — Enter the endpoint base URL`**. The account was connected,
+its key was on disk, and nothing would use it. The only way through was to
+open Connected Accounts and select the account by hand.
+
+Three things fixed it, and none of them added a store:
+
+1. **The first account becomes the one in use.** `accounts.connect` takes the
+   brain when there is no brain — and only then, so connecting a second
+   account never moves the user off the one they chose. The migration already
+   did exactly this for the account it carried forward.
+2. **The panel record is projected from the brain**, on every write that can
+   change which account is in use: connect, select, capability check,
+   disconnect, associate. `activeProviderId` and `activeModelId` move with it,
+   so the pair the export carries names the account actually in use.
+3. **Settings drives the account it created.** The capability check runs
+   through `accounts.runDoctor`, which stamps the measurement onto the account
+   with the `(connectionId, modelId)` pair it was taken on — the only form
+   `resolveProvider` will honour. The provider-id route stored it where the
+   panel could read "ready" from a measurement the runtime was ignoring.
+
+The form's own **Disconnect** button is gone. It called `provider.disconnect`,
+which clears the pre-account slot and the `apiKey:<providerId>` credential,
+and reported "Disconnected and removed the stored key" while the account's
+real key, stored under its connection id, stayed exactly where it was.
+Connected Accounts removes the account and its credential together, which is
+the only place that can honestly claim to.
+
+The `provider.*` routes are **kept, not deleted**: they serve the pre-account
+fallback and the provider-conformance suites. What changed is that no shipped
+UI writes through them.
+
 > Evidence: `tests/security/local-first.test.ts` 03;
 > `tests/security/multi-account-isolation.test.ts`;
 > `tests/security/local-export.test.ts` 01–03 and 05;
+> `tests/security/legacy-migration.test.ts` 13;
+> `tests/e2e/provider-connection.spec.ts` (11 cases, real Chromium);
 > `tests/e2e/local-first.spec.ts` "the export carries the user's work and no credential".
 
 ---
@@ -357,6 +424,65 @@ file, because that is what it might be. So:
   fail at its first request while looking ready, so the panel reports how many
   keys to re-enter instead.
 
+### What is portable, and what is not
+
+The question "may this travel in a file?" is now a table in code rather than a
+list in the exporter: `EXPORT_PORTABILITY` in `storage/data-classification.ts`,
+total over every persisted kind, with `EXPORTABLE_KINDS` **derived** from it.
+The exporter no longer keeps its own list that merely happened to agree.
+
+It is deliberately a **second** table rather than a reuse of `cloudEligible`.
+They answer different questions and would each be wrong as the other: cloud
+eligibility asks whether a server the user trusts may hold something,
+portability asks whether a file the user may email or restore onto a machine
+that is not theirs may contain it. `audit` is the clearest case — syncable in
+principle, and not portable, because a hash chain re-anchored on another
+device would verify while describing decisions that device never made.
+
+| Kind                                                                                                                 | Portability                          | Why                                                                                                                      |
+| -------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `workflow`, `shortcut`                                                                                               | **PORTABLE**                         | the user's own work, re-validated by the owning store on import                                                          |
+| `connection-metadata`                                                                                                | **PORTABLE_AFTER_TRANSFORMATION**    | five fields saying what you connected to; never how you authenticate                                                     |
+| `preference`                                                                                                         | **PORTABLE_AFTER_TRANSFORMATION**    | the portable allowlist only; security posture stays behind                                                               |
+| `provider-credential`, `connector-token`, `aba-refresh-token`, `aba-access-token`, `oauth-transient`, `page-content` | **NOT_PORTABLE_BY_DESIGN**           | secrets, and no transformation makes a key in a mailed file acceptable                                                   |
+| `evidence`                                                                                                           | **NOT_PORTABLE_BY_DESIGN**           | payload plus an HMAC digest under a per-task salt: the digest alone proves nothing, the salt is private key material     |
+| `policy`                                                                                                             | **NOT_PORTABLE_BY_DESIGN**           | a site rule is consent; an imported one is an archive granting itself permission to automate a site                      |
+| `persistence-health`                                                                                                 | **NOT_PORTABLE_BY_DESIGN**           | it **gates execution**, so a `HEALTHY` record from elsewhere would be an archive clearing this device's safety interlock |
+| `identity-profile`, `device-id`                                                                                      | **LOCAL_ONLY**                       | exporting either is how two installations come to claim one owner                                                        |
+| `ai-brain`                                                                                                           | **LOCAL_ONLY**                       | names a `connectionId` whose credential deliberately does not travel                                                     |
+| `skill-run`                                                                                                          | **LOCAL_ONLY**                       | progress through a run on a worker generation that no longer exists                                                      |
+| `audit`                                                                                                              | **LOCAL_ONLY**                       | has its own scoped export route; the chain is anchored to this installation                                              |
+| `task`                                                                                                               | **REQUIRES_FURTHER_SECURITY_DESIGN** | see below                                                                                                                |
+| `workspace`                                                                                                          | **REQUIRES_FURTHER_SECURITY_DESIGN** | see below                                                                                                                |
+
+**Tasks and workspaces are deferred, not forgotten.** A task carries
+page-derived tab context, a monotone taint state, a per-task HMAC salt and
+evidence ids: exporting one puts browsing content in a portable file, and
+importing one asks an installation to accept a taint state it never measured
+and evidence ids that resolve to nothing — a taint downgrade dressed as a
+restore. A workspace's members are tab origins and titles, which is browsing
+history, and `workspaceId` is the boundary tasks are bound to, so an imported
+one names a Chrome tab group that does not exist. Neither is unsolvable.
+Neither has been solved, and the classification is what distinguishes that
+from nobody having got round to it.
+
+**Skills are not in the table at all**, because nothing persists them: the
+registry is rebuilt at every worker start from the definitions shipped in the
+build, and is hash-verified there. A restore reconstructs them by running the
+same build. Skill _runs_ are persisted and classified above.
+
+Reclassifying a kind as portable is a review gate rather than a one-word edit:
+`data-export` asserts at module load that every portable kind has a section of
+the document to write into, so marking `task` portable fails the build until
+somebody has decided what a task looks like in a file.
+
+Two persisted kinds — `workspace` and `skill-run` — were **missing from the
+classification table entirely** until this audit went looking for them. The
+table is total over `PersistedDataKind`, which is what made adding a _kind_
+safe; nothing forced a new _store_ to declare one.
+
+> Evidence: `tests/security/export-portability.test.ts` (8 cases).
+
 ### Imported data is data
 
 An import moves records. It does not move standing. Nothing in the file
@@ -377,6 +503,36 @@ authorization:
 neither is reachable by a model, and neither touches the network: an export is
 built in the worker from local storage and an import is read from a file the
 user chose.
+
+### Legacy records
+
+The one-time migration turns a pre-account `settings.provider-connection` plus
+its `apiKey:<providerId>` credential into an account, in an order chosen so
+that no interruption can delete a credential it has not first proved it can
+read back. It records a marker when it finishes — including on a fresh install
+with nothing to migrate — so it runs once and never again.
+
+It is fire-and-forget at worker start, which is what makes the projection
+guard load-bearing rather than defensive. A panel that connects an account
+while migration is still running writes a projection into the very record
+migration is about to read. Without the guard, migration would mint a _second_
+account for a connection that already has one, look for a credential at
+`apiKey:<providerId>` that a projection never has, conclude the connection has
+no usable key, and **clear the settings slot** — leaving a panel showing
+nothing connected while the account and its key sat untouched a namespace
+away.
+
+Nothing is silently deleted, merged, or adopted into another identity: a
+migrated account is carried forward **unowned** and claimed only by an
+explicit click in Connected Accounts, because `bindAccountToUser` permits no
+second move.
+
+No new migration was needed for this phase. The correction changes which
+routes write the settings record, not what is stored in it, and a projection
+is re-derived from the account store on the next write rather than converted.
+
+> Evidence: `tests/security/legacy-migration.test.ts` (13 cases, 13 being the
+> projection guard with its negative control).
 
 ### Atomicity: the exact guarantee
 

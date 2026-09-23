@@ -18,6 +18,15 @@ import type {
 const log = getLogger('provider');
 
 export interface ProviderConnection {
+  /**
+   * The connected account this record was projected from, when it was.
+   *
+   * Absent on the pre-account single-slot record, which is what makes it a
+   * usable discriminator: a record carrying one is a projection of an account
+   * that already exists, and the one-time migration must leave it alone. See
+   * `providers/accounts/brain-projection.ts`.
+   */
+  readonly connectionId?: string;
   readonly providerId: string;
   readonly modelId: string;
   readonly authKind: string;

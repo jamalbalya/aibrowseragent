@@ -274,4 +274,36 @@ describe('TEST-SECURITY-039 — legacy credential migration', () => {
       'sk-legacy-value',
     );
   });
+
+  it('13 — a projection of a connected account is not migrated, and not cleared', async () => {
+    // The settings slot has two possible authors now. The account routes
+    // write it as a display projection of whichever account is the AI brain,
+    // and those carry the connection id they came from; only a record from
+    // before accounts existed is a thing to migrate.
+    //
+    // Reachable because migration is fire-and-forget at worker start: a panel
+    // that connects an account while it is still running writes a projection
+    // into the record migration is about to read.
+    const f = fixture({
+      connectionId: 'conn-already-an-account',
+      providerId: 'openai-compatible',
+      modelId: 'gpt-4o',
+      createdAt: NOW - 1000,
+    });
+
+    const outcome = await migrateLegacyConnection(f.ports);
+
+    expect(outcome.kind).toBe('skipped');
+    // No second account for a connection that already has one.
+    expect(await f.store.get('conn-migrated')).toBeUndefined();
+    // And — the part that is not merely tidiness — the projection is still
+    // there. Migrating it would have found no `apiKey:<providerId>` behind
+    // it, concluded the connection had no usable credential, and cleared the
+    // settings slot, leaving a panel showing nothing connected while the
+    // account and its key sat untouched a namespace away.
+    expect(f.legacy()?.connectionId).toBe('conn-already-an-account');
+    // No marker either: a real legacy record may still arrive on a later
+    // start, and recording completion here would make it unmigratable.
+    expect(await f.store.migrationRecord()).toBeUndefined();
+  });
 });
