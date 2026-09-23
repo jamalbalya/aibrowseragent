@@ -1,26 +1,62 @@
-# K1 — End-to-End Encryption for Cloud Sync
+# K1 — Client-Side End-to-End Encryption for Cloud Sync
 
-Status: **design v2, pending review. Nothing here is implemented.** No
+Status: **design v3, pending review. Nothing here is implemented.** No
 production code was changed to produce this document, and none may change
 until it is reviewed and approved. There is no backend, no Cloud Sync
 transport and no encryption code in the repository.
 
-Baseline: `59114e4`, CI #46 green, 2267 unit/integration/security and 213 real
+Baseline: `67aafe9`, CI #47 green, 2267 unit/integration/security and 213 real
 Chromium tests.
 
-**What changed in v2.** Four product decisions were approved and they alter the
-cryptography, not merely the wording:
+## 0. What "K1 client-side E2EE" means
 
-|     | Decision                                                                | Effect                                                                            |
-| --- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Q1  | **Generated 128-bit recovery key**, no user passphrase in v1            | the secret is uniformly random, so there is nothing for a password KDF to stretch |
-| Q2  | **No Argon2id, no scrypt, no WASM, no CSP change**                      | not applicable once Q1 holds                                                      |
-| Q3  | The recovery key is a **recovery credential**, not a session credential | key material persists locally; §7.4 states what that costs                        |
-| Q4  | **Remove the API-key suffix from `accountLabel`**                       | credential fragments are `SECRET_LOCAL_ONLY`, never sync metadata                 |
+The product term is **K1 client-side E2EE**, and it is defined by what it does
+and does not cover. Using it without that definition attached is how a
+reasonable claim becomes an overclaim.
 
-v1 specified PBKDF2-HMAC-SHA-256 at 600 000 iterations. **That is removed.**
-See §7 for why running a password KDF against a uniformly random secret buys
-nothing.
+> **K1 is client-side encryption designed so that the backend and cloud service
+> cannot decrypt protected user content.**
+>
+> **K1 does not provide endpoint-compromise protection once the active local
+> KEK is available on a trusted device.**
+
+| **Protected by K1**                                     |                                            |
+| ------------------------------------------------------- | ------------------------------------------ |
+| backend compromise                                      | the service holds ciphertext and no key    |
+| cloud database compromise                               | same                                       |
+| ciphertext theft                                        | 128-bit key, infeasible to search (§4)     |
+| network interception                                    | TLS, and ciphertext beneath it             |
+| malicious backend operator **without endpoint access**  | cannot decrypt, cannot forge               |
+| ciphertext transplant between users                     | AAD binds `abaUserId` (§10)                |
+| record substitution                                     | AAD binds `recordId` and `recordType`      |
+| record replay and rollback **within the sync protocol** | monotonic revision, high-water marks (§15) |
+
+| **Not protected by K1**                               |                                              |
+| ----------------------------------------------------- | -------------------------------------------- |
+| full compromise of the user's trusted device          | the KEK is present and usable there          |
+| an attacker with read access to the Chrome profile    | can read the KEK from `chrome.storage.local` |
+| an attacker able to extract active local KEK material | by definition holds the key                  |
+| malware running with equivalent local user privileges | indistinguishable from the user              |
+
+**This is a boundary, not a cryptographic failure.** The construction is sound;
+what the second table describes is the set of attackers who already hold the
+key, and no cipher protects against an adversary in possession of the key. It
+is the direct and intended consequence of the approved lifecycle in which
+normal operation does not re-prompt for the recovery key (§7.4).
+
+**What changed in v3.** Six decisions were approved:
+
+|     | Decision                                                                                      | Effect                                               |
+| --- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| 1   | Keep the construction; make the endpoint boundary **explicit**                                | §0, §3, §4                                           |
+| 2   | Terminology must match the threat model                                                       | every claim in this document is qualified against §0 |
+| 3   | **Q5 resolved** — 90-day tombstone retention, but elapsed time alone never authorises a purge | §14A                                                 |
+| 4   | **Q6 resolved** — audit content is `LOCAL_ONLY` for the initial release                       | §12, §13                                             |
+| 5   | Backend knowledge boundary re-reviewed                                                        | §26                                                  |
+| 6   | Invariants and gates extended                                                                 | §27, §28                                             |
+
+**What changed in v2**, retained for the record: a generated 128-bit recovery
+key replaced a user passphrase, which removed the password KDF entirely (§7.1).
 
 ---
 
@@ -41,17 +77,17 @@ implementation review, and this document does not invent requirements for it).
 
 ## 2. Security goals
 
-| #   | Goal                                                                                                            |
-| --- | --------------------------------------------------------------------------------------------------------------- |
-| G1  | The backend cannot read task, workflow, shortcut, audit or workspace content — honest, compromised, or hostile. |
-| G2  | The backend never receives the recovery key, in plaintext or in any form it could derive one from.              |
-| G3  | Ciphertext cannot be moved between users, records, or record types without decryption failing.                  |
-| G4  | A stale or replayed record cannot silently overwrite a newer one.                                               |
-| G5  | Provider API keys never leave the device, encrypted or not.                                                     |
-| G6  | Losing a session, a device, or the backend never destroys user work.                                            |
-| G7  | Losing local storage never creates a second identity for the same account.                                      |
-| G8  | Cloud Sync grants no browser authority: it is storage, never a permission.                                      |
-| G9  | **Authentication alone never decrypts anything.** A valid session is not a key.                                 |
+| #   | Goal                                                                                                                                                                                  |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| G1  | The backend cannot read task, workflow, shortcut or workspace content — honest, compromised, or hostile. Scoped by §0: a claim about the _backend_, not about a compromised endpoint. |
+| G2  | The backend never receives the recovery key, in plaintext or in any form it could derive one from.                                                                                    |
+| G3  | Ciphertext cannot be moved between users, records, or record types without decryption failing.                                                                                        |
+| G4  | A stale or replayed record cannot silently overwrite a newer one.                                                                                                                     |
+| G5  | Provider API keys never leave the device, encrypted or not.                                                                                                                           |
+| G6  | Losing a session, a device, or the backend never destroys user work.                                                                                                                  |
+| G7  | Losing local storage never creates a second identity for the same account.                                                                                                            |
+| G8  | Cloud Sync grants no browser authority: it is storage, never a permission.                                                                                                            |
+| G9  | **Authentication alone never decrypts anything.** A valid session is not a key.                                                                                                       |
 
 **Security level: 128 bits.** The recovery key carries 128 bits of entropy, so
 the whole system provides 128-bit security against key recovery — not 256,
@@ -61,10 +97,11 @@ reader to infer "256" from the cipher name.
 
 ## 3. Explicit non-goals
 
-- **Not** protection against a compromised device. See §7.4: under the approved
-  Q3 lifecycle, key material rests locally, so an attacker with the extension's
-  storage can decrypt. This is a consequence of the approved UX, stated rather
-  than hidden.
+- **Not** protection against a compromised device. §0 states this as a
+  boundary and §7.4 explains why it follows from the approved lifecycle: key
+  material rests locally, so an attacker holding the Chrome profile holds the
+  key. Not a cryptographic failure — an adversary in possession of the key is
+  outside what any cipher addresses.
 - **Not** server-side recovery. Losing the recovery key means losing the
   plaintext (Q1). No escrow, no second key, no backdoor.
 - **Not** metadata privacy. The backend learns record counts, sizes, types and
@@ -80,7 +117,7 @@ reader to infer "256" from the cipher name.
 | Backend compromise                                                                | ciphertext only; no key ever sent                            | metadata                                                                                                                                |
 | Database compromise                                                               | same                                                         | same                                                                                                                                    |
 | Network interception                                                              | TLS, and ciphertext beneath it                               | traffic analysis                                                                                                                        |
-| Malicious backend operator                                                        | cannot decrypt; §10 binding blocks transplant                | can delete or withhold — availability, not confidentiality                                                                              |
+| Malicious backend operator **without endpoint access**                            | cannot decrypt; §10 binding blocks transplant                | can delete or withhold — availability, not confidentiality                                                                              |
 | Stolen ciphertext (cloud)                                                         | AES-256-GCM under a 128-bit-entropy key                      | none practical — see brute force below                                                                                                  |
 | Stolen ciphertext (local)                                                         | same                                                         | **but see local key material, below**                                                                                                   |
 | **Recovery-key brute force**                                                      | 2¹²⁸ search, each guess costing an HKDF plus a GCM tag check | infeasible: at 10¹⁸ guesses/second, ~10¹³ years                                                                                         |
@@ -258,7 +295,9 @@ means. Stated in full:
 
 A tighter model — KEK in memory only, prompt per session — is a coherent
 alternative with a real usability cost. It is not what was approved, and this
-document does not quietly build it.
+document does not quietly build it. The resulting boundary is stated in §0 and
+is **approved**, not outstanding: a per-worker or per-browser-start prompt is
+explicitly ruled out.
 
 ## 8. Encryption algorithm
 
@@ -387,68 +426,118 @@ any provider OAuth secret · plaintext task, workflow, shortcut or audit
 content · plaintext page content · prompts or model responses · workspace
 titles or member origins · the KEK or any DEK.
 
-**Audit data is encrypted, not metadata-only.** An audit record carries
-`destination`, `origin` and `site` — browsing history in all but name. Its body
-goes in `ct`; only ordering metadata stays plaintext. The chain's `seq` and
-`prevDigest` are inside the ciphertext, so the backend cannot verify the chain
-— which it never could and was never asked to. Verification stays client-side.
+**Audit is not synced at all in the initial release** (Q6, §12). An audit
+record carries `destination`, `origin` and `site` — browsing history in all but
+name — and the approved policy is to keep it on the device rather than to
+encrypt and upload it. No audit sync row is created, so the backend receives no
+audit content _and_ no audit metadata. Were audit to sync later, its body would
+go in `ct` like any other record and the `seq`/`prevDigest` chain would ride
+inside the ciphertext, unverifiable by the backend — which it never could
+verify and was never asked to.
 
-## 12. The metadata-only phase
+## 12. Initial Cloud Sync policy
 
-> **Finding carried from v1, now resolved by Q4.** `deriveAccountLabel`
-> (`account-model.ts:186`) produces `"api.openai.com (key …1234)"` — the last
-> four characters of the API key. Q4 approves removing that suffix.
-> **`accountLabel` must never contain an API-key fragment, an OAuth token
-> fragment, a client secret, or any credential fingerprint.** A label may carry
-> ordinary non-secret metadata: provider name, a user-entered label, a
-> non-sensitive description.
->
-> Until that change ships, `accountLabel` is credential-derived and is
-> classified `SECRET_LOCAL_ONLY`. After it ships, it is ordinary user content
-> and is **still encrypted**, for a different reason: a user-entered label is
-> whatever the user typed. Two reasons, two mechanisms, and neither depends on
-> the other.
+> **Supersedes the two-phase split in v2.** That phasing deferred tasks,
+> workflows and shortcuts until "after the E2EE design is implemented and
+> validated". This document _is_ that design, so the approved initial policy
+> covers them — encrypted — and defers **audit** instead, on data-minimisation
+> grounds rather than cryptographic ones.
 
-"Metadata-only" means **which record types sync**, not that they sync in the
-clear. The two readings must not be confused.
+**Everything that syncs, syncs encrypted.** One wire format, from the first
+Cloud Sync commit. A second plaintext format shipped "temporarily" outlives its
+phase.
 
-**Recommendation: the envelope exists from the first Cloud Sync commit.** One
-wire format, not two. A second plaintext format shipped "temporarily" outlives
-its phase.
+### SYNC — encrypted body, plaintext routing metadata
 
-| Phase 1 syncs                                                                          | As                                                      |
-| -------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `connectionId`, `providerId`, `protocol`, `authKind`, `modelId`, `status`              | plaintext row fields — structural, no user content      |
-| `revision`, `deviceId`, `updatedAt`, `serverSeq`, `deleted`                            | plaintext row fields                                    |
-| `kdSalt`, `kdInfo`, `keyVersion`                                                       | plaintext, non-secret, needed to derive on a new device |
-| `accountLabel`, `baseUrl`, capability detail, workspace title and origins, preferences | **encrypted body**                                      |
+- tasks (terminal only, §14)
+- workflows
+- shortcuts
+- approved workspace metadata
+- preferences
+- approved connection metadata
+
+### LOCAL_ONLY — never uploaded in this release
+
+- provider API keys
+- provider OAuth secrets
+- provider credentials of any kind, including fragments
+- **audit content**
+
+### NEVER CLOUD — not uploaded in any release
+
+- page content
+- provider prompts
+- provider responses
+- raw browser content
+- secrets of any kind
+
+### Audit — `LOCAL_ONLY`, resolving Q6
+
+Audit content does not sync in the initial release, **in plaintext or
+encrypted**. The reason is scope and data minimisation, not a cryptographic
+obstacle: the envelope would protect it perfectly well. Audit is the
+highest-volume record type, its per-device streams never merge (§14), and its
+content is browsing history — `destination`, `origin`, `site`. Not uploading it
+is the smaller, more defensible product.
+
+**No audit sync metadata is required either.** Because no audit row exists,
+there is nothing for the sync protocol to order, acknowledge or reconcile.
+`serverSeq`, revisions and tombstone accounting operate over the record types
+listed under SYNC and do not reference audit at all — so there is no carve-out
+to define, and this document does not invent one.
+
+Audit synchronisation may become a later explicit product decision. It is not
+one now, and nothing in this design depends on it.
+
+### Provider connection metadata — what is plaintext
+
+| Field                                                                     | Class                                                   |
+| ------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `connectionId`, `providerId`, `protocol`, `authKind`, `modelId`, `status` | plaintext row fields — structural, no user content      |
+| `revision`, `deviceId`, `updatedAt`, `serverSeq`, `deleted`               | plaintext row fields                                    |
+| `kdSalt`, `kdInfo`, `keyVersion`                                          | plaintext, non-secret, needed to derive on a new device |
+| `accountLabel`, `baseUrl`, capability detail                              | **encrypted body**                                      |
 
 `baseUrl` is encrypted because a self-hosted or local endpoint can be an
-internal hostname, which is user infrastructure rather than structural
-metadata.
+internal hostname — user infrastructure, not structural metadata.
 
-| Phase 1 does **not** sync                              | Why                     |
-| ------------------------------------------------------ | ----------------------- |
-| tasks, workflows, shortcuts, audit                     | deferred to phase 2     |
-| page content, prompts, responses, screenshots          | never sync, any phase   |
-| provider API keys, OAuth secrets, credential fragments | never sync, permanently |
+> **`accountLabel`, resolving Q4.** `deriveAccountLabel`
+> (`account-model.ts:186`) currently produces `"api.openai.com (key …1234)"` —
+> the last four characters of the API key. The suffix is removed in the
+> implementation phase. **`accountLabel` must never contain an API-key
+> fragment, an OAuth token fragment, a client secret, or any credential
+> fingerprint.** A label may carry ordinary non-secret metadata: provider name,
+> a user-entered label, a non-sensitive description.
+>
+> Until that change ships the label is credential-derived and classified
+> `SECRET_LOCAL_ONLY`. Afterwards it is ordinary user content and is **still
+> encrypted**, for a different reason: a user-entered label is whatever the
+> user typed. Two reasons, two mechanisms, neither depending on the other.
+>
+> **`account-model.ts` is not modified by this task.**
 
 ## 13. Record types
 
-| Record                            | Cloud?    | Body encrypted? | Notes                                                                                |
-| --------------------------------- | --------- | --------------- | ------------------------------------------------------------------------------------ |
-| task                              | phase 2   | yes             | terminal tasks only (§14)                                                            |
-| workflow                          | phase 2   | yes             | fork on conflict                                                                     |
-| shortcut                          | phase 2   | yes             | fork on conflict                                                                     |
-| audit                             | phase 2   | yes             | per-device streams; `seq`/`prevDigest` inside `ct`                                   |
-| preferences                       | phase 1   | yes             | field-level merge after decryption                                                   |
-| workspace metadata                | phase 1   | yes             | title and origins are browsing signal                                                |
-| workspace runtime binding         | **never** | n/a             | `LOCAL_ONLY`; tab/group/window ids mean nothing elsewhere                            |
-| provider connection metadata      | phase 1   | partly          | structural fields plaintext; `accountLabel` and `baseUrl` encrypted                  |
-| **provider credentials**          | **never** | n/a             | **`SECRET_LOCAL_ONLY`, permanently**                                                 |
-| **provider credential fragments** | **never** | n/a             | **`SECRET_LOCAL_ONLY`** — Q4; a fragment is credential material regardless of length |
-| recovery key                      | **never** | n/a             | the secret itself; §7.2                                                              |
-| ABA refresh/access token          | never     | n/a             | session material, not user work                                                      |
+"Cloud?" is the **initial release** policy (§12). Nothing marked `LOCAL_ONLY`
+or `never` is deferred for cryptographic reasons.
+
+| Record                            | Cloud?           | Body encrypted? | Notes                                                                                                   |
+| --------------------------------- | ---------------- | --------------- | ------------------------------------------------------------------------------------------------------- |
+| task                              | yes              | yes             | terminal tasks only (§14)                                                                               |
+| workflow                          | yes              | yes             | fork on conflict                                                                                        |
+| shortcut                          | yes              | yes             | fork on conflict                                                                                        |
+| preferences                       | yes              | yes             | field-level merge after decryption                                                                      |
+| workspace metadata                | yes              | yes             | title and origins are browsing signal                                                                   |
+| provider connection metadata      | yes              | partly          | structural fields plaintext; `accountLabel` and `baseUrl` encrypted                                     |
+| **audit content**                 | **`LOCAL_ONLY`** | n/a             | **Q6** — not synced in this release, plaintext or encrypted. Data minimisation, not a crypto limit. §12 |
+| audit sync metadata               | **none exists**  | n/a             | no audit row is created, so the protocol has nothing to order or acknowledge                            |
+| workspace runtime binding         | **never**        | n/a             | `LOCAL_ONLY`; tab/group/window ids mean nothing elsewhere                                               |
+| **provider credentials**          | **never**        | n/a             | **`SECRET_LOCAL_ONLY`, permanently**                                                                    |
+| **provider credential fragments** | **never**        | n/a             | **`SECRET_LOCAL_ONLY`** — Q4; credential material regardless of length                                  |
+| page content, prompts, responses  | **never**        | n/a             | not uploaded in any release                                                                             |
+| recovery key                      | **never**        | n/a             | the secret itself; §7.2                                                                                 |
+| KEK, any DEK                      | **never**        | n/a             | derived key material; never leaves the device                                                           |
+| ABA refresh/access token          | never            | n/a             | session material, not user work                                                                         |
 
 No field in `SyncRow` or the envelope can hold a provider credential. That is
 the enforcement: not a rule to remember, but the absence of a place to put one.
@@ -464,18 +553,103 @@ the plaintext row. Conflict _resolution_ happens on the client after
 decryption, where the content is readable. The backend arbitrates ordering, not
 meaning.
 
-| Type                | Conflict handling                                                                                                                                                                    |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| tasks               | **sync only when terminal.** A running task belongs to the device running it; a terminal task is immutable — the conflict is removed rather than resolved                            |
-| workflows           | **fork.** The loser becomes `"<name> (edited on <device>)"`. Never silently overwritten                                                                                              |
-| shortcuts           | fork, disambiguating the name                                                                                                                                                        |
-| preferences         | field-level LWW on per-field `updatedAt`; independent scalars, so no work is destroyed                                                                                               |
-| connection metadata | `connectionId` is device-minted and unique, so only the same connection's fields collide → field-level LWW                                                                           |
-| workspace metadata  | field-level LWW on title; membership is local runtime state and does not sync                                                                                                        |
-| audit               | **no conflict.** Per-device append-only streams, never interleaved — merging two chains destroys the `seq`/`prevDigest` property they exist for. Merged into one _view_ at read time |
+| Type                | Conflict handling                                                                                                                                                                                                            |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| tasks               | **sync only when terminal.** A running task belongs to the device running it; a terminal task is immutable — the conflict is removed rather than resolved                                                                    |
+| workflows           | **fork.** The loser becomes `"<name> (edited on <device>)"`. Never silently overwritten                                                                                                                                      |
+| shortcuts           | fork, disambiguating the name                                                                                                                                                                                                |
+| preferences         | field-level LWW on per-field `updatedAt`; independent scalars, so no work is destroyed                                                                                                                                       |
+| connection metadata | `connectionId` is device-minted and unique, so only the same connection's fields collide → field-level LWW                                                                                                                   |
+| workspace metadata  | field-level LWW on title; membership is local runtime state and does not sync                                                                                                                                                |
+| audit               | **does not sync** (Q6, §12), so there is no conflict to handle. Were it to sync later, per-device append-only streams would never be interleaved: merging two chains destroys the `seq`/`prevDigest` property they exist for |
 
 Deletes are tombstones (`deleted: true`), so a delete on one device is not
-resurrected by another's stale copy. Retention: **Q5, open.**
+resurrected by another's stale copy. Retention and safe purge: §14A.
+
+## 14A. Tombstone retention and safe purge
+
+**Retention policy: 90 days.** That is a _retention_ figure — the minimum a
+tombstone is kept — and **it is not by itself a condition for deleting one**.
+Confusing the two produces the following, which the design must prevent:
+
+```
+Device A deletes record R        → tombstone at serverSeq T
+Device B goes offline, holding R
+90 days elapse
+Tombstone purged on elapsed time alone
+Device B reconnects, still holding R, never told it was deleted
+Device B pushes R                → R is resurrected
+```
+
+The user deleted something and it came back. No cryptography is involved and
+none would help: this is a distributed-systems failure, and elapsed time is the
+wrong signal because it says nothing about whether anyone still holds the
+record.
+
+### The required condition
+
+> A tombstone may be purged only when the protocol has **positive evidence**
+> that no device which could still hold the record is able to reintroduce it.
+
+That needs three pieces of state, none of which is a clock:
+
+1. **Per-device acknowledgement watermark.** Each device reports
+   `syncedThroughSeq` — the highest `serverSeq` it has fully applied. Stored
+   server-side, per `(abaUserId, deviceId)`. It is an acknowledgement, not a
+   timestamp.
+2. **A purge horizon.** The server records `purgeHorizon`: the `serverSeq`
+   below which tombstones have been removed. It only ever increases.
+3. **Device retirement.** A device not seen for `D` days leaves the
+   acknowledgement quorum, so one machine that never returns cannot block
+   purging forever. `D` must exceed the 90-day retention (see the parameter
+   note in §29).
+
+The rule:
+
+```
+purgeable(tombstone at seq T)  ⟺  T < min( syncedThroughSeq )  over all
+                                   non-retired devices of this user
+                                   AND  age(T) ≥ 90 days
+```
+
+Both conjuncts are required. Age alone is the bug above; acknowledgement alone
+would purge history sooner than the retention policy promises.
+
+### The returning-device rule
+
+Retirement makes purging possible, so it must not make resurrection possible.
+A device whose `syncedThroughSeq` is **below `purgeHorizon`** has provably
+missed deletions it can never learn about, and therefore **may not delta-sync**.
+It must reconcile instead, and the reconciliation is not "upload everything
+local":
+
+- The client tracks, per record, the `serverSeq` at which it last saw that
+  record confirmed by the server.
+- A local record whose last-confirmed seq is **below `purgeHorizon`**, and
+  which the server does not have, is **not** re-uploaded as existing. The
+  client cannot distinguish "deleted elsewhere" from "never reached the
+  server", so it does not assert either.
+- If the client **modified** that record after its last-confirmed seq, the
+  local change is real work and is preserved — surfaced to the user as a
+  record that may have been deleted on another device, for them to keep or
+  discard. It is never silently resurrected and never silently dropped.
+- A local record created entirely after the last-confirmed seq has no tombstone
+  risk and uploads normally.
+
+### What this deliberately does not rely on
+
+| Not used            | Why                                                        |
+| ------------------- | ---------------------------------------------------------- |
+| client clock        | wrong on real machines, and whatever a hostile client says |
+| last-seen timestamp | a proxy for acknowledgement, not acknowledgement           |
+| local date          | same                                                       |
+
+Every decision above is on server-assigned `serverSeq`, which is monotonic and
+not client-supplied. The 90-day figure is the only wall-clock element, and it
+can only ever _delay_ a purge, never authorise one.
+
+**Not implemented.** This section specifies the mechanism; building it is
+implementation work gated by §28.
 
 ## 15. Replay and rollback protection
 
@@ -691,133 +865,179 @@ un-read what was already read, and the UI must not imply otherwise.
 
 ## 26. Backend knowledge boundary
 
-| Information                                                 | Backend can see?     | Reason                                                    |
-| ----------------------------------------------------------- | -------------------- | --------------------------------------------------------- |
-| `abaUserId`                                                 | **yes**              | it is the account                                         |
-| email, `googleSub`, `emailVerified`                         | **yes**              | authentication is its job                                 |
-| IP, timestamp                                               | **yes**              | rate limiting and abuse prevention                        |
-| `recordId`, `recordType`, `schemaVersion`                   | **yes**              | routing and conflict detection                            |
-| `revision`, `serverSeq`, `deviceId`, `updatedAt`, `deleted` | **yes**              | ordering, replay rejection, tombstones                    |
-| record count, size, write timing                            | **yes, unavoidably** | metadata privacy is an explicit non-goal (§3)             |
-| `kdSalt`, `kdInfo`, `keyVersion`                            | **yes**              | non-secret; required to derive on a new device            |
-| envelope header, nonces, wrapped DEK, ciphertext            | **yes (as bytes)**   | useless without the recovery key                          |
-| **recovery key**                                            | **no, ever**         | the only decryption secret; never transmitted in any form |
-| KEK, any DEK                                                | **no**               | never leave the device                                    |
-| task, workflow, shortcut bodies                             | **no**               | encrypted                                                 |
-| audit content, `destination`/`origin`/`site`                | **no**               | browsing history; encrypted                               |
-| workspace title, member origins                             | **no**               | browsing signal; encrypted                                |
-| `accountLabel`, `baseUrl`                                   | **no**               | user content, and — until Q4 ships — credential-derived   |
-| **provider credential fragments**                           | **no**               | Q4; credential material regardless of length              |
-| page content, prompts, model responses, screenshots         | **no**               | never uploaded, any phase                                 |
-| **provider API keys, OAuth secrets**                        | **no, permanently**  | `SECRET_LOCAL_ONLY`; no field exists to carry one         |
-| Chrome tab / group / window ids                             | **no**               | local runtime state; meaningless elsewhere                |
+Re-reviewed for v3. The backend may receive **only** approved synchronisation
+metadata and encrypted payloads.
+
+### The backend may receive
+
+| Information                                                                                             | Reason                                                     |
+| ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `abaUserId`                                                                                             | it is the account                                          |
+| email, `googleSub`, `emailVerified`                                                                     | authentication is its job                                  |
+| IP, timestamp                                                                                           | rate limiting and abuse prevention                         |
+| `recordId`, `recordType`, `schemaVersion`                                                               | routing and conflict detection                             |
+| `revision`, `serverSeq`, `deviceId`, `updatedAt`, `deleted`                                             | ordering, replay rejection, tombstones                     |
+| `syncedThroughSeq` per device                                                                           | the acknowledgement watermark for safe purge (§14A)        |
+| `kdSalt`, `kdInfo`, `keyVersion`                                                                        | non-secret; required to derive on a new device             |
+| envelope header, nonces, wrapped DEK, ciphertext bytes                                                  | useless without the recovery key                           |
+| record count, size, write timing                                                                        | unavoidable; metadata privacy is an explicit non-goal (§3) |
+| structural connection fields: `connectionId`, `providerId`, `protocol`, `authKind`, `modelId`, `status` | §12                                                        |
+
+### The backend must never receive
+
+| Information                      | Reason                                                                |
+| -------------------------------- | --------------------------------------------------------------------- |
+| **recovery key**                 | the only decryption secret; never transmitted in any form or encoding |
+| **KEK**                          | derived key material; never leaves the device                         |
+| **any DEK** (unwrapped)          | same; only the wrapped form is stored                                 |
+| **provider API key**             | `SECRET_LOCAL_ONLY`, permanently                                      |
+| **provider OAuth secret**        | same                                                                  |
+| **provider credential fragment** | Q4; credential material regardless of length                          |
+| **plaintext tasks**              | encrypted                                                             |
+| **plaintext workflows**          | encrypted                                                             |
+| **plaintext shortcuts**          | encrypted                                                             |
+| **plaintext audit content**      | `LOCAL_ONLY` — not uploaded at all (§12)                              |
+| **page content**                 | never uploaded, any release                                           |
+| **provider prompts**             | same                                                                  |
+| **provider responses**           | same                                                                  |
+| workspace title, member origins  | browsing signal; encrypted                                            |
+| `accountLabel`, `baseUrl`        | user content, and — until Q4 ships — credential-derived               |
+| Chrome tab / group / window ids  | local runtime state; meaningless elsewhere                            |
+
+There is no field in `SyncRow` or the envelope capable of carrying anything in
+the second table. That absence is the enforcement.
 
 ## 27. Security invariants
 
-Written to be testable, in the style of the repository's existing invariants.
+Testable, in the style of the repository's existing invariants.
 
-| #        | Invariant                                                                                                                                            |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| K-1      | No sync payload contains a provider credential — no field in `SyncRow` or the envelope can hold one.                                                 |
-| K-2      | **No request to the backend contains the recovery key, the KEK or any unwrapped DEK, in any encoding.**                                              |
-| K-3      | Given only a sync row, decryption without the recovery key fails.                                                                                    |
-| K-4      | A row whose `abaUserId` is altered fails to decrypt.                                                                                                 |
-| K-5      | A row whose `recordType` is altered fails to decrypt.                                                                                                |
-| K-6      | A row whose `recordId` is altered fails to decrypt.                                                                                                  |
-| K-7      | A row whose `revision` is altered fails to decrypt.                                                                                                  |
-| K-8      | A ciphertext from user A never decrypts under user B's key.                                                                                          |
-| K-9      | A write with a stale `baseRevision` is rejected, never merged.                                                                                       |
-| K-10     | A served revision below the client's high-water mark is rejected.                                                                                    |
-| K-11     | Logout clears session keys and changes no byte of local user data, including the KEK.                                                                |
-| K-12     | An authentication outage, up to and past the grace period, never changes `abaUserId`.                                                                |
-| K-13     | After a simulated reinstall, authenticating as the same identity yields the same `abaUserId`.                                                        |
-| K-14     | Cloud Sync state is never an input to `authorizeEgress`, `ToolRegistry.dispatch`, route trust or workspace membership.                               |
-| K-15     | No Chrome tab, group or window id appears in any sync payload.                                                                                       |
-| K-16     | Every encryption uses a fresh nonce; no two records share a DEK.                                                                                     |
-| K-17     | Rotating the recovery key re-encrypts no record body.                                                                                                |
-| K-18     | No log record contains the recovery key, a derived key, or a plaintext body.                                                                         |
-| K-19     | A record that fails to decrypt is retained, never deleted.                                                                                           |
-| K-20     | An envelope with a higher `v` is refused, not parsed.                                                                                                |
-| **K-21** | **The recovery key is 128 bits drawn from `crypto.getRandomValues`** — not a counter, not a timestamp, not `Math.random`.                            |
-| **K-22** | **The backend cannot derive the recovery key from anything it holds**: no stored value is a function of it.                                          |
-| **K-23** | **A valid authenticated session, alone, decrypts nothing.** Authentication with no recovery key yields ciphertext and stops.                         |
-| **K-24** | **No provider-credential fragment appears in plaintext sync metadata** — `accountLabel` included.                                                    |
-| **K-25** | **No password-based KDF is applied to the recovery key**; the only derivation is HKDF, and no iteration-count parameter exists in a `v: 1` envelope. |
-| **K-26** | Losing the recovery key leaves the ciphertext present, the identity unchanged, and nothing downgraded to plaintext.                                  |
+| #        | Invariant                                                                                                                                                              |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| K-1      | No sync payload contains a provider credential — no field in `SyncRow` or the envelope can hold one.                                                                   |
+| K-2      | No request to the backend contains the recovery key, in plaintext or any encoding.                                                                                     |
+| K-3      | Given only a sync row, decryption without the recovery key fails — the backend cannot decrypt K1-protected ciphertext.                                                 |
+| K-4      | A row whose `abaUserId` is altered fails to decrypt.                                                                                                                   |
+| K-5      | A row whose `recordType` is altered fails to decrypt.                                                                                                                  |
+| K-6      | A row whose `recordId` is altered fails to decrypt.                                                                                                                    |
+| K-7      | A row whose `revision` is altered fails to decrypt.                                                                                                                    |
+| K-8      | A ciphertext from user A never decrypts under user B's key.                                                                                                            |
+| K-9      | A write with a stale `baseRevision` is rejected, never merged.                                                                                                         |
+| K-10     | A served revision below the client's high-water mark is rejected.                                                                                                      |
+| K-11     | Logout clears session keys and changes no byte of local user data, including the KEK.                                                                                  |
+| K-12     | An authentication outage, up to and past the grace period, never changes `abaUserId`.                                                                                  |
+| K-13     | After a simulated reinstall, authenticating as the same identity yields the same `abaUserId` — never a new one.                                                        |
+| K-14     | Cloud Sync state is never an input to `authorizeEgress`, `ToolRegistry.dispatch`, route trust or workspace membership.                                                 |
+| K-15     | No Chrome tab, group or window id appears in any sync payload.                                                                                                         |
+| K-16     | Every encryption uses a fresh nonce; no two records share a DEK.                                                                                                       |
+| K-17     | Rotating the recovery key re-encrypts no record body.                                                                                                                  |
+| K-18     | No log record contains the recovery key, a derived key, or a plaintext body.                                                                                           |
+| K-19     | A record that fails to decrypt is retained, never deleted.                                                                                                             |
+| K-20     | An envelope with a higher `v` is refused, not parsed.                                                                                                                  |
+| K-21     | The recovery key is 128 bits from `crypto.getRandomValues` — not a counter, not a timestamp, not `Math.random`.                                                        |
+| K-22     | The backend cannot derive the recovery key from anything it holds: no stored value is a function of it.                                                                |
+| K-23     | A valid authenticated session, alone, decrypts nothing.                                                                                                                |
+| K-24     | No provider-credential fragment appears in plaintext sync metadata — `accountLabel` included.                                                                          |
+| K-25     | No password-based KDF is applied to the recovery key; the only derivation is HKDF, and no iteration-count parameter exists in a `v: 1` envelope.                       |
+| K-26     | Losing the recovery key leaves ciphertext present, identity unchanged, and nothing downgraded to plaintext.                                                            |
+| **K-27** | **No request to the backend contains the KEK.**                                                                                                                        |
+| **K-28** | **K1 makes no claim of protection against a compromised trusted endpoint holding the active KEK** — asserted against the shipped product copy, not only this document. |
+| **K-29** | **A tombstone is never purged on elapsed time alone**: purge requires the acknowledgement condition in §14A.                                                           |
+| **K-30** | **Initial Cloud Sync uploads no audit content**, encrypted or otherwise, and creates no audit sync row.                                                                |
+
+### Coverage of the v3 invariant requirements
+
+| Required                                                 | Satisfied by |
+| -------------------------------------------------------- | ------------ |
+| K-NEW-1 backend cannot decrypt K1 ciphertext             | K-3          |
+| K-NEW-2 recovery key never transmitted in plaintext      | K-2          |
+| K-NEW-3 KEK never transmitted                            | **K-27**     |
+| K-NEW-4 provider API keys remain `SECRET_LOCAL_ONLY`     | K-1          |
+| K-NEW-5 credential fragments not plaintext sync metadata | K-24         |
+| K-NEW-6 no endpoint-compromise claim                     | **K-28**     |
+| K-NEW-7 tombstone not purged on 90 days alone            | **K-29**     |
+| K-NEW-8 initial sync uploads no audit content            | **K-30**     |
+| K-NEW-9 authentication alone cannot decrypt              | K-23         |
+| K-NEW-10 reinstall cannot create a new identity          | K-13         |
 
 ## 28. Implementation gates
 
-None is optional; none is satisfied by this document alone.
+None is optional; none is satisfied by this document alone. **None is
+implemented.**
 
 1. **Architecture review** of this document, and explicit approval.
-2. **Cryptographic review** by someone who did not write it — specifically
-   §7.4 (local key material), the AAD encoding, and the nonce argument.
+2. **Cryptographic review** by someone who did not write it — the AAD encoding,
+   the nonce argument, and §0's boundary as written in product copy.
 3. **Threat-model review** against §4, including the recovery-key rows.
-4. **Test vectors** — fixed recovery key, salt, nonces and plaintext producing
-   a byte-exact envelope, committed, so a later refactor cannot silently change
-   the format.
-5. **Serialization compatibility plan** — a `v: 1` envelope written today must
-   decrypt unchanged after any later refactor; enforced by the vectors.
-6. **Generated recovery-key entropy validation** — 128 bits, from
-   `crypto.getRandomValues`; a mutation substituting a weak source must fail
-   the suite (K-21).
-7. **Wrong recovery key** — including the checksum path and the key-check path.
-8. **Recovery-key loss** — ciphertext retained, identity unchanged, no
-   plaintext downgrade (K-26).
-9. **Authentication-without-key** — a valid session decrypts nothing (K-23).
-10. **Cross-user transplant** — K-4 to K-8, each as its own case.
-11. **Corrupted ciphertext** — flipped bits in `ct`, tag, nonce and AAD.
-12. **Reinstall recovery** — discard local storage, restore, assert the same
-    `abaUserId`, that the recovery key is required, and that no provider key
-    returns.
-13. **Logout and session-expiry** — K-11.
-14. **Seven-day outage** — K-12, at the boundary on both sides.
-15. **Provider-secret non-egress** — K-1 as a mutation: add a field that could
-    carry a credential and require the suite to fail.
-16. **`accountLabel` carries no credential-derived suffix** — K-24, asserted
+4. **Endpoint-compromise threat-model tests** — assert the product claims only
+   what §0 claims (K-28), including the UI and store-listing copy.
+5. **Cloud/backend plaintext absence tests** — no plaintext body of any synced
+   record reaches a captured request (K-3).
+6. **KEK non-egress tests** (K-27).
+7. **Recovery-key non-egress tests** (K-2, K-22).
+8. **Ciphertext transplant tests** — K-4 to K-8, each as its own case.
+9. **Tombstone offline-device resurrection test** — the §14A scenario end to
+   end: delete, take a device offline past retention, purge under the
+   acknowledgement rule, reconnect, assert no resurrection and no silent loss
+   of work created offline.
+10. **Tombstone purge safety test** — a purge attempted on elapsed time alone
+    is refused (K-29).
+11. **Audit-content non-egress test** (K-30).
+12. **Provider API-key non-egress test** — K-1 as a mutation: add a field that
+    could carry a credential and require the suite to fail.
+13. **`accountLabel` credential-fragment non-egress test** (K-24), asserted
     against the shipped `deriveAccountLabel`.
-17. **No password KDF against the recovery key** — K-25.
-18. **Real Chromium coverage** of derive, encrypt, decrypt and restore, because
+14. **Reinstall recovery test** — discard local storage, restore, assert the
+    same `abaUserId`, that the recovery key is required, and that no provider
+    key returns.
+15. **Test vectors** — fixed recovery key, salt, nonces and plaintext producing
+    a byte-exact envelope, committed, so a later refactor cannot silently
+    change the format.
+16. **Generated recovery-key entropy validation** (K-21) — a mutation
+    substituting a weak source must fail the suite.
+17. **Wrong recovery key**, including the checksum and key-check paths.
+18. **Recovery-key loss** — ciphertext retained, identity unchanged, no
+    plaintext downgrade (K-26).
+19. **Authentication-without-key** — a valid session decrypts nothing (K-23).
+20. **Corrupted ciphertext** — flipped bits in `ct`, tag, nonce and AAD.
+21. **Logout and session-expiry** (K-11) and **seven-day outage** (K-12).
+22. **No password KDF against the recovery key** (K-25).
+23. **Real Chromium coverage** of derive, encrypt, decrypt and restore, because
     WebCrypto behaviour is the platform's and not a fake's.
-
-These are not implemented, and this document does not claim any of them passes.
 
 ## 29. Open questions
 
-**Q1 — RESOLVED.** Generated 128-bit recovery key. No user passphrase in K1 v1.
+**All six resolved.**
 
-**Q2 — RESOLVED / not applicable.** No Argon2id, no scrypt, no WASM, no CSP
-change. A password KDF has no role against a uniform secret (§7.1).
+|     |                                                                                   |          |
+| --- | --------------------------------------------------------------------------------- | -------- |
+| Q1  | Generated 128-bit recovery key                                                    | §7.2     |
+| Q2  | No Argon2id, scrypt, WASM or CSP change — not applicable against a uniform secret | §7.1     |
+| Q3  | Recovery credential, not a per-session credential; the resulting boundary is §0   | §7.4     |
+| Q4  | API-key suffix removed from `accountLabel`; fragments are `SECRET_LOCAL_ONLY`     | §12      |
+| Q5  | 90-day retention, purge only on the acknowledgement condition                     | §14A     |
+| Q6  | Audit content `LOCAL_ONLY` for the initial release; no audit sync row exists      | §12, §13 |
 
-**Q3 — RESOLVED at architecture level.** The recovery key is a recovery
-credential, required at setup and at recovery, not per session or per worker.
-The security cost is §7.4 and is stated rather than mitigated away. Session UX
-is not designed here.
-
-**Q4 — RESOLVED.** Remove the API-key suffix from `accountLabel`. Credential
-fragments are `SECRET_LOCAL_ONLY` and never plaintext sync metadata (§12, §13,
-§26). **`account-model.ts` is not modified by this task** — the change belongs
-to the implementation phase.
-
-**Q5 — OPEN. Tombstone retention.** 90 days was proposed in v1 by analogy, not
-measured. It interacts with how long a device may stay offline and still
-converge. No product decision has been made and none is assumed here.
-
-**Q6 — OPEN. Whether audit syncs at all.** Audit is the highest-volume record
-type and the one whose per-device streams never merge. The architecture can say
-what audit sync _would_ look like (§11, §13, §14) but cannot settle whether the
-volume and the browsing-history sensitivity are worth it — that is a product
-judgement about what users need off-device, not a technical one. Left open.
+No new product questions are raised, and none of the above is resolved by
+implication.
 
 ### Cryptographic ambiguity still requiring review
 
-One item, raised rather than resolved:
+**None.** The construction — HKDF-SHA-256 → 256-bit KEK → per-record DEK →
+AES-256-GCM with length-prefixed AAD — is determinate, uses only standard
+WebCrypto primitives, and leaves no parameter unspecified.
 
-**The local resting place of the KEK (§7.4).** The cryptography is
-unambiguous; the _posture_ deserves a second opinion. Q3 requires that normal
-operation not re-prompt, which requires the KEK to persist in
-`chrome.storage.local`, which means profile disk access yields cloud plaintext.
-That is consistent with where provider API keys already live, and it is a real
-reduction in what "end-to-end encrypted" protects against compared with a
-prompt-per-session model. It is recorded as gate 2 for an independent reviewer
-rather than settled here.
+The item v2 raised for review, the local resting place of the KEK, is
+**resolved by decision rather than left open**: it is approved, and §0 states
+the resulting boundary as a product claim instead of a caveat. It stays on the
+gate list (§28 items 2 and 4) as something an independent reviewer should see,
+which is not the same as being unresolved.
+
+One value is left to implementation review. It is a tuning parameter, not a
+question of correctness:
+
+- **Device retirement window `D` (§14A).** It must exceed the 90-day tombstone
+  retention, or a device could leave the acknowledgement quorum while its
+  tombstones are still live. Too short degrades the experience for a
+  legitimately offline device; too long lets tombstones accumulate. Neither is
+  a correctness failure, and the safe-purge rule in §14A holds for any `D`
+  satisfying that constraint.
