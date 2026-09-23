@@ -54,7 +54,7 @@ const CHROMIUM = process.env.E2E_CHROMIUM_PATH ?? '/opt/pw-browsers/chromium';
  * name, because Playwright's default for `headless: true` is the headless
  * shell, and the headless shell has no extension support.
  */
-const BROWSER: { executablePath?: string; channel?: string } =
+export const BROWSER: { executablePath?: string; channel?: string } =
   CHROMIUM.length > 0 ? { executablePath: CHROMIUM } : { channel: 'chromium' };
 
 /** What the message router returns across the boundary. */

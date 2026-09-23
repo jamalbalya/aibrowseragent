@@ -31,10 +31,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { startAuthBackend, type AuthBackend } from './fixtures/auth-backend';
+import { BROWSER } from './fixtures/extension';
 import type { PanelRequestType, PanelResponse } from '../../src/messaging/protocol';
 
 const EXTENSION_PATH = resolve(import.meta.dirname, '../../dist-auth');
-const CHROMIUM = process.env.E2E_CHROMIUM_PATH ?? '/opt/pw-browsers/chromium';
 
 let backend: AuthBackend;
 let context: BrowserContext;
@@ -75,7 +75,13 @@ test.beforeAll(async () => {
   backend = await startAuthBackend();
   profile = mkdtempSync(join(tmpdir(), 'aba-auth-e2e-'));
   context = await chromium.launchPersistentContext(profile, {
-    ...(CHROMIUM.length > 0 ? { executablePath: CHROMIUM } : {}),
+    // The shared fixture's options, reused rather than restated. They pin
+    // `channel: 'chromium'` when no explicit binary is given, because
+    // `headless: true` alone resolves to `chrome-headless-shell`, which
+    // cannot load extensions at all — every test then fails identically
+    // waiting for a service worker that never registers. Restating them here
+    // is how this spec passed locally and failed in CI.
+    ...BROWSER,
     headless: true,
     args: [
       `--disable-extensions-except=${EXTENSION_PATH}`,
@@ -97,9 +103,11 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  await context.close();
-  await backend.close();
-  rmSync(profile, { recursive: true, force: true });
+  // Defensive: when `beforeAll` fails, these are undefined, and an unguarded
+  // teardown throws a second error that hides the first one.
+  await context?.close();
+  await backend?.close();
+  if (profile !== undefined) rmSync(profile, { recursive: true, force: true });
 });
 
 test('01 — the configured build reports authentication as available', async () => {
