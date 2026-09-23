@@ -19,6 +19,17 @@ const ORIGIN = 'https://api.example.test';
 const NOW = 1_800_000_000_000;
 
 /**
+ * The URL of a fetch call, without stringifying a `Request`.
+ *
+ * `String(input)` looks harmless and yields `[object Request]` for the one
+ * case that matters, so the union is narrowed rather than coerced.
+ */
+function urlOf(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input;
+  return input instanceof URL ? input.href : input.url;
+}
+
+/**
  * A backend that answers start and exchange.
  *
  * Installed over `globalThis.fetch`, because `IdentityTransport` supplies no
@@ -33,8 +44,8 @@ function backend(overrides: {
   exchangeStatus?: number;
 }): { seen: string[] } {
   const seen: string[] = [];
-  globalThis.fetch = ((input: RequestInfo | URL) => {
-    const url = String(input);
+  const stub: typeof fetch = (input) => {
+    const url = urlOf(input);
     seen.push(url);
     const isStart = url.endsWith('/v1/auth/start');
     const body = isStart
@@ -57,7 +68,8 @@ function backend(overrides: {
         headers: { 'content-type': 'application/json' },
       }),
     );
-  }) as typeof fetch;
+  };
+  globalThis.fetch = stub;
   return { seen };
 }
 

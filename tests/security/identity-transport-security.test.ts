@@ -28,6 +28,22 @@ const ORIGIN = 'https://api.example.test';
  * design, so that it names no network primitive and the three holders of one
  * stay three. A test may replace the global; the module may not.
  */
+/**
+ * The URL of a fetch call, without stringifying a `Request`.
+ *
+ * `String(input)` looks harmless and yields `[object Request]` for the one
+ * case that matters, so the union is narrowed rather than coerced.
+ */
+function urlOf(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input;
+  return input instanceof URL ? input.href : input.url;
+}
+
+/** A request body, which this transport always sets as a string. */
+function bodyOf(init: RequestInit | undefined): string {
+  return typeof init?.body === 'string' ? init.body : '';
+}
+
 function recordingFetch(
   responder: (url: string) => Response = () =>
     new Response(JSON.stringify({ ok: true }), {
@@ -36,11 +52,12 @@ function recordingFetch(
     }),
 ): { calls: { url: string; init: RequestInit }[] } {
   const calls: { url: string; init: RequestInit }[] = [];
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
+  const stub: typeof fetch = (input, init) => {
+    const url = urlOf(input);
     calls.push({ url, init: init ?? {} });
     return Promise.resolve(responder(url));
-  }) as typeof fetch;
+  };
+  globalThis.fetch = stub;
   return { calls };
 }
 
@@ -175,7 +192,7 @@ describe('IdentityTransport', () => {
 
     expect(recorder.calls[0]?.url).not.toContain('the-exchange-code');
     expect(recorder.calls[0]?.url).not.toContain('?');
-    expect(String(recorder.calls[0]?.init.body)).toContain('the-exchange-code');
+    expect(bodyOf(recorder.calls[0]?.init)).toContain('the-exchange-code');
   });
 });
 
