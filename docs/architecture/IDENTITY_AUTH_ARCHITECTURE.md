@@ -1,5 +1,14 @@
 # Identity and Authentication Architecture
 
+> **HALTED — superseded by the standalone requirement.** The product is now a
+> standalone extension with no author-operated infrastructure, so the
+> server-backed direction below is on hold: no Email OTP, no server-side ABA
+> account, no production backend. See `STANDALONE_ARCHITECTURE.md`. The
+> identity _semantics_ settled here — `AUTH-27` through `AUTH-30`, the
+> canonical email form, never-merge, never-move — survive and apply to any
+> user-owned destination that authenticates. Nothing below is deleted, because
+> a user who self-hosts is exactly who it would serve.
+
 Status: **partly implemented.** The status line above this one used to read
 "design only", and that is no longer true.
 
