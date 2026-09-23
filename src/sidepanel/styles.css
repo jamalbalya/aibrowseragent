@@ -1094,3 +1094,56 @@ body {
   margin: 0.5rem 0 0;
   color: var(--danger, #b42318);
 }
+
+/*
+ * The first thing a new installation shows.
+ *
+ * Bordered rather than bannered: a banner reads as a problem, and nothing
+ * here is one. It leaves with the first connected AI account.
+ */
+.welcome {
+  border: 1px solid var(--border, #d0d7de);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 12px;
+}
+
+.welcome__title {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.welcome__body {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.welcome__note {
+  margin: 12px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/*
+ * Diagnostics, closed by default.
+ *
+ * `<details>` rather than a route or a toggle, so the summary is the whole
+ * affordance and nothing inside it is part of the ordinary path.
+ */
+.technical {
+  margin-top: 8px;
+}
+
+.technical > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.technical__row {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 8px 0 0;
+}

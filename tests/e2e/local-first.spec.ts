@@ -139,8 +139,10 @@ test('the panel shows the data section and says where things are stored', async 
   const data = panel.getByRole('region', { name: 'Your data' });
   await expect(data).toBeVisible();
 
-  // The honest statement, in the words a user reads.
-  await expect(panel.getByTestId('storage-mode')).toContainText('stored on this computer');
+  // The honest statement, in the words a user reads. "Device" rather than
+  // "computer" since the standalone UX phase, which says the same thing in
+  // the vocabulary the rest of the product now uses.
+  await expect(panel.getByTestId('storage-mode')).toContainText('stored on this device');
   await expect(panel.getByTestId('data-export')).toBeVisible();
   await expect(panel.getByTestId('data-import')).toBeVisible();
 

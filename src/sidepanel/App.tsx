@@ -9,6 +9,7 @@ import { FilePrompt } from './components/FilePrompt';
 import { SettingsView } from './components/SettingsView';
 import { WorkflowsView } from './components/WorkflowsView';
 import { AuditView } from './components/AuditView';
+import { WelcomeNotice } from './components/WelcomeNotice';
 
 export function App(): React.JSX.Element {
   const agent = useAgentState();
@@ -20,10 +21,14 @@ export function App(): React.JSX.Element {
   // the composer is disabled rather than letting the task fail at the first
   // model turn.
   const ready = agent.connection?.capabilities?.toolCalling === true;
-  const disabledReason = !agent.connection
-    ? 'Connect an AI provider in Settings to start.'
+  const connected = agent.connection !== null && agent.connection !== undefined;
+  // Said in the user's terms rather than the system's. The second case is a
+  // real limitation of the model they chose, not of this extension, and the
+  // wording keeps that straight without naming the check that found it.
+  const disabledReason = !connected
+    ? 'Connect an AI account to start.'
     : !ready
-      ? 'Run the capability check in Settings — tool calling has not been verified.'
+      ? 'This AI model has not shown it can use browser actions. Check it in Settings.'
       : undefined;
 
   if (showSettings) {
@@ -105,6 +110,12 @@ export function App(): React.JSX.Element {
       ))}
 
       <main className="main">
+        {/* Only until an AI account exists. A standing explanation of what the
+            product is would become a standing apology for what it is not. */}
+        {!agent.loading && !connected ? (
+          <WelcomeNotice onConnect={() => setShowSettings(true)} />
+        ) : null}
+
         {agent.loading ? (
           <p className="empty">Loading…</p>
         ) : (

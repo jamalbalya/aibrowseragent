@@ -2,19 +2,30 @@ import { useCallback, useEffect, useState } from 'react';
 import { sendToBackground } from '@/messaging/bus';
 
 /**
- * The AI Browser Agent account: signed out, signed in, sign out.
+ * How this installation is being used, and — where a build offers it — signing
+ * in.
  *
- * Deliberately small. This phase adds Google sign-in and nothing else, so the
- * panel gains one block rather than a redesign.
+ * **The first branch is the one people actually see.** The extension is
+ * standalone: it works on this device with no account, and every shipped build
+ * has no sign-in to offer. So that state is written as what it is — a complete
+ * way to use the product — rather than as a feature that is missing.
  *
- * **What it shows.** Whether you are signed in, and the address you signed in
- * with. **What it cannot show**, because the route that feeds it carries
- * neither: a token of any kind, a provider API key, or any K1 key material.
+ * The distinction is not cosmetic. "Signing in is not available" describes the
+ * software's limitation; "you're using it on this device" describes the user's
+ * situation, and only one of those is the thing they need to know. Nothing
+ * here invents a local account to fill the gap either: there is no account,
+ * and saying there is one would be a worse lie than the one it replaced.
  *
- * **What signing in is not.** It authorises AI Browser Agent. It does not
- * connect, authorise or alter any AI provider — those stay where they were,
- * under Connected AI Accounts, each with its own credential. The copy says so
- * rather than leaving it to be inferred.
+ * **What it shows.** Whether this device is being used on its own, and — when
+ * a build has sign-in — the address you signed in with. **What it cannot
+ * show**, because the route that feeds it carries none of them: a token, a
+ * provider API key, K1 key material, or the installation's own identifier.
+ * That last one is deliberate: an opaque local label is not something anyone
+ * needs to read.
+ *
+ * **What signing in is not.** It would authorise AI Browser Agent. It does not
+ * connect, authorise or alter any AI account — those stay where they were,
+ * each with its own key.
  */
 
 interface AuthStatus {
@@ -78,20 +89,23 @@ export function AccountPanel(): React.JSX.Element {
 
   if (status === null) {
     return (
-      <section className="account" aria-label="AI Browser Agent account">
-        <p className="account__status">Checking your account…</p>
+      <section className="account" aria-label="This device">
+        {/* Neutral on purpose: until `configured` is known, saying "checking
+            your account" would announce an account to somebody who has none. */}
+        <p className="account__status">Just a moment…</p>
       </section>
     );
   }
 
   if (!status.configured) {
     return (
-      <section className="account" aria-label="AI Browser Agent account">
-        <p className="account__status" data-testid="auth-unavailable">
-          Signing in is not available in this build.
+      <section className="account" aria-label="This device">
+        <p className="account__status" data-testid="auth-local-only">
+          You’re using AI Browser Agent on this device.
         </p>
         <p className="account__note">
-          Your connected AI accounts and everything you have made keep working without it.
+          Your work is stored here. No account is needed, and nothing is sent to us — AI Browser
+          Agent has no service of its own to send it to.
         </p>
       </section>
     );
@@ -137,7 +151,7 @@ export function AccountPanel(): React.JSX.Element {
       </button>
       <p className="account__note">
         This signs you in to AI Browser Agent only. It does not connect or authorise OpenAI,
-        Anthropic, Gemini or any other AI provider — those are connected separately, each with its
+        Anthropic, Gemini or any other AI account — those are connected separately, each with its
         own key.
       </p>
       {message === null ? null : <p className="account__error">{message}</p>}
@@ -150,7 +164,7 @@ function describeFailure(failure: string | null): string {
     case 'CANCELLED':
       return 'Sign-in was not completed.';
     case 'NOT_CONFIGURED':
-      return 'Signing in is not available in this build.';
+      return 'There is nothing to sign in to — this device is all you need.';
     case 'DIFFERENT_USER':
       return 'This browser already holds another AI Browser Agent user’s data. Remove it explicitly before signing in as someone else.';
     default:

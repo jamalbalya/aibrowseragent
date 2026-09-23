@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { sendToBackground, MessagingError } from '@/messaging/bus';
 import { AccountPanel } from './AccountPanel';
+import { TechnicalDetails } from './TechnicalDetails';
 import { DataPanel } from './DataPanel';
 import { ConnectedAccounts } from './ConnectedAccounts';
 import { WorkspaceView } from './WorkspaceView';
@@ -240,8 +241,10 @@ export function SettingsView({
 
       <section className="settings__section">
         {/* The same form as before, unchanged, now reached as one way to add
-            an account rather than as the only connection there can be. */}
-        <h3>Connect AI provider</h3>
+            an account rather than as the only connection there can be.
+            "Account" rather than "provider" because that is the thing the
+            user already has and is about to point us at. */}
+        <h3>Connect AI account</h3>
 
         <label className="field">
           <span>Provider</span>
@@ -511,6 +514,11 @@ export function SettingsView({
             here.
           </p>
         )}
+      </section>
+
+      {/* Last, and collapsed. Diagnostics are not part of setting anything up. */}
+      <section className="settings__section">
+        <TechnicalDetails />
       </section>
     </div>
   );

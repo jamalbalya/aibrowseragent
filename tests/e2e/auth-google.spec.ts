@@ -10,9 +10,9 @@
  * **What it deliberately does not claim.** No build in this repository is
  * configured with a backend origin and no Google credentials exist, so a
  * click-through sign-in cannot be performed and is not simulated. The panel
- * therefore reports authentication as unavailable, and that is asserted as
- * the true state rather than worked around — a test that faked a successful
- * Google sign-in would report coverage nobody has. Live acceptance is
+ * therefore reports the standalone state, and that is asserted as the true
+ * state rather than worked around — a test that faked a successful Google
+ * sign-in would report coverage nobody has. Live acceptance is
  * credential-blocked and recorded as such.
  */
 import { expect, test } from './fixtures/extension';
@@ -22,12 +22,14 @@ test('the panel shows the account block and reports the real configured state', 
 }) => {
   await panel.getByRole('button', { name: 'Settings' }).click();
 
-  const account = panel.getByRole('region', { name: 'AI Browser Agent account' });
+  // Labelled for what it describes: this device, not an account nobody has.
+  const account = panel.getByRole('region', { name: 'This device' });
   await expect(account).toBeVisible();
 
-  // No backend origin is compiled into this build, so sign-in is unavailable.
-  // Asserted as the fact it is: the alternative states would be a lie here.
-  await expect(panel.getByTestId('auth-unavailable')).toBeVisible();
+  // No backend origin is compiled into this build, so there is nothing to
+  // sign in to. Asserted as the fact it is — and asserted as the *standalone*
+  // state rather than a missing feature, which is what the panel now says.
+  await expect(panel.getByTestId('auth-local-only')).toBeVisible();
   await expect(panel.getByTestId('auth-sign-in-google')).toHaveCount(0);
 });
 

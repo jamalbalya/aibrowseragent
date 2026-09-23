@@ -104,7 +104,16 @@ export function DataPanel(): React.JSX.Element {
       <p className="field__hint" data-testid="storage-mode">
         {preference?.mode === 'cloud'
           ? 'Your work is set to sync to your AI Browser Agent account.'
-          : 'Everything is stored on this computer. Nothing is uploaded, and you do not need an account.'}
+          : 'Your tasks, workflows, shortcuts and settings are stored on this device. No account is needed.'}
+      </p>
+
+      {/* The line that is easy to get wrong, so it is drawn where it really
+          is. "Nothing leaves this device" would be comfortable and false: an
+          AI request has to reach whichever service the user connected. What
+          is true is that it goes there directly, and nowhere else. */}
+      <p className="field__hint" data-testid="storage-traffic">
+        Your AI requests go directly to the AI service you connect, along with whatever that request
+        needs from the page. Nothing else is sent anywhere.
       </p>
 
       <p className="field__hint">
