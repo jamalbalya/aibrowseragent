@@ -157,21 +157,21 @@ describe('local export', () => {
 });
 
 describe('local import', () => {
-  it('06 — an unrelated JSON file is refused, not partially read', () => {
+  it('07 — an unrelated JSON file is refused, not partially read', () => {
     for (const candidate of [null, 42, 'text', [], {}, { hello: 'world' }]) {
       const result = parseLocalExport(candidate);
       expect(result.ok).toBe(false);
     }
   });
 
-  it('07 — a newer format version is refused rather than best-effort parsed', () => {
+  it('08 — a newer format version is refused rather than best-effort parsed', () => {
     const result = parseLocalExport(exportDocument({ formatVersion: EXPORT_FORMAT_VERSION + 1 }));
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
     expect(result.refusal).toBe('UNSUPPORTED_VERSION');
   });
 
-  it('08 — a malformed section is refused with a reason, not silently emptied', () => {
+  it('09 — a malformed section is refused with a reason, not silently emptied', () => {
     for (const broken of [
       { workflows: 'not an array' },
       { shortcuts: null },
@@ -186,7 +186,7 @@ describe('local import', () => {
     }
   });
 
-  it('09 — a file carrying a credential is refused outright, never cleaned', () => {
+  it('10 — a file carrying a credential is refused outright, never cleaned', () => {
     // Cleaning would import the acceptable-looking remainder of a file that
     // this exporter demonstrably did not produce. Stopping is the answer.
     for (const smuggled of [
@@ -201,7 +201,7 @@ describe('local import', () => {
     }
   });
 
-  it('10 — a deeply nested structure costs a refusal, not a stack overflow', () => {
+  it('11 — a deeply nested structure costs a refusal, not a stack overflow', () => {
     let nested: Record<string, unknown> = { apiKey: KEY };
     for (let depth = 0; depth < 5000; depth += 1) nested = { nested };
 
@@ -211,7 +211,7 @@ describe('local import', () => {
     expect(typeof result.ok).toBe('boolean');
   });
 
-  it('11 — every record is applied through the store that owns it', async () => {
+  it('12 — every record is applied through the store that owns it', async () => {
     const seen: string[] = [];
     const parsed = parseLocalExport(
       exportDocument({
@@ -237,7 +237,7 @@ describe('local import', () => {
     expect(seen).toEqual(['workflow:wf_1', 'workflow:wf_2', 'shortcut:sc_1']);
   });
 
-  it('12 — a record the owning store refuses is counted, and the rest still import', async () => {
+  it('13 — a record the owning store refuses is counted, and the rest still import', async () => {
     const parsed = parseLocalExport(
       exportDocument({
         workflows: [{ workflowId: 'good' }, { workflowId: 'bad' }, { workflowId: 'also-good' }],
@@ -263,7 +263,7 @@ describe('local import', () => {
     expect(outcome.workflowsRefused).toBe(1);
   });
 
-  it('13 — connections are counted for re-keying and never written', async () => {
+  it('14 — connections are counted for re-keying and never written', async () => {
     const parsed = parseLocalExport(
       exportDocument({
         connections: [
@@ -407,7 +407,7 @@ describe('local import', () => {
     expect(JSON.stringify(document_)).not.toContain('accountLabel');
   });
 
-  it('14 — a round trip preserves what it carries and drops what it must', async () => {
+  it('23 — a round trip preserves what it carries and drops what it must', async () => {
     const built = await buildLocalExport(sources(), NOW);
     const parsed = parseLocalExport(JSON.parse(JSON.stringify(built)));
 

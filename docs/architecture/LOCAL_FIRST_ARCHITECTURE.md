@@ -180,7 +180,7 @@ capability measurement and its own label.
 
 > Evidence: `tests/security/local-first.test.ts` 03;
 > `tests/security/multi-account-isolation.test.ts`;
-> `tests/security/local-export.test.ts` 01–04;
+> `tests/security/local-export.test.ts` 01–03 and 05;
 > `tests/e2e/local-first.spec.ts` "the export carries the user's work and no credential".
 
 ---
