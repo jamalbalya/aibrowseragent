@@ -136,6 +136,11 @@ export class SessionService {
    *  - expired → `AUTH_REQUIRED`.
    *  - the account is deleted → `ACCOUNT_DELETED`, which is an answer and so
    *    never an outage (AUTH-14).
+   *  - **the rotation claim is lost** → also reuse, for the same reason and
+   *    with the same consequence. See the claim below.
+   *
+   * Single-use is enforced by an atomic claim rather than by the check above,
+   * because a check that is not the write cannot decide a race.
    */
   async rotateSession(refreshToken: string): Promise<Result<IssuedSession>> {
     const digest = await this.options.digest.compute(refreshToken);
@@ -164,6 +169,41 @@ export class SessionService {
     if (user === null) return fail('NOT_FOUND');
     if (user.state === 'deleted') return fail('ACCOUNT_DELETED');
 
+    // The claim, and the reason it comes before the successor exists.
+    //
+    // Everything above this line is a read. Two concurrent presentations of
+    // one refresh token both reach here having seen `rotated_at` as null, so
+    // a check is not enough: without an atomic claim both would mint a
+    // successor and one single-use token would have produced two independently
+    // valid sessions, neither detected as reuse. That is the property §6.3
+    // exists to guarantee, so the claim is what decides, not the check.
+    //
+    // The loser is treated as reuse, because from here a genuine race and a
+    // stolen token presented a moment behind the real one are the same
+    // observation — and the safe reading of an ambiguous one is the hostile
+    // reading. It costs an honest double-submit a re-authentication; it costs
+    // a thief the whole family.
+    //
+    // The ordering trade is deliberate and is the reverse of what stood here
+    // before. Claiming first means a failure between the claim and the insert
+    // leaves the user with neither token, and they sign in again. Claiming
+    // last meant a race left an attacker with a valid session. An availability
+    // cost in a rare window beats a security hole in a common one.
+    const claimed = await this.options.store.claimSessionRotation(current.id, now);
+    if (!claimed) {
+      const revoked = await this.options.store.revokeFamily(
+        current.family_id,
+        now,
+        'refresh_reuse',
+      );
+      this.options.log.warn('session.refresh.reuse', {
+        abaUserId: current.aba_user_id,
+        familyId: current.family_id,
+        sessionsRevoked: revoked,
+      });
+      return fail('SESSION_REVOKED');
+    }
+
     const token = newRefreshToken();
     const next: SessionRow = {
       id: newSessionId(),
@@ -183,9 +223,32 @@ export class SessionService {
       last_seen_at: now,
     };
     await this.options.store.insertSession(next);
-    // Marked after the successor exists, so a failure between the two leaves
-    // the presented token usable rather than leaving the user with neither.
-    await this.options.store.markSessionRotated(current.id, now);
+
+    // The second half of the race, which the claim alone does not close.
+    //
+    // The loser revokes the family, and it can do so *before* this successor
+    // exists — in which case `revokeFamily` walked a set that did not include
+    // it, and the winner would walk away with a session that survived the
+    // revocation meant to stop exactly that. So the row we claimed is re-read:
+    // if it was revoked while we were inserting, the revocation was aimed at
+    // this family and this successor is part of it.
+    //
+    // Re-revoking is cheap and idempotent. Missing this is not.
+    const claimedRow = await this.options.store.getSession(current.id);
+    if (claimedRow !== null && claimedRow.revoked_at !== null) {
+      const revoked = await this.options.store.revokeFamily(
+        current.family_id,
+        now,
+        'refresh_reuse',
+      );
+      this.options.log.warn('session.refresh.reuse', {
+        abaUserId: current.aba_user_id,
+        familyId: current.family_id,
+        sessionsRevoked: revoked,
+      });
+      return fail('SESSION_REVOKED');
+    }
+
     this.options.log.info('session.rotated', {
       abaUserId: next.aba_user_id,
       sessionId: next.id,

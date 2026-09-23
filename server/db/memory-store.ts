@@ -297,8 +297,16 @@ export class MemoryStore implements Store {
     return Promise.resolve(this.sessions.find((row) => row.refresh_digest === digest));
   }
 
-  markSessionRotated(id: string, at: number): Promise<void> {
-    return MemoryStore.run(() => this.sessions.update({ id }, { rotated_at: at }));
+  claimSessionRotation(id: string, at: number): Promise<boolean> {
+    return MemoryStore.run(() => {
+      const row = this.sessions.get({ id });
+      // Read and write with no await between them, so nothing can interleave:
+      // in this runtime that is what "atomic" means, and it is the same
+      // guarantee `WHERE rotated_at IS NULL` gives a SQL adapter.
+      if (row === null || row.rotated_at !== null) return false;
+      this.sessions.update({ id }, { rotated_at: at });
+      return true;
+    });
   }
 
   revokeSession(id: string, at: number, reason: string): Promise<void> {

@@ -115,7 +115,25 @@ export interface Store {
   insertSession(row: SessionRow): Promise<void>;
   getSession(id: string): Promise<SessionRow | null>;
   findSessionByDigest(digest: string): Promise<SessionRow | null>;
-  markSessionRotated(id: string, at: number): Promise<void>;
+  /**
+   * Claims a session for rotation, atomically. Returns whether this call won.
+   *
+   * A compare-and-set, **not** an update: it sets `rotated_at` only if it is
+   * still null, and reports which caller made the transition. That is the
+   * only shape that can enforce "a refresh token is single-use" (§6.3), and
+   * it has to live at the port because nothing above it can be atomic.
+   *
+   * It replaced an unconditional `markSessionRotated`, under which two
+   * concurrent presentations of one refresh token both read `rotated_at` as
+   * null, both passed the reuse check and both minted a successor — two
+   * independently valid sessions from one single-use token, with neither
+   * detected as reuse.
+   *
+   * A SQL adapter implements this as
+   * `UPDATE session SET rotated_at = $2 WHERE id = $1 AND rotated_at IS NULL`
+   * and returns whether a row was affected.
+   */
+  claimSessionRotation(id: string, at: number): Promise<boolean>;
   revokeSession(id: string, at: number, reason: string): Promise<void>;
   revokeFamily(familyId: string, at: number, reason: string): Promise<number>;
   revokeAllForUser(abaUserId: string, at: number, reason: string): Promise<number>;

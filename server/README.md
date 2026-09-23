@@ -93,6 +93,29 @@ Every refusal on a route answers with one status and one body, whatever was
 wrong. An attacker who can tell "unknown state" from "spent challenge" from
 "that Google account belongs to somebody else" learns what to try next.
 
+## The session lifecycle that is not exposed yet
+
+Four routes the architecture specifies exist in `IDENTITY_PATHS` on the client
+and are **not served**, deliberately: `/v1/auth/refresh`, `/v1/auth/logout`,
+`/v1/me`, `/v1/devices`. Phase 2A's scope was Google sign-in, and these belong
+to the session-lifecycle phase.
+
+What that costs today, stated rather than implied:
+
+| Gap                                      | Consequence now                                                                                                                                                                                                                                | Classification                |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| No `/v1/auth/refresh`                    | An access token expires after ~15 minutes and cannot be renewed; the refresh token is held but unusable over HTTP. `rotateSession` is implemented and tested — nothing calls it from outside                                                   | deferred                      |
+| No `/v1/auth/logout`                     | **Sign-out is local only.** It clears the extension's session and access token; the server session stays valid until it expires. Nothing can present it — the client discarded the only copy of the refresh token — but the row is not revoked | deferred, with a real residue |
+| No `/v1/me`, `/v1/devices`               | No authenticated read surface. `listDevices`, `getAccount` and `listIdentities` exist and are tested; nothing reaches them                                                                                                                     | deferred                      |
+| `AccessTokenIssuer.verify` has no caller | There is no authenticated route to protect yet. The verifier is complete and tested so the first such route does not have to invent one                                                                                                        | deferred                      |
+
+**Rate limiting is deliberately absent.** Every mention in
+`IDENTITY_AUTH_ARCHITECTURE.md` attaches it to the email OTP — a low-entropy
+credential where guessing is the threat. The Google flow already bounds abuse
+with a 10-minute challenge TTL, a 2-minute exchange TTL, single-use rows and a
+3-attempt cap. Adding per-IP limits now would be infrastructure nobody's
+threat model asked for.
+
 ## How the pieces constrain each other
 
 ```

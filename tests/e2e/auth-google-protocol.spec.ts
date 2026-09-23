@@ -290,6 +290,44 @@ test('13 — workspace authorization is unchanged by being signed in', async () 
   expect(state.activeWorkspaceId).not.toBeNull();
 });
 
+test('15 — a different Google account cannot inherit this installation’s session', async () => {
+  // Sign in as the first account, then present a *different* verified Google
+  // subject to the same installation.
+  await send('auth.signOut', {});
+  await send('auth.signInWithGoogle', {});
+  const first = await send('auth.status', {});
+  expect(first.state).toBe('signed_in');
+
+  backend.setSubject('google-subject-somebody-else');
+  await send('auth.signOut', {});
+  const second = await send('auth.signInWithGoogle', {});
+
+  // Refused, and refused without writing anything for the second account:
+  // one installation's local work belongs to the identity that made it, and
+  // a second account must not silently take it over.
+  expect(second.ok).toBe(false);
+  if (second.ok) throw new Error('unreachable');
+  expect(second.failure).toBe('DIFFERENT_USER');
+
+  const after = await send('auth.status', {});
+  expect(after.abaUserId).toBe(first.abaUserId);
+  expect(after.state).toBe('signed_out');
+
+  // Restore the fixture for any later case.
+  backend.setSubject('google-subject-e2e');
+});
+
+test('16 — the sign-in that was refused left no session for the other account', async () => {
+  const stored = await worker.evaluate(async () => {
+    const local = await chrome.storage.local.get(null);
+    return JSON.stringify(local);
+  });
+
+  // The refused account's id appears nowhere: a refusal that still wrote a
+  // session would be the takeover the refusal exists to prevent.
+  expect(stored).not.toContain('google-subject-somebody-else');
+});
+
 test('14 — the configured build still added no permission and no host access', async () => {
   const manifest = await worker.evaluate(() => chrome.runtime.getManifest());
 
