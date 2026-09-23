@@ -107,21 +107,29 @@ K1 uses a passphrase, and that belief would produce the wrong login screen.
 file, so no edit was made. Nothing in the present document depends on that
 correction happening first.
 
-### 2.2 Argon2id — a boundary, not a contradiction
+### 2.2 Where a password KDF belongs, and where it does not
 
 `IDENTITY_AND_SYNC.md` §T and §U specify **Argon2id** for the OTP hash and the
 refresh-token hash. `K1_E2EE_DESIGN.md` §7.3 states **no Argon2id** and no
 WebAssembly, and the approved decisions forbid `wasm-unsafe-eval`.
 
-These are about two different machines and both stand:
+Both stand, and the rule that reconciles them is not "client versus server" —
+it is **the entropy of the input**, applied consistently wherever a secret is
+stored or derived:
 
-| Where                      | Primitive                        | Why                                                                                                                                                                         |
-| -------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **extension (client)**     | HKDF-SHA-256 only, via WebCrypto | the input is a uniform 128-bit secret, so there is no guess space to make expensive (K1 §7.1); and WebCrypto has no Argon2id, which would require WASM and a CSP change     |
-| **authentication backend** | Argon2id                         | its inputs — a 6-digit OTP, a bearer token — are low-entropy or high-value secrets at rest in a database that may be stolen; making each guess expensive is exactly the job |
+| Where                                     | Primitive                        | Why                                                                                                                                                                                |
+| ----------------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **extension (client)** — recovery key     | HKDF-SHA-256 only, via WebCrypto | a uniform 128-bit secret has no guess space to make expensive (K1 §7.1); and WebCrypto has no Argon2id, which would require WASM and a CSP change                                  |
+| **backend** — email OTP, and any password | **Argon2id**                     | six digits is roughly twenty bits and a password is worse; both are enumerable, so multiplying the cost of each guess is exactly the control (§8.1, §8.2)                          |
+| **backend** — refresh token               | SHA-256, domain-separated        | 256 bits of server-generated CSPRNG output, untruncated at every stage. There is no enumerable space for a work factor to act on, and the token is single-use and revocable (§6.6) |
 
-The rule is therefore precise: **no password-hashing primitive runs in the
-extension, and the CSP is unchanged.** `AUTH-15` asserts it.
+`IDENTITY_AND_SYNC.md` §U's blanket "argon2id" for the refresh-token hash is
+**superseded by §6.6**, which was reviewed against the implementation rather
+than assumed. The OTP half of that line stands unchanged.
+
+The client rule is therefore precise and unaffected: **no password-hashing
+primitive runs in the extension, and the CSP is unchanged.** `AUTH-15` asserts
+it.
 
 ### 2.3 Everything else, verified consistent
 
@@ -364,7 +372,7 @@ area, and the answer never depends on the order two reads resolved in.
 | **rolling window**       | the new token's expiry is `now + 30 d`, so an actively used session does not expire; an idle one does                                                                                                                                                               |
 | **replay detection**     | presenting an _already-rotated_ refresh token is a **reuse signal**: the entire session family is revoked and re-authentication is required                                                                                                                         |
 | **why the whole family** | reuse means the token was captured. The attacker and the user both hold one; revoking only the presented one leaves the thief's valid                                                                                                                               |
-| **storage at rest**      | the backend stores `argon2id(refresh_token)`, never the token. A stolen database yields no usable token (§2.2)                                                                                                                                                      |
+| **storage at rest**      | the backend stores a **domain-separated SHA-256 digest**, never the token. A stolen database yields no presentable token, and the digest itself is not one (§6.6)                                                                                                   |
 | **access token**         | not stored server-side at all; validated by signature and expiry. Short life is its revocation story                                                                                                                                                                |
 | **binding**              | every token is bound to `(abaUserId, sessionId)`. A token is never bound to a `deviceId`, because a device is not an authenticator (§11). The session **records** which identity established it, for unlink revocation only — that value authorises nothing (§20.7) |
 | **session fixation**     | the session is created **after** the identity assertion is verified, never before. No pre-issued identifier is adopted (§7.4, §8.4)                                                                                                                                 |
@@ -407,6 +415,119 @@ its reach. A session ending cannot delete user data because the code that ends
 sessions was never given a way to name it. A whole-keyspace diff before and
 after any session operation must show changes **only** under
 `identity-session:` — an assertion that protects stores which do not exist yet.
+
+### 6.6 The refresh-token digest
+
+The stored form of a refresh token, specified here because it was the one
+place where this document and the implementation disagreed, and the
+disagreement was resolved by review rather than by whichever side was written
+last.
+
+#### What a refresh token is
+
+| Property              | Requirement                                                                                                        |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| generation            | **CSPRNG only** — `crypto.getRandomValues`. Never a counter, a timestamp, a UUID, or any value derived from a user |
+| entropy               | **256 bits**, uniform. 32 random bytes                                                                             |
+| encoding              | lowercase hex, 64 characters, zero-padded per byte. A **bijective** encoding of the 32 bytes — nothing is lost     |
+| truncation            | **none**, at any stage: not the token, not the digest, not the stored column                                       |
+| who holds the value   | **the client only.** It is returned once, at creation and at each rotation, and cannot be recovered afterwards     |
+| server-side plaintext | **never persisted.** No column, in any table, holds a refresh token                                                |
+| logging               | **never logged**, in any form, at any level. The logger's field allowlist has no entry that could carry one (§18)  |
+
+#### What the backend stores
+
+```
+refresh_digest = SHA-256( "aba/auth/refresh/v1" || ":" || token )
+```
+
+| Property                       | Requirement                                                                                                                                                               |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| algorithm                      | **SHA-256**, domain-separated. Not a password KDF — see the threat model below                                                                                            |
+| domain separation              | the literal prefix above, so a digest computed for this purpose collides with nothing computed for another                                                                |
+| storage                        | the **full** 256-bit digest, hex, 64 characters. Never truncated to save a column                                                                                         |
+| digest logging                 | **never logged.** The digest is credential-adjacent material and is treated as credential material                                                                        |
+| digest in responses            | **never returned** by any endpoint                                                                                                                                        |
+| comparison                     | lookup is an indexed equality on the digest column. Any comparison performed in **application** code is constant-time                                                     |
+| the digest is not a credential | presenting the digest in place of the token fails, because verification digests what it is given: `digest(digest) ≠ digest`. A database reader learns nothing presentable |
+
+**A domain separator is not a salt, and this document does not call it one.**
+A per-row salt defeats precomputation amortised across rows. The separator
+does not do that; it only scopes the digest to this use. Against a uniform
+256-bit input there is nothing to amortise, which is why no salt is required —
+but the two must not be confused, because the reasoning that makes the salt
+unnecessary is the entropy of the input, not the presence of the prefix.
+
+#### Why not Argon2id here
+
+A password KDF buys one thing: it multiplies the cost of **each guess**. That
+is decisive when the input space is small enough to enumerate, and arithmetically
+irrelevant when it is not. The question is therefore entirely about whether the
+input space is enumerable — which is a fact about the implementation, not a
+matter of taste.
+
+The conditions under which the cost multiplier is irrelevant, each of which
+must hold and each of which is a testable property rather than an assurance:
+
+1. the token is generated by a CSPRNG, not a predictable source;
+2. it carries 256 bits, with no structure an attacker can exploit;
+3. the hex encoding loses nothing, so the searchable space is the full space;
+4. the digest is stored untruncated, so a collision is not cheaper than a
+   preimage;
+5. the token is never persisted or logged anywhere in plaintext.
+
+**If any one of those stopped being true, this conclusion would flip.** A
+generator regression that shortened a token, an encoder that dropped a leading
+zero, a digest truncated to 16 characters for an index — each would create a
+searchable space, and with SHA-256 there is no work factor to absorb the
+mistake. That is the honest cost of this choice, and the mitigation is that the
+five properties are pinned by tests rather than by review.
+
+Two further properties of _this_ secret, which a long-lived credential does not
+have, and which reduce the value of offline cracking even before feasibility is
+considered: a refresh token is **single-use and rotating**, so a token recovered
+from a stolen database has probably already been superseded; and presenting a
+superseded one is a **reuse signal that revokes the entire family** (§6.3). An
+attacker who did the impossible work would, in the common case, announce
+themselves and lose the session.
+
+**Argon2id remains correct where the input is small.** The email OTP is six
+digits — roughly twenty bits, trivially enumerable — and §8.2 continues to
+require Argon2id for it, with an attempt limit and rate limits alongside. If
+password authentication is ever introduced (§8.1), Argon2id is required there
+too. The distinction is the entropy of the input, applied consistently, rather
+than one primitive imposed everywhere.
+
+#### Versioning and migration
+
+The digest is versioned, because an algorithm decision that cannot be revisited
+is a decision that will one day be wrong.
+
+| Requirement             | Rule                                                                                                                                                  |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| version marker          | the algorithm and its version are identifiable from the stored row, so a mixed population is unambiguous rather than guessed at                       |
+| current version         | `v1` — SHA-256, domain `aba/auth/refresh/v1`                                                                                                          |
+| a change is prospective | a digest cannot be recomputed without the token, which the backend does not have. A new algorithm therefore applies to **newly issued** digests only  |
+| no forced sign-out      | existing sessions keep verifying under the version they were written with, and adopt the new one at their next rotation — within 30 days, all of them |
+| retiring an old version | once no unexpired session carries it. Until then both verify; after then the old path is deleted, not left dormant                                    |
+| no backfill             | there is no migration that rewrites existing digests, and any design proposing one is proposing to store the token                                    |
+
+> **Implementation status, stated rather than assumed.** The version marker is
+> currently carried **inside the domain string** (`aba/auth/refresh/v1`) and
+> **not** as a separate stored discriminator, so a row does not by itself say
+> which algorithm produced it. That satisfies domain separation and does not
+> satisfy the first row of the table above. Adding a stored discriminator is a
+> **required implementation change before a second algorithm exists** — it is
+> not needed while there is exactly one, and it must not be deferred past that
+> point. Recorded here rather than left as a gap between document and code.
+
+#### Storage
+
+The column is `session.refresh_digest`, `text`, holding the 64-character
+lowercase hex digest, with a unique index so that presenting a token is an
+unambiguous single-row lookup rather than a scan that could match two rows.
+It is credential material: never logged, never returned, hard-deleted with the
+account.
 
 ---
 
@@ -1068,17 +1189,17 @@ reads as evidence.
 
 ### 18.1 The authentication backend
 
-| Receives                                                     | Why it is required                                                                                         | Retention                                             |
-| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `google_sub` (Google sign-in)                                | the stable key that resolves the same `abaUserId` every time (§4.3)                                        | until the identity is unlinked or the account deleted |
-| email address                                                | the identifier for email sign-in, and the **only** way a user reaches their account again on a new machine | same                                                  |
-| `email_verified`                                             | an unverified address must never match or link (§4.3)                                                      | same                                                  |
-| `abaUserId`                                                  | it is the account                                                                                          | until deletion                                        |
-| session metadata: issued/expiry/revoked, `argon2id(refresh)` | issuing, rotating and revoking sessions                                                                    | §25                                                   |
-| IP address and timestamp                                     | rate limiting and abuse prevention                                                                         | §25 — short                                           |
-| `deviceId`, `synced_through_seq`, `last_ack_at`              | the purge quorum (Cloud Sync §9)                                                                           | until retired/deleted                                 |
-| `kdSalt`, `kdInfo`, `keyVersion`, `keyCheck`                 | **non-secret**; a new device needs them before it holds anything else (K1 §7.3)                            | until deletion                                        |
-| account lifecycle timestamps                                 | creation, deletion tombstone                                                                               | §25                                                   |
+| Receives                                                               | Why it is required                                                                                         | Retention                                             |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `google_sub` (Google sign-in)                                          | the stable key that resolves the same `abaUserId` every time (§4.3)                                        | until the identity is unlinked or the account deleted |
+| email address                                                          | the identifier for email sign-in, and the **only** way a user reaches their account again on a new machine | same                                                  |
+| `email_verified`                                                       | an unverified address must never match or link (§4.3)                                                      | same                                                  |
+| `abaUserId`                                                            | it is the account                                                                                          | until deletion                                        |
+| session metadata: issued/expiry/revoked, the refresh **digest** (§6.6) | issuing, rotating and revoking sessions                                                                    | §25                                                   |
+| IP address and timestamp                                               | rate limiting and abuse prevention                                                                         | §25 — short                                           |
+| `deviceId`, `synced_through_seq`, `last_ack_at`                        | the purge quorum (Cloud Sync §9)                                                                           | until retired/deleted                                 |
+| `kdSalt`, `kdInfo`, `keyVersion`, `keyCheck`                           | **non-secret**; a new device needs them before it holds anything else (K1 §7.3)                            | until deletion                                        |
+| account lifecycle timestamps                                           | creation, deletion tombstone                                                                               | §25                                                   |
 
 **Is the email required?** Yes, and only for that reason: it is the recovery
 path for account _access_. Without a stored identifier there is no way to
@@ -1579,23 +1700,25 @@ schema can express (`AUTH-23`).
 
 ### `session`
 
-| Field                | Type             | Notes                                                                                                                                             |
-| -------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`                 | text PK          | `ses_…`                                                                                                                                           |
-| `aba_user_id`        | text FK          | **the source of `abaUserId` for every authorization decision** (§19.1)                                                                            |
-| `family_id`          | text             | the rotation chain; reuse revokes the whole family (§6.3)                                                                                         |
-| `refresh_token_hash` | bytea            | **argon2id**. The token itself is never stored (§2.2)                                                                                             |
-| `issued_at`          | timestamptz      |                                                                                                                                                   |
-| `expires_at`         | timestamptz      | issue + ~30 d, rolled forward on each rotation                                                                                                    |
-| `rotated_at`         | timestamptz null | set when superseded; a presented token with this set is **reuse**                                                                                 |
-| `revoked_at`         | timestamptz null | logout, `logout-all`, reuse detection, deletion                                                                                                   |
-| `auth_identity_id`   | text FK          | which identity established this session. Read **only** to revoke on unlink (§20.7); never an authorization input — authorization is `aba_user_id` |
-| `last_seen_at`       | timestamptz      | drives `lastContactAt` on the client and nothing else                                                                                             |
+| Field              | Type             | Notes                                                                                                                                             |
+| ------------------ | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`               | text PK          | `ses_…`                                                                                                                                           |
+| `aba_user_id`      | text FK          | **the source of `abaUserId` for every authorization decision** (§19.1)                                                                            |
+| `family_id`        | text             | the rotation chain; reuse revokes the whole family (§6.3)                                                                                         |
+| `refresh_digest`   | text             | domain-separated **SHA-256**, 64 hex characters, untruncated. The token itself is never stored (§6.6)                                             |
+| `issued_at`        | timestamptz      |                                                                                                                                                   |
+| `expires_at`       | timestamptz      | issue + ~30 d, rolled forward on each rotation                                                                                                    |
+| `rotated_at`       | timestamptz null | set when superseded; a presented token with this set is **reuse**                                                                                 |
+| `revoked_at`       | timestamptz null | logout, `logout-all`, reuse detection, deletion                                                                                                   |
+| `auth_identity_id` | text FK          | which identity established this session. Read **only** to revoke on unlink (§20.7); never an authorization input — authorization is `aba_user_id` |
+| `last_seen_at`     | timestamptz      | drives `lastContactAt` on the client and nothing else                                                                                             |
 
 Index `(aba_user_id, revoked_at)` for `logout-all` and listing; index
-`(family_id)` for reuse revocation. **Sensitive:** `refresh_token_hash` is
-credential material — never logged, never returned by any endpoint.
-**Deletion:** hard-deleted on account deletion.
+`(family_id)` for reuse revocation; **unique** index on `refresh_digest`, so
+presenting a token is an unambiguous single-row lookup rather than a scan that
+could match two rows. **Sensitive:** `refresh_digest` is credential material —
+never logged, never returned by any endpoint. **Deletion:** hard-deleted on
+account deletion.
 
 > A `session` row is **never** joined to a `device` row and never keyed by
 > `deviceId`. A session is authorization; a device is provenance. Binding them
@@ -1644,13 +1767,13 @@ both.
 
 ### Encryption at rest
 
-| Assumption                           | Statement                                                                                                                                        |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| database-level encryption at rest    | **assumed and required** — volume or tablespace encryption, plus TLS in transit                                                                  |
-| what it protects against             | stolen disks and stolen backups                                                                                                                  |
-| what it does **not** protect against | a compromised application or a stolen live credential, which sees decrypted rows                                                                 |
-| therefore                            | it is **not** a substitute for hashing. `refresh_token_hash` and `otp_hash` are argon2id **on top of** it, because the threat is a live read-out |
-| K1 ciphertext                        | already ciphertext before it arrives. At-rest encryption adds a layer and changes nothing about the guarantee — the backend still holds no key   |
+| Assumption                           | Statement                                                                                                                                                                    |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| database-level encryption at rest    | **assumed and required** — volume or tablespace encryption, plus TLS in transit                                                                                              |
+| what it protects against             | stolen disks and stolen backups                                                                                                                                              |
+| what it does **not** protect against | a compromised application or a stolen live credential, which sees decrypted rows                                                                                             |
+| therefore                            | it is **not** a substitute for hashing. `refresh_digest` (SHA-256, §6.6) and `otp_hash` (argon2id, §8.2) are applied **on top of** it, because the threat is a live read-out |
+| K1 ciphertext                        | already ciphertext before it arrives. At-rest encryption adds a layer and changes nothing about the guarantee — the backend still holds no key                               |
 
 ---
 
@@ -1767,7 +1890,7 @@ outside it is excluded on purpose.
 | Threat                                         | Control                                                                                                                                                                                                                                                        | Residual                                                                                                                                |
 | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | **stolen access token**                        | ~15-minute lifetime; held in memory-backed `chrome.storage.session`, gone on browser close; never in a URL; never written into any user record (`AUTH-17`)                                                                                                     | a window of minutes in which ciphertext and metadata are reachable — **not plaintext** (`AUTH-3`)                                       |
-| **stolen refresh token**                       | single-use rotation; the whole family revoked on reuse (`AUTH-16`); stored only as `argon2id` server-side; `logout-all` is the user's control                                                                                                                  | the thief's first use succeeds; the legitimate client's next use triggers detection and both are cut off                                |
+| **stolen refresh token**                       | single-use rotation; the whole family revoked on reuse (`AUTH-16`); stored only as a domain-separated SHA-256 digest (§6.6); `logout-all` is the user's control                                                                                                | the thief's first use succeeds; the legitimate client's next use triggers detection and both are cut off                                |
 | **refresh replay**                             | `rotated_at` makes a superseded token identifiable; presenting one is the reuse signal, not merely an error                                                                                                                                                    | —                                                                                                                                       |
 | **session fixation**                           | sessions are created only **after** the identity assertion is verified; no client-supplied identifier is ever adopted as a session id; `challengeId` names a challenge, never a session                                                                        | —                                                                                                                                       |
 | **account enumeration**                        | one response shape from `/auth/start`; one error code across wrong/expired/consumed/unknown challenge; `NOT_FOUND` for another user's records; rate-limit messages never state the reason (§8.4, §24)                                                          | timing side channels need the mail send to stay off the response path — stated as a requirement, not assumed                            |
