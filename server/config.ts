@@ -26,6 +26,27 @@ export interface ServerConfig {
   /** Postgres connection string. Required; never defaulted. */
   readonly databaseUrl: string;
   readonly logLevel: 'debug' | 'info' | 'warn' | 'error';
+  /**
+   * Google OAuth, or `null` when this deployment has none.
+   *
+   * Optional as a whole and required as a group: a deployment either has both
+   * halves of a Google client or has no Google sign-in. A client id with no
+   * secret would start a server that fails at the one moment it matters, so
+   * a partial configuration is a startup error rather than a runtime one.
+   */
+  readonly google: GoogleOAuthConfig | null;
+}
+
+export interface GoogleOAuthConfig {
+  readonly clientId: string;
+  /**
+   * SECRET, and server-side only.
+   *
+   * Never reaches the extension, the manifest, `dist/`, Chrome storage or a
+   * URL. The authorization-code flow exists precisely so this stays here: the
+   * client redeems nothing, so it needs nothing to redeem with.
+   */
+  readonly clientSecret: string;
 }
 
 export class ConfigError extends Error {
@@ -43,6 +64,18 @@ export const REQUIRED_VARIABLES = [
 ] as const;
 
 /**
+ * Google sign-in, configured as a group or not at all.
+ *
+ * Not in `REQUIRED_VARIABLES` because a backend without Google sign-in is a
+ * working backend — it simply cannot sign anybody in that way, and the routes
+ * that would are absent rather than broken.
+ */
+export const GOOGLE_VARIABLES = [
+  { name: 'ABA_GOOGLE_CLIENT_ID', why: "This application's Google client id." },
+  { name: 'ABA_GOOGLE_CLIENT_SECRET', why: 'Redeems authorization codes. Secret.' },
+] as const;
+
+/**
  * Variables whose value is a secret.
  *
  * Named so the invariant suite can assert that no secret variable has a
@@ -52,6 +85,7 @@ export const REQUIRED_VARIABLES = [
 export const SECRET_VARIABLES: readonly string[] = [
   'ABA_ACCESS_TOKEN_SIGNING_KEY',
   'ABA_DATABASE_URL',
+  'ABA_GOOGLE_CLIENT_SECRET',
 ];
 
 const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
@@ -86,7 +120,18 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
   const rawLevel = env.ABA_LOG_LEVEL ?? 'info';
   const logLevel = isLogLevel(rawLevel) ? rawLevel : 'info';
 
-  return { publicOrigin, accessTokenSigningKey, databaseUrl, logLevel };
+  // All or nothing. A half-configured Google client is refused here rather
+  // than producing a server that starts and then cannot complete a sign-in.
+  const clientId = env.ABA_GOOGLE_CLIENT_ID?.trim() ?? '';
+  const clientSecret = env.ABA_GOOGLE_CLIENT_SECRET?.trim() ?? '';
+  if ((clientId.length === 0) !== (clientSecret.length === 0)) {
+    throw new ConfigError(
+      clientId.length === 0 ? ['ABA_GOOGLE_CLIENT_ID'] : ['ABA_GOOGLE_CLIENT_SECRET'],
+    );
+  }
+  const google = clientId.length === 0 ? null : { clientId, clientSecret };
+
+  return { publicOrigin, accessTokenSigningKey, databaseUrl, logLevel, google };
 }
 
 /**
@@ -101,6 +146,10 @@ export function describeConfig(config: ServerConfig): Record<string, string> {
     logLevel: config.logLevel,
     accessTokenSigningKey: '[set]',
     databaseUrl: '[set]',
+    // Whether, never which. A client id is not a secret, but printing it here
+    // would put it in whatever this description is written to, and an
+    // operator only needs to know that Google sign-in is switched on.
+    google: config.google === null ? '[not configured]' : '[set]',
     // A length, not a prefix: a prefix of a connection string is a hostname.
     secretsConfigured: String(SECRET_VARIABLES.length),
   };

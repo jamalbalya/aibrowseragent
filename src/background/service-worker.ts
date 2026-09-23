@@ -2047,6 +2047,10 @@ const authController = new AuthController({
           // module, so no network primitive is created here.
           transport: new IdentityTransport(identityConfig),
           authFlow: new TabAuthFlow(chromeTabs()),
+          // The installation's own random id, minted once and kept locally.
+          // Never derived from the Google subject, the email, or any Chrome
+          // runtime handle.
+          deviceId: () => dataStoragePreference.deviceId(),
         }),
 });
 

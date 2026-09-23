@@ -113,15 +113,40 @@ export class DataStoragePreferenceStore {
    * This installation's device identifier.
    *
    * Random, minted once, never derived from anything identifying — not from a
-   * Google subject, not from a Chrome runtime id. It exists so a future sync
-   * can key per-device state and so a conflict can name which device produced
-   * the other side. In LOCAL mode it never leaves this profile.
+   * Google subject, not from a Chrome runtime id, not from a tab, window or
+   * extension id. It exists so a device can be associated with an account,
+   * and so a future sync can key per-device state. In LOCAL mode it never
+   * leaves this profile.
+   *
+   * **The shape is specified, not incidental.** `dev_` plus a UUID is what
+   * K1 §16 and Cloud Sync §5 define and what the backend's `isDeviceId`
+   * validates. An earlier build minted a bare UUID here, which the backend
+   * would have refused — so a stored value of the wrong shape is treated as
+   * absent and re-minted rather than sent and rejected. Nothing consumes a
+   * device id yet, so re-minting costs nothing; sending one the server
+   * refuses would cost the association.
    */
-  async deviceId(mint: () => string = () => crypto.randomUUID()): Promise<string> {
-    const existing = await this.area.get<string>(DEVICE_KEY);
-    if (typeof existing === 'string' && existing.length > 0) return existing;
+  async deviceId(mint: () => string = () => `dev_${crypto.randomUUID()}`): Promise<string> {
+    const existing = await this.area.get<unknown>(DEVICE_KEY);
+    if (isDeviceId(existing)) return existing;
+    if (typeof existing === 'string' && existing.length > 0) {
+      log.info('The stored device id was not in the expected form; minting a new one.');
+    }
     const minted = mint();
     await this.area.set(DEVICE_KEY, minted);
     return minted;
   }
+}
+
+/**
+ * `dev_` plus a UUID.
+ *
+ * Deliberately the same shape the backend enforces. A device id authorises
+ * nothing, so nothing security-relevant rests on this — what it buys is that
+ * a tab id, a window id or an extension id cannot be presented as one.
+ */
+const DEVICE_ID = /^dev_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+export function isDeviceId(value: unknown): value is string {
+  return typeof value === 'string' && DEVICE_ID.test(value);
 }

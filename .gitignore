@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# A second bundle built only for the E2E auth fixture. Never shipped.
+dist-auth/
 coverage/
 *.zip
 # Build output. The digest is recorded in docs/testing/release/README.md

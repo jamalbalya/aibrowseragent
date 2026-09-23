@@ -5,11 +5,11 @@
  * knows how the pieces fit, which is what keeps every module below it
  * testable in isolation.
  *
- * **There is no HTTP transport here, deliberately.** The approved
- * architecture keeps controller boundaries separate from domain logic, and
- * this phase implements the domain. Adding a web framework now would ship a
- * routing layer with no endpoint behind it and no test that could exercise
- * one end to end.
+ * **The HTTP transport lives in `http/router.ts`, not here.** The approved
+ * architecture keeps controller boundaries separate from domain logic: this
+ * file wires services, and the router turns requests into calls on them. No
+ * Google verification logic exists in either — it is all in
+ * `app/google-auth-service.ts` and `domain/oidc.ts`.
  */
 import { MemoryStore } from './db/memory-store';
 import { systemClock, type Clock } from './domain/clock';
@@ -94,6 +94,7 @@ export function createIdentityBackend(options: ServerOptions = {}): IdentityBack
           accounts,
           identities,
           sessions,
+          devices,
           ...(options.google.challengeTtlMs === undefined
             ? {}
             : { challengeTtlMs: options.google.challengeTtlMs }),
@@ -105,6 +106,19 @@ export function createIdentityBackend(options: ServerOptions = {}): IdentityBack
   return { store, clock, accounts, identities, sessions, devices, google };
 }
 
+export {
+  createAuthRouter,
+  DEFAULT_PATHS,
+  MAX_BODY_BYTES,
+  type AuthRouter,
+  type AuthRouterOptions,
+  type AuthRouterPaths,
+} from './http/router';
+export {
+  createAccessTokenIssuer,
+  type AccessTokenClaims,
+  type AccessTokenIssuer,
+} from './app/access-token';
 export { MemoryStore } from './db/memory-store';
 export { FixedClock, systemClock, type Clock } from './domain/clock';
 export { ConstraintViolation } from './db/store';
@@ -158,5 +172,7 @@ export {
   ConfigError,
   REQUIRED_VARIABLES,
   SECRET_VARIABLES,
+  GOOGLE_VARIABLES,
   type ServerConfig,
+  type GoogleOAuthConfig,
 } from './config';

@@ -32,6 +32,8 @@ import type { LoginChallengeRow, Store } from '../db/store';
 import type { AccountService } from './account-service';
 import type { IdentityService } from './identity-service';
 import type { IssuedSession, SessionService } from './session-service';
+import type { DeviceService } from './device-service';
+import { isDeviceId } from '../domain/ids';
 import type { ServerLogger } from '../logging';
 
 /** How long a sign-in may sit half-finished. Short: it is an open door. */
@@ -78,6 +80,14 @@ export interface GoogleAuthServiceOptions {
   readonly accounts: AccountService;
   readonly identities: IdentityService;
   readonly sessions: SessionService;
+  /**
+   * Device registration, run after a session exists.
+   *
+   * Here rather than in `SessionService` because a device is associated with
+   * an *account*, not with a session: signing in twice on one machine must
+   * not produce two devices, and signing out must not retire one.
+   */
+  readonly devices: DeviceService;
   readonly challengeTtlMs?: number;
   readonly exchangeTtlMs?: number;
 }
@@ -99,6 +109,16 @@ export interface GoogleExchangeOutcome {
   readonly session: IssuedSession;
   /** True when this sign-in created the account rather than returning to one. */
   readonly created: boolean;
+  /**
+   * Whether the device the client named was associated with the account.
+   *
+   * Reported rather than assumed. A client that sent no device id, or one the
+   * shape check refused, gets `false` and a working session: authentication
+   * succeeded, and a device association is not what authorised it. Saying so
+   * is better than a silent `true` that a later sync would discover was
+   * false.
+   */
+  readonly deviceRegistered: boolean;
 }
 
 export class GoogleAuthService {
@@ -251,6 +271,16 @@ export class GoogleAuthService {
   async exchange(params: {
     readonly challengeId: string;
     readonly exchangeCode: string;
+    /**
+     * This installation's device id, minted by the client.
+     *
+     * Optional, and validated by shape only. It is **never** derived from the
+     * Google subject, the email, or any Chrome runtime handle — the client
+     * mints a random one once and keeps it, so it identifies an installation
+     * and says nothing about who is using it. A device id authorises nothing,
+     * so no decision here rests on it.
+     */
+    readonly deviceId?: string;
   }): Promise<Result<GoogleExchangeOutcome>> {
     const now = this.options.clock.now();
 
@@ -295,12 +325,50 @@ export class GoogleAuthService {
     const created = identity !== null && identity.last_used_at === null;
     if (identity !== null) await this.options.store.touchIdentity(identity.id, now);
 
+    const deviceRegistered = await this.registerDevice(issued.value.sessionId, params.deviceId);
+
     this.options.log.info('auth.google.exchange', {
       challengeId: byDigest.id,
       abaUserId: issued.value.abaUserId,
       sessionId: issued.value.sessionId,
+      // Only when it was actually registered. The allowlist has no slot for
+      // an absent value, and a rejected id is client-supplied text.
+      ...(deviceRegistered && params.deviceId !== undefined ? { deviceId: params.deviceId } : {}),
     });
-    return ok({ session: issued.value, created });
+    return ok({ session: issued.value, created, deviceRegistered });
+  }
+
+  /**
+   * Associates the client's installation with the account that just signed in.
+   *
+   * Runs **after** the session exists, and goes through the same
+   * `DeviceService` any other caller would — which means it goes through a
+   * `Principal`, minted from the new session rather than assembled here. That
+   * is the point: there is no path in this file that registers a device
+   * without an authenticated session behind it.
+   *
+   * Registration is idempotent on `(abaUserId, deviceId)`, so a second
+   * sign-in on the same machine refreshes the existing row instead of adding
+   * one.
+   *
+   * **A failure here never fails the sign-in.** The session is already
+   * issued and is valid; an account without a device association is a working
+   * account. Returning `false` reports the truth rather than hiding it.
+   */
+  private async registerDevice(sessionId: string, deviceId: string | undefined): Promise<boolean> {
+    if (deviceId === undefined) return false;
+    if (!isDeviceId(deviceId)) {
+      // Shape only. Logged without the value, because a malformed id is
+      // client-supplied text and belongs nowhere near a log line.
+      this.options.log.warn('auth.device.rejected', { sessionId });
+      return false;
+    }
+
+    const principal = await this.options.sessions.verify(sessionId);
+    if (!principal.ok) return false;
+
+    const registered = await this.options.devices.registerDevice(principal.value, deviceId);
+    return registered.ok;
   }
 
   /** Removes challenges past their life. Credential material does not linger. */

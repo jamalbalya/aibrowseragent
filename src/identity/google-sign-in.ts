@@ -61,6 +61,15 @@ export interface GoogleSignInOptions {
   readonly transport: IdentityTransport;
   readonly authFlow: AuthFlowPort;
   readonly timeoutMs?: number;
+  /**
+   * This installation's device id, read when the exchange is made.
+   *
+   * A function rather than a value because minting one is a storage read, and
+   * a sign-in that never completes should not have caused a write. Optional:
+   * a sign-in without one still works, and the account simply has no device
+   * associated with this installation.
+   */
+  readonly deviceId?: () => Promise<string>;
 }
 
 function readString(body: unknown, field: string): string | null {
@@ -141,6 +150,19 @@ export class GoogleSignIn {
     return this.exchange(callback.challengeId, callback.exchangeCode);
   }
 
+  /** The device id, or `null` when there is none and when reading one fails. */
+  private async readDeviceId(): Promise<string | null> {
+    if (this.options.deviceId === undefined) return null;
+    try {
+      const value = await this.options.deviceId();
+      return value.length > 0 ? value : null;
+    } catch {
+      // A device association is not what authorises a sign-in, so failing to
+      // read one must not fail the sign-in.
+      return null;
+    }
+  }
+
   private async start(): Promise<{
     readonly challengeId: string;
     readonly authorizationUrl: string;
@@ -176,9 +198,16 @@ export class GoogleSignIn {
 
   private async exchange(challengeId: string, exchangeCode: string): Promise<SignInResult> {
     try {
+      // Read now rather than at construction: a sign-in that is cancelled
+      // before this point should not have minted anything.
+      const deviceId = await this.readDeviceId();
       const response = await this.options.transport.send({
         path: IDENTITY_PATHS.exchange,
-        body: { challengeId, code: exchangeCode },
+        body: {
+          challengeId,
+          exchangeCode,
+          ...(deviceId === null ? {} : { deviceId }),
+        },
       });
       if (response.status !== 200) return { ok: false, failure: 'EXCHANGE_FAILED' };
 

@@ -31,6 +31,15 @@ const COMPLETE = {
   ABA_PUBLIC_ORIGIN: 'https://api.example.test',
   ABA_ACCESS_TOKEN_SIGNING_KEY: 'k'.repeat(64),
   ABA_DATABASE_URL: 'postgres://user:pw@db.example.test/aba',
+  ABA_GOOGLE_CLIENT_ID: '1234567890-example.apps.googleusercontent.com',
+  ABA_GOOGLE_CLIENT_SECRET: 'GOCSPX-not-a-real-secret-for-tests-only',
+};
+
+/** Everything a deployment must set. Google is configured on top of it. */
+const WITHOUT_GOOGLE = {
+  ABA_PUBLIC_ORIGIN: COMPLETE.ABA_PUBLIC_ORIGIN,
+  ABA_ACCESS_TOKEN_SIGNING_KEY: COMPLETE.ABA_ACCESS_TOKEN_SIGNING_KEY,
+  ABA_DATABASE_URL: COMPLETE.ABA_DATABASE_URL,
 };
 
 describe('configuration', () => {
@@ -79,6 +88,28 @@ describe('configuration', () => {
       }
       expect(threw, `${variable} must have no default`).toBe(true);
     }
+  });
+
+  it('treats Google as configured in full or not at all', () => {
+    // A backend with no Google client is a working backend that cannot sign
+    // anybody in that way, so the absence is allowed and is not an error.
+    expect(loadConfig(WITHOUT_GOOGLE).google).toBeNull();
+    expect(loadConfig(COMPLETE).google?.clientId).toBe(COMPLETE.ABA_GOOGLE_CLIENT_ID);
+
+    // Half of a client is refused at startup rather than at the one moment it
+    // would matter, which is in the middle of somebody's sign-in.
+    for (const half of ['ABA_GOOGLE_CLIENT_ID', 'ABA_GOOGLE_CLIENT_SECRET']) {
+      expect(() => loadConfig({ ...COMPLETE, [half]: undefined }), half).toThrow(ConfigError);
+      expect(() => loadConfig({ ...COMPLETE, [half]: '   ' }), half).toThrow(ConfigError);
+    }
+  });
+
+  it('never prints the Google client secret', () => {
+    const serialised = JSON.stringify(describeConfig(loadConfig(COMPLETE)));
+    expect(serialised).not.toContain(COMPLETE.ABA_GOOGLE_CLIENT_SECRET);
+    expect(serialised).not.toContain('GOCSPX-');
+    // Not the id either: whether Google is on is all an operator needs.
+    expect(serialised).not.toContain(COMPLETE.ABA_GOOGLE_CLIENT_ID);
   });
 
   it('defaults only the non-secret log level', () => {

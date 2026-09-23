@@ -38,6 +38,8 @@ a connection. See `docs/architecture/LOCAL_FIRST_ARCHITECTURE.md` §11.
 | Environment-injected configuration with no secret defaults        | `config.ts`                  |
 | Allowlist logging                                                 | `logging.ts`                 |
 | Google sign-in: start, callback, exchange                         | `app/google-auth-service.ts` |
+| The HTTP surface: four routes and nothing else                    | `http/router.ts`             |
+| Access-token signing, which the domain leaves to the transport    | `app/access-token.ts`        |
 | ID-token verification against Google's published keys             | `domain/oidc.ts`             |
 | PKCE (S256 only)                                                  | `app/pkce.ts`                |
 
@@ -55,15 +57,41 @@ half-built version of any of them would be worse than shipping none:
   belong to the sync phase.
 - **K1 crypto.** The backend holds no key and no ciphertext. There is no
   column in this schema capable of carrying either.
-- **An HTTP transport.** The approved architecture keeps controller boundaries
-  separate from domain logic; this phase implements the domain. A routing
-  layer with no endpoint behind it is not a foundation, it is scaffolding.
 - **A database driver.** The schema renders to PostgreSQL DDL and the port is
   asynchronous, so wiring a driver is deployment work. Installing one now
   would add a dependency nothing exercises — and would make a database a
   requirement for building and testing an extension that does not use one.
   The deployment intent is a **managed** database that applies migrations on
   deploy: the project owner maintains source code, not database servers.
+
+## The HTTP surface
+
+Four routes, no framework, and a handler that is a pure
+`(Request) => Promise<Response>` over the platform's own types — so a test
+drives it without opening a socket, and no dependency was added.
+
+| Route                      | Method | What it does                                                         |
+| -------------------------- | ------ | -------------------------------------------------------------------- |
+| `/v1/auth/start`           | POST   | Mints the challenge; returns an id and an authorization URL          |
+| `/v1/auth/google/redirect` | GET    | **Registered with Google.** Verifies and mints the exchange artifact |
+| `/v1/auth/google/callback` | GET    | A static landing page. The extension watches this URL                |
+| `/v1/auth/exchange`        | POST   | Trades the artifact for a session                                    |
+
+**The redirect path and the callback path are deliberately different.** The
+extension's tab watcher fires on the first URL matching the path it watches;
+if Google redirected straight there, the watcher would capture Google's own
+authorization code before the backend had done anything, and whether it did
+would depend on Chrome's redirect timing. Two paths remove the race rather
+than tuning it.
+
+**No Google verification logic is in the router.** It reads query parameters
+and a JSON body, calls the service, and maps a `Result` to a status. It never
+sees an ID token, never compares an issuer and never touches a JWKS — and a
+test asserts it holds no network primitive of its own.
+
+Every refusal on a route answers with one status and one body, whatever was
+wrong. An attacker who can tell "unknown state" from "spent challenge" from
+"that Google account belongs to somebody else" learns what to try next.
 
 ## How the pieces constrain each other
 

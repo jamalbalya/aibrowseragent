@@ -285,16 +285,38 @@ describe('TEST-SECURITY-037 — reinstall recovery', () => {
 
   it('11 — the device id is minted once and is stable thereafter', async () => {
     const installed = fresh();
+    // `dev_` plus a UUID: the shape K1 §16 specifies and the backend's
+    // `isDeviceId` enforces. A value of any other shape is not a device id.
+    const A = 'dev_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    const B = 'dev_bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+    const C = 'dev_cccccccc-cccc-cccc-cccc-cccccccccccc';
 
-    const first = await installed.preference.deviceId(() => 'device-aaa');
-    const second = await installed.preference.deviceId(() => 'device-bbb');
+    const first = await installed.preference.deviceId(() => A);
+    const second = await installed.preference.deviceId(() => B);
 
-    expect(first).toBe('device-aaa');
-    expect(second).toBe('device-aaa');
+    expect(first).toBe(A);
+    expect(second).toBe(A);
 
     // A reinstall is a new device, which is what makes per-device sync keys
     // meaningful rather than a second name for the user.
-    expect(await afterReinstall().preference.deviceId(() => 'device-ccc')).toBe('device-ccc');
+    expect(await afterReinstall().preference.deviceId(() => C)).toBe(C);
+  });
+
+  it('11b — a device id from a build that minted the wrong shape is replaced', async () => {
+    const installed = fresh();
+    const good = 'dev_dddddddd-dddd-dddd-dddd-dddddddddddd';
+
+    // What an earlier build wrote: a bare UUID, which the backend would
+    // refuse. Re-minting costs nothing — nothing consumes a device id yet —
+    // and sending one the server rejects would cost the association.
+    await installed.preference.deviceId(() => '7c9e6679-7425-40de-944b-e07fc1f90ae7');
+    const replaced = await installed.preference.deviceId(() => good);
+
+    expect(replaced).toBe(good);
+    // Stable from then on.
+    expect(
+      await installed.preference.deviceId(() => 'dev_eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'),
+    ).toBe(good);
   });
 
   it('12 — unowned legacy data survives a reinstall-and-decline without being touched', async () => {

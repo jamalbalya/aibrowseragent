@@ -11,7 +11,8 @@ Status: **partly implemented.** The status line above this one used to read
 | Email OTP                                                                                             | not built                                                              |
 | Account-linking UI                                                                                    | not built                                                              |
 | Cloud Sync, K1                                                                                        | not built                                                              |
-| An HTTP transport, a deployed backend, a running database                                             | **not deployed**                                                       |
+| The HTTP surface for the Google routes                                                                | **implemented** (`server/http/router.ts`)                              |
+| A deployed backend, a running database, real Google credentials                                       | **not deployed / credential-blocked**                                  |
 
 Everything implemented is implemented **optionally**: a build with no
 configured backend origin has no authentication, and the extension is fully
