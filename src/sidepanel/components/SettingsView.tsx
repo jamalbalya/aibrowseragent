@@ -4,6 +4,7 @@ import { AccountPanel } from './AccountPanel';
 import { TechnicalDetails } from './TechnicalDetails';
 import { DataPanel } from './DataPanel';
 import { ConnectedAccounts } from './ConnectedAccounts';
+import { ProtectionPanel } from './ProtectionPanel';
 import { WorkspaceView } from './WorkspaceView';
 import type { CapabilityReport } from '@/providers/capability-doctor/capability-doctor';
 import type { ProviderConnection } from '@/providers/registry/provider-registry';
@@ -246,6 +247,8 @@ export function SettingsView({
         onMessage={(tone, text) => setMessage({ tone, text })}
         onChanged={onChanged}
       />
+
+      <ProtectionPanel />
 
       <section className="settings__section">
         {/* The same form as before, unchanged, now reached as one way to add

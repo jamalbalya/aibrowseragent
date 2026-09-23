@@ -222,6 +222,105 @@ export const PORTABLE_DATA_KINDS: readonly PersistedDataKind[] = PERSISTED_DATA_
 );
 
 /**
+ * K1: which persisted kinds are encrypted at rest, and which are not.
+ *
+ * A third table, for the same reason portability is a second one: "may a
+ * server hold this", "may a file carry this" and "is this encrypted on this
+ * disk" are three questions, and any two of them collapsed would be wrong
+ * about the third.
+ *
+ * ## Why not everything
+ *
+ * Encrypting everything would be the easy answer and the worse one. K1 is
+ * unlocked by a passphrase that is not stored anywhere, so every protected
+ * store is unreadable until the user types it — once per browser session, and
+ * again after every restart. Protecting the whole extension would mean a
+ * passphrase prompt before the side panel could show anything at all, which
+ * is how a security feature gets switched off.
+ *
+ * So the protected set is the records whose disclosure costs the user
+ * something **outside this extension**: the provider API keys they pay for and
+ * the connector credentials that reach services this extension has nothing to
+ * do with. Everything else is either already memory-only, or is the user's own
+ * work, whose disclosure is bounded by the profile that already holds it.
+ */
+export const K1_PROTECTION_CLASSES = [
+  /** Encrypted at rest when K1 is switched on. Unreadable while locked. */
+  'ENCRYPTED',
+  /** Never written to disk at all, so there is nothing to encrypt. */
+  'MEMORY_ONLY',
+  /**
+   * On disk in plaintext, deliberately. Either it must be readable before the
+   * user can be asked for a passphrase, or encrypting it would cost more in
+   * availability than it buys in confidentiality.
+   */
+  'PLAINTEXT_BY_DESIGN',
+] as const;
+export type K1Protection = (typeof K1_PROTECTION_CLASSES)[number];
+
+export const K1_PROTECTION: Readonly<Record<PersistedDataKind, K1Protection>> = {
+  // The protected set. Paid-for credentials that reach other people's
+  // services, and the only records here whose disclosure is not bounded by
+  // this profile.
+  'provider-credential': 'ENCRYPTED',
+  // Durable, and a long-lived credential: exactly what K1 is for. Only the
+  // *durable* half of the identity session is protected; its access-token
+  // half is memory-only and classified separately below.
+  'aba-refresh-token': 'ENCRYPTED',
+
+  // Nothing on disk to protect, which is better than encrypting it.
+  //
+  // Connector tokens live in `chrome.storage.session` and are gone when the
+  // browser closes. The first draft of this table called them ENCRYPTED,
+  // which would have been a claim the implementation does not make — they are
+  // not in a protected namespace, because they are not in a durable one.
+  'connector-token': 'MEMORY_ONLY',
+  'aba-access-token': 'MEMORY_ONLY',
+  'oauth-transient': 'MEMORY_ONLY',
+  'page-content': 'MEMORY_ONLY',
+
+  // Must be readable before a passphrase can be asked for.
+  //
+  // The identity says whose rows these are, and the panel has to render
+  // *something* before the user can unlock anything — including the screen
+  // with the passphrase field on it. Encrypting it would make the unlock
+  // screen depend on the unlock.
+  'identity-profile': 'PLAINTEXT_BY_DESIGN',
+  'device-id': 'PLAINTEXT_BY_DESIGN',
+  // Health gates execution. A gate that cannot be read while locked would
+  // fail closed on every locked start, which is a denial of service dressed
+  // as caution.
+  'persistence-health': 'PLAINTEXT_BY_DESIGN',
+  // Policy decides whether a page may be automated at all, and is consulted
+  // on paths that have nothing to do with a provider credential.
+  policy: 'PLAINTEXT_BY_DESIGN',
+
+  // The user's own work. Disclosure is bounded by the profile that already
+  // holds it, and the availability cost of protecting it is a passphrase
+  // prompt before the panel can list anything.
+  //
+  // `aba-brain` and `connection-metadata` say *what* you connected to, never
+  // how you authenticate — the credential is the protected half, and this is
+  // the half the panel renders while locked so it can tell you which account
+  // needs unlocking.
+  'connection-metadata': 'PLAINTEXT_BY_DESIGN',
+  'ai-brain': 'PLAINTEXT_BY_DESIGN',
+  task: 'PLAINTEXT_BY_DESIGN',
+  workflow: 'PLAINTEXT_BY_DESIGN',
+  shortcut: 'PLAINTEXT_BY_DESIGN',
+  workspace: 'PLAINTEXT_BY_DESIGN',
+  preference: 'PLAINTEXT_BY_DESIGN',
+  audit: 'PLAINTEXT_BY_DESIGN',
+  evidence: 'PLAINTEXT_BY_DESIGN',
+  'skill-run': 'PLAINTEXT_BY_DESIGN',
+};
+
+/** The kinds K1 encrypts. Derived, so a reclassification moves the code. */
+export const K1_ENCRYPTED_KINDS: readonly PersistedDataKind[] = PERSISTED_DATA_KINDS.filter(
+  (kind) => K1_PROTECTION[kind] === 'ENCRYPTED',
+);
+
+/**
  * Does a design exist for recovering a secret to another device?
  *
  * It does not. End-to-end encryption under a user passphrase would make one

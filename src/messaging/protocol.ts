@@ -19,6 +19,7 @@ import type { ActedOnElement, SemanticPage } from '@/content/semantic-tree';
 import type { EvidenceReference } from '@/evidence/evidence-model';
 import type { LogRecord } from '@/logging/logger';
 import type { SitePolicyState } from '@/policy/site-policy';
+import type { K1State } from '@/crypto/k1-store';
 import type { ProviderConnection } from '@/providers/registry/provider-registry';
 import type { ModelCapabilities } from '@/providers/core/types';
 import type { StorageMode } from '@/storage/data-classification';
@@ -270,6 +271,38 @@ export interface PanelRequestMap {
     response: { associated: number; refused: number };
   };
   'accounts.declineAssociation': { request: Record<string, never>; response: { ok: true } };
+
+  /**
+   * Local encryption (K1).
+   *
+   * Five routes, all `CLASS_B_PANEL_CONTROL_PLANE`: switching protection on,
+   * unlocking it and changing the passphrase are decisions a person makes, and
+   * a model that could make them could unlock the credentials it is not
+   * allowed to read.
+   *
+   * `k1.status` returns a state and an opaque key id and nothing else — no
+   * salt, no iteration count, no wrapped key, no hash. A panel has no use for
+   * any of them and a diagnostics view showing them would be an invitation.
+   */
+  'k1.status': {
+    request: Record<string, never>;
+    response: { state: K1State; keyId?: string; since?: number };
+  };
+  'k1.enable': {
+    request: { passphrase: string };
+    response:
+      | { ok: true; state: K1State; encrypted: number }
+      | { ok: false; reason: string; detail: string };
+  };
+  'k1.unlock': {
+    request: { passphrase: string };
+    response: { ok: true; state: K1State } | { ok: false; reason: string; detail: string };
+  };
+  'k1.lock': { request: Record<string, never>; response: { state: K1State } };
+  'k1.disable': {
+    request: { passphrase: string };
+    response: { ok: true; state: K1State } | { ok: false; reason: string; detail: string };
+  };
 
   'storage.getPreference': {
     request: Record<string, never>;

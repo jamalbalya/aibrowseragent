@@ -155,11 +155,38 @@ import { IdentityTransport } from '@/identity/identity-transport';
 import { loadIdentityConfig } from '@/identity/identity-config';
 import { DataStoragePreferenceStore } from '@/storage/data-storage-preference';
 import { applyLocalExport, buildLocalExport, parseLocalExport } from '@/storage/data-export';
+import { K1Store } from '@/crypto/k1-store';
+import { ProtectedStorageArea } from '@/crypto/protected-storage-area';
+import { protectExistingRecords, unprotectExistingRecords } from '@/crypto/protect-existing';
+import { K1AwareArea } from '@/crypto/k1-aware-area';
+import { UnlockError } from '@/crypto/passphrase-key';
 import type { ConnectedAccountView } from '@/messaging/protocol';
 
 const persistenceHealth = new PersistenceHealthStore(new NamespacedStorageArea(local, 'health'));
 const settingsStore = new SettingsStore(new NamespacedStorageArea(local, 'settings'));
-const credentialStore = new CredentialStore(local);
+/**
+ * Local encryption (K1), and the one store it protects.
+ *
+ * Provider API keys and connector credentials are the records whose
+ * disclosure costs the user something outside this extension — they are paid
+ * for, they reach services the extension has nothing to do with, and they may
+ * not be re-issuable. Everything else the extension persists is either
+ * already memory-only, or is the user's own work, which a passphrase prompt
+ * on every browser start would make worse rather than safer.
+ *
+ * `k1Durable` deliberately sits on the raw `local` area rather than a
+ * namespaced one, so the state flag and the wrapped key are plain records that
+ * the protected area never tries to decrypt. The unwrapped key lives in
+ * `session`, which Chrome holds in memory and never writes to disk.
+ */
+const k1 = new K1Store(local, session);
+const credentialStore = new CredentialStore(
+  local,
+  (area) => new K1AwareArea(area, k1, 'credentials'),
+);
+/** The same namespace without the protection, for switching K1 on and off. */
+const credentialPlainArea = CredentialStore.plainArea(local);
+const credentialProtectedArea = new ProtectedStorageArea(credentialPlainArea, k1, 'credentials');
 /**
  * Connected AI accounts, the identity profile, and where data should live.
  *
@@ -184,8 +211,17 @@ const dataStoragePreference = new DataStoragePreferenceStore(
  * it does not outlive the browser. Measured behaviour, not an assumption.
  */
 const sessionStore = new SessionStore(
-  new NamespacedStorageArea(local, 'identity-session'),
+  // The durable half holds a refresh token, which is a long-lived credential
+  // on disk and therefore exactly what K1 is for. The volatile half is already
+  // memory-only and has nothing to protect.
+  new K1AwareArea(new NamespacedStorageArea(local, 'identity-session'), k1, 'identity-session'),
   new NamespacedStorageArea(session, 'identity-session'),
+);
+const identitySessionPlainArea = new NamespacedStorageArea(local, 'identity-session');
+const identitySessionProtectedArea = new ProtectedStorageArea(
+  identitySessionPlainArea,
+  k1,
+  'identity-session',
 );
 
 const localIdentity = new LocalIdentityStore(new NamespacedStorageArea(local, 'identity-local'));
@@ -2361,6 +2397,149 @@ router.on('accounts.declineAssociation', async () => {
   await accountStore.declineAssociation(await currentAbaUserId());
   return { ok: true as const };
 });
+
+/* ------------------------------------------------------------------ *
+ * Local encryption (K1)
+ *
+ * What it protects: the provider API keys and connector credentials stored in
+ * this profile, against somebody who can read the profile directory — a
+ * stolen laptop, a synced backup, a shared machine.
+ *
+ * What it does not protect against, said here because the alternative is a
+ * false claim: anything running inside the extension while it is unlocked,
+ * and anything with the passphrase. There is no recovery. Nobody operates a
+ * service that could reset it, and adding one would put the thing the
+ * passphrase protects into somebody else's hands.
+ * ------------------------------------------------------------------ */
+
+router.on('k1.status', async () => await k1.status());
+
+router.on('k1.enable', async ({ passphrase }) => {
+  try {
+    const status = await k1.initialize(passphrase);
+    // Existing keys are encrypted in place, and each is proved readable in
+    // its new form before it counts. A failure here leaves that record as
+    // plaintext rather than as something nobody can read.
+    const outcome = await protectBoth();
+    if (outcome.failed > 0 || outcome.unreadable > 0) {
+      await persistenceHealth.report(
+        'storage',
+        'DEGRADED',
+        'some stored keys could not be encrypted',
+      );
+    }
+    return { ok: true as const, state: status.state, encrypted: outcome.encrypted };
+  } catch (error) {
+    return {
+      ok: false as const,
+      reason: 'ENABLE_FAILED',
+      detail: describeK1(error, 'Protection could not be switched on.'),
+    };
+  }
+});
+
+router.on('k1.unlock', async ({ passphrase }) => {
+  try {
+    const status = await k1.unlock(passphrase);
+    return { ok: true as const, state: status.state };
+  } catch (error) {
+    return {
+      ok: false as const,
+      reason: error instanceof UnlockError ? error.failure : 'UNLOCK_FAILED',
+      detail: describeK1(error, 'That passphrase did not unlock this installation.'),
+    };
+  }
+});
+
+router.on('k1.lock', async () => {
+  await k1.lock();
+  return await k1.status();
+});
+
+router.on('k1.disable', async ({ passphrase }) => {
+  try {
+    // Unlocked first, so switching off cannot be done by somebody who has the
+    // machine but not the passphrase — which would make the protection
+    // removable by exactly the person it exists to stop.
+    await k1.unlock(passphrase);
+    const restored = await unprotectBoth();
+    if (!restored.ok) {
+      return {
+        ok: false as const,
+        reason: 'UNREADABLE_RECORDS',
+        detail:
+          `${restored.unreadable} stored key(s) could not be read, so nothing was changed. ` +
+          'Remove those connections and try again.',
+      };
+    }
+    await k1.disable();
+    return { ok: true as const, state: 'OFF' as const };
+  } catch (error) {
+    return {
+      ok: false as const,
+      reason: error instanceof UnlockError ? error.failure : 'DISABLE_FAILED',
+      detail: describeK1(error, 'Protection could not be switched off.'),
+    };
+  }
+});
+
+/**
+ * Both protected namespaces, converted together.
+ *
+ * Separate areas rather than one, because they are separate stores with
+ * separate lifetimes — but a single decision, because "protection is on" has
+ * to mean the same thing for every record it covers. Half-converted is a state
+ * neither the user nor the code should have to reason about.
+ */
+async function protectBoth(): Promise<{
+  encrypted: number;
+  failed: number;
+  unreadable: number;
+}> {
+  const totals = { encrypted: 0, failed: 0, unreadable: 0 };
+  for (const [plain, guarded] of [
+    [credentialPlainArea, credentialProtectedArea],
+    [identitySessionPlainArea, identitySessionProtectedArea],
+  ] as const) {
+    const outcome = await protectExistingRecords(plain, guarded);
+    totals.encrypted += outcome.encrypted;
+    totals.failed += outcome.failed;
+    totals.unreadable += outcome.unreadable;
+  }
+  return totals;
+}
+
+async function unprotectBoth(): Promise<
+  { ok: true; decrypted: number } | { ok: false; unreadable: number }
+> {
+  let decrypted = 0;
+  for (const [plain, guarded] of [
+    [credentialPlainArea, credentialProtectedArea],
+    [identitySessionPlainArea, identitySessionProtectedArea],
+  ] as const) {
+    const outcome = await unprotectExistingRecords(plain, guarded);
+    // Refused as a whole: half a store decrypted, with the key about to be
+    // deleted, is worse than either end state.
+    if (!outcome.ok) return outcome;
+    decrypted += outcome.decrypted;
+  }
+  return { ok: true, decrypted };
+}
+
+/** A message a person can act on, and never the passphrase they typed. */
+function describeK1(error: unknown, fallback: string): string {
+  if (error instanceof UnlockError) {
+    switch (error.failure) {
+      case 'WRONG_PASSPHRASE':
+        return 'That passphrase is not the one this installation was protected with.';
+      case 'METADATA_CORRUPT':
+        return 'The protection key on this device is damaged and cannot be used.';
+      case 'UNSUPPORTED_VERSION':
+        return 'This data was protected by a newer version of AI Browser Agent.';
+    }
+  }
+  return error instanceof Error && error.message.length > 0 ? error.message : fallback;
+}
 
 router.on('storage.getPreference', async () => {
   const preference = await dataStoragePreference.get();

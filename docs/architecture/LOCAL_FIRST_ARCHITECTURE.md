@@ -306,6 +306,19 @@ no shipped UI writes through it.
 > reach the legacy provider write routes" and "a worker restart does not
 > resurrect a stale legacy connection".
 
+### Local encryption (K1)
+
+Provider credentials can be encrypted at rest behind a passphrase the user
+chooses and nothing stores. Off by default, opt-in, and covering the
+credentials rather than the whole extension — the reasoning, the threat model
+and what it explicitly does _not_ protect against are in
+[K1_LOCAL_ENCRYPTION.md](K1_LOCAL_ENCRYPTION.md).
+
+The short version: `chrome.storage.local` is a plaintext directory in the
+Chrome profile, an extension has no keychain, and a key kept beside the
+ciphertext protects nothing — so the only key material that helps is material
+the user supplies. There is no recovery, and no service that could provide one.
+
 ## 6. Optional authentication
 
 Google sign-in exists, and it is **optional in the strong sense**: the code

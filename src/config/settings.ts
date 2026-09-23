@@ -84,8 +84,21 @@ export interface StoredProviderConfig {
 export class CredentialStore {
   private readonly area: StorageArea;
 
-  constructor(backing: StorageArea) {
-    this.area = new NamespacedStorageArea(backing, 'credentials');
+  /**
+   * @param backing  the raw storage.
+   * @param protect  wraps the namespaced area, when K1 is switched on. Taken
+   *   as a function rather than a flag so this class never learns whether it
+   *   is writing ciphertext — which is what keeps the decision about *what* is
+   *   protected in one place rather than spread through every store that
+   *   happens to hold something sensitive.
+   */
+  constructor(backing: StorageArea, protect: (area: StorageArea) => StorageArea = (area) => area) {
+    this.area = protect(new NamespacedStorageArea(backing, 'credentials'));
+  }
+
+  /** The unwrapped namespace, for the migration that converts it in place. */
+  static plainArea(backing: StorageArea): StorageArea {
+    return new NamespacedStorageArea(backing, 'credentials');
   }
 
   getApiKey(providerId: string): Promise<string | undefined> {

@@ -342,6 +342,14 @@ export const PANEL_ROUTE_CLASSES: Record<PanelRequestType, RouteClass> = {
 
   'storage.getPreference': 'CLASS_E_PANEL_READ_ONLY',
   'storage.setPreference': 'CLASS_B_PANEL_CONTROL_PLANE',
+  // Switching protection on, unlocking it and changing the passphrase are
+  // decisions a person makes. A model that could make them could unlock the
+  // credentials it is not allowed to read.
+  'k1.status': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'k1.enable': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'k1.unlock': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'k1.lock': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'k1.disable': 'CLASS_B_PANEL_CONTROL_PLANE',
   // Moving a user's own data in or out is a control-plane act, not a read: an
   // import writes, and an export decides what leaves. Neither is CLASS_E, and
   // neither is reachable from a tool.
