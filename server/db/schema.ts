@@ -63,6 +63,21 @@ export interface UniqueSpec {
    * not collide into a single account.
    */
   readonly requires?: readonly string[];
+  /**
+   * Columns that must all be **absent** for the constraint to apply.
+   *
+   * The mirror of `requires`, and it exists for one reason: a uniqueness key
+   * may be correct for the kinds a column identifies and wrong for the kinds
+   * it merely describes. `auth_identity.email` is the identity for a kind
+   * that has no subject and display metadata for a kind that has one, so the
+   * key that enforces "one account per address" has to apply to the first and
+   * not to the second. Saying "where `subject` is null" states that in terms
+   * of the schema rather than by naming kinds, so a future subjectless kind
+   * is covered without editing this.
+   *
+   * Rendered and evaluated the same way `requires` is, from one declaration.
+   */
+  readonly requiresNull?: readonly string[];
   readonly why: string;
 }
 
@@ -279,7 +294,14 @@ const authIdentity: TableSpec = {
       name: 'auth_identity_email_key',
       columns: ['kind', 'email'],
       requires: ['email', 'email_verified'],
-      why: 'The same, for verified addresses. Unverified rows are excluded because an unverified address is a claim, not an identity — and two unverified claims on one address must not collide into a single account (AUTH-18).',
+      // Where the kind has a subject, the subject is the identity and this
+      // column is metadata (AUTH-29). A uniqueness key over metadata denies
+      // service on a value that authorises nothing: two distinct Google
+      // subjects can carry one address — a domain reassigns it, and our copy
+      // of the old holder's is never refreshed — and the second of them could
+      // then never sign in at all, while each attempt left an account behind.
+      requiresNull: ['subject'],
+      why: 'One ABA account per verified address, for the kinds where the address IS the identity. Unverified rows are excluded because an unverified address is a claim, not an identity (AUTH-18). Subject-bearing rows are excluded because there the address is metadata and the subject is the identity — uniqueness belongs on the authenticator, and auth_identity_subject_key already provides it (AUTH-29).',
     },
   ],
   foreignKeys: [

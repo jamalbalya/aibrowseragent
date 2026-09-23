@@ -43,10 +43,14 @@ function asRow(value: object): Row {
 
 /** Is every column a partial index requires present on this row? */
 function constraintApplies(row: Row, unique: UniqueSpec): boolean {
-  if (unique.requires === undefined) return true;
-  return unique.requires.every((name) => {
+  const present = (unique.requires ?? []).every((name) => {
     const value = row[name];
     return value !== null && value !== undefined && value !== false;
+  });
+  if (!present) return false;
+  return (unique.requiresNull ?? []).every((name) => {
+    const value = row[name];
+    return value === null || value === undefined;
   });
 }
 

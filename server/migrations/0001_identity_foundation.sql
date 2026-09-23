@@ -39,8 +39,8 @@ CREATE TABLE auth_identity (
 -- An external subject belongs to at most one ABA account. This constraint is what makes the identity-in-use refusal a database property rather than only an application check (AUTH-23).
 CREATE UNIQUE INDEX auth_identity_subject_key ON auth_identity (kind, subject) WHERE subject IS NOT NULL;
 
--- The same, for verified addresses. Unverified rows are excluded because an unverified address is a claim, not an identity — and two unverified claims on one address must not collide into a single account (AUTH-18).
-CREATE UNIQUE INDEX auth_identity_email_key ON auth_identity (kind, email) WHERE email IS NOT NULL AND email_verified;
+-- One ABA account per verified address, for the kinds where the address IS the identity. Unverified rows are excluded because an unverified address is a claim, not an identity (AUTH-18). Subject-bearing rows are excluded because there the address is metadata and the subject is the identity — uniqueness belongs on the authenticator, and auth_identity_subject_key already provides it (AUTH-29).
+CREATE UNIQUE INDEX auth_identity_email_key ON auth_identity (kind, email) WHERE email IS NOT NULL AND email_verified AND subject IS NULL;
 
 -- Listing an account's identities, and the unlink last-identity check.
 CREATE INDEX auth_identity_owner_idx ON auth_identity (aba_user_id);

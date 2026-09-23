@@ -171,8 +171,16 @@ describe('accounts and identities', () => {
   });
 
   describe('normaliseEmail', () => {
-    it('lowercases and trims', () => {
-      expect(normaliseEmail('  Person@Example.COM ')).toBe('person@example.com');
+    it('folds the domain, trims the ends, and leaves the local part alone', () => {
+      // The domain is a DNS name and is case-insensitive by definition. The
+      // local part is not: RFC 5321 reserves its interpretation to the
+      // destination host, so folding it would be a guess about somebody
+      // else's mail server — and a wrong guess merges two people.
+      expect(normaliseEmail('  Person@Example.COM ')).toBe('Person@example.com');
+      expect(normaliseEmail('PERSON@example.com')).not.toBe(normaliseEmail('person@example.com'));
+      // A quoted local part may contain an `@`; the domain is what follows
+      // the last one.
+      expect(normaliseEmail('"a@b"@Example.COM')).toBe('"a@b"@example.com');
     });
 
     it('leaves dots and plus-tags alone, because stripping them merges people', () => {

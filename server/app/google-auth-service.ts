@@ -30,7 +30,7 @@ import type { TokenDigest } from './token';
 import type { Clock } from '../domain/clock';
 import type { LoginChallengeRow, Store } from '../db/store';
 import type { AccountService } from './account-service';
-import type { IdentityService } from './identity-service';
+import { normaliseEmail, type IdentityService } from './identity-service';
 import type { IssuedSession, SessionService } from './session-service';
 import type { DeviceService } from './device-service';
 import { isDeviceId } from '../domain/ids';
@@ -233,7 +233,17 @@ export class GoogleAuthService {
     if (!verified.ok) return this.refuse('id_token_invalid');
 
     const resolution = await this.resolveAccount(verified.value.subject, {
-      email: verified.value.email,
+      // Canonicalised here, at the boundary where a provider's claim becomes
+      // an identity of ours.
+      //
+      // `verifyGoogleIdToken` reports what the token said, which is its job;
+      // the address it reports is whatever the domain provisioned, and a
+      // hosted domain may well provision `Alice@Corp.test`. `isUsable`
+      // refuses an address that is not already canonical, so passing the
+      // claim through untouched made every such sign-in fail with
+      // `INVALID_ARGUMENT` — a first-sign-in that could never succeed, for
+      // reasons having nothing to do with the user.
+      email: verified.value.email === null ? null : normaliseEmail(verified.value.email),
       emailVerified: verified.value.emailVerified,
     });
     if (!resolution.ok) {

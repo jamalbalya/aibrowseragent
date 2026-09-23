@@ -148,60 +148,84 @@ describe('google identity authority', () => {
     });
   });
 
-  it('E — linking stays explicit: a shared address links nothing by itself', async () => {
+  it('E — a shared address neither links nor blocks: the subject decides both', async () => {
     const alice = await account();
     const bob = await account();
     await backend.identities.attachIdentity(alice.principal, google('S_alice', 'shared@corp.test'));
 
     // Bob holds a session on his own account and completes a Google proof for
     // a different subject that happens to carry Alice's address. Both proofs
-    // are real; neither says anything about Alice's account.
+    // are real, and they are proofs about Bob — the address says nothing.
     const attempt = await backend.identities.attachIdentity(
       bob.principal,
       google('S_bob', 'shared@corp.test'),
     );
 
-    // Refused, cleanly — a domain refusal rather than a thrown constraint —
-    // and without naming the account on the other side (AUTH-28).
-    expect(attempt.ok).toBe(false);
-    if (attempt.ok) throw new Error('unreachable');
-    expect(attempt.error.code).toBe('IDENTITY_IN_USE');
-    expect(JSON.stringify(attempt.error)).not.toContain(alice.abaUserId);
-
-    // Nothing moved, nothing merged: two accounts, one identity each side of
-    // the refusal, and Alice's row still belongs to Alice.
+    // It succeeds, and it has to. S_bob is an identity nobody holds, so
+    // refusing it would deny Bob an account over a value that authorises
+    // nothing — which is what a uniqueness key on the address used to do.
+    expect(attempt.ok).toBe(true);
+    // Nothing merged and nothing moved: two accounts, one identity each,
+    // each subject resolving only to its own owner.
     expect(await ownerOf(google('S_alice', 'shared@corp.test'))).toBe(alice.abaUserId);
-    expect(await backend.store.listIdentities(bob.abaUserId)).toHaveLength(0);
+    expect(await ownerOf(google('S_bob', 'shared@corp.test'))).toBe(bob.abaUserId);
+    expect(await backend.store.listIdentities(alice.abaUserId)).toHaveLength(1);
+    expect(await backend.store.listIdentities(bob.abaUserId)).toHaveLength(1);
     expect(census.census().accounts).toBe(2);
-    expect(census.census().identities).toBe(1);
   });
 
-  it('G — a second Google subject on the same account is refused, never silently dropped', async () => {
-    const owner = await account();
-    await backend.identities.attachIdentity(owner.principal, google('S_alice', 'shared@corp.test'));
+  it('E2 — a subject already held elsewhere is still refused, naming nobody', async () => {
+    const alice = await account();
+    const bob = await account();
+    await backend.identities.attachIdentity(alice.principal, google('S_alice', 'alice@corp.test'));
 
-    // The account holds S_alice. A link is attempted for a *different* Google
-    // subject that carries the same address.
-    //
-    // Before the subject-only rule this returned success while writing
-    // nothing: resolution matched the address, saw the row already belonged
-    // to this account, and reported the idempotent no-op that a re-link is
-    // supposed to produce. The caller was told the link succeeded, the new
-    // subject was never attached, and signing in with it later would have
-    // produced a second account — a silent failure of a security-relevant
-    // operation, which is worse than a refusal.
+    // The other half of the rule. The address is not an identity, but the
+    // subject is — and one external subject belongs to at most one account
+    // (AUTH-23), enforced by the database rather than only by this service.
     const attempt = await backend.identities.attachIdentity(
-      owner.principal,
-      google('S_bob', 'shared@corp.test'),
+      bob.principal,
+      google('S_alice', 'someone.else@corp.test'),
     );
 
     expect(attempt.ok).toBe(false);
     if (attempt.ok) throw new Error('unreachable');
     expect(attempt.error.code).toBe('IDENTITY_IN_USE');
-    // And the account is exactly as it was: one identity, still S_alice.
+    expect(JSON.stringify(attempt.error)).not.toContain(alice.abaUserId);
+    expect(await backend.store.listIdentities(bob.abaUserId)).toHaveLength(0);
+    // Still Alice's, and still pointing at her.
+    expect(await ownerOf(google('S_alice', 'alice@corp.test'))).toBe(alice.abaUserId);
+  });
+
+  it('G — a second Google subject on the same account is attached, never silently dropped', async () => {
+    const owner = await account();
+    await backend.identities.attachIdentity(owner.principal, google('S_alice', 'shared@corp.test'));
+
+    // The account holds S_alice. A link is completed for a *different* Google
+    // subject that carries the same address — a second Google account on one
+    // ABA account, which is precisely what Model B is for.
+    //
+    // This is the case that was silently broken twice over. Resolution used
+    // to match the address, see the row already on this account and report
+    // the idempotent no-op a re-link is supposed to produce: success, with
+    // nothing written. Narrowing resolution to the subject then exposed a
+    // uniqueness key over the address, which refused it outright. Neither
+    // outcome attached S_bob, and signing in with it would have produced a
+    // separate account either way.
+    const attempt = await backend.identities.attachIdentity(
+      owner.principal,
+      google('S_bob', 'shared@corp.test'),
+    );
+
+    expect(attempt.ok).toBe(true);
+    if (!attempt.ok) throw new Error('unreachable');
+    expect(attempt.value.subject).toBe('S_bob');
+    // Both rows are present and both resolve to this one account.
     const rows = await backend.store.listIdentities(owner.abaUserId);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.subject).toBe('S_alice');
+    expect(rows.map((row) => row.subject).sort()).toEqual(['S_alice', 'S_bob']);
+    expect(await ownerOf(google('S_alice', 'shared@corp.test'))).toBe(owner.abaUserId);
+    expect(await ownerOf(google('S_bob', 'shared@corp.test'))).toBe(owner.abaUserId);
+    // One account, two identities — a link, not a second account.
+    expect(census.census()).toMatchObject({ accounts: 1, identities: 2 });
   });
 
   it('F — the same address on both kinds stays two accounts, each resolving to its own', async () => {

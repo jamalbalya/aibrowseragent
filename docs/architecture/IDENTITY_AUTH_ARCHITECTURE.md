@@ -718,9 +718,14 @@ is a known limitation rather than an omission, and it is deliberately not fixed
 by adding mutation semantics: the field is **not** an authenticator (§4.3
 rule 1, `AUTH-29`), so a stale value authorises nothing and can move no
 account. What it can do is show the wrong address in an identity list, which is
-a display defect to correct when that surface exists — at which point the
-refresh must also satisfy the `(kind, email)` unique index, since two Google
-identities may then carry the same address.
+a display defect to correct when that surface exists.
+
+A refresh is now unobstructed: the `(kind, email)` unique index no longer
+covers subject-bearing rows (§23), so updating one Google row's address cannot
+collide with another's. It remains unimplemented because nothing yet displays
+it, and adding a write path to a field that authorises nothing, ahead of a
+surface that would show it, buys nothing. When it is added it must go through
+`normaliseEmail`, exactly as the first insert does.
 
 ---
 
@@ -795,112 +800,177 @@ opaque below the `@`.
 
 The rest of the policy, item by item. Settled rows are enforced today by
 `normaliseEmail` and by `isUsable`, which refuses any assertion whose address
-is not already in normal form — so an unnormalised address cannot enter the
+is not already in canonical form — so an unnormalised address cannot enter the
 table by a side door.
 
-| Item                   | Policy                             | Status                                  |
-| ---------------------- | ---------------------------------- | --------------------------------------- |
-| domain case            | case-insensitive — folded to lower | **settled**, universally valid          |
-| surrounding whitespace | trimmed                            | **settled**                             |
-| `+tag` addressing      | **preserved.** Never stripped      | **settled** (provider-specific)         |
-| dots in the local part | **preserved.** Never stripped      | **settled** (provider-specific)         |
-| local-part case        | folded to lower today              | **OPEN — see below**                    |
-| interior whitespace    | —                                  | **OPEN.** Unspecified                   |
-| Unicode normalisation  | —                                  | **OPEN.** No NF\* form chosen           |
-| IDN / punycode         | —                                  | **OPEN.** No rule, no confusable policy |
+**Canonicalisation and validation are separate, deliberately.**
+`normaliseEmail` only ever transforms and never rejects; `isUsable` only ever
+rejects and never transforms. Keeping them apart is what stops "what an
+address means" from quietly becoming "what we were willing to accept".
 
-**The local-part case question, stated rather than settled.** Two authorities
-disagree and neither is obviously wrong.
+| Item                   | Policy                    | Kind       | Status                  |
+| ---------------------- | ------------------------- | ---------- | ----------------------- |
+| domain case            | folded to lower           | canonical  | **settled**             |
+| local-part case        | **preserved**             | canonical  | **settled** — see below |
+| surrounding whitespace | trimmed                   | canonical  | **settled**             |
+| interior whitespace    | **refused**               | validation | **settled** — see below |
+| `+tag` addressing      | preserved, never stripped | canonical  | **settled**             |
+| dots in the local part | preserved, never stripped | canonical  | **settled**             |
+| Unicode normalisation  | —                         | —          | **OPEN**                |
+| IDN / punycode         | —                         | —          | **OPEN**                |
 
-- `IDENTITY_AND_SYNC.md` §U specifies `email(uniq, lower)`, and the
-  implementation follows it: `normaliseEmail` is `trim().toLowerCase()`, so the
-  whole address including the local part is folded.
-- This section's own governing principle is that **not merging is the safe
-  failure**, and folding the local part _merges_: `Alice@x` and `alice@x`
-  become one identity. RFC 5321 §2.4 makes the local part case-sensitive and
-  reserves its interpretation to the destination host, so folding it is exactly
-  the kind of provider-specific assumption the paragraph above refuses for dots
-  and `+tags`.
+#### The local-part decision: preserved
 
-The trade is real in both directions: folding risks conflating two mailboxes on
-a server that distinguishes them; preserving splits one person into two
-accounts when they capitalise differently, which is the duplicate-account cost
-in §20.1. Essentially every large provider folds, and no large provider is
-known to rely on local-part case.
+**Only transformations that hold for every mail system are applied.** The
+domain is a DNS name and is case-insensitive by definition, so it folds. The
+local part is not: RFC 5321 §2.4 makes it case-sensitive and reserves its
+interpretation to the destination host, so folding it is a guess about
+somebody else's mail server.
 
-**This is a decision to take before the first email identity is written, not
-after.** The stored value is the unique key, so changing the rule later is a
-data migration over live identity rows and a window in which two rows can
-collide. Today there are none — no deployment, no email identities — so the
-decision is free now and is not free later.
+Almost every provider does fold — and "almost every" is exactly what makes it
+provider-specific rather than universal, which is the same test that keeps
+dots and `+tags` intact. The two failure modes are not symmetric:
 
-Whichever way it goes, the Google side is unaffected: an address is not an
-authenticator for a subject-bearing kind (§4.3 rule 1, `AUTH-29`).
+| Folding the local part                                                                      | Preserving it                                                                               |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| on a host that distinguishes them, **merges two people into one account**                   | on the overwhelmingly common case-insensitive host, **splits one person into two accounts** |
+| unrecoverable — the merged account cannot be un-merged, and merge is not implemented anyway | visible, and repairable by the explicit link flow (§20)                                     |
+| an account-confusion failure                                                                | a duplicate-account failure, already named as Model B's known cost (§20.1)                  |
 
-### 8.5 Email identity policy
+Not merging is the safe failure, so the local part is preserved. This
+supersedes `IDENTITY_AND_SYNC.md` §U's `email(uniq, lower)`, which specified a
+whole-address fold; the uniqueness half of that line is unchanged.
 
-What an `auth_identity` of kind `email` is, and what is not yet decided about
-it. **No part of this is implemented.**
+**The provider-dependent aspect, recorded rather than resolved.** On a
+provider that treats the local part case-insensitively — which is nearly all
+of them — one human who types `Alice@x` on Monday and `alice@x` on Tuesday
+gets two ABA accounts. That is a real cost and it is accepted, because the
+alternative risks the unrecoverable failure. The mitigations are the link flow
+and, as a product decision rather than an identity-semantics one, telling a
+user at sign-in when an address differing only by case already exists.
 
-| Question                          | Answer                                                                                                                          | Status      |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| canonical identifier              | the normalised address in `auth_identity.email`, with `kind='email'` and `subject` null                                         | **settled** |
-| uniqueness scope                  | `(kind, email)` where verified — per-kind, never global (§4.3 rule 2, §23)                                                      | **settled** |
-| verification requirement          | `email_verified` is true only after a completed OTP proof; an unverified address is never written as an identity (`AUTH-18`)    | **settled** |
-| a separate user table for email   | **no.** One `aba_user`, one `auth_identity` table, one `session` table, one device model. Email changes the proof, nothing else | **settled** |
-| display address stored separately | no column exists                                                                                                                | **OPEN**    |
-| email change semantics            | see below                                                                                                                       | **OPEN**    |
+> **A delivery rule this forces, and it is not optional.** An OTP must be sent
+> to the **canonical** address, never to the string the user typed. Sending to
+> the typed form would prove control of one mailbox and then bind the identity
+> to a different one — which is the takeover any canonicalisation scheme has
+> to close, whichever form it chooses.
 
-The display-address question is **coupled to the local-part decision in §8.3**:
-if the local part is folded, the address the user typed is not recoverable from
-the row, and a second column is the only way to show it back to them. If it is
-preserved, there is nothing to store separately. Decide §8.3 first.
+#### Interior whitespace: refused, as validation
 
-**Email change — the candidate rule, not yet ratified.** When a verified
-address changes from `old@` to `new@`, the two available shapes are to mutate
-the row after a fresh proof, or to attach a new identity and remove the old
-one. The architecture does not name this operation, but it does not have to:
-for `kind='email'` the address **is** the identity, so changing it is not an
-attribute update — it is a different identity. Read that way, §20 already
-governs it and no new rule is needed:
+A space inside an address is either a typo or a quoted local part, and the two
+are indistinguishable from the server. Stripping it would silently turn one
+address into a different one and then send a proof of control to whichever
+mailbox the edited version reaches, so this is **validation, and the answer is
+no** rather than a guess. It is refused in `isUsable`, not removed in
+`normaliseEmail`.
 
-- attaching `new@` is a **link**: an authenticated session on the account plus
-  a fresh proof of control of `new@` (§20.4);
-- removing `old@` is an **unlink**, and therefore refused if it would leave the
-  account with no verified method (`AUTH-25`);
-- `abaUserId` does not change, nothing is re-encrypted, no record moves
-  (`AUTH-24`);
-- sessions established through `old@` are revoked when it is unlinked (§20.7).
+#### Unicode and IDN: OPEN, and blocking
 
-A mutate-in-place would bypass all four — in particular `AUTH-25`, since an
-in-place edit never looks like a removal. That asymmetry is the argument, and
-it is why this is recorded as the candidate rather than left blank. It is
-**OPEN pending ratification**, and nothing is implemented against it.
+No normalisation form is chosen, no punycode rule is chosen, and no confusable
+policy is invented here. **These must be decided before production email
+authentication**, and specifically:
 
-**OTP transient data.** The client's classification table has one transient
-authentication kind, `oauth-transient`, described as "PKCE verifier, state,
-nonce". An email OTP challenge is not OAuth, but it is the same thing in every
-way the table cares about: single-use, TTL-bounded, memory-backed and
-`NEVER_PERSISTED`. The determination is therefore to **widen the existing kind
-to a method-neutral name rather than add a second one** — a second kind
-carrying an identical classification would state no new fact, and the existing
-name has only two references, both in `data-classification.ts`. Not applied
-here, because a renamed kind with no OTP code to consume it is churn ahead of
-the work.
+1. whether Unicode local parts are accepted at all, or refused as validation;
+2. whether Unicode domains are accepted, and if so whether the stored
+   canonical form is U-label or A-label (punycode) — one of the two, never
+   both, or the same address has two rows;
+3. which normalisation form applies if Unicode is accepted (NFC is the usual
+   answer; it is not chosen here), and that it must be applied before the
+   uniqueness key sees the value;
+4. whether confusable/homograph detection is required, and if so whether it
+   refuses or merely warns — a merging answer here is subject to exactly the
+   argument above;
+5. whether the answer differs for the local part and the domain.
 
-### 8.4 Account enumeration
+Until these are decided, an implementation must **refuse** non-ASCII addresses
+rather than guess at a canonical form for them. Refusing is reversible; a
+wrong canonical form written into the uniqueness key is not.
 
-`POST /v1/auth/start` returns the **same status, same body and same timing
-envelope** whether or not the address has an account. A code is sent only when
-an account exists or is being created, but the response cannot tell them apart.
+### 8.5 Email identity policy — RESOLVED
 
-| Leak                            | Control                                                                         |
-| ------------------------------- | ------------------------------------------------------------------------------- |
-| differing status or body        | one response shape, always                                                      |
-| differing latency               | the response does not wait on mail delivery; sending is queued after responding |
-| differing error on verify       | wrong code, expired challenge and consumed challenge are one error code (§24)   |
-| rate-limit messages             | never say _why_ a limit was hit                                                 |
-| `GET /v1/me` on another account | `NOT_FOUND`, never a distinguishable authorization error (§19, Cloud Sync §15)  |
+What an `auth_identity` of kind `email` is. **No part of the OTP flow is
+implemented.**
+
+| Question                           | Answer                                                                                                                       | Status       |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| canonical identifier               | the canonical address in `auth_identity.email`, with `kind='email'` and `subject` null                                       | **settled**  |
+| uniqueness scope                   | `(kind, email)` where verified **and `subject` is null** — per-kind, never global (§4.3 rule 2, §23)                         | **settled**  |
+| verification requirement           | `email_verified` is true only after a completed OTP proof; an unverified address is never written as an identity (`AUTH-18`) | **settled**  |
+| a separate user table for email    | **no.** One `aba_user`, one `auth_identity`, one `session`, one device model. Email changes the proof and nothing else       | **settled**  |
+| a separate account or session type | **no**                                                                                                                       | **settled**  |
+| `canonical_email` column           | **not needed.** `email` **is** the canonical column; the name stays                                                          | **settled**  |
+| `display_email` column             | **not needed** — see below                                                                                                   | **settled**  |
+| email change semantics             | link then unlink — see below                                                                                                 | **RATIFIED** |
+
+#### No display address column
+
+A second column would be needed only if the canonical form were lossy in a way
+a user would notice. Under §8.3 it is not: the local part is preserved byte for
+byte, and the only transformations are trimming and folding a DNS name that is
+case-insensitive by definition. `alice@EXAMPLE.com` displayed back as
+`alice@example.com` is the same address, correctly spelled.
+
+So `email` is both the identity and the display value, and no duplicate of a
+PII field is stored. **This conclusion depends on the §8.3 decision**: had the
+local part been folded, the typed form would have been unrecoverable and a
+second column would have been the only way to show it back.
+
+#### Email change: link, then unlink — RATIFIED
+
+For `kind='email'` the address **is** the identity, so changing it is not an
+attribute update; it is a different identity. §20 therefore already governs it
+and no new rule is added:
+
+| Step                  | Rule that applies                                                                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| attach `new@`         | a **link**: authenticated session on the account **plus** a fresh proof of control of `new@` (§20.4)                                                         |
+| `new@` held elsewhere | refused, naming no account (§20.4.1, `AUTH-28`)                                                                                                              |
+| remove `old@`         | an **unlink**, refused if it would leave the account with no verified method (`AUTH-25`)                                                                     |
+| `abaUserId`           | unchanged (`AUTH-24`)                                                                                                                                        |
+| sessions              | those established through `old@` are revoked when it is unlinked (§20.7); others survive                                                                     |
+| uniqueness            | both rows coexist between the two steps, which the `(kind, email)` key permits — they are different addresses                                                |
+| auditability          | `linked_at` and `linked_via` record the attach; the unlink is the removal of a row that was there                                                            |
+| concurrency           | the link is decided by the unique index, so two concurrent attempts cannot both create `new@`; the unlink re-checks the last-identity rule against live rows |
+
+**Mutation-in-place is rejected**, and the reason is not neatness. An in-place
+edit never looks like a removal, so it would bypass `AUTH-25` entirely — an
+account could edit its way to an address the user no longer controls and be
+left with no verified method and no refusal. It would also make the change
+unauditable, since the row would carry no trace of what it used to be, and it
+would give the unlink's session-revocation rule nothing to fire on.
+
+**Ordering is link-then-unlink, never the reverse.** Unlinking first can strip
+the account's last verified method before the replacement exists, which is the
+state `AUTH-25` exists to prevent.
+
+Not implemented. The flow, its endpoints and its UI belong to a later phase.
+
+#### OTP transient classification — CONFIRMED
+
+The client's classification table (`src/storage/data-classification.ts`) has
+one transient authentication kind, `oauth-transient`, covering the PKCE
+verifier, `state` and `nonce`, classified `NEVER_PERSISTED`.
+
+**A future OTP implementation must use that existing kind, not a second one.**
+An email OTP challenge id and code are single-use, TTL-bounded, memory-backed
+and never written to disk — identical in every respect the table encodes, so a
+second kind would state no new fact while adding a row that must be kept in
+step. The kind's _name_ should widen to something method-neutral at the same
+time; renaming it now, with no OTP code to consume it, is churn ahead of the
+work.
+
+The exact contract the OTP implementation must satisfy:
+
+| Value                       | Classification                                                      |
+| --------------------------- | ------------------------------------------------------------------- |
+| OTP code (in transit/entry) | `NEVER_PERSISTED` — never written to `chrome.storage`, never logged |
+| challenge id                | `NEVER_PERSISTED`                                                   |
+| the address being verified  | `identity-profile` once verified; never persisted before that       |
+| `otp_hash`                  | server-side only; never reaches the client in any form              |
+
+`AUTH-17` already forbids any authentication artefact — the OTP named
+explicitly — from reaching a task, workflow, shortcut, workspace, sync,
+evidence or audit record.
 
 ---
 
@@ -1268,6 +1338,34 @@ implements `DELETE /v1/me`, and these are its inputs:**
 | Cloud Sync records   | delete with tombstones | not implemented; no upload path exists                                                                                                                                         |
 | K1 material          | server holds none      | local ciphertext survives until the local wipe and stays decryptable with the recovery key                                                                                     |
 | audit / history      | —                      | **unresolved.** §25 sets retention windows; whether a deletion leaves an auditable trace beyond the tombstone is not stated, and the tombstone deliberately carries no content |
+
+**The decisions required before `DELETE /v1/me` can be implemented**, none of
+which this document settles:
+
+1. **Does deletion free the identifiers?** Hard-deleting `auth_identity` lets
+   the same Google subject or address create a new account later; retaining
+   them burns both forever. §15.1 says hard delete; the consequence needs
+   ratifying rather than inheriting.
+2. **Immediate or cancellable?** §29 Q2, still open. The 30-day tombstone is a
+   replay-safety record and is **not** a recovery window; treating it as one
+   would promise a recovery that does not exist.
+3. **What is auditable afterwards?** The tombstone carries no content by
+   design, so a deletion currently leaves no reconstructable trace. Whether
+   that is the requirement, or whether a content-free deletion log is needed,
+   is unanswered — and it is the one item with no partial answer anywhere.
+4. **Sessions: revoked or deleted?** §15.1 says deleted; today they are
+   revoked and retained. Whichever is chosen, `ACCOUNT_DELETED` must stay
+   answerable, which the tombstone provides.
+5. **Is the local wipe sequenced with it?** §15.2 is explicitly separate, and
+   backend deletion cannot reach browser storage. The product question is
+   whether the UI offers both together and states which does what — saying
+   "your data is deleted" while a provider API key remains on disk would be a
+   lie.
+6. **Re-authentication window.** §15.1 requires a live proof within five
+   minutes; nothing implements a freshness check yet, and it is the only
+   authorization control the operation has.
+
+Until 1 and 3 are answered, deletion stays deferred.
 
 ### 15.3 Relationships
 
@@ -1874,8 +1972,9 @@ acceptable at implementation time.
 | `linked_via`     | text null   | the `session.id` that performed the link; null for the identity the account was created with. **Audit only**, never an authorization input |
 | `last_used_at`   | timestamptz | for display and for stale-identity review only                                                                                             |
 
-Indexes: unique `(kind, subject)`, unique `(kind, email)`, and `(aba_user_id)`
-for listing. **Sensitive:** `email` and `subject` are PII. Retention: §25.
+Indexes: unique `(kind, subject)` where `subject` is not null, unique
+`(kind, email)` where the address is verified **and `subject` is null**, and
+`(aba_user_id)` for listing. **Sensitive:** `email` and `subject` are PII. Retention: §25.
 **Deletion:** hard-deleted on account deletion (§15.1).
 
 **This shape already carries the resolved linking policy, unchanged.** It is
@@ -1885,10 +1984,42 @@ account are two ordinary rows: **§20 requires no schema change**, and
 
 Two constraints hold the security property, and neither may be relaxed:
 
-| Constraint                                          | What it enforces                                                                                                                                                                                                                  |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| unique `(kind, subject)` and unique `(kind, email)` | an external identity belongs to **at most one** ABA account. A link naming one already attached elsewhere cannot be written at all, so §20.4.1's refusal is a database property rather than only an application check (`AUTH-23`) |
-| **no** unique constraint on `aba_user_id`           | many identities per account. Model A would have added one here, and adding one later would break every linked account                                                                                                             |
+| Constraint                                         | What it enforces                                                                                                                                                                                                                 |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| unique `(kind, subject)`                           | an external subject belongs to **at most one** ABA account. A link naming one already attached elsewhere cannot be written at all, so §20.4.1's refusal is a database property rather than only an application check (`AUTH-23`) |
+| unique `(kind, email)` **where `subject` is null** | the same, for the kinds where the address **is** the identity                                                                                                                                                                    |
+| **no** unique constraint on `aba_user_id`          | many identities per account. Model A would have added one here, and adding one later would break every linked account                                                                                                            |
+
+#### Why the email key excludes subject-bearing rows
+
+**A uniqueness key belongs on a kind's authenticator, never on its metadata.**
+Under §4.3 rule 1 a Google identity is its subject and the address merely
+travels with it, so a key covering `(kind='google', email)` gives an
+identity-defining role to a value that authorises nothing.
+
+The cost of getting this wrong was not theoretical. Two distinct Google
+subjects can carry one address — a domain reassigns it, and our copy of the
+previous holder's is never refreshed (§7.6) — and while the key covered them:
+
+- the second subject **could never sign in**, permanently, because nothing
+  ever stops the stale row holding the address;
+- every attempt still created an `aba_user` before the identity insert failed,
+  so a user retrying a sign-in that cannot succeed left an empty account behind
+  each time;
+- and a second Google identity could not be linked to an account that already
+  held one carrying the same address, which is an ordinary Model B link.
+
+Excluding them removes all three and weakens nothing: `AUTH-23` for Google is
+carried entirely by `(kind, subject)`, which is untouched, and for email by
+`(kind, email)`, which still applies because an email identity has no subject.
+The predicate is written as `subject IS NULL` rather than `kind = 'email'` so
+that any future subjectless kind is covered without editing it.
+
+> Evidence: `server-google-security` "signs in a new subject whose address an
+> older account still records"; `server-google-identity-authority` E, E2, G.
+> The schema descriptor expresses it as `requiresNull: ['subject']`, which
+> `sql.ts` renders into the partial index and `memory-store.ts` enforces from
+> the same declaration.
 
 There is deliberately **no** `merge_source` column, no `previous_aba_user_id`
 and no nullable owner. A row's `aba_user_id` is written once at creation and is
@@ -2046,37 +2177,38 @@ it.
 Written in the style of the repository's existing invariants, so each is a test
 rather than a sentiment.
 
-| #           | Invariant                                                                                                                                                                                                                               |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **AUTH-1**  | One ABA account has exactly one durable `abaUserId`; the backend is its only source, and a known identity never produces a new one.                                                                                                     |
-| **AUTH-2**  | An authentication session is not the ABA identity: no session value is an input to `abaUserId`, and ending a session does not end the account.                                                                                          |
-| **AUTH-3**  | A valid authenticated session, alone, decrypts nothing. No endpoint returns plaintext of a K1-protected record.                                                                                                                         |
-| **AUTH-4**  | The recovery key never reaches the backend, in any encoding, hashed or as a verifier; no stored value is a function of it.                                                                                                              |
-| **AUTH-5**  | No provider API key, OAuth secret or credential fragment appears in any authentication request, response, or backend log.                                                                                                               |
-| **AUTH-6**  | No provider credential is an input to `abaUserId`, `deviceId`, a session token, or any K1 key.                                                                                                                                          |
-| **AUTH-7**  | No Chrome runtime identifier — extension id, `tabId`, `windowId`, `tabGroupId` — is an input to `abaUserId` or `deviceId`, and none appears in an authentication payload.                                                               |
-| **AUTH-8**  | Cross-user access is rejected server-side: `abaUserId` comes from the session, no endpoint accepts it as a parameter, and another user's record is `NOT_FOUND`.                                                                         |
-| **AUTH-9**  | Logout, session expiry, revocation and a lapsed grace delete no user work — local or cloud — and delete no provider credential.                                                                                                         |
-| **AUTH-10** | An authentication outage never rotates, recreates or re-resolves `abaUserId`.                                                                                                                                                           |
-| **AUTH-11** | Extension reinstall followed by authentication with the same identity yields the same `abaUserId` — never a new one.                                                                                                                    |
-| **AUTH-12** | Provider API keys are never restored from the cloud: no response field on any endpoint is capable of carrying one.                                                                                                                      |
-| **AUTH-13** | Account deletion is the only normal destructive account operation, and it requires re-authentication within the last five minutes.                                                                                                      |
-| **AUTH-14** | A revoked session and a deleted account are never treated as an outage: an authenticated rejection never enters `offline_grace`.                                                                                                        |
-| **AUTH-15** | No password-hashing primitive (Argon2id, scrypt, PBKDF2, bcrypt) runs in the extension, and the CSP remains `script-src 'self'; object-src 'self'` with no `wasm-unsafe-eval`.                                                          |
-| **AUTH-16** | A refresh token is single-use; presenting a rotated one revokes the entire session family.                                                                                                                                              |
-| **AUTH-17** | No authentication artefact — access token, refresh token, `state`, `nonce`, PKCE verifier, OTP — is written into a task, workflow, shortcut, workspace, sync, evidence or audit record.                                                 |
-| **AUTH-18** | An unverified email never matches an existing account and never becomes a linked identity.                                                                                                                                              |
-| **AUTH-19** | `/auth/start` responses do not vary on whether an account exists.                                                                                                                                                                       |
-| **AUTH-20** | A `deviceId` authorises nothing: no endpoint grants access on the basis of one, and no device's state authorises another device.                                                                                                        |
-| **AUTH-21** | Authentication requests no new Chrome permission; `chrome.identity` is not used.                                                                                                                                                        |
-| **AUTH-22** | Two ABA accounts are never merged — automatically or otherwise. Linking requires an authenticated session on the target account **and** a fresh proof of control of the identity being added; neither alone suffices.                   |
-| **AUTH-23** | An external identity belongs to at most one ABA account. A link naming one already attached elsewhere is refused, and no identity row's `aba_user_id` is ever updated.                                                                  |
-| **AUTH-24** | Linking and unlinking change `abaUserId` for nobody, rotate no key, expose no recovery key, re-encrypt no record, duplicate no record, and move no record between accounts.                                                             |
-| **AUTH-25** | An identity cannot be unlinked if it would leave the account with no verified authentication method.                                                                                                                                    |
-| **AUTH-26** | Unlinking is not account deletion: it removes no work, no cloud record, no device row, no provider credential and no account.                                                                                                           |
-| **AUTH-27** | Account ownership is proved only by completing an authentication flow. A matching email string, a display name, provider metadata, the browser profile, local extension state, a `deviceId` and the K1 recovery key each prove nothing. |
-| **AUTH-28** | A link refusal does not reveal which account holds the identity, or that any particular account exists.                                                                                                                                 |
-| **AUTH-29** | An authentication kind that carries a subject resolves by that subject alone: a verified email address is never a fallback when the subject does not match. Identity lookup by address is scoped to the same kind, in both directions.  |
+| #           | Invariant                                                                                                                                                                                                                                                                   |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **AUTH-1**  | One ABA account has exactly one durable `abaUserId`; the backend is its only source, and a known identity never produces a new one.                                                                                                                                         |
+| **AUTH-2**  | An authentication session is not the ABA identity: no session value is an input to `abaUserId`, and ending a session does not end the account.                                                                                                                              |
+| **AUTH-3**  | A valid authenticated session, alone, decrypts nothing. No endpoint returns plaintext of a K1-protected record.                                                                                                                                                             |
+| **AUTH-4**  | The recovery key never reaches the backend, in any encoding, hashed or as a verifier; no stored value is a function of it.                                                                                                                                                  |
+| **AUTH-5**  | No provider API key, OAuth secret or credential fragment appears in any authentication request, response, or backend log.                                                                                                                                                   |
+| **AUTH-6**  | No provider credential is an input to `abaUserId`, `deviceId`, a session token, or any K1 key.                                                                                                                                                                              |
+| **AUTH-7**  | No Chrome runtime identifier — extension id, `tabId`, `windowId`, `tabGroupId` — is an input to `abaUserId` or `deviceId`, and none appears in an authentication payload.                                                                                                   |
+| **AUTH-8**  | Cross-user access is rejected server-side: `abaUserId` comes from the session, no endpoint accepts it as a parameter, and another user's record is `NOT_FOUND`.                                                                                                             |
+| **AUTH-9**  | Logout, session expiry, revocation and a lapsed grace delete no user work — local or cloud — and delete no provider credential.                                                                                                                                             |
+| **AUTH-10** | An authentication outage never rotates, recreates or re-resolves `abaUserId`.                                                                                                                                                                                               |
+| **AUTH-11** | Extension reinstall followed by authentication with the same identity yields the same `abaUserId` — never a new one.                                                                                                                                                        |
+| **AUTH-12** | Provider API keys are never restored from the cloud: no response field on any endpoint is capable of carrying one.                                                                                                                                                          |
+| **AUTH-13** | Account deletion is the only normal destructive account operation, and it requires re-authentication within the last five minutes.                                                                                                                                          |
+| **AUTH-14** | A revoked session and a deleted account are never treated as an outage: an authenticated rejection never enters `offline_grace`.                                                                                                                                            |
+| **AUTH-15** | No password-hashing primitive (Argon2id, scrypt, PBKDF2, bcrypt) runs in the extension, and the CSP remains `script-src 'self'; object-src 'self'` with no `wasm-unsafe-eval`.                                                                                              |
+| **AUTH-16** | A refresh token is single-use; presenting a rotated one revokes the entire session family.                                                                                                                                                                                  |
+| **AUTH-17** | No authentication artefact — access token, refresh token, `state`, `nonce`, PKCE verifier, OTP — is written into a task, workflow, shortcut, workspace, sync, evidence or audit record.                                                                                     |
+| **AUTH-18** | An unverified email never matches an existing account and never becomes a linked identity.                                                                                                                                                                                  |
+| **AUTH-19** | `/auth/start` responses do not vary on whether an account exists.                                                                                                                                                                                                           |
+| **AUTH-20** | A `deviceId` authorises nothing: no endpoint grants access on the basis of one, and no device's state authorises another device.                                                                                                                                            |
+| **AUTH-21** | Authentication requests no new Chrome permission; `chrome.identity` is not used.                                                                                                                                                                                            |
+| **AUTH-22** | Two ABA accounts are never merged — automatically or otherwise. Linking requires an authenticated session on the target account **and** a fresh proof of control of the identity being added; neither alone suffices.                                                       |
+| **AUTH-23** | An external identity belongs to at most one ABA account. A link naming one already attached elsewhere is refused, and no identity row's `aba_user_id` is ever updated.                                                                                                      |
+| **AUTH-24** | Linking and unlinking change `abaUserId` for nobody, rotate no key, expose no recovery key, re-encrypt no record, duplicate no record, and move no record between accounts.                                                                                                 |
+| **AUTH-25** | An identity cannot be unlinked if it would leave the account with no verified authentication method.                                                                                                                                                                        |
+| **AUTH-26** | Unlinking is not account deletion: it removes no work, no cloud record, no device row, no provider credential and no account.                                                                                                                                               |
+| **AUTH-27** | Account ownership is proved only by completing an authentication flow. A matching email string, a display name, provider metadata, the browser profile, local extension state, a `deviceId` and the K1 recovery key each prove nothing.                                     |
+| **AUTH-28** | A link refusal does not reveal which account holds the identity, or that any particular account exists.                                                                                                                                                                     |
+| **AUTH-29** | An authentication kind that carries a subject resolves by that subject alone: a verified email address is never a fallback when the subject does not match. Identity lookup by address is scoped to the same kind, in both directions.                                      |
+| **AUTH-30** | A uniqueness constraint covers a kind's authoritative identifier and nothing else. An address is unique per kind only where it **is** the identity; where a subject exists, the address is metadata and constrains nothing, so two distinct subjects may carry one address. |
 
 ---
 

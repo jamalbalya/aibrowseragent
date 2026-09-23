@@ -432,4 +432,58 @@ describe('Google sign-in, adversarial', () => {
       expect(identities[0]?.subject).toBe('google-subject-1');
     });
   });
+
+  /**
+   * Two first-sign-ins that could not succeed, and the reason both traced to
+   * treating an address as though it identified a Google account.
+   */
+  describe('an address does not decide a Google sign-in', () => {
+    it('signs in a domain-provisioned address that is not already lowercase', async () => {
+      const backend = build();
+      subject = 'workspace-subject';
+      // A hosted domain may provision exactly this. `verifyGoogleIdToken`
+      // reports what the token said, which is its job; canonicalising is the
+      // caller's, and until it did, `isUsable` refused the assertion and this
+      // user could never complete a first sign-in.
+      emailClaim = { email: 'Alice@Corp.test', email_verified: true };
+
+      const result = await signIn(backend);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok || !result.exchange.ok) throw new Error('unreachable');
+      const identities = await backend.store.listIdentities(
+        result.exchange.value.session.abaUserId,
+      );
+      // Stored in canonical form: the domain folded, the local part intact.
+      expect(identities[0]?.email).toBe('Alice@corp.test');
+      expect(identities[0]?.subject).toBe('workspace-subject');
+    });
+
+    it('signs in a new subject whose address an older account still records', async () => {
+      const backend = build();
+      // Alice signs in. Our copy of her address is never refreshed afterwards.
+      subject = 'subject-alice';
+      emailClaim = { email: 'alice@corp.test', email_verified: true };
+      const first = await signIn(backend);
+      if (!first.ok || !first.exchange.ok) throw new Error('unreachable');
+
+      // The domain reassigns the address to Bob, who has a Google account of
+      // his own and therefore a different subject.
+      subject = 'subject-bob';
+      const second = await signIn(backend);
+
+      // Bob gets an account. He must: his subject belongs to nobody, and the
+      // address authorises nothing (AUTH-29). While a uniqueness key covered
+      // the address this refused, permanently — Alice's stale row would never
+      // stop holding it.
+      expect(second.ok).toBe(true);
+      if (!second.ok || !second.exchange.ok) throw new Error('unreachable');
+      const bob = second.exchange.value.session.abaUserId;
+      const alice = first.exchange.value.session.abaUserId;
+      expect(bob).not.toBe(alice);
+      // And he did not land in Alice's: two accounts, one identity each.
+      expect(await backend.store.listIdentities(alice)).toHaveLength(1);
+      expect(await backend.store.listIdentities(bob)).toHaveLength(1);
+    });
+  });
 });

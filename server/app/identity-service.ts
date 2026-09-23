@@ -55,16 +55,55 @@ export interface VerifiedIdentity {
 }
 
 /**
- * Normalises an address for comparison.
+ * Canonicalises an address for comparison: **the domain folds, the local part
+ * does not.**
  *
- * Lowercased whole, and **nothing else**. No dot stripping, no `+tag`
- * removal: those are provider-specific rules, and applying Gmail's to a
- * domain that treats the forms as distinct merges two people. Not merging is
- * the safe failure, so the local part is treated as opaque.
+ * Only transformations that are true for every mail system are applied, and
+ * exactly two are: surrounding whitespace is not part of an address, and the
+ * domain is a DNS name, which is case-insensitive by definition. Everything
+ * left of the last `@` is carried through byte for byte.
+ *
+ * **Why the local part is not folded.** RFC 5321 §2.4 makes it case-sensitive
+ * and reserves its interpretation to the destination host, so folding it is a
+ * guess about somebody else's mail server. Almost every provider does fold —
+ * but "almost every" is what makes it provider-specific rather than
+ * universal, and the two failure modes are not symmetric:
+ *
+ *  - folding a domain that distinguishes `Alice@x` from `alice@x` **merges two
+ *    people into one account**, which is unrecoverable and is the failure this
+ *    design refuses everywhere else;
+ *  - not folding, on the overwhelmingly common case-insensitive host, **splits
+ *    one person into two accounts** — visible, annoying, and repairable by the
+ *    explicit link flow (§20).
+ *
+ * Not merging is the safe failure, so the same rule that keeps dots and
+ * `+tags` intact keeps case intact: no dot stripping, no `+tag` removal, no
+ * case folding below the `@`. The local part is opaque.
+ *
+ * **This is canonicalisation, not validation.** It never rejects and never
+ * removes anything a caller might have meant; `isUsable` does the refusing,
+ * and the two are kept apart so that "what an address means" cannot quietly
+ * become "what we were willing to accept".
  */
 export function normaliseEmail(value: string): string {
-  return value.trim().toLowerCase();
+  const trimmed = value.trim();
+  // The **last** `@`: a quoted local part may legally contain one, and the
+  // domain is what follows the final separator.
+  const at = trimmed.lastIndexOf('@');
+  if (at <= 0 || at === trimmed.length - 1) return trimmed;
+  return `${trimmed.slice(0, at)}${trimmed.slice(at).toLowerCase()}`;
 }
+
+/**
+ * Interior whitespace is **refused, not removed**.
+ *
+ * A space inside an address is either a typo or a quoted local part, and the
+ * two are indistinguishable from here. Stripping it would silently turn one
+ * address into a different one and then send a proof of control to whichever
+ * mailbox the edited version reaches — so this is validation, and the answer
+ * is no rather than a guess.
+ */
+const INTERIOR_WHITESPACE = /\s/u;
 
 /** What `resolveIdentity` found. */
 export type IdentityResolution =
@@ -281,8 +320,14 @@ export class IdentityService {
     if (verified.subject === null && verified.email === null) return false;
     if (verified.email !== null) {
       if (!verified.emailVerified) return false;
+      // Already canonical. A caller that has not applied `normaliseEmail` is
+      // handing over an address this service would store under a different
+      // key than it compares with.
       if (verified.email !== normaliseEmail(verified.email)) return false;
       if (verified.email.length === 0) return false;
+      // Validation, deliberately after canonicalisation: `normaliseEmail`
+      // trims the ends, so anything left is interior and is refused.
+      if (INTERIOR_WHITESPACE.test(verified.email)) return false;
     }
     if (verified.subject !== null && verified.subject.length === 0) return false;
     return true;

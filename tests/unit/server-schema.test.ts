@@ -176,8 +176,13 @@ describe('migrations', () => {
     expect(sql).toContain(
       'CREATE UNIQUE INDEX auth_identity_subject_key ON auth_identity (kind, subject) WHERE subject IS NOT NULL;',
     );
+    // `AND subject IS NULL` is the load-bearing clause: the address is the
+    // identity only for a kind that has no subject. Where a subject exists it
+    // is the identity and the address is metadata, so a uniqueness key over
+    // it would refuse two distinct Google accounts that happen to carry one
+    // address — which a domain reassignment produces (AUTH-29).
     expect(sql).toContain(
-      'CREATE UNIQUE INDEX auth_identity_email_key ON auth_identity (kind, email) WHERE email IS NOT NULL AND email_verified;',
+      'CREATE UNIQUE INDEX auth_identity_email_key ON auth_identity (kind, email) WHERE email IS NOT NULL AND email_verified AND subject IS NULL;',
     );
   });
 

@@ -35,14 +35,19 @@ const TYPES: Record<ColumnSpec['type'], string> = {
  * a null check, which is the distinction that keeps unverified addresses out
  * of the uniqueness key without a separate hand-written clause.
  */
-function renderPartialPredicate(spec: TableSpec, requires: readonly string[] | undefined): string {
-  if (requires === undefined || requires.length === 0) return '';
-  const terms = requires.map((name) => {
-    const column = spec.columns.find((entry) => entry.name === name);
-    if (!column) throw new Error(`${spec.name}: partial index requires unknown column ${name}`);
-    return column.type === 'boolean' ? name : `${name} IS NOT NULL`;
-  });
-  return ` WHERE ${terms.join(' AND ')}`;
+function renderPartialPredicate(spec: TableSpec, unique: UniqueSpec): string {
+  const column = (name: string): ColumnSpec => {
+    const found = spec.columns.find((entry) => entry.name === name);
+    if (!found) throw new Error(`${spec.name}: partial index requires unknown column ${name}`);
+    return found;
+  };
+  const terms = [
+    ...(unique.requires ?? []).map((name) =>
+      column(name).type === 'boolean' ? name : `${name} IS NOT NULL`,
+    ),
+    ...(unique.requiresNull ?? []).map((name) => `${column(name).name} IS NULL`),
+  ];
+  return terms.length === 0 ? '' : ` WHERE ${terms.join(' AND ')}`;
 }
 
 function renderColumn(column: ColumnSpec): string {
@@ -50,7 +55,7 @@ function renderColumn(column: ColumnSpec): string {
 }
 
 function renderUnique(spec: TableSpec, unique: UniqueSpec): string[] {
-  const where = renderPartialPredicate(spec, unique.requires);
+  const where = renderPartialPredicate(spec, unique);
   return [
     '',
     `-- ${unique.why}`,
