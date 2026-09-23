@@ -27,7 +27,7 @@ import { fail, ok, type Result } from '../domain/errors';
 import { newAuthIdentityId } from '../domain/ids';
 import type { Clock } from '../domain/clock';
 import type { AuthIdentityKind } from '../db/schema';
-import type { AuthIdentityRow, Store } from '../db/store';
+import { ConstraintViolation, type AuthIdentityRow, type Store } from '../db/store';
 import type { Principal } from '../domain/authorization';
 import type { ServerLogger } from '../logging';
 
@@ -95,14 +95,33 @@ export class IdentityService {
   async resolveIdentity(verified: VerifiedIdentity): Promise<Result<IdentityResolution>> {
     if (!this.isUsable(verified)) return fail('INVALID_ARGUMENT');
 
+    // A kind has exactly one authoritative identifier, and resolution uses
+    // that one and no other.
+    //
+    // Where the kind has a subject, the subject **is** the identity and the
+    // address is metadata that happens to travel with it. Falling back to the
+    // address when the subject misses is the account-ownership defect this
+    // rule exists to close: a domain can reassign a verified address to a
+    // different person, who arrives with a new subject and the old address,
+    // and an email fallback hands them the previous owner's account.
+    //
+    // Subject-first ordering does not help, because ordering only decides
+    // which of two matches wins — it does nothing when the subject has no
+    // match at all, which is exactly the reassignment case.
+    //
+    // Where the kind has no subject the verified address is the authority,
+    // and the lookup is still scoped to that kind: an `email` assertion never
+    // resolves a `google` row that carries the same address, and vice versa.
+    // The two are different proofs of different things, and a shared string
+    // is not a proof of either (AUTH-27).
     if (verified.subject !== null) {
       const bySubject = await this.options.store.findIdentityBySubject(
         verified.kind,
         verified.subject,
       );
-      if (bySubject) {
-        return ok({ kind: 'existing', abaUserId: bySubject.aba_user_id, identity: bySubject });
-      }
+      return bySubject
+        ? ok({ kind: 'existing', abaUserId: bySubject.aba_user_id, identity: bySubject })
+        : ok({ kind: 'unknown' });
     }
 
     if (verified.email !== null && verified.emailVerified) {
@@ -164,7 +183,30 @@ export class IdentityService {
       linked_via: principal.sessionId,
       last_used_at: null,
     };
-    await this.options.store.insertIdentity(row);
+    try {
+      await this.options.store.insertIdentity(row);
+    } catch (error) {
+      // A uniqueness constraint refused the row, so somebody already holds
+      // this identifier and resolution did not see them.
+      //
+      // That gap is reachable for a subject-bearing kind, because resolution
+      // matches on the subject while the table also holds `(kind, email)`
+      // unique: two Google subjects that carry the same verified address —
+      // which a domain reassignment produces — resolve as unknown and then
+      // collide on insert. Refusing is the conservative answer, and it is the
+      // same refusal §20.4.1 already specifies: it names no account and says
+      // nothing about which field collided (AUTH-28).
+      //
+      // It is caught rather than pre-checked because only the write is
+      // atomic: a check first would be a race, and a race here would let two
+      // concurrent links both believe they had won.
+      if (!(error instanceof ConstraintViolation)) throw error;
+      this.options.log.warn('identity.link.refused', {
+        abaUserId: principal.abaUserId,
+        reason: 'identity_in_use',
+      });
+      return fail('IDENTITY_IN_USE');
+    }
     this.options.log.info('identity.linked', {
       abaUserId: principal.abaUserId,
       identityId: row.id,

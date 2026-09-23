@@ -14,6 +14,8 @@ Status: **partly implemented.** The status line above this one used to read
 | The HTTP surface for the Google routes                                                                | **implemented** (`server/http/router.ts`)                              |
 | `POST /v1/auth/refresh`, `POST /v1/auth/logout`, and the client's refresh lifecycle                   | **implemented**                                                        |
 | `GET /v1/me`, `GET /v1/devices`                                                                       | not built — not needed by refresh or logout                            |
+| `DELETE /v1/me` and the §15.1 erasure                                                                 | **not built.** No route reaches `AccountService`; see §15.4            |
+| Email identity, OTP, account linking over HTTP                                                        | not built — §8 and §20 are design only                                 |
 | A deployed backend, a running database, real Google credentials                                       | **not deployed / credential-blocked**                                  |
 
 Everything implemented is implemented **optionally**: a build with no
@@ -232,29 +234,58 @@ email moved, the user's entire installation would come unbound from itself.
 
 ### 4.3 Resolution: how an authentication becomes an `abaUserId`
 
+**Every authentication kind has exactly one authoritative identifier, and
+resolution uses that one and no other.**
+
+| kind     | authoritative identifier | the address is                           |
+| -------- | ------------------------ | ---------------------------------------- |
+| `google` | `google_sub`             | display metadata, never an authenticator |
+| `email`  | the **verified** address | the identifier itself                    |
+
 ```
 verified authentication assertion
    │
-   ├─ google_sub matches an auth_identity ───────────────▶ return its aba_user_id
+   ├─ the kind HAS a subject (google)
+   │    ├─ (kind, subject) matches an auth_identity ─────▶ return its aba_user_id
+   │    └─ no match ───────────────────────────────────▶ create a new aba_user
+   │       (the address is NOT consulted — see rule 1)
    │
-   ├─ no google_sub match, and the assertion carries a
-   │  VERIFIED email matching an EXISTING auth_identity ▶ return its aba_user_id  (a match, never a new link)
-   │
-   └─ no match ─────────────────────────────────────────▶ create a new aba_user
+   └─ the kind has NO subject (email)
+        ├─ (kind, VERIFIED email) matches ──────────────▶ return its aba_user_id
+        └─ no match ───────────────────────────────────▶ create a new aba_user
 ```
 
-Three rules make this safe, and all three are load-bearing:
+Four rules make this safe, and all four are load-bearing:
 
-1. **`google_sub` first.** It is Google's stable subject identifier and does
-   not change when the user changes their email address. Matching on email
-   first would move an account whenever an address was reassigned.
-2. **Only a _verified_ email ever matches.** An unverified address is an
+1. **A subject-bearing kind resolves by subject only.** There is no email
+   fallback. `google_sub` identifies the Google account; a verified address
+   does not, because a domain can reassign one. Alice leaves, `alice@corp` is
+   given to Bob, and Bob arrives holding a **new** subject and the **old**
+   address — under a fallback the resolver would hand him Alice's account.
+   Ordering `google_sub` first does not prevent this: ordering only decides
+   which of two matches wins, and in the reassignment case there is no subject
+   match at all. So the fallback is removed rather than ordered.
+   > This supersedes the earlier form of this rule, which permitted a verified
+   > email to resolve an account when the subject missed. Evidence:
+   > `tests/security/server-google-identity-authority.test.ts` A, B, D, G.
+2. **Email lookup is scoped to the same kind.** An `email` assertion for
+   `x@example.com` never resolves an `auth_identity` of kind `google` carrying
+   `x@example.com`, and a `google` assertion never resolves an `email` row.
+   The two are different proofs of different things, and a shared string is a
+   proof of neither (`AUTH-27`). This is why `auth_identity` is unique on
+   `(kind, email)` rather than on `email` alone (§23): per-kind uniqueness and
+   per-kind lookup are the same decision seen from two sides, and the same
+   address may legitimately exist as a Google identity on one account and an
+   email identity on another. Evidence: `server-google-identity-authority`
+   C, F; `server-google-security` "does not merge a Google sign-in into an
+   account holding that email".
+3. **Only a _verified_ email ever matches.** An unverified address is an
    unproven claim, and matching on one is the pre-hijack attack: register an
    account under someone's address before they do, and inherit theirs when they
    arrive. `IDENTITY_AND_SYNC.md` §T already states that no `auth_method` is
    created with `email_verified: false`; Google's `email_verified: false` never
    links and never matches.
-3. **A miss creates; a hit returns.** The backend never mints a new
+4. **A miss creates; a hit returns.** The backend never mints a new
    `abaUserId` for an identity it already knows. This is the single line the
    whole reinstall-recovery path rests on (K1 §17, Cloud Sync §20), and
    `AUTH-11` asserts it.
@@ -263,8 +294,16 @@ Three rules make this safe, and all three are load-bearing:
 one on an existing account.** Attaching a second identity is account linking —
 a separate, authenticated operation requiring two independent proofs (§20).
 Resolution never links on its own, and a verified email that is not already an
-`auth_identity` row creates a **new** account rather than joining one that
-happens to share the address.
+`auth_identity` row **of that kind** creates a **new** account rather than
+joining one that happens to share the address.
+
+**The cost of rule 1, stated rather than hidden.** A user whose Google account
+is replaced — a new Google account on the same work address — arrives as a new
+ABA account and does not inherit the old one. That is the intended outcome: the
+alternative is that whoever next holds the address inherits it instead. The
+route back to the original account is the explicit link flow (§20), performed
+from a session on that account, and where no such session can be obtained §20.8
+applies.
 
 ### 4.5 One account, many identities
 
@@ -661,15 +700,27 @@ for authentication.**
 
 ### 7.6 Subject mapping, revocation and identity change
 
-| Situation                                           | Behaviour                                                                                                                                                                                           |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| first Google sign-in                                | create `aba_user` + `auth_identity{kind:'google', subject:sub}`                                                                                                                                     |
-| returning                                           | match on `sub`, return the same `abaUserId`                                                                                                                                                         |
-| the user changes their Google email address         | `sub` is unchanged, so the account is unchanged. The stored email is updated for display                                                                                                            |
-| the user revokes the app's Google authorization     | existing ABA sessions keep working until they expire — they are ABA sessions, not Google ones. The **next** Google sign-in fails and must be re-consented                                           |
-| Google account deleted                              | sign-in via Google stops working. The ABA account persists; a linked email identity remains usable (§20). With no other identity the account may be unreachable — the limitation is stated in §20.8 |
-| two Google accounts, same person                    | two `auth_identity` rows, two ABA accounts, unless explicitly linked (§20). **Never merged automatically**                                                                                          |
-| a `sub` already attached to a different `abaUserId` | refused. One external subject maps to at most one ABA account                                                                                                                                       |
+| Situation                                           | Behaviour                                                                                                                                                                                            |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| first Google sign-in                                | create `aba_user` + `auth_identity{kind:'google', subject:sub}`                                                                                                                                      |
+| returning                                           | match on `sub`, return the same `abaUserId`                                                                                                                                                          |
+| the user changes their Google email address         | `sub` is unchanged, so the account is unchanged. The stored address is display metadata and may go stale — see the note below                                                                        |
+| the address is **reassigned** to a different person | that person arrives with a different `sub`, so they get a **new** ABA account. They never reach the previous holder's account, because a subject-bearing kind resolves by subject only (§4.3 rule 1) |
+| the user revokes the app's Google authorization     | existing ABA sessions keep working until they expire — they are ABA sessions, not Google ones. The **next** Google sign-in fails and must be re-consented                                            |
+| Google account deleted                              | sign-in via Google stops working. The ABA account persists; a linked email identity remains usable (§20). With no other identity the account may be unreachable — the limitation is stated in §20.8  |
+| two Google accounts, same person                    | two `auth_identity` rows, two ABA accounts, unless explicitly linked (§20). **Never merged automatically**                                                                                           |
+| a `sub` already attached to a different `abaUserId` | refused. One external subject maps to at most one ABA account                                                                                                                                        |
+
+**The stored Google address is display metadata, and it is not refreshed.**
+Nothing writes `auth_identity.email` after the row is created, so a user who
+changes their Google address keeps the address recorded at first sign-in. This
+is a known limitation rather than an omission, and it is deliberately not fixed
+by adding mutation semantics: the field is **not** an authenticator (§4.3
+rule 1, `AUTH-29`), so a stale value authorises nothing and can move no
+account. What it can do is show the wrong address in an identity list, which is
+a display defect to correct when that surface exists — at which point the
+refresh must also satisfy the `(kind, email)` unique index, since two Google
+identities may then carry the same address.
 
 ---
 
@@ -735,16 +786,107 @@ this is the pre-hijack control from `IDENTITY_AND_SYNC.md` §T, unchanged.
 
 ### 8.3 Email normalisation
 
-Addresses are compared **case-insensitively on the domain and stored lowercase
-whole**, which is what `IDENTITY_AND_SYNC.md` §U's `email(uniq, lower)`
-specifies.
-
 No provider-specific canonicalisation is applied — dots are not stripped,
-`+tags` are not removed. Two rules collide here and one has to win: treating
+`+tags` are not removed. Two rules collide there and one has to win: treating
 `a.b@gmail.com` and `ab@gmail.com` as one account is right for Gmail and wrong
 for every provider that treats them as distinct, and getting it wrong merges
 two people. **Not merging is the safe failure**, so the address is treated as
 opaque below the `@`.
+
+The rest of the policy, item by item. Settled rows are enforced today by
+`normaliseEmail` and by `isUsable`, which refuses any assertion whose address
+is not already in normal form — so an unnormalised address cannot enter the
+table by a side door.
+
+| Item                   | Policy                             | Status                                  |
+| ---------------------- | ---------------------------------- | --------------------------------------- |
+| domain case            | case-insensitive — folded to lower | **settled**, universally valid          |
+| surrounding whitespace | trimmed                            | **settled**                             |
+| `+tag` addressing      | **preserved.** Never stripped      | **settled** (provider-specific)         |
+| dots in the local part | **preserved.** Never stripped      | **settled** (provider-specific)         |
+| local-part case        | folded to lower today              | **OPEN — see below**                    |
+| interior whitespace    | —                                  | **OPEN.** Unspecified                   |
+| Unicode normalisation  | —                                  | **OPEN.** No NF\* form chosen           |
+| IDN / punycode         | —                                  | **OPEN.** No rule, no confusable policy |
+
+**The local-part case question, stated rather than settled.** Two authorities
+disagree and neither is obviously wrong.
+
+- `IDENTITY_AND_SYNC.md` §U specifies `email(uniq, lower)`, and the
+  implementation follows it: `normaliseEmail` is `trim().toLowerCase()`, so the
+  whole address including the local part is folded.
+- This section's own governing principle is that **not merging is the safe
+  failure**, and folding the local part _merges_: `Alice@x` and `alice@x`
+  become one identity. RFC 5321 §2.4 makes the local part case-sensitive and
+  reserves its interpretation to the destination host, so folding it is exactly
+  the kind of provider-specific assumption the paragraph above refuses for dots
+  and `+tags`.
+
+The trade is real in both directions: folding risks conflating two mailboxes on
+a server that distinguishes them; preserving splits one person into two
+accounts when they capitalise differently, which is the duplicate-account cost
+in §20.1. Essentially every large provider folds, and no large provider is
+known to rely on local-part case.
+
+**This is a decision to take before the first email identity is written, not
+after.** The stored value is the unique key, so changing the rule later is a
+data migration over live identity rows and a window in which two rows can
+collide. Today there are none — no deployment, no email identities — so the
+decision is free now and is not free later.
+
+Whichever way it goes, the Google side is unaffected: an address is not an
+authenticator for a subject-bearing kind (§4.3 rule 1, `AUTH-29`).
+
+### 8.5 Email identity policy
+
+What an `auth_identity` of kind `email` is, and what is not yet decided about
+it. **No part of this is implemented.**
+
+| Question                          | Answer                                                                                                                          | Status      |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| canonical identifier              | the normalised address in `auth_identity.email`, with `kind='email'` and `subject` null                                         | **settled** |
+| uniqueness scope                  | `(kind, email)` where verified — per-kind, never global (§4.3 rule 2, §23)                                                      | **settled** |
+| verification requirement          | `email_verified` is true only after a completed OTP proof; an unverified address is never written as an identity (`AUTH-18`)    | **settled** |
+| a separate user table for email   | **no.** One `aba_user`, one `auth_identity` table, one `session` table, one device model. Email changes the proof, nothing else | **settled** |
+| display address stored separately | no column exists                                                                                                                | **OPEN**    |
+| email change semantics            | see below                                                                                                                       | **OPEN**    |
+
+The display-address question is **coupled to the local-part decision in §8.3**:
+if the local part is folded, the address the user typed is not recoverable from
+the row, and a second column is the only way to show it back to them. If it is
+preserved, there is nothing to store separately. Decide §8.3 first.
+
+**Email change — the candidate rule, not yet ratified.** When a verified
+address changes from `old@` to `new@`, the two available shapes are to mutate
+the row after a fresh proof, or to attach a new identity and remove the old
+one. The architecture does not name this operation, but it does not have to:
+for `kind='email'` the address **is** the identity, so changing it is not an
+attribute update — it is a different identity. Read that way, §20 already
+governs it and no new rule is needed:
+
+- attaching `new@` is a **link**: an authenticated session on the account plus
+  a fresh proof of control of `new@` (§20.4);
+- removing `old@` is an **unlink**, and therefore refused if it would leave the
+  account with no verified method (`AUTH-25`);
+- `abaUserId` does not change, nothing is re-encrypted, no record moves
+  (`AUTH-24`);
+- sessions established through `old@` are revoked when it is unlinked (§20.7).
+
+A mutate-in-place would bypass all four — in particular `AUTH-25`, since an
+in-place edit never looks like a removal. That asymmetry is the argument, and
+it is why this is recorded as the candidate rather than left blank. It is
+**OPEN pending ratification**, and nothing is implemented against it.
+
+**OTP transient data.** The client's classification table has one transient
+authentication kind, `oauth-transient`, described as "PKCE verifier, state,
+nonce". An email OTP challenge is not OAuth, but it is the same thing in every
+way the table cares about: single-use, TTL-bounded, memory-backed and
+`NEVER_PERSISTED`. The determination is therefore to **widen the existing kind
+to a method-neutral name rather than add a second one** — a second kind
+carrying an identical classification would state no new fact, and the existing
+name has only two references, both in `data-classification.ts`. Not applied
+here, because a renamed kind with no OTP code to consume it is churn ahead of
+the work.
 
 ### 8.4 Account enumeration
 
@@ -1085,6 +1227,47 @@ evidence, preferences, the identity profile, the session and the KEK.
 Deleting the backend account **cannot** reach into browser storage. Saying
 "your data is deleted" while a provider API key remains on disk would be a lie,
 so the UI offers both actions and states exactly which does what.
+
+### 15.4 What exists today, and the discrepancy it leaves
+
+**`DELETE /v1/me` is not implemented and no HTTP route reaches `AccountService`
+at all.** What exists is one domain method, `markAccountDeleted`, which marks
+the account `deleted` and revokes every session for it. That is not a partial
+implementation of §15.1 — it is a different, smaller operation, and reading it
+as the endpoint's implementation is what makes the two look contradictory.
+
+Of the seven things §15.1 removes, `markAccountDeleted` removes none: sessions
+are **revoked, not deleted**, and `auth_identity`, `login_challenge`, `device`,
+`sync_record`, `push_idempotency` and the `kd_*` columns are all retained.
+
+One consequence is worth stating because it is user-visible and counter-
+intuitive: since the identity rows survive, the Google subject and the address
+stay claimed. A deleted account's owner signing in again resolves to their own
+deleted account and is refused with `ACCOUNT_DELETED` — **permanently**. Under
+§15.1 as specified, the hard delete would free the identifiers and a fresh
+sign-in would create a new account, which is the ordinary product behaviour.
+
+Nothing here is reachable by a client, so the discrepancy is dormant rather
+than live. It is recorded rather than repaired because repairing one row of
+§15.1's table in isolation would replace a coherent smaller operation with an
+incoherent partial one: identities gone, devices and challenges retained,
+sessions revoked but present. **The reconciliation belongs to whatever phase
+implements `DELETE /v1/me`, and these are its inputs:**
+
+| Entity               | §15.1 says             | Consequence to settle                                                                                                                                                          |
+| -------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `auth_identity`      | hard delete            | frees the Google subject and the address for reuse; a returning user gets a **new** `abaUserId` (`AUTH-1` is satisfied — it is a new account)                                  |
+| `session`            | delete every row       | today they are revoked and retained; deletion must keep `ACCOUNT_DELETED` answerable, which the tombstone provides                                                             |
+| `login_challenge`    | delete                 | in-flight flows must not resolve to a deleted account afterwards                                                                                                               |
+| `device`             | delete                 | other installations learn through an authenticated 401, never an outage (§9.1)                                                                                                 |
+| `aba_user`           | tombstone, 30 d        | the tombstone answers replayed requests **naming the account**; it does not, and should not, block a fresh sign-up                                                             |
+| Google subject reuse | —                      | freed by the hard delete. A reassigned address is no longer a takeover path either way (§4.3 rule 1)                                                                           |
+| email identity reuse | —                      | freed. Required, or a deleted account burns an address forever                                                                                                                 |
+| local work           | untouched              | §15.2 — a separate, explicit wipe. Backend deletion cannot reach browser storage                                                                                               |
+| provider credentials | never present          | `SECRET_LOCAL_ONLY`; removed only by the local wipe (`AUTH-5`)                                                                                                                 |
+| Cloud Sync records   | delete with tombstones | not implemented; no upload path exists                                                                                                                                         |
+| K1 material          | server holds none      | local ciphertext survives until the local wipe and stays decryptable with the recovery key                                                                                     |
+| audit / history      | —                      | **unresolved.** §25 sets retention windows; whether a deletion leaves an auditable trace beyond the tombstone is not stated, and the tombstone deliberately carries no content |
 
 ### 15.3 Relationships
 
@@ -1893,6 +2076,7 @@ rather than a sentiment.
 | **AUTH-26** | Unlinking is not account deletion: it removes no work, no cloud record, no device row, no provider credential and no account.                                                                                                           |
 | **AUTH-27** | Account ownership is proved only by completing an authentication flow. A matching email string, a display name, provider metadata, the browser profile, local extension state, a `deviceId` and the K1 recovery key each prove nothing. |
 | **AUTH-28** | A link refusal does not reveal which account holds the identity, or that any particular account exists.                                                                                                                                 |
+| **AUTH-29** | An authentication kind that carries a subject resolves by that subject alone: a verified email address is never a fallback when the subject does not match. Identity lookup by address is scoped to the same kind, in both directions.  |
 
 ---
 
