@@ -36,6 +36,7 @@ import {
   type GoogleTokenEndpoint,
 } from '../../../server/index';
 import { GoogleFixture } from '../../fixtures/google-oidc-fixture';
+import { censusStore } from '../../fixtures/census-store';
 
 /**
  * Fixed, because the extension's backend origin is inlined at build time.
@@ -57,7 +58,17 @@ export interface AuthBackend {
   /** Every device row the backend holds for an account. */
   devices(abaUserId: string): Promise<readonly { device_id: string }[]>;
   /** Every session row for an account, so revocation can be asserted. */
-  sessions(abaUserId: string): Promise<readonly { id: string; revoked_at: number | null }[]>;
+  sessions(
+    abaUserId: string,
+  ): Promise<readonly { id: string; revoked_at: number | null; rotated_at: number | null }[]>;
+  /**
+   * How many ABA accounts exist in the whole backend.
+   *
+   * Per-account lookups cannot answer "did a second account appear", because
+   * they need an id to look one up by. This counts rows at the store port
+   * instead, which is the only way any of them come into existence.
+   */
+  accounts(): number;
   /** Moves the backend's clock, so an access token can be aged past expiry. */
   advance(ms: number): void;
   close(): Promise<void>;
@@ -114,7 +125,10 @@ export async function startAuthBackend(): Promise<AuthBackend> {
   let offset = 0;
   const clock = { now: () => Date.now() + offset };
 
+  const census = censusStore();
+
   const backend = createIdentityBackend({
+    store: census.store,
     clock,
     log: silentLogger,
     google: {
@@ -162,11 +176,26 @@ export async function startAuthBackend(): Promise<AuthBackend> {
       }
 
       const body = incoming.method === 'POST' ? await readBody(incoming) : undefined;
+
+      /**
+       * The bearer is forwarded, and it has to be.
+       *
+       * Logout takes the access token as an `Authorization` header — that is
+       * how the route knows which session to end. A fixture that rebuilt the
+       * request with only a content type dropped it, so every logout reached
+       * the router unauthenticated and answered 401. The extension clears
+       * locally whichever way the server answers, so the browser still looked
+       * signed out and the failure was invisible from the client side.
+       */
+      const authorization = incoming.headers.authorization;
       const response = await router(
         new Request(url.toString(), {
           method: incoming.method ?? 'GET',
           ...(body === undefined || body.length === 0 ? {} : { body }),
-          headers: { 'content-type': 'application/json' },
+          headers: {
+            'content-type': 'application/json',
+            ...(typeof authorization === 'string' ? { authorization } : {}),
+          },
         }),
       );
 
@@ -192,6 +221,7 @@ export async function startAuthBackend(): Promise<AuthBackend> {
     },
     devices: (abaUserId: string) => backend.store.listDevices(abaUserId),
     sessions: (abaUserId: string) => backend.store.listSessions(abaUserId),
+    accounts: () => census.census().accounts,
     advance(ms: number) {
       offset += ms;
     },

@@ -335,6 +335,7 @@ test('17 — a refresh renews the session and keeps the same account', async () 
   await send('auth.signInWithGoogle', {});
   const before = await send('auth.status', {});
 
+  const accountsBefore = backend.accounts();
   const refreshed = await send('auth.refresh', {});
 
   expect(refreshed.ok).toBe(true);
@@ -344,6 +345,10 @@ test('17 — a refresh renews the session and keeps the same account', async () 
   // A refresh renews a session; it never moves the installation to another
   // account, and never silently creates one.
   expect(after.abaUserId).toBe(before.abaUserId);
+  // The second half of that sentence, measured rather than assumed: a refresh
+  // that created an account beside this one would still return this
+  // `abaUserId`, so the count is the only thing that can see it.
+  expect(backend.accounts()).toBe(accountsBefore);
 });
 
 test('18 — the refresh went over the wire and rotated the stored token', async () => {
@@ -430,14 +435,36 @@ test('22 — logout revokes the server session, not just the local one', async (
   const status = await send('auth.status', {});
   const abaUserId = status.abaUserId ?? '';
 
+  // The sessions that are genuinely usable right now, named individually.
+  //
+  // Asserting that some row for this account is revoked would pass without
+  // logout doing anything at all: the Google exchange mints a bootstrap
+  // session to obtain a principal for the identity attach and revokes it
+  // immediately, so a revoked row exists from the moment the account does.
+  // Naming the usable ones first is what makes this measure logout.
+  //
+  // Rotated rows are excluded because they are spent, not live: a rotation
+  // sets `rotated_at` and leaves `revoked_at` null, and logout revokes the
+  // one session its access token names. Presenting a spent predecessor is
+  // reuse, which revokes the whole family — so leaving it unrevoked costs
+  // nothing, and demanding it be revoked here would assert a behaviour the
+  // design deliberately does not have.
+  const live = (await backend.sessions(abaUserId))
+    .filter((row) => row.revoked_at === null && row.rotated_at === null)
+    .map((row) => row.id);
+  expect(live.length).toBeGreaterThan(0);
+
   await send('auth.signOut', {});
 
   expect((await send('auth.status', {})).state).toBe('signed_out');
   const rows = await backend.sessions(abaUserId);
-  // Every session for this account is revoked on the server. Before this
-  // phase, sign-out cleared two local keys and the row stayed live.
-  expect(rows.length).toBeGreaterThan(0);
-  expect(rows.some((row) => row.revoked_at !== null)).toBe(true);
+  // Each session that was live is now revoked. Before this phase, sign-out
+  // cleared two local keys and the rows stayed live.
+  for (const id of live) {
+    const row = rows.find((candidate) => candidate.id === id);
+    expect(row, id).toBeDefined();
+    expect(row?.revoked_at, id).not.toBeNull();
+  }
 });
 
 test('23 — a refresh after logout fails and does not resurrect the session', async () => {
