@@ -373,15 +373,15 @@ server assigns `revision+1` and the next `serverSeq`.
 
 ### Responses
 
-| Outcome              | Status                     | Body                                                                         |
-| -------------------- | -------------------------- | ---------------------------------------------------------------------------- |
-| accepted             | 200                        | new `revision`, `serverSeq`                                                  |
-| stale revision       | 409 `STALE_REVISION`       | the **current** record, so the client can resolve without another round trip |
-| immutable record     | 409 `IMMUTABLE_RECORD`     | terminal task already present (§8)                                           |
-| duplicate            | 200                        | the original outcome, from the idempotency store                             |
-| cursor below horizon | 409 `CURSOR_BELOW_HORIZON` | reconcile (§10)                                                              |
-| retired device       | 409 `DEVICE_RETIRED`       | reactivate first (§10)                                                       |
-| too large            | 413 `RECORD_TOO_LARGE`     | see §33 Q1                                                                   |
+| Outcome              | Status                     | Body                                                                          |
+| -------------------- | -------------------------- | ----------------------------------------------------------------------------- |
+| accepted             | 200                        | new `revision`, `serverSeq`                                                   |
+| stale revision       | 409 `STALE_REVISION`       | the **current** record, so the client can resolve without another round trip  |
+| immutable record     | 409 `IMMUTABLE_RECORD`     | terminal task already present (§8)                                            |
+| duplicate            | 200                        | the original outcome, from the idempotency store                              |
+| cursor below horizon | 409 `CURSOR_BELOW_HORIZON` | reconcile (§10)                                                               |
+| retired device       | 409 `DEVICE_RETIRED`       | reactivate first (§10)                                                        |
+| too large            | 413 `RECORD_TOO_LARGE`     | nothing is written; the client retains the record and stops retrying (§33 Q1) |
 
 ### Transaction boundaries
 
@@ -408,11 +408,17 @@ gapless order is a database property rather than a convention.
   "purgeHorizon": 41200,
   "device": { "deviceId": "dev_…", "syncedThroughSeq": 918100, "retiredAt": null },
   "counts": { "task": 412, "workflow": 18, "shortcut": 7, "preferences": 1,
-              "workspace": 3, "connection": 4 }
+              "workspace": 3, "connection": 4 },
+  "limits": { "maxRecordBytes": 262144 }  // §33 Q1 — TUNABLE, illustrative here
 }
 ```
 
 Counts are for progress display only; nothing branches on them.
+
+`limits.maxRecordBytes` is the backend's maximum accepted record size on the
+wire. The client enforces the **smaller** of it and its own compiled-in
+maximum, so a served value can only tighten the check and never loosen it
+(SYNC-26, §33 Q1).
 
 **The manifest must not contain**, and has no field capable of carrying:
 plaintext tasks · page content · provider prompts · provider responses ·
@@ -711,6 +717,7 @@ has exactly one consequence: a sign-in prompt.
 | duplicate push             | —                      | 200 with the original outcome                                                                                                              |
 | conflicting local state    | `STALE_REVISION`       | §8; forks rather than overwrites where the policy says so                                                                                  |
 | cursor below horizon       | `CURSOR_BELOW_HORIZON` | full reconciliation (§10)                                                                                                                  |
+| record over the size limit | `RECORD_TOO_LARGE`     | refused before upload; **retained** locally and reported, never truncated and never uploaded in part (§33 Q1)                              |
 | partial sync               | —                      | per-record outcomes (§12); applied records ack, failures retry. `syncedThroughSeq` advances only to the last **contiguous** applied change |
 
 That last row matters: acking a high watermark while a lower change failed
@@ -736,12 +743,12 @@ would then be wrong.
 
 ## 25. Pagination and large datasets
 
-| Parameter              | Value       | Status                                                                           |
-| ---------------------- | ----------- | -------------------------------------------------------------------------------- |
-| default page size      | 100 records | **TUNABLE**                                                                      |
-| maximum page size      | 500 records | **TUNABLE**                                                                      |
-| maximum response bytes | —           | **TUNABLE**; the byte cap binds before the record cap, because record sizes vary |
-| maximum single record  | —           | **TUNABLE** — see §33 Q1                                                         |
+| Parameter              | Value       | Status                                                                                                      |
+| ---------------------- | ----------- | ----------------------------------------------------------------------------------------------------------- |
+| default page size      | 100 records | **TUNABLE**                                                                                                 |
+| maximum page size      | 500 records | **TUNABLE**                                                                                                 |
+| maximum response bytes | —           | **TUNABLE**; the byte cap binds before the record cap, because record sizes vary                            |
+| maximum single record  | —           | **TUNABLE**, floor derived in §33 Q1; enforced client-side before upload and again by the backend (SYNC-23) |
 
 Cursor semantics: `since` is an exclusive `serverSeq`; results ascend;
 `nextCursor` is the highest `serverSeq` returned; `hasMore` is explicit rather
@@ -839,30 +846,34 @@ cannot bring it back.
 
 Testable, in the style of the repository's existing invariants.
 
-| #       | Invariant                                                                                                                                                             |
-| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| SYNC-1  | The backend never receives plaintext user work — no request body carries an unencrypted record body.                                                                  |
-| SYNC-2  | The backend never receives a provider secret or credential fragment.                                                                                                  |
-| SYNC-3  | The backend never receives the recovery key, in any encoding.                                                                                                         |
-| SYNC-4  | The backend never receives the KEK or an unwrapped DEK.                                                                                                               |
-| SYNC-5  | **No Chrome runtime id appears in any sync payload, and no cloud record is an input to workspace membership or route trust.** Cloud Sync grants no browser authority. |
-| SYNC-6  | A user cannot read another user's records; `abaUserId` is taken from the session and never from a request.                                                            |
-| SYNC-7  | A stale revision cannot silently overwrite a newer one — a `baseRevision` mismatch is refused.                                                                        |
-| SYNC-8  | A deleted record cannot be resurrected by a non-retired stale device.                                                                                                 |
-| SYNC-9  | A tombstone is never purged on elapsed time alone; the watermark conjunct is required.                                                                                |
-| SYNC-10 | Initial Cloud Sync uploads no audit content and creates no audit record.                                                                                              |
-| SYNC-11 | A valid authenticated session, alone, decrypts nothing.                                                                                                               |
-| SYNC-12 | With the storage preference `undecided`, zero bytes are uploaded.                                                                                                     |
-| SYNC-13 | A repeated push with the same `(deviceId, deviceSeq)` applies once.                                                                                                   |
-| SYNC-14 | `syncedThroughSeq` never decreases, and advances only on an explicit ack after a durable local write.                                                                 |
-| SYNC-15 | A returning device below `purgeHorizon` cannot delta-sync; it reconciles.                                                                                             |
-| SYNC-16 | Offline modifications are never silently dropped, and deleted records are never silently resurrected — the ambiguous case is escalated to the user.                   |
-| SYNC-17 | A record that fails to decrypt, or carries an unknown encryption version, is retained rather than deleted.                                                            |
-| SYNC-18 | Logout and session expiry change no byte of local or cloud user data.                                                                                                 |
-| SYNC-19 | An authentication outage, during or past grace, never rotates `abaUserId`.                                                                                            |
-| SYNC-20 | Reinstall with the same identity yields the same `abaUserId` — never a new one.                                                                                       |
-| SYNC-21 | No provider credential is restorable from the cloud; no response field can carry one.                                                                                 |
-| SYNC-22 | Server-assigned timestamps and sequences are the only ordering inputs; no correctness decision reads a client clock.                                                  |
+| #       | Invariant                                                                                                                                                                                     |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SYNC-1  | The backend never receives plaintext user work — no request body carries an unencrypted record body.                                                                                          |
+| SYNC-2  | The backend never receives a provider secret or credential fragment.                                                                                                                          |
+| SYNC-3  | The backend never receives the recovery key, in any encoding.                                                                                                                                 |
+| SYNC-4  | The backend never receives the KEK or an unwrapped DEK.                                                                                                                                       |
+| SYNC-5  | **No Chrome runtime id appears in any sync payload, and no cloud record is an input to workspace membership or route trust.** Cloud Sync grants no browser authority.                         |
+| SYNC-6  | A user cannot read another user's records; `abaUserId` is taken from the session and never from a request.                                                                                    |
+| SYNC-7  | A stale revision cannot silently overwrite a newer one — a `baseRevision` mismatch is refused.                                                                                                |
+| SYNC-8  | A deleted record cannot be resurrected by a non-retired stale device.                                                                                                                         |
+| SYNC-9  | A tombstone is never purged on elapsed time alone; the watermark conjunct is required.                                                                                                        |
+| SYNC-10 | Initial Cloud Sync uploads no audit content and creates no audit record.                                                                                                                      |
+| SYNC-11 | A valid authenticated session, alone, decrypts nothing.                                                                                                                                       |
+| SYNC-12 | With the storage preference `undecided`, zero bytes are uploaded.                                                                                                                             |
+| SYNC-13 | A repeated push with the same `(deviceId, deviceSeq)` applies once.                                                                                                                           |
+| SYNC-14 | `syncedThroughSeq` never decreases, and advances only on an explicit ack after a durable local write.                                                                                         |
+| SYNC-15 | A returning device below `purgeHorizon` cannot delta-sync; it reconciles.                                                                                                                     |
+| SYNC-16 | Offline modifications are never silently dropped, and deleted records are never silently resurrected — the ambiguous case is escalated to the user.                                           |
+| SYNC-17 | A record that fails to decrypt, or carries an unknown encryption version, is retained rather than deleted.                                                                                    |
+| SYNC-18 | Logout and session expiry change no byte of local or cloud user data.                                                                                                                         |
+| SYNC-19 | An authentication outage, during or past grace, never rotates `abaUserId`.                                                                                                                    |
+| SYNC-20 | Reinstall with the same identity yields the same `abaUserId` — never a new one.                                                                                                               |
+| SYNC-21 | No provider credential is restorable from the cloud; no response field can carry one.                                                                                                         |
+| SYNC-22 | Server-assigned timestamps and sequences are the only ordering inputs; no correctness decision reads a client clock.                                                                          |
+| SYNC-23 | No record is uploaded whose **encoded sync payload** exceeds `MAX_SYNC_RECORD_BYTES`; the check is on the wire size, runs before encryption, and runs again at the backend before acceptance. |
+| SYNC-24 | A record over the limit is refused whole — never truncated, never stripped of fields, never uploaded in part, and never uploaded unencrypted or to any other destination.                     |
+| SYNC-25 | A record over the limit is retained locally, unmodified, and remains readable, editable and deletable; its tombstone is always under the limit and always syncs.                              |
+| SYNC-26 | A size limit served by the backend can only lower the client's compiled-in maximum, never raise it.                                                                                           |
 
 ## 32. Implementation gates
 
@@ -907,20 +918,253 @@ implemented.**
     payload, and no cloud record reaches the workspace guard (SYNC-5).
 20. **Ack semantics** — `syncedThroughSeq` advances only after a durable write,
     never on receipt, and never regresses (SYNC-14).
+21. **Oversized record** — a record one byte over the limit: no request is
+    made, no `deviceSeq` is consumed, the local record is byte-identical
+    afterwards, the rest of the queue syncs, and the user-facing state names
+    the size and the limit (SYNC-23, SYNC-24, SYNC-25).
+22. **Oversized record, deletion and recovery** — deleting one still syncs its
+    tombstone; bringing it back under the limit makes it sync with no
+    intervention; a record that grew after being synced resolves through §8
+    rather than overwriting (SYNC-25).
+23. **Backend size enforcement** — a client with the check disabled is refused
+    at the backend with `RECORD_TOO_LARGE` and nothing is written; a backend
+    advertising a larger limit than the client's compiled-in maximum does not
+    raise it (SYNC-23, SYNC-26).
 
 ## 33. Open questions
 
-Two. Both have a real product consequence and neither is resolvable from the
-architecture alone.
+One remains. Q1 is resolved below, and the resolution is kept here with the
+evidence that produced it rather than moved elsewhere, because the number is
+only defensible alongside the measurements.
 
-**Q1 — Maximum encrypted record size, and what happens at the limit.** A
-workflow with many recorded steps can grow without an obvious bound. Three
-options, with different costs: reject the push (`RECORD_TOO_LARGE`) and show
-the record as not-syncing, which is honest but means a user's largest workflow
-silently stops travelling; chunk large records across rows, which adds protocol
-complexity and a partial-write failure mode; or cap growth client-side, which
-changes recording behaviour. The protocol works under any of the three, so this
-is a product decision about what a user should experience, not a technical one.
+### Q1 — Maximum encrypted record size — RESOLVED
+
+**One record, one envelope, one row, with a hard maximum size enforced on the
+client before anything is encrypted and again by the backend before anything
+is accepted. No chunking in v1.**
+
+#### What the repository actually stores
+
+Six record types (§6), all persisted as plain JSON in `chrome.storage.local`.
+`unlimitedStorage` is granted (`public/manifest.json`), so Chrome's per-item
+storage quota does not shape the answer; the constraint is a protocol
+constraint only.
+
+| Record type   | Structural limits already enforced in the repository                                                                                                                                                                   | Field that can grow without a hard bound                                             |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `workflow`    | `MAX_STEPS_PER_SKILL = 24`, `MAX_SKILL_INPUTS = 12`, `MAX_COMPOSITION_DEPTH = 3`, `MAX_BINDING_PATH_SEGMENTS = 6` (`src/skills/core/skill-model.ts`); element binding `role`/`name` ≤ 200 chars; 50 workflows retained | a `literal` binding's value — checked for plain-data shape and depth ≤ 8, never size |
+| `task`        | `DEFAULT_BUDGET` 60 tool calls / 40 model requests (`src/agent/budget/budget.ts`); model-message step summary `text.slice(0, 200)`; 100 tasks retained (`src/tasks/task-store.ts`)                                     | `objective` — trimmed, never length-checked; `steps[]` has no cap in the model       |
+| `workspace`   | members deduplicated by `origin` (`src/workspaces/workspace-model.ts`)                                                                                                                                                 | `members[]` — one entry per distinct origin ever seen, and nothing evicts one        |
+| `shortcut`    | 100 shortcuts, name ≤ 48, display name ≤ 120 (`src/shortcuts/`)                                                                                                                                                        | none                                                                                 |
+| `connection`  | fixed field set, no collections (`src/providers/accounts/account-model.ts`)                                                                                                                                            | none                                                                                 |
+| `preferences` | fixed field set (`src/config/settings.ts`)                                                                                                                                                                             | none                                                                                 |
+
+Three further facts decide the shape of the answer.
+
+**`steps[]` is bounded in practice even though the model does not bound it.**
+`AgentRuntime` carries `task.usage` across a resume and resets only
+`elapsedMs`, so the tool-call and model-request budgets survive pause, worker
+eviction and restart. The reachable ceiling for one task is therefore roughly
+60 + 40 steps plus retry and error steps — about 112 — not an unbounded log.
+`plan[]` and `tabs[]` are declared on `AgentTask` and never written by any
+code path, so they contribute nothing.
+
+**No synced record carries page content or a provider response body.** What
+page-derived text does reach a record is already small and already capped: a
+model-message step's summary is `text.slice(0, 200)`; an element binding's
+`role` and `name` are `PAGE_DERIVED` and refused above 200 characters; a
+page-derived value can only be stored as a workflow literal when the task was
+tainted and the value is ≤ 24 characters (`SHORT_VALUE`, `parameteriser.ts`) —
+anything longer becomes an input slot; a workspace member carries an origin and
+a tab title. Evidence is referenced by id and is not a record type at all, and
+audit content is `LOCAL_ONLY` (§27). There is no path by which a page, a
+prompt, a full model response or a screenshot becomes a sync record, so this
+limit is not a page-size problem wearing a protocol hat.
+
+**The unbounded fields are unbounded in the type, not in ordinary use.** Every
+one of them is a user-authored or model-proposed string, or a list of distinct
+origins. None of them is a stream.
+
+#### Measured sizes
+
+Serialized from the models above; each row names the shape it measures. Wire
+bytes are the encoded sync payload per §6 and K1 §9, computed with the formula
+below.
+
+| Record                                             | Plaintext JSON | Wire bytes  | Wire        |
+| -------------------------------------------------- | -------------- | ----------- | ----------- |
+| `preferences`, at its maximum                      | 341 B          | 1 125 B     | 1.1 KiB     |
+| `shortcut`, at its maximum                         | 459 B          | 1 283 B     | 1.3 KiB     |
+| `connection`, at its maximum                       | 1 145 B        | 2 197 B     | 2.1 KiB     |
+| tombstone marker body                              | 70 B           | 764 B       | 0.7 KiB     |
+| `workspace`, 12 members                            | 3 969 B        | 5 963 B     | 5.8 KiB     |
+| `workflow`, 24 steps, 4 arguments, 64 B literals   | 23 973 B       | 32 635 B    | 31.9 KiB    |
+| `task`, 40 steps                                   | 24 374 B       | 33 169 B    | 32.4 KiB    |
+| `workspace`, 200 distinct origins                  | 62 731 B       | 84 312 B    | 82.3 KiB    |
+| `task`, budget ceiling: 112 steps, bounded fields  | 74 534 B       | 100 049 B   | 97.7 KiB    |
+| `workflow` ceiling, 24 × 6 element bindings at cap | 88 550 B       | 118 737 B   | 116.0 KiB   |
+| `workflow` ceiling, 24 × 8 element bindings at cap | 114 688 B      | 153 588 B   | 150.0 KiB   |
+| `workflow`, 24 steps, 16 arguments, 4 KiB literals | 1 315 474 B    | 1 754 636 B | 1 713.5 KiB |
+| `workspace`, 2 000 distinct origins                | 629 031 B      | 839 379 B   | 819.7 KiB   |
+
+The last two rows are the unbounded fields exercised, not records anyone has
+produced. Everything reachable through the repository's own caps sits between
+1 KiB and 150 KiB.
+
+#### Overhead, exactly
+
+```
+ct_b64     = ceil((plaintextBytes + 16) * 4 / 3)   // GCM tag, then base64url
+envelope   = 265 B   // K1 §9 header with kdSalt(16), wrap.nonce(12),
+                     //   wrap.dek(32+16), nonce(12), all base64url
+syncRow    = 384 B   // §6 plaintext fields at realistic widths
+wireBytes  = ct_b64 + 649
+```
+
+The expansion is deterministic: **wire size is a function of plaintext size
+alone**. That is what makes the check possible before any key is touched.
+
+| Wire limit | Usable plaintext |
+| ---------- | ---------------- |
+| 64 KiB     | 47.5 KiB         |
+| 128 KiB    | 95.5 KiB         |
+| 256 KiB    | 191.5 KiB        |
+| 512 KiB    | 383.5 KiB        |
+
+#### The three options, compared
+
+Stated as costs, not as a ranking.
+
+| Dimension                 | A — single record, hard maximum                                                        | B — chunked across rows                                                                                 | C — hybrid: single by default, chunk above a threshold                         |
+| ------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Schema                    | §6 unchanged                                                                           | adds a chunk index, a chunk count and a manifest row; `sync_record` gains a composite identity          | both, plus a discriminator                                                     |
+| Client complexity         | one size check                                                                         | split, reassemble, verify completeness, handle a missing chunk                                          | both paths, and the transition between them                                    |
+| Integrity                 | one AEAD tag covers the whole body                                                     | per-chunk tags leave chunk **ordering and completeness** outside AEAD unless a manifest digest is added | as B above the threshold                                                       |
+| K1 implications           | none — K1 §9/§10 apply unchanged                                                       | AAD must gain a chunk index and a total, or chunks are interchangeable; that is a K1 change             | a K1 change, conditionally applied                                             |
+| Push and retries          | per-record transaction as today (§12)                                                  | a partial-write failure mode: some chunks accepted, some not; a record that is neither old nor new      | the partial-write mode exists, reached less often — which makes it less tested |
+| Idempotency               | `(deviceId, deviceSeq)` per record                                                     | per chunk, plus a rule for a repeated partial set                                                       | both                                                                           |
+| Revisions and conflicts   | `baseRevision` per record; §8 unchanged                                                | a revision spans rows, so the conditional write becomes multi-row and §8 needs a chunk-set comparison   | §8 gains a case                                                                |
+| Pull and pagination       | a page is a set of records (§25)                                                       | a page can split a record, so `hasMore` no longer means what §25 says it means                          | as B when a chunked record is in the page                                      |
+| Deletion and tombstones   | one tombstone                                                                          | a tombstone must retire every chunk, and a missed chunk is an orphan the purge quorum never covers      | as B                                                                           |
+| Storage overhead          | ~649 B per record                                                                      | ~649 B per **chunk**, plus the manifest                                                                 | between the two                                                                |
+| What the user experiences | a record above the limit does not sync, and the user is told                           | records of any size sync                                                                                | as B, above the threshold                                                      |
+| Migration                 | can become B or C later behind `schemaVersion`; a v1 client refuses an unknown version | cannot become A without a re-upload                                                                     | carries both futures and both present costs                                    |
+
+#### Why A, for v1
+
+The repository does not contain a record type that legitimately exceeds a
+sensible limit. Every reachable ceiling measures at or under 150 KiB on the wire, and
+the two rows that exceed it are produced only by fields that have no cap for
+reasons unrelated to sync — a `literal` binding is size-checked for shape and
+depth but not bytes, and a workspace remembers every distinct origin forever.
+Those are worth bounding on their own merits; they are not evidence that sync
+needs a chunking protocol.
+
+Chunking would buy the ability to sync a record nobody has produced, and would
+pay for it with a partial-write failure mode, a K1 AAD change, a multi-row
+conditional write, an orphan-chunk case the purge quorum does not cover, and a
+pagination rule that no longer means what §25 says. Introducing all of that for
+hypothetical data is the wrong trade, and it is reversible: A migrates to B or
+C behind `schemaVersion`, and B does not migrate back.
+
+#### The size policy
+
+The **number is TUNABLE**; the **invariant is not**.
+
+> **The size check is on the encoded sync payload, and it happens before the
+> record is encrypted and again before the backend accepts it.**
+>
+> ```
+> wireBytes(record) = ceil((plaintextBytes + 16) * 4 / 3) + envelopeBytes + rowBytes
+> wireBytes(record) ≤ MAX_SYNC_RECORD_BYTES
+> ```
+
+Checking the plaintext alone would be wrong by a third plus the header, and
+that is exactly the margin in which a record passes locally and is refused
+remotely.
+
+`MAX_SYNC_RECORD_BYTES` is left TUNABLE because the production value also
+depends on a backend row and request limit that does not exist yet. Two
+constraints bind whatever is chosen:
+
+- **Floor.** It must exceed every record reachable through the repository's own
+  caps. The largest measured is 150.0 KiB (a 24-step workflow with eight
+  element bindings per step, all at the 200-character cap). A limit below that
+  would refuse a record the extension is entitled to produce.
+- **Ceiling.** It must sit below the backend's maximum row and request size and
+  below §25's maximum response bytes, or a record that pushes cannot be pulled
+  back — the worst possible failure, because it is invisible until a second
+  device tries to read it.
+
+The client's copy of the limit is served by the manifest (§13) so the two
+cannot drift, and the client enforces the **smaller** of its compiled-in value
+and the served one. A served value is a constraint, never a permission: it can
+lower the limit, never raise it past the compiled-in maximum, because a hostile
+backend raising it is a way to make a client build a request it would otherwise
+refuse.
+
+#### What happens at the limit
+
+The client check runs at enqueue, before encryption and before a `deviceSeq` is
+assigned. An oversized record therefore never enters the sync queue, never
+consumes a sequence number, and never produces a request.
+
+| Rule                                       | Behaviour                                                                                                                           |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| never partially uploaded                   | the record is refused whole; §12's per-record transaction means no other record in the batch is affected                            |
+| never truncated, and no field dropped      | there is no path that shortens a record to make it fit — a shortened record would be a different record, silently                   |
+| never falls back to plaintext              | refusal is the only outcome; see the security rules below                                                                           |
+| the local record is untouched              | it is still readable, editable, replayable and deletable exactly as before; nothing about it is a sync artefact                     |
+| the user is told, deterministically        | the record is shown as **not syncing — too large**, with its size and the limit, in the same surface that shows sync state          |
+| the queue is not blocked                   | every other record continues to sync                                                                                                |
+| the state clears by itself                 | the next change that brings the record under the limit makes it eligible again; nothing has to be re-enabled                        |
+| a backend 413 is terminal for that attempt | the record leaves the queue, is marked the same way, and is not retried on a backoff — the size will not change by waiting          |
+| deletion still works                       | a tombstone encrypts a fixed marker and measures 0.7 KiB, so an oversized record is always deletable, and the deletion always syncs |
+
+A record that synced before and has since grown past the limit is the same
+state, with one consequence worth naming: the cloud keeps the last accepted
+revision, and it is now stale. The local record is authoritative, the divergence
+is visible, and when the record next becomes pushable the outcome is an ordinary
+`baseRevision` mismatch resolved by §8 — the same path a long-offline device
+takes. Nothing new is invented for it, and the stale cloud copy never overwrites
+the local one.
+
+#### Security
+
+Oversize is a refusal, and a refusal must not become a bypass.
+
+| Must not happen                                      | Why it cannot                                                                                                                 |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| falling back to plaintext cloud storage              | there is no plaintext upload path in the protocol to fall back to; SYNC-1 asserts it and the size check adds no new path      |
+| falling back to an alternate or unencrypted endpoint | §15 is the complete endpoint set; an oversized record produces no request at all                                              |
+| spilling into provider storage                       | a provider request is a model call on the egress path; it is not a storage path, and no record type is reachable from it      |
+| using browser runtime storage as a cloud substitute  | `chrome.storage` is local; that is where the record already is, and staying there is the defined behaviour, not a workaround  |
+| bypassing the storage preference                     | the size check runs after the preference check, so `undecided` still uploads zero bytes (SYNC-12) whatever a record's size is |
+| bypassing encryption                                 | the check is on the **predicted** wire size of an encrypted record; there is no unencrypted branch to take                    |
+| bypassing provider-secret or page-content isolation  | size changes nothing about what a record may contain; SYNC-2 and SYNC-1 are unaffected                                        |
+| a hostile backend enlarging what a client will build | the served limit can only lower the compiled-in one (above)                                                                   |
+| an oversized record becoming an availability attack  | per-record transactions; one refusal never stalls another record or the watermark                                             |
+
+#### Migration path, if a real record ever needs it
+
+In order, and each step is independently useful:
+
+1. **Bound the three unbounded fields at their source** — a byte cap on a
+   `literal` binding value, a length cap on `objective`, and an eviction or cap
+   on `workspace.members[]`. This is where the growth actually is, and capping
+   it removes the need for anything else. It is a repository change, out of
+   scope for this document.
+2. **Raise `MAX_SYNC_RECORD_BYTES`**, if the backend's row limit allows. The
+   manifest serves it, so no client change is required.
+3. **Only then, chunking**, introduced as `schemaVersion + 1` for the affected
+   record type. A v1 client refuses an unknown `schemaVersion` and retains the
+   record (SYNC-17), so an old client never half-reads a chunked one. K1's AAD
+   would gain a chunk index and a chunk total in the same step — without them
+   chunks are interchangeable, which is the failure the per-chunk tag does not
+   catch.
+
+Nothing in the v1 wire format forecloses step 3, and no data written under v1
+needs re-uploading to reach it.
 
 **Q2 — Per-account storage quota and its behaviour at the limit.** Unbounded
 encrypted storage has a real cost, and a quota needs an error contract: whether
