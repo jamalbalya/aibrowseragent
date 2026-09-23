@@ -195,6 +195,7 @@ describe('AuthController', () => {
     return new AuthController({
       sessions,
       profile,
+      session: null,
       google: new GoogleSignIn({
         config: { backendOrigin: ORIGIN },
         transport: new IdentityTransport({ backendOrigin: ORIGIN }),
@@ -220,6 +221,7 @@ describe('AuthController', () => {
       sessions,
       profile,
       google: null,
+      session: null,
       now: () => NOW,
     }).status();
     expect(status.configured).toBe(false);

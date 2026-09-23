@@ -148,6 +148,7 @@ import { IdentityProfileStore } from '@/identity/identity-profile';
 import { SessionStore } from '@/identity/session-store';
 import { AuthController } from '@/identity/auth-controller';
 import { GoogleSignIn } from '@/identity/google-sign-in';
+import { SessionClient } from '@/identity/session-client';
 import { IdentityTransport } from '@/identity/identity-transport';
 import { loadIdentityConfig } from '@/identity/identity-config';
 import { DataStoragePreferenceStore } from '@/storage/data-storage-preference';
@@ -2035,23 +2036,40 @@ router.on('workspace.reattach', async ({ workspaceId }) => {
  * unavailable rather than offering a button that would reach nowhere.
  */
 const identityConfig = loadIdentityConfig();
+
+/**
+ * Sign-in, refresh and logout — all three, or none of them.
+ *
+ * Built together because they share one transport and one precondition: a
+ * configured backend origin. Splitting them would let a build end up able to
+ * refresh but not sign in, which is a state nothing should be able to reach.
+ */
+const identityClients =
+  identityConfig === null
+    ? null
+    : (() => {
+        // No send port: `guardedSend` performs the fetch, inside the egress
+        // module, so no network primitive is created here.
+        const transport = new IdentityTransport(identityConfig);
+        return {
+          google: new GoogleSignIn({
+            config: identityConfig,
+            transport,
+            authFlow: new TabAuthFlow(chromeTabs()),
+            // The installation's own random id, minted once and kept locally.
+            // Never derived from the Google subject, the email, or any Chrome
+            // runtime handle.
+            deviceId: () => dataStoragePreference.deviceId(),
+          }),
+          session: new SessionClient({ transport, sessions: sessionStore }),
+        };
+      })();
+
 const authController = new AuthController({
   sessions: sessionStore,
   profile: identityProfile,
-  google:
-    identityConfig === null
-      ? null
-      : new GoogleSignIn({
-          config: identityConfig,
-          // No send port: `guardedSend` performs the fetch, inside the egress
-          // module, so no network primitive is created here.
-          transport: new IdentityTransport(identityConfig),
-          authFlow: new TabAuthFlow(chromeTabs()),
-          // The installation's own random id, minted once and kept locally.
-          // Never derived from the Google subject, the email, or any Chrome
-          // runtime handle.
-          deviceId: () => dataStoragePreference.deviceId(),
-        }),
+  google: identityClients?.google ?? null,
+  session: identityClients?.session ?? null,
 });
 
 router.on('auth.status', async () => authController.status());
@@ -2061,6 +2079,13 @@ router.on('auth.signInWithGoogle', async () => {
   // when it elapses rather than leaving a tab open for ever.
   const controller = new AbortController();
   return authController.signInWithGoogle(controller.signal);
+});
+
+router.on('auth.refresh', async () => {
+  const result = await authController.refresh();
+  // The failure code only; nothing about the token, the session or the
+  // account reaches the panel.
+  return { ok: result.ok, failure: result.ok ? null : result.failure };
 });
 
 router.on('auth.signOut', async () => authController.signOut());

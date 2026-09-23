@@ -12,6 +12,8 @@ Status: **partly implemented.** The status line above this one used to read
 | Account-linking UI                                                                                    | not built                                                              |
 | Cloud Sync, K1                                                                                        | not built                                                              |
 | The HTTP surface for the Google routes                                                                | **implemented** (`server/http/router.ts`)                              |
+| `POST /v1/auth/refresh`, `POST /v1/auth/logout`, and the client's refresh lifecycle                   | **implemented**                                                        |
+| `GET /v1/me`, `GET /v1/devices`                                                                       | not built — not needed by refresh or logout                            |
 | A deployed backend, a running database, real Google credentials                                       | **not deployed / credential-blocked**                                  |
 
 Everything implemented is implemented **optionally**: a build with no

@@ -209,7 +209,23 @@ export interface PanelRequestMap {
       failure: string | null;
     };
   };
-  /** Ends the session. Deletes nothing. */
+  /**
+   * Renews the access token from the stored refresh token.
+   *
+   * Exposed so the panel can recover a session whose access token lapsed
+   * without making the user sign in again. Concurrent callers are collapsed
+   * into one request inside `SessionClient`, because a refresh token is
+   * single-use and two presentations would revoke the family.
+   */
+  'auth.refresh': {
+    request: Record<string, never>;
+    response: {
+      ok: boolean;
+      /** `REVOKED` means sign in again; `UNREACHABLE` means try later. */
+      failure: string | null;
+    };
+  };
+  /** Ends the session, on the server as well as here. Deletes nothing. */
   'auth.signOut': {
     request: Record<string, never>;
     response: { ok: boolean };

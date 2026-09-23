@@ -23,6 +23,7 @@ import { getLogger } from '@/logging/logger';
 import { evaluateSession, type SessionStore } from './session-store';
 import type { IdentityProfileStore } from './identity-profile';
 import type { GoogleSignIn } from './google-sign-in';
+import type { RefreshResult, SessionClient } from './session-client';
 
 const log = getLogger('security');
 
@@ -38,6 +39,12 @@ export interface AuthControllerOptions {
   readonly profile: IdentityProfileStore;
   /** Null when no backend origin is configured — sign-in is then unavailable. */
   readonly google: GoogleSignIn | null;
+  /**
+   * Refresh and logout against the backend. Null for the same reason
+   * `google` is: with no configured origin there is nothing to talk to, and
+   * sign-out is then the local clear it has always been.
+   */
+  readonly session: SessionClient | null;
   readonly now?: () => number;
 }
 
@@ -125,15 +132,37 @@ export class AuthController {
   }
 
   /**
-   * Ends the session.
+   * Renews the access token, or reports that the session is gone.
+   *
+   * Single-flight lives in `SessionClient`, not here: collapsing concurrent
+   * callers is a property of the token being single-use, and belongs beside
+   * the request rather than beside the routes.
+   */
+  async refresh(): Promise<RefreshResult> {
+    if (this.options.session === null) return { ok: false, failure: 'UNREACHABLE' };
+    return this.options.session.refresh();
+  }
+
+  /**
+   * Ends the session, on the server as well as here.
    *
    * Clears the two session keys and nothing else. The identity profile stays,
    * so the sign-in screen can offer "sign back in as …" rather than showing a
    * returning user a blank form, and every connected account, credential,
    * task, workflow and workspace is untouched (AUTH-9).
+   *
+   * With no backend configured this is the local clear it has always been,
+   * which is the whole of sign-out for a build that never had a session on a
+   * server to begin with.
    */
   async signOut(): Promise<{ ok: boolean }> {
-    await this.options.sessions.clear();
+    if (this.options.session === null) {
+      await this.options.sessions.clear();
+      return { ok: true };
+    }
+    // `logout` clears locally whichever way the server answers, so a user who
+    // pressed sign out is signed out even when the backend is unreachable.
+    await this.options.session.logout();
     return { ok: true };
   }
 }

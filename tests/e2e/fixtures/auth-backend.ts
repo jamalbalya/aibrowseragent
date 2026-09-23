@@ -56,6 +56,10 @@ export interface AuthBackend {
   setSubject(subject: string): void;
   /** Every device row the backend holds for an account. */
   devices(abaUserId: string): Promise<readonly { device_id: string }[]>;
+  /** Every session row for an account, so revocation can be asserted. */
+  sessions(abaUserId: string): Promise<readonly { id: string; revoked_at: number | null }[]>;
+  /** Moves the backend's clock, so an access token can be aged past expiry. */
+  advance(ms: number): void;
   close(): Promise<void>;
 }
 
@@ -105,7 +109,13 @@ export async function startAuthBackend(): Promise<AuthBackend> {
   // way a browser would.
   let nonce = '';
 
+  // A clock the test can move, so access-token expiry is exercised by ageing
+  // the session rather than by waiting fifteen minutes.
+  let offset = 0;
+  const clock = { now: () => Date.now() + offset };
+
   const backend = createIdentityBackend({
+    clock,
     log: silentLogger,
     google: {
       config: {
@@ -181,6 +191,10 @@ export async function startAuthBackend(): Promise<AuthBackend> {
       subject = next;
     },
     devices: (abaUserId: string) => backend.store.listDevices(abaUserId),
+    sessions: (abaUserId: string) => backend.store.listSessions(abaUserId),
+    advance(ms: number) {
+      offset += ms;
+    },
     close: () =>
       new Promise<void>((resolve) => {
         server.close(() => {

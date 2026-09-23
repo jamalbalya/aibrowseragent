@@ -1,5 +1,5 @@
 /**
- * The HTTP surface for Google sign-in. Three routes and nothing else.
+ * The HTTP surface for authentication. Six routes and nothing else.
  *
  * Phase 1 deliberately shipped no transport, because a routing layer with no
  * endpoint behind it is scaffolding. There is an endpoint behind it now, so
@@ -43,6 +43,30 @@
  * the backend had done anything — and whether it did would depend on Chrome's
  * redirect timing. Two paths remove the race entirely rather than tuning it.
  *
+ * ## The session lifecycle
+ *
+ * Sign-in is three of the six routes; the other three complete the life of
+ * the session it produces:
+ *
+ * ```
+ *   POST /v1/auth/refresh   credential: the refresh token, in the body
+ *   POST /v1/auth/logout    credential: the access token, in Authorization
+ * ```
+ *
+ * They take different credentials because they answer different questions.
+ * Refresh asks "may this token become a new session?", and the refresh token
+ * is the only thing that can answer it — an access token proves nothing about
+ * a rotation chain. Logout asks "may this caller end *this* session?", which
+ * the access token answers directly because it names the session it was
+ * minted for. `IDENTITY_AUTH_ARCHITECTURE.md` §19 lists logout under the
+ * access token for that reason.
+ *
+ * Neither restates a security decision. Refresh hands the token to
+ * `SessionService.rotateSession`, where the atomic claim, reuse detection,
+ * family revocation, expiry and the deleted-account check already live.
+ * Logout resolves a `Principal` and calls `revokeSession`, which revokes the
+ * session the principal names and deletes nothing.
+ *
  * ## What may appear in a URL
  *
  * Exactly one secret-ish value: the one-time exchange artifact, on the
@@ -56,6 +80,8 @@
 import type { IdentityBackend } from '../index';
 import type { ServerLogger } from '../logging';
 import type { AccessTokenIssuer } from '../app/access-token';
+import type { IssuedSession } from '../app/session-service';
+import type { Principal } from '../domain/authorization';
 
 /** Paths, taken from configuration rather than assumed. */
 export interface AuthRouterPaths {
@@ -67,6 +93,10 @@ export interface AuthRouterPaths {
   readonly callbackPath: string;
   /** Where the extension trades the artifact for tokens. */
   readonly exchangePath: string;
+  /** Where the extension rotates a refresh token into a new session. */
+  readonly refreshPath: string;
+  /** Where a session revokes itself. */
+  readonly logoutPath: string;
 }
 
 export const DEFAULT_PATHS: AuthRouterPaths = {
@@ -74,6 +104,8 @@ export const DEFAULT_PATHS: AuthRouterPaths = {
   redirectPath: '/v1/auth/google/redirect',
   callbackPath: '/v1/auth/google/callback',
   exchangePath: '/v1/auth/exchange',
+  refreshPath: '/v1/auth/refresh',
+  logoutPath: '/v1/auth/logout',
 };
 
 export interface AuthRouterOptions {
@@ -203,6 +235,21 @@ const LANDING_PAGE = `<!doctype html>
 <p>You can close this tab and go back to AI Browser Agent.</p>
 </main></body></html>`;
 
+/**
+ * Reads a bearer credential out of the Authorization header.
+ *
+ * Header only. A token in a query parameter would reach browser history,
+ * server logs and any `Referer` the page sent, which is the whole reason the
+ * exchange artifact is the only value this API ever puts in a URL.
+ */
+function bearerFrom(request: Request): string | null {
+  const header = request.headers.get('authorization');
+  if (header === null) return null;
+  const match = /^Bearer (.+)$/.exec(header.trim());
+  const token = match?.[1]?.trim();
+  return token === undefined || token.length === 0 || token.length > 4096 ? null : token;
+}
+
 export type AuthRouter = (request: Request) => Promise<Response>;
 
 /**
@@ -215,6 +262,60 @@ export function createAuthRouter(options: AuthRouterOptions): AuthRouter {
   const paths = options.paths ?? DEFAULT_PATHS;
   const limit = options.maxBodyBytes ?? MAX_BODY_BYTES;
   const { backend, log, accessTokens } = options;
+
+  /**
+   * The body every session-issuing route returns.
+   *
+   * Shared so `exchange` and `refresh` cannot drift into returning different
+   * shapes for the same thing — a client that had to tell them apart would be
+   * a client with two session paths.
+   *
+   * The access token is minted here because the domain deliberately does not:
+   * it carries the account, the session and an expiry, and never an email, a
+   * Google subject, a device id or the refresh token.
+   */
+  const sessionBody = async (session: IssuedSession): Promise<Record<string, unknown>> => ({
+    abaUserId: session.abaUserId,
+    accessToken: await accessTokens.sign({
+      sub: session.abaUserId,
+      sid: session.sessionId,
+      iat: backend.clock.now(),
+      exp: session.accessExpiresAt,
+    }),
+    accessExpiresAt: session.accessExpiresAt,
+    refreshToken: session.refreshToken,
+    refreshExpiresAt: session.refreshExpiresAt,
+  });
+
+  /**
+   * The authenticated-route boundary. The minimum, and no more.
+   *
+   * Two checks, and the second is the one that matters. The signature and
+   * expiry prove the token was minted here and is current — but a stateless
+   * token cannot know that its session was revoked a second ago, and logout
+   * is precisely an operation on a session's liveness. So the `sid` is
+   * resolved through `sessions.verify`, which re-reads the session **and**
+   * the account: a revoked session, an expired one and a deleted account are
+   * all refused there, live, however valid the signature is.
+   *
+   * Authority comes from the signed `sid` and `sub`. Nothing the caller sends
+   * — body, query, header — can name a different session or account.
+   */
+  const authenticate = async (request: Request): Promise<Principal | null> => {
+    const bearer = bearerFrom(request);
+    if (bearer === null) return null;
+
+    const claims = await accessTokens.verify(bearer, backend.clock.now());
+    if (claims === null) return null;
+
+    const principal = await backend.sessions.verify(claims.sid);
+    if (!principal.ok) return null;
+    // Defence in depth: the token's account and the session's must agree.
+    // They cannot disagree unless a token was minted for the wrong session,
+    // and continuing then would act for one account under another's token.
+    if (principal.value.abaUserId !== claims.sub) return null;
+    return principal.value;
+  };
 
   /** Builds the URL the extension's watcher will match. */
   const callbackUrl = (origin: string, params: Readonly<Record<string, string>>): string => {
@@ -333,27 +434,61 @@ export function createAuthRouter(options: AuthRouterOptions): AuthRouter {
         return errorResponse('invalid_request', 401);
       }
 
-      const { session } = outcome.value;
-      // Minted here, from the session the domain issued. It carries the
-      // account, the session and an expiry — no email, no Google subject, no
-      // device id, and never the refresh token.
-      const accessToken = await accessTokens.sign({
-        sub: session.abaUserId,
-        sid: session.sessionId,
-        iat: backend.clock.now(),
-        exp: session.accessExpiresAt,
-      });
       return json(
         {
-          abaUserId: session.abaUserId,
-          accessToken,
-          accessExpiresAt: session.accessExpiresAt,
-          refreshToken: session.refreshToken,
-          refreshExpiresAt: session.refreshExpiresAt,
+          ...(await sessionBody(outcome.value.session)),
           deviceRegistered: outcome.value.deviceRegistered,
         },
         200,
       );
+    }
+
+    /* ----------------------------- refresh ----------------------------- */
+    if (path === paths.refreshPath) {
+      if (request.method !== 'POST') return errorResponse('method_not_allowed', 405);
+
+      const body = await readJsonBody(request, limit);
+      if (body === null) return errorResponse('invalid_request', 400);
+
+      // **The refresh token is the credential.** There is no parameter here
+      // for an `abaUserId`, a Google subject, an email or a device id, so
+      // none of them can be offered as authority — the account comes from the
+      // session row the digest resolves to, and from nowhere else.
+      const refreshToken = requiredString(body, 'refreshToken', 4096);
+      if (refreshToken === null) return errorResponse('invalid_request', 400);
+
+      // Straight to the existing domain service. Every security decision —
+      // the atomic claim, reuse detection, family revocation, expiry, the
+      // deleted-account check — lives there and is not restated here.
+      const rotated = await backend.sessions.rotateSession(refreshToken);
+      if (!rotated.ok) {
+        log.warn('auth.http.refresh_refused', { errorCode: rotated.error.code });
+        // One status and one body for every refusal. An unknown token, an
+        // expired one, a rotated one and a deleted account must be
+        // indistinguishable, or the endpoint becomes an oracle for which of
+        // those a stolen token is.
+        return errorResponse('invalid_request', 401);
+      }
+
+      return json(await sessionBody(rotated.value), 200);
+    }
+
+    /* ------------------------------ logout ----------------------------- */
+    if (path === paths.logoutPath) {
+      if (request.method !== 'POST') return errorResponse('method_not_allowed', 405);
+
+      const principal = await authenticate(request);
+      if (principal === null) return errorResponse('invalid_request', 401);
+
+      // The session revoked is the one the credential names. The request body
+      // is not read at all, so there is no field in which another session id
+      // or another account could be offered.
+      await backend.sessions.revokeSession(principal);
+      // Idempotent by construction: revoking an already-revoked session is a
+      // write that changes nothing, and a second logout simply fails to
+      // authenticate because the session it names is revoked. Both end
+      // signed out, which is the only state logout is allowed to produce.
+      return json({ ok: true }, 200);
     }
 
     return errorResponse('not_found', 404);

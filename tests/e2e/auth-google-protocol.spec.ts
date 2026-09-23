@@ -31,7 +31,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { startAuthBackend, type AuthBackend } from './fixtures/auth-backend';
-import { BROWSER } from './fixtures/extension';
+import { BROWSER, killServiceWorker } from './fixtures/extension';
 import type { PanelRequestType, PanelResponse } from '../../src/messaging/protocol';
 
 const EXTENSION_PATH = resolve(import.meta.dirname, '../../dist-auth');
@@ -326,6 +326,164 @@ test('16 — the sign-in that was refused left no session for the other account'
   // The refused account's id appears nowhere: a refusal that still wrote a
   // session would be the takeover the refusal exists to prevent.
   expect(stored).not.toContain('google-subject-somebody-else');
+});
+
+/* ------------------------- the session lifecycle ------------------------- */
+
+test('17 — a refresh renews the session and keeps the same account', async () => {
+  await send('auth.signOut', {});
+  await send('auth.signInWithGoogle', {});
+  const before = await send('auth.status', {});
+
+  const refreshed = await send('auth.refresh', {});
+
+  expect(refreshed.ok).toBe(true);
+  expect(refreshed.failure).toBeNull();
+  const after = await send('auth.status', {});
+  expect(after.state).toBe('signed_in');
+  // A refresh renews a session; it never moves the installation to another
+  // account, and never silently creates one.
+  expect(after.abaUserId).toBe(before.abaUserId);
+});
+
+test('18 — the refresh went over the wire and rotated the stored token', async () => {
+  const storedBefore = await worker.evaluate(async () => {
+    const all = await chrome.storage.local.get(null);
+    return JSON.stringify(all);
+  });
+
+  const before = backend.seen.length;
+  const result = await send('auth.refresh', {});
+  expect(result.ok).toBe(true);
+
+  expect(backend.seen.slice(before)).toContain('/v1/auth/refresh');
+  const storedAfter = await worker.evaluate(async () => {
+    const all = await chrome.storage.local.get(null);
+    return JSON.stringify(all);
+  });
+  // Single-use means the stored token must have changed.
+  expect(storedAfter).not.toBe(storedBefore);
+});
+
+test('19 — an expired access token is recovered by a refresh, not by signing in', async () => {
+  // Age the backend past the access token's fifteen minutes. The refresh
+  // token is good for thirty days, so the session is recoverable.
+  backend.advance(20 * 60 * 1000);
+
+  const refreshed = await send('auth.refresh', {});
+
+  expect(refreshed.ok).toBe(true);
+  expect((await send('auth.status', {})).state).toBe('signed_in');
+});
+
+test('20 — many simultaneous refreshes produce one request and one session', async () => {
+  const before = backend.seen.filter((path) => path === '/v1/auth/refresh').length;
+
+  // Eight callers at once, which is what the panel, a task and a scheduled
+  // check would look like noticing a stale token together. Without the
+  // client's single flight this would spend one single-use token eight times
+  // and the server would revoke the family.
+  const results = await panel.evaluate(async () => {
+    const one = (): Promise<unknown> =>
+      chrome.runtime.sendMessage({
+        id: `e2e_${Math.random().toString(36).slice(2)}`,
+        type: 'auth.refresh',
+        timestamp: Date.now(),
+        payload: {},
+      });
+    return Promise.all(Array.from({ length: 8 }, one));
+  });
+
+  const requests = backend.seen.filter((path) => path === '/v1/auth/refresh').length - before;
+  expect(requests).toBe(1);
+  expect(results).toHaveLength(8);
+  // And the session survived: eight independent refreshes would not have.
+  expect((await send('auth.status', {})).state).toBe('signed_in');
+});
+
+test('21 — the session survives a real worker restart after a refresh', async () => {
+  const before = await send('auth.status', {});
+  await send('auth.refresh', {});
+
+  // A genuine termination through CDP, the same one the shared harness uses.
+  // The refresh token lives in chrome.storage.local and must survive it; the
+  // access token lives in chrome.storage.session and legitimately may not.
+  await killServiceWorker(context, worker);
+
+  // The old panel's port died with the worker, so both are replaced.
+  const extensionId = new URL(worker.url()).host;
+  panel = await context.newPage();
+  await panel.goto(`chrome-extension://${extensionId}/src/sidepanel/index.html`);
+  worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+
+  const after = await send('auth.status', {});
+  expect(after.state).toBe('signed_in');
+  expect(after.abaUserId).toBe(before.abaUserId);
+
+  // And the restarted worker can still refresh, which is what proves the
+  // durable half of the session actually survived rather than merely reading
+  // back as present.
+  expect((await send('auth.refresh', {})).ok).toBe(true);
+});
+
+test('22 — logout revokes the server session, not just the local one', async () => {
+  const status = await send('auth.status', {});
+  const abaUserId = status.abaUserId ?? '';
+
+  await send('auth.signOut', {});
+
+  expect((await send('auth.status', {})).state).toBe('signed_out');
+  const rows = await backend.sessions(abaUserId);
+  // Every session for this account is revoked on the server. Before this
+  // phase, sign-out cleared two local keys and the row stayed live.
+  expect(rows.length).toBeGreaterThan(0);
+  expect(rows.some((row) => row.revoked_at !== null)).toBe(true);
+});
+
+test('23 — a refresh after logout fails and does not resurrect the session', async () => {
+  const result = await send('auth.refresh', {});
+
+  expect(result.ok).toBe(false);
+  expect((await send('auth.status', {})).state).toBe('signed_out');
+});
+
+test('24 — logout kept every local record, credential and preference', async () => {
+  // Signed out from the previous case. Nothing of the user's went with it.
+  const workspaces = await send('workspace.state', {});
+  expect(workspaces.workspaces.length).toBeGreaterThan(0);
+
+  const accounts = await send('accounts.list', {});
+  expect(accounts.accounts.length).toBeGreaterThan(0);
+
+  const preference = await send('storage.getPreference', {});
+  expect(preference.mode).toBe('local');
+
+  // And the provider key is still in local storage under its own key.
+  const hasCredential = await worker.evaluate(async () => {
+    const all = await chrome.storage.local.get(null);
+    return Object.keys(all).some((key) => key.includes('credentials:conn:'));
+  });
+  expect(hasCredential).toBe(true);
+});
+
+test('25 — no K1 material appeared across the whole refresh and logout cycle', async () => {
+  const keys = await worker.evaluate(async () => {
+    const all = await chrome.storage.local.get(null);
+    return Object.keys(all).join('|').toLowerCase();
+  });
+  for (const term of ['recovery', 'kek', 'dek', 'envelope', 'ciphertext', 'k1']) {
+    expect(keys, term).not.toContain(term);
+  }
+});
+
+test('26 — refresh and logout uploaded no local work', async () => {
+  // Every path the backend saw across this whole spec belongs to the auth
+  // flow. Nothing resembling a sync endpoint was ever called.
+  for (const path of backend.seen) {
+    expect(path).toMatch(/^\/(v1\/auth|fixture\/google)/);
+  }
+  expect(backend.seen.some((path) => path.includes('sync'))).toBe(false);
+  expect(backend.seen.some((path) => path.includes('task'))).toBe(false);
 });
 
 test('14 — the configured build still added no permission and no host access', async () => {

@@ -319,6 +319,9 @@ export const PANEL_ROUTE_CLASSES: Record<PanelRequestType, RouteClass> = {
   // could start without the user.
   'auth.status': 'CLASS_E_PANEL_READ_ONLY',
   'auth.signInWithGoogle': 'CLASS_B_PANEL_CONTROL_PLANE',
+  // Control plane, not a read: a refresh rotates a credential and can end a
+  // session. No tool reaches it.
+  'auth.refresh': 'CLASS_B_PANEL_CONTROL_PLANE',
   'auth.signOut': 'CLASS_B_PANEL_CONTROL_PLANE',
 
   // Connected AI accounts. Reads are CLASS_E; anything that creates, removes,

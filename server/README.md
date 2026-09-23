@@ -93,28 +93,34 @@ Every refusal on a route answers with one status and one body, whatever was
 wrong. An attacker who can tell "unknown state" from "spent challenge" from
 "that Google account belongs to somebody else" learns what to try next.
 
-## The session lifecycle that is not exposed yet
+## The session lifecycle
 
-Four routes the architecture specifies exist in `IDENTITY_PATHS` on the client
-and are **not served**, deliberately: `/v1/auth/refresh`, `/v1/auth/logout`,
-`/v1/me`, `/v1/devices`. Phase 2A's scope was Google sign-in, and these belong
-to the session-lifecycle phase.
+`/v1/auth/refresh` and `/v1/auth/logout` are **served**. They complete the life
+of the session sign-in produces, and they take different credentials because
+they answer different questions:
 
-What that costs today, stated rather than implied:
+| Route                   | Credential                           | Why that one                                                                                                                                                       |
+| ----------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `POST /v1/auth/refresh` | the refresh token, in the body       | An access token proves nothing about a rotation chain. The token is the credential, and the route has no parameter for an account, a subject, an email or a device |
+| `POST /v1/auth/logout`  | the access token, in `Authorization` | It names the session it was minted for, so the session being ended is never a value the client chose. §19 of the architecture lists logout under the access token  |
 
-| Gap                                      | Consequence now                                                                                                                                                                                                                                | Classification                |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| No `/v1/auth/refresh`                    | An access token expires after ~15 minutes and cannot be renewed; the refresh token is held but unusable over HTTP. `rotateSession` is implemented and tested — nothing calls it from outside                                                   | deferred                      |
-| No `/v1/auth/logout`                     | **Sign-out is local only.** It clears the extension's session and access token; the server session stays valid until it expires. Nothing can present it — the client discarded the only copy of the refresh token — but the row is not revoked | deferred, with a real residue |
-| No `/v1/me`, `/v1/devices`               | No authenticated read surface. `listDevices`, `getAccount` and `listIdentities` exist and are tested; nothing reaches them                                                                                                                     | deferred                      |
-| `AccessTokenIssuer.verify` has no caller | There is no authenticated route to protect yet. The verifier is complete and tested so the first such route does not have to invent one                                                                                                        | deferred                      |
+Neither restates a security decision. Refresh hands the token to
+`SessionService.rotateSession`, where the atomic claim, reuse detection, family
+revocation, expiry and the deleted-account check already live. Logout resolves
+a `Principal` and calls `revokeSession`, which revokes that session and deletes
+nothing.
 
-**Rate limiting is deliberately absent.** Every mention in
-`IDENTITY_AUTH_ARCHITECTURE.md` attaches it to the email OTP — a low-entropy
-credential where guessing is the threat. The Google flow already bounds abuse
-with a 10-minute challenge TTL, a 2-minute exchange TTL, single-use rows and a
-3-attempt cap. Adding per-IP limits now would be infrastructure nobody's
-threat model asked for.
+**Logout's authentication is not stateless.** The access token's signature and
+expiry are checked, and then the `sid` is resolved through `sessions.verify`,
+which re-reads the session _and_ the account. A revoked session, an expired one
+and a deleted account are refused there, live, however valid the signature is —
+which matters because logout is precisely an operation on a session's liveness.
+
+### Still deferred
+
+`GET /v1/me` and `GET /v1/devices` are **not built**. Neither is needed by
+refresh or logout, so neither was added: `listDevices`, `getAccount` and
+`listIdentities` exist and are tested, and nothing reaches them yet.
 
 ## How the pieces constrain each other
 
