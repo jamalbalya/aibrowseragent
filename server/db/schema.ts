@@ -90,7 +90,30 @@ export interface ForeignKeySpec {
 export interface CheckSpec {
   readonly name: string;
   readonly expression: string;
+  /**
+   * The same rule in JavaScript, so it can be enforced and tested without a
+   * database.
+   *
+   * `UniqueSpec.requires` is declared once and honoured by both the SQL
+   * renderer and the memory store; checks had no equivalent, so they were
+   * rendered into DDL and enforced *nowhere* under test. That is how
+   * `auth_identity_email_lowercase` came to say `email = lower(email)` while
+   * the canonicaliser deliberately preserves local-part case — a
+   * contradiction that would only have appeared against real Postgres, at
+   * sign-in, for anybody whose address has a capital letter before the `@`.
+   *
+   * Optional because a check whose meaning is genuinely SQL-only should say
+   * so by omission rather than by a JavaScript approximation nobody can
+   * trust. Where it is present, the memory store enforces it.
+   */
+  readonly holds?: (row: Readonly<Record<string, unknown>>) => boolean;
   readonly why: string;
+}
+
+/** Everything after the last `@`. Mirrors `normaliseEmail`'s split exactly. */
+export function domainOf(email: string): string {
+  const at = email.lastIndexOf('@');
+  return at < 0 ? '' : email.slice(at + 1);
 }
 
 export interface IndexSpec {
@@ -253,7 +276,7 @@ const authIdentity: TableSpec = {
       name: 'email',
       type: 'text',
       nullable: true,
-      why: 'Normalised, lowercase. Null for kinds that carry no address.',
+      why: 'Canonical form: surrounding whitespace removed and the domain folded to lower case, local part byte-for-byte as given (AUTH-31). Null for kinds that carry no address.',
     },
     {
       name: 'email_verified',
@@ -323,9 +346,20 @@ const authIdentity: TableSpec = {
       why: 'An identity with neither identifies nobody and would match every lookup that tested only for null.',
     },
     {
-      name: 'auth_identity_email_lowercase',
-      expression: 'email IS NULL OR email = lower(email)',
-      why: 'Normalisation is enforced at the boundary, not hoped for: a mixed-case row would be invisible to the lookup that normalises first.',
+      name: 'auth_identity_email_domain_lowercase',
+      // Everything after the **last** `@`, which is the same split
+      // `normaliseEmail` makes: a quoted local part may legally contain one.
+      // `regexp_replace` with a greedy `^.*@` takes the last separator.
+      expression:
+        "email IS NULL OR regexp_replace(email, '^.*@', '') = lower(regexp_replace(email, '^.*@', ''))",
+      holds: (row) => {
+        const email = row['email'];
+        if (email === null || email === undefined) return true;
+        if (typeof email !== 'string') return false;
+        const domain = domainOf(email);
+        return domain === domain.toLowerCase();
+      },
+      why: 'Normalisation is enforced at the boundary, not hoped for: a row whose domain is not folded would be invisible to the lookup that folds first. Only the domain, because that is all `normaliseEmail` folds — RFC 5321 §2.4 reserves the local part to the destination host, so folding it would be a guess that can merge two people into one account. The previous form of this check required the whole address to be lowercase, which contradicted the canonicaliser and would have refused every address with a capital letter before the `@`.',
     },
   ],
   indexes: [

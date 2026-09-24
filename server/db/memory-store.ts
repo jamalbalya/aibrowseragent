@@ -124,6 +124,20 @@ class MemoryTable<T extends object> {
     }
   }
 
+  /**
+   * Evaluates the checks that carry a JavaScript twin.
+   *
+   * Without this, a CHECK constraint was rendered into DDL and enforced
+   * nowhere under test — which let `auth_identity_email_lowercase` contradict
+   * the canonicaliser for as long as nobody ran against real Postgres.
+   */
+  private validateChecks(row: Row): void {
+    for (const check of this.spec.checks) {
+      if (check.holds === undefined) continue;
+      if (!check.holds(row)) throw new ConstraintViolation(check.name, this.spec.name);
+    }
+  }
+
   insert(row: T): void {
     const raw = asRow(row);
     this.validateShape(raw);
@@ -131,6 +145,7 @@ class MemoryTable<T extends object> {
     if (this.rows.has(pk)) {
       throw new ConstraintViolation(`${this.spec.name}_pkey`, this.spec.name);
     }
+    this.validateChecks(raw);
     this.validateUnique(raw, null);
     this.validateForeignKeys(raw);
     this.rows.set(pk, { ...row });
@@ -160,6 +175,7 @@ class MemoryTable<T extends object> {
     const next = { ...current, ...patch };
     const raw = asRow(next);
     this.validateShape(raw);
+    this.validateChecks(raw);
     this.validateUnique(raw, pk);
     this.rows.set(pk, next);
   }

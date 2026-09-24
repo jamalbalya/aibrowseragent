@@ -1969,17 +1969,17 @@ An external identity that resolves to an ABA account. `IDENTITY_AND_SYNC.md`
 §U calls this `auth_method`; the shape is identical and either name is
 acceptable at implementation time.
 
-| Field            | Type        | Notes                                                                                                                                      |
-| ---------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `id`             | text PK     |                                                                                                                                            |
-| `aba_user_id`    | text FK     | owner                                                                                                                                      |
-| `kind`           | enum        | `google` \| `email`                                                                                                                        |
-| `subject`        | text null   | `google_sub`. **Unique** where non-null                                                                                                    |
-| `email`          | citext null | stored lowercase. **Unique** where non-null (§8.3)                                                                                         |
-| `email_verified` | boolean     | **never `true` without a completed proof** (§4.3)                                                                                          |
-| `linked_at`      | timestamptz | when this identity was attached (§20.7)                                                                                                    |
-| `linked_via`     | text null   | the `session.id` that performed the link; null for the identity the account was created with. **Audit only**, never an authorization input |
-| `last_used_at`   | timestamptz | for display and for stale-identity review only                                                                                             |
+| Field            | Type        | Notes                                                                                                                                                                              |
+| ---------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`             | text PK     |                                                                                                                                                                                    |
+| `aba_user_id`    | text FK     | owner                                                                                                                                                                              |
+| `kind`           | enum        | `google` \| `email`                                                                                                                                                                |
+| `subject`        | text null   | `google_sub`. **Unique** where non-null                                                                                                                                            |
+| `email`          | text null   | canonical form: trimmed, domain folded, local part byte-for-byte (`AUTH-31`). **Unique only where `subject IS NULL`** — where a subject exists the address is metadata (`AUTH-29`) |
+| `email_verified` | boolean     | **never `true` without a completed proof** (§4.3)                                                                                                                                  |
+| `linked_at`      | timestamptz | when this identity was attached (§20.7)                                                                                                                                            |
+| `linked_via`     | text null   | the `session.id` that performed the link; null for the identity the account was created with. **Audit only**, never an authorization input                                         |
+| `last_used_at`   | timestamptz | for display and for stale-identity review only                                                                                                                                     |
 
 Indexes: unique `(kind, subject)` where `subject` is not null, unique
 `(kind, email)` where the address is verified **and `subject` is null**, and
@@ -2412,3 +2412,156 @@ Everything else is settled. `D` (device retirement window), the revoked-session
 retention window, the account-deletion tombstone window and the operational log
 window are marked **TUNABLE**: parameters for implementation review, correct at
 any value meeting the constraint stated with them.
+
+---
+
+## 23. Email identity decision gate — closed
+
+The register this gate produced. Every row is either **FINAL** — settled, in
+the code, and covered by a test — or **OPEN**, with what would have to be
+decided before it can be closed. Nothing is listed as final on the strength of
+a plan.
+
+| #   | Decision                                                                                        | Status                             | Where it lives                                          |
+| --- | ----------------------------------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------- |
+| 1   | **Local-part case: preserved.** Option B.                                                       | **FINAL**                          | `normaliseEmail`; `email-identity-policy.test.ts` 01–03 |
+| 2   | **Interior whitespace: rejected**, as validation and not canonicalisation                       | **FINAL**                          | `INTERIOR_WHITESPACE` in `isUsable`; case 05            |
+| 3   | Unicode normalisation (NFC/NFKC/NFD/NFKD)                                                       | **OPEN**                           | —                                                       |
+| 4   | IDN / punycode / confusables                                                                    | **OPEN**                           | —                                                       |
+| 5   | **Display address: one field, no second copy**                                                  | **FINAL**                          | §23.2                                                   |
+| 6   | **Email change: attach-then-unlink, never mutation**                                            | **FINAL**                          | §20.9, `AUTH-25`                                        |
+| 7   | **Google subject authority vs `(kind,email)`**: uniqueness applies only where `subject IS NULL` | **FINAL**                          | `auth_identity_email_key.requiresNull`; cases 10–13     |
+| 8   | Deletion semantics                                                                              | **DEFERRED** by design             | §23.4 checklist                                         |
+| 9   | **OTP transient classification**                                                                | **FINAL** as policy; unimplemented | §23.5                                                   |
+| 10  | Schema/index consequence                                                                        | **FINAL**, one correction applied  | §23.3                                                   |
+
+### 23.1 Local-part case, and what stays provider-dependent
+
+**The domain folds; the local part does not.** RFC 5321 §2.4 makes the local
+part case-sensitive and reserves its interpretation to the destination host,
+so folding it is a guess about somebody else's mail server.
+
+The two failure modes are not symmetric, and that asymmetry is the whole
+argument:
+
+- folding a host that distinguishes `Alice@x` from `alice@x` **merges two
+  people into one account** — unrecoverable, and the failure this design
+  refuses everywhere else;
+- not folding, on the overwhelmingly common case-insensitive host, **splits
+  one person into two accounts** — visible, annoying, and repairable by the
+  explicit link flow.
+
+**What remains provider-dependent, stated rather than papered over:** whether
+any given host treats `Alice@` and `alice@` as one mailbox is that host's
+decision and is not knowable from here. A user at such a host who signs in
+with two different capitalisations gets two accounts and must link them. That
+is a real cost, accepted deliberately, because the alternative cost is
+irreversible. No Gmail dot rule, no `+tag` rule, no provider alias table.
+
+### 23.2 One address field, not two
+
+Canonicalisation is **not lossy** in the way that would force a second field:
+only surrounding whitespace is removed, and only the domain's case changes.
+Nothing a user would recognise as "their address" is destroyed — the local
+part, which is the part people capitalise deliberately, survives byte for
+byte.
+
+So one field serves both identity and display. A second copy would be a second
+place a personal identifier lives, with a synchronisation question attached
+and nothing gained. **If Unicode normalisation is ever adopted (decision 3),
+this conclusion has to be revisited** — NFKC in particular is lossy, and a
+display copy would then have a concrete reason to exist.
+
+### 23.3 The schema correction this gate made
+
+The gate found a contradiction between the ratified canonical form and the
+schema that was supposed to enforce it:
+
+```
+ was:  CHECK (email IS NULL OR email = lower(email))
+```
+
+Every address with a capital letter before the `@` fails that. The
+canonicaliser deliberately produces exactly such addresses, so a Google
+account with the address `Alice.Smith@example.com` would have passed every
+application check and been **refused by the database at sign-in**.
+
+```
+ now:  CHECK (email IS NULL OR regexp_replace(email, '^.*@', '')
+              = lower(regexp_replace(email, '^.*@', '')))
+```
+
+Everything after the **last** `@`, which is the same split `normaliseEmail`
+makes — a quoted local part may legally contain one.
+
+**Why it survived:** CHECK constraints were rendered into DDL and enforced
+nowhere else, so no test could see them. `UniqueSpec.requires` is declared
+once and honoured by both the renderer and the memory store; checks had no
+equivalent. `CheckSpec` now carries an optional `holds` — the same rule in
+JavaScript — and the memory store evaluates it on insert and update.
+
+**Migration shape.** The change is to the `CREATE TABLE` in `0001`, and it was
+made there rather than as a `0003`. That is safe **only** because no database
+has ever run these migrations: there is no author-operated backend, `src/`
+never imports `server/`, and there are no production identity rows of any
+kind. A follow-up migration would encode a history that never happened. If a
+database is ever deployed before this file changes again, the rule reverts to
+the usual one: new migration, never an edit.
+
+**Collision risk: none.** No existing rows, and the new constraint is strictly
+weaker than the old one — every address the old check accepted, the new one
+accepts.
+
+### 23.4 Deletion — the checklist for a future phase
+
+`DELETE /v1/me` stays unimplemented. Before it can be, each of these needs an
+answer, and the last one is the hard one:
+
+| Subject                                  | Question to resolve                                                                                                                                                                                              |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `aba_user`                               | tombstone or hard delete                                                                                                                                                                                         |
+| `auth_identity`                          | deleted with the account; does the address become reusable                                                                                                                                                       |
+| `session`, `device`                      | revoked first, or cascaded                                                                                                                                                                                       |
+| Local work (workflows, shortcuts, tasks) | the extension's, not the server's — does deleting an account touch the device at all                                                                                                                             |
+| Provider credentials                     | installation-local and never server-held; presumably untouched                                                                                                                                                   |
+| Cloud Sync, K1                           | not built; deletion must not assume either                                                                                                                                                                       |
+| **Audit / history**                      | **the blocker.** The trail is a hash chain, and removing a link breaks verification for everything after it. Either the chain tolerates tombstones by design, or deletion cannot be honest about what it removed |
+| Recreation                               | may the same address create a new account, and how soon                                                                                                                                                          |
+| Identity reuse                           | may a freed subject or address be re-linked                                                                                                                                                                      |
+| Retention                                | how long a tombstone lives, and what it may contain                                                                                                                                                              |
+
+Until the audit-chain question is answered, an erasure route would either lie
+about what it deleted or silently break integrity verification.
+
+### 23.5 What a future OTP must satisfy
+
+Policy only. Nothing here is built, and no production code was renamed for it.
+
+An email OTP challenge is **transient**: `oauth-transient` in the
+classification table, memory-backed, never durable. A future implementation
+must satisfy all of:
+
+- single use — consumed on first verification, success or failure
+- TTL-bounded, short
+- never persisted to durable storage, and never exported
+- a bounded attempt count per challenge
+- replay prevention: a consumed or expired challenge is not re-offerable
+- verification server-side only; the client never learns the expected value
+- rate limiting, per address and per source, designed before launch
+
+Delivery, generation, hashing and the KDF choice are all out of scope until
+the gate that precedes implementation.
+
+### 23.6 Google display email
+
+Our copy of a Google account's address can go stale — the user changes it,
+or the domain reassigns it. That is tolerable **because the address
+authorises nothing for a subject-bearing identity** (`AUTH-29`): a stale value
+cannot move an account, cannot match a lookup that matters, and cannot occupy
+a uniqueness key. The security impact is nil; the impact is cosmetic.
+
+Refreshing it on each exchange would be a reasonable convenience and is **not
+required**. It is not done now, and doing it later introduces no collision
+risk, precisely because the uniqueness key excludes subject-bearing rows —
+which is the same property that made this gate's central decision the right
+one.

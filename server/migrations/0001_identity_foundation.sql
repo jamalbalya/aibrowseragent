@@ -33,7 +33,7 @@ CREATE TABLE auth_identity (
   FOREIGN KEY (aba_user_id) REFERENCES aba_user (id) ON DELETE CASCADE,
   CONSTRAINT auth_identity_kind_valid CHECK (kind IN ('google', 'email')),
   CONSTRAINT auth_identity_has_an_identifier CHECK (subject IS NOT NULL OR email IS NOT NULL),
-  CONSTRAINT auth_identity_email_lowercase CHECK (email IS NULL OR email = lower(email))
+  CONSTRAINT auth_identity_email_domain_lowercase CHECK (email IS NULL OR regexp_replace(email, '^.*@', '') = lower(regexp_replace(email, '^.*@', '')))
 );
 
 -- An external subject belongs to at most one ABA account. This constraint is what makes the identity-in-use refusal a database property rather than only an application check (AUTH-23).
