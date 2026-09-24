@@ -939,3 +939,151 @@ describe('TEST-SECURITY-062 — the unconfigured build', () => {
     expect(half.email).toBeNull();
   });
 });
+
+describe('TEST-SECURITY-062 — the single-process limitation, demonstrated', () => {
+  /**
+   * These cases **demonstrate a limitation rather than a guarantee**, the same
+   * way `k1-boundary.test.ts` case 12 demonstrates that rollback is accepted.
+   * A limitation that is only described is a limitation nobody has checked,
+   * and the first thing a second server process would do is break three
+   * properties the flow otherwise has.
+   *
+   * If any of these starts failing, the challenge store or the limiter has
+   * been made cross-process and `EMAIL_OTP_AUTHENTICATION.md` §5 must be
+   * rewritten — that is what they are here to catch.
+   *
+   * Nothing here argues for building shared infrastructure. It records, in a
+   * form that cannot rot, exactly which properties are single-process-only.
+   */
+  function twoInstances(): {
+    readonly a: ReturnType<typeof createIdentityBackend>;
+    readonly b: ReturnType<typeof createIdentityBackend>;
+    readonly mailA: RecordingEmailDelivery;
+    readonly mailB: RecordingEmailDelivery;
+    readonly store: CensusStore;
+    readonly clock: FixedClock;
+  } {
+    // One store — the shared database a two-process deployment would have.
+    // Two backends — each with its own in-memory challenge store and limiter.
+    const store = censusStore();
+    const clock = new FixedClock(1_700_000_000_000);
+    const mailA = new RecordingEmailDelivery();
+    const mailB = new RecordingEmailDelivery();
+    return {
+      store,
+      clock,
+      mailA,
+      mailB,
+      a: createIdentityBackend({ store: store.store, clock, email: { delivery: mailA } }),
+      b: createIdentityBackend({ store: store.store, clock, email: { delivery: mailB } }),
+    };
+  }
+
+  it('48 — LIMITATION: two instances leave two simultaneously USABLE codes for one address', async () => {
+    const { a, b, mailA, mailB } = twoInstances();
+    const first = startOutcome(await a.email!.start({ email: ADDRESS, source: 'ip-1' }));
+    const second = startOutcome(await b.email!.start({ email: ADDRESS, source: 'ip-1' }));
+    if (first.kind !== 'sent' || second.kind !== 'sent') throw new Error('not sent');
+    expect(mailA.lastCode()).not.toBe(mailB.lastCode());
+
+    // **Usable, not merely issued.** An earlier version of this case asserted
+    // only that both starts returned `sent` and that the codes differed — both
+    // of which stay true when the challenge store is shared, so the case
+    // passed under the very mutation it exists to catch. What actually
+    // distinguishes one process from two is whether the *older* code still
+    // works after the newer one is issued: with one store it is invalidated,
+    // with two it is not.
+    const older = verifyOutcome(
+      await a.email!.verify({
+        challengeId: first.challengeId,
+        code: mailA.lastCode(),
+        source: 'ip-1',
+      }),
+    );
+    expect(older.kind).toBe('verified');
+  });
+
+  it('49 — LIMITATION: a code minted by one instance cannot be verified by the other', async () => {
+    const { a, b, mailB } = twoInstances();
+    const started = startOutcome(await b.email!.start({ email: ADDRESS, source: 'ip-1' }));
+    if (started.kind !== 'sent') throw new Error('not sent');
+
+    // Not a security hole — it fails closed — but it is a functional break,
+    // and it is why the challenge store is a port.
+    const crossed = verifyOutcome(
+      await a.email!.verify({
+        challengeId: started.challengeId,
+        code: mailB.lastCode(),
+        source: 'ip-1',
+      }),
+    );
+    expect(crossed.kind).toBe('refused');
+  });
+
+  it('50 — LIMITATION: the per-address send budget multiplies by the instance count', async () => {
+    const { a, b, clock } = twoInstances();
+    let sent = 0;
+    for (let round = 0; round < OTP_LIMITS.startPerEmail.limit + 1; round += 1) {
+      for (const instance of [a, b]) {
+        const outcome = startOutcome(
+          await instance.email!.start({ email: ADDRESS, source: `src-${round}` }),
+        );
+        if (outcome.kind === 'sent') sent += 1;
+      }
+      clock.advance(OTP_LIMITS.resendCooldown.windowMs);
+    }
+    // Exactly twice the limit, with two instances. The anti-mail-bomb control
+    // is therefore a per-process control.
+    expect(sent).toBe(OTP_LIMITS.startPerEmail.limit * 2);
+  });
+
+  it('51 — LIMITATION: a cross-instance race leaves an account with no identity', async () => {
+    const { a, b, mailA, mailB, store } = twoInstances();
+    const first = startOutcome(await a.email!.start({ email: ADDRESS, source: 'ip-1' }));
+    const second = startOutcome(await b.email!.start({ email: ADDRESS, source: 'ip-2' }));
+    if (first.kind !== 'sent' || second.kind !== 'sent') throw new Error('not sent');
+
+    const [one, two] = await Promise.all([
+      a.email!.verify({ challengeId: first.challengeId, code: mailA.lastCode(), source: 'ip-1' }),
+      b.email!.verify({ challengeId: second.challengeId, code: mailB.lastCode(), source: 'ip-2' }),
+    ]);
+
+    // The important half is safe: the uniqueness constraint holds, so the
+    // address yields exactly one identity and the loser is refused. Nobody
+    // signs in as somebody else.
+    const outcomes = [verifyOutcome(one), verifyOutcome(two)];
+    expect(outcomes.filter((outcome) => outcome.kind === 'verified')).toHaveLength(1);
+    expect(store.census().identities).toBe(1);
+
+    // The unsafe half, recorded rather than hidden: the loser created its
+    // account *before* the attach that was refused, and nothing removes it.
+    // `resolveAccount` has no rollback, and giving it one needs a delete the
+    // `Store` port deliberately does not have — which is deletion semantics,
+    // and those are deferred. So this is reported, not patched.
+    expect(store.census().accounts).toBe(2);
+
+    const orphans: string[] = [];
+    for (const id of store.accountIds()) {
+      if ((await store.store.listIdentities(id)).length === 0) orphans.push(id);
+    }
+    expect(orphans).toHaveLength(1);
+  });
+
+  it('52 — the same race within ONE instance creates nothing extra', async () => {
+    // The control for 51. Single-process, the challenge store serialises
+    // everything, and the orphan does not occur — which is what makes 51 a
+    // statement about deployment shape rather than about this code.
+    const h = harness();
+    const started = startOutcome(await h.service.start({ email: ADDRESS, source: 'ip-1' }));
+    if (started.kind !== 'sent') throw new Error('not sent');
+    const code = h.mail.lastCode();
+
+    const outcomes = await Promise.all(
+      Array.from({ length: 12 }, () =>
+        h.service.verify({ challengeId: started.challengeId, code, source: 'ip-1' }),
+      ),
+    );
+    expect(outcomes.map(verifyOutcome).filter((o) => o.kind === 'verified')).toHaveLength(1);
+    expect(h.store.census()).toEqual({ accounts: 1, identities: 1, devices: 0 });
+  });
+});
