@@ -314,6 +314,10 @@ export class GitHubConnector implements Connector {
       inputSchema: searchInput,
       risk: 'R1',
       executionMode: 'requires_connector',
+      // A connector call reaches an API over the network, not a page in a
+      // tab. Its authorization is the connector's own OAuth grant and the
+      // egress gate; no browser site governs it.
+      siteAuthorization: 'none',
       sideEffects: ['Sends the search terms to GitHub.'],
       timeoutMs: 30_000,
       idempotent: true,
@@ -383,6 +387,10 @@ export class GitHubConnector implements Connector {
       inputSchema: readInput,
       risk: 'R1',
       executionMode: 'requires_connector',
+      // A connector call reaches an API over the network, not a page in a
+      // tab. Its authorization is the connector's own OAuth grant and the
+      // egress gate; no browser site governs it.
+      siteAuthorization: 'none',
       sideEffects: ['Asks GitHub for one issue.'],
       timeoutMs: 30_000,
       idempotent: true,
@@ -467,6 +475,10 @@ export class GitHubConnector implements Connector {
       inputSchema: createInput,
       risk: 'R3',
       executionMode: 'requires_connector',
+      // A connector call reaches an API over the network, not a page in a
+      // tab. Its authorization is the connector's own OAuth grant and the
+      // egress gate; no browser site governs it.
+      siteAuthorization: 'none',
       sideEffects: ['Creates a public issue attributed to your GitHub account.'],
       timeoutMs: 30_000,
       idempotent: false,
@@ -504,6 +516,10 @@ export class GitHubConnector implements Connector {
       inputSchema: commentInput,
       risk: 'R3',
       executionMode: 'requires_connector',
+      // A connector call reaches an API over the network, not a page in a
+      // tab. Its authorization is the connector's own OAuth grant and the
+      // egress gate; no browser site governs it.
+      siteAuthorization: 'none',
       sideEffects: ['Posts a public comment attributed to your GitHub account.'],
       timeoutMs: 30_000,
       idempotent: false,

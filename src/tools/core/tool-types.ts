@@ -128,6 +128,30 @@ export interface CallClassification {
 }
 
 /**
+ * Which site's authorization governs a call.
+ *
+ * Declared by the tool, resolved by the registry, and never written by
+ * `classify` — because `classify` receives the model's arguments, and a field
+ * a tool could fill from its arguments is a field the model can fill. A tool
+ * says *what kind of scope it has*; the worker decides *what URL that is*.
+ *
+ *  - `page`        — the call acts on whatever page its tab is showing. The
+ *                    scope is the tab's live URL, read from `chrome.tabs` by
+ *                    the worker. This is the only scope a model cannot name.
+ *  - `destination` — the call names where it is going, and that name is the
+ *                    scope. Already how `browser.navigate` and `tabs.create`
+ *                    work: the URL comes from the arguments, and naming a URL
+ *                    subjects it to *more* checks rather than fewer.
+ *  - `none`        — no page and no destination. Tab bookkeeping, listing a
+ *                    skill, detaching the debugger.
+ *
+ * Required, with no default. A new tool cannot be added without answering the
+ * question, which is the point: the defect this replaces was a site-permission
+ * model that governed one tool because nothing forced the others to say so.
+ */
+export type SiteAuthorizationScope = 'page' | 'destination' | 'none';
+
+/**
  * A tool.
  *
  * `TInput` is inferred from the Zod schema, so a tool implementation receives
@@ -141,6 +165,16 @@ export interface AgentTool<TSchema extends z.ZodType = z.ZodType> {
   /** Minimum risk. Argument-aware escalation may raise it via `classify`. */
   readonly risk: RiskLevel;
   readonly executionMode: ExecutionMode;
+  /**
+   * Whose site authorization applies to this tool. See
+   * `SiteAuthorizationScope`.
+   *
+   * Separate from `executionMode` because the two answer different questions.
+   * `executionMode` is about what the call needs in order to run;
+   * this is about whose permission covers it. `browser.download` needs no page
+   * and still has a site; `tabs.close` needs no page and has none.
+   */
+  readonly siteAuthorization: SiteAuthorizationScope;
   /** Side effects, used for the audit trail and the approval prompt. */
   readonly sideEffects: readonly string[];
   readonly timeoutMs: number;

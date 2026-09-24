@@ -144,6 +144,7 @@ export function createSelectFileTool({
     inputSchema: selectInput,
     risk: 'R2',
     executionMode: 'immediate',
+    siteAuthorization: 'none',
     sideEffects: [
       'Asks the user to choose a file.',
       'Brings the contents of that file into the task.',
@@ -280,6 +281,7 @@ export function createAttachFileTool(deps: FileToolDeps): AgentTool<typeof attac
     inputSchema: attachInput,
     risk: 'R3',
     executionMode: 'requires_page',
+    siteAuthorization: 'page',
     sideEffects: ['Sends the contents of the chosen files to the current website.'],
     timeoutMs: 60_000,
     idempotent: false,
@@ -426,6 +428,7 @@ export function createDownloadTool(deps: FileToolDeps): AgentTool<typeof downloa
     inputSchema: downloadInput,
     risk: 'R3',
     executionMode: 'immediate',
+    siteAuthorization: 'destination',
     sideEffects: ['Writes a file to the browser’s download folder.'],
     timeoutMs: 5 * 60 * 1000,
     idempotent: false,

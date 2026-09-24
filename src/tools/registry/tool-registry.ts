@@ -29,7 +29,9 @@ import type { TaintSource } from '@/security/exfiltration/exfiltration-guard';
 import type { CanonicalToolSchema } from '@/providers/core/types';
 import type {
   AgentTool,
+  CallClassification,
   RecordedEvidence,
+  SiteAuthorizationScope,
   ToolExecutionContext,
   ToolExecutionResult,
   ToolResultEnvelope,
@@ -457,6 +459,15 @@ export class ToolRegistry {
     const classification = tool.classify?.(parsed.data, context) ?? {};
     const risk = maxRisk(tool.risk, classification.risk ?? tool.risk);
 
+    // 2b. Site authorization scope.
+    //
+    //     Derived here rather than inside `classify`, and that placement is
+    //     the security property. `classify` receives the model's arguments, so
+    //     a scope it could fill is a scope the model could fill. A tool
+    //     declares what *kind* of scope it has; the worker decides which URL
+    //     that is, from `chrome.tabs`.
+    const siteScope = resolveSiteScope(tool.siteAuthorization, currentUrl, classification);
+
     // 3. Policy.
     const policyContext = await this.options.loadPolicyContext(invocation.taskId);
     const decision = evaluatePolicy(
@@ -473,6 +484,7 @@ export class ToolRegistry {
         // other half of the drift comparison: where the page is now, against
         // where it was when the model was asked.
         ...(currentUrl === undefined ? {} : { currentUrl }),
+        ...(siteScope === undefined ? {} : { siteScope }),
         ...(classification.writeDestination === undefined
           ? {}
           : { writeDestination: classification.writeDestination }),
@@ -550,6 +562,11 @@ export class ToolRegistry {
       decision: effective,
       summary: classification.summary ?? describeCall(tool, parsed.data),
       ...(classification.targetUrl === undefined ? {} : { targetUrl: classification.targetUrl }),
+      // The site a standing grant would be written against. Without it the
+      // panel can only offer "always allow" for the two tools that name a
+      // destination, which is how a site-permission model ended up governing
+      // navigation and nothing else.
+      ...(siteScope === undefined ? {} : { siteScopeUrl: siteScope }),
       ...(invocation.signal === undefined ? {} : { signal: invocation.signal }),
     });
 
@@ -713,6 +730,30 @@ export function fromWireName(name: string): string {
   if (name.includes('.')) return name;
   const index = name.indexOf('_');
   return index === -1 ? name : `${name.slice(0, index)}.${name.slice(index + 1)}`;
+}
+
+/**
+ * The URL whose site authorization governs one call.
+ *
+ * Total over the three scopes, with no `default`, so adding a scope is a
+ * compile error here rather than a silent fall-through to the permissive end.
+ * Returns `undefined` when the scope cannot be established — a tab that has
+ * gone, a URL Chrome would not report — and `undefined` is read downstream as
+ * "not established", never as "no restriction".
+ */
+function resolveSiteScope(
+  scope: SiteAuthorizationScope,
+  currentUrl: string | undefined,
+  classification: CallClassification,
+): string | undefined {
+  switch (scope) {
+    case 'page':
+      return currentUrl;
+    case 'destination':
+      return classification.targetUrl;
+    case 'none':
+      return undefined;
+  }
 }
 
 function toAgentError(caught: unknown, tool: string): AgentError {

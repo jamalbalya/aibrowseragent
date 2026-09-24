@@ -99,6 +99,7 @@ function listTool(deps: SkillToolDeps): AgentTool<typeof listInput> {
     inputSchema: listInput,
     risk: 'R0',
     executionMode: 'immediate',
+    siteAuthorization: 'none',
     sideEffects: [],
     timeoutMs: 5_000,
     idempotent: true,
@@ -156,6 +157,7 @@ function runTool(deps: SkillToolDeps): AgentTool<typeof runInput> {
     // each step needs — a page, the debugger, a connector — is that step's
     // declaration, checked when it is dispatched.
     executionMode: 'immediate',
+    siteAuthorization: 'none',
     sideEffects: ['Runs every step the workflow defines, each gated on its own.'],
     timeoutMs: 10 * 60_000,
     idempotent: false,
