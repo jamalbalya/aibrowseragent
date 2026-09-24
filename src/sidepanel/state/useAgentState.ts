@@ -11,6 +11,7 @@ import { sendToBackground, subscribeToEvents, MessagingError } from '@/messaging
 import { isTerminal, type AgentTask } from '@/tasks/task-model';
 import type { PermissionRequest, PermissionResponse } from '@/policy/permission-engine';
 import type { PermissionMode } from '@/policy/policy-engine';
+import type { AuthorizationModel } from '@/policy/plan-model';
 import type { ProviderConnection } from '@/providers/registry/provider-registry';
 import type { AgentError } from '@/types/result';
 import type { FileSelectionRequest } from '@/background/file-broker';
@@ -184,11 +185,54 @@ export function useAgentState() {
   }, []);
 
   const startTask = useCallback(
-    async (objective: string) => {
-      const result = await run(() => sendToBackground('task.create', { objective }));
+    async (objective: string, authorizationModel?: AuthorizationModel) => {
+      const result = await run(() =>
+        sendToBackground('task.create', {
+          objective,
+          ...(authorizationModel === undefined ? {} : { authorizationModel }),
+        }),
+      );
       if (result) {
         setTasks((current) => [result.task, ...current]);
         setActiveTaskId(result.task.id);
+      }
+    },
+    [run],
+  );
+
+  /**
+   * Approves the plan the active task proposed.
+   *
+   * The panel sends the decision and nothing else: it does not build the
+   * approval, does not name the sites, and cannot approve a task that has no
+   * proposal. What comes back is the task record the worker wrote, so the
+   * panel's view of what is authorised is the worker's view of it.
+   */
+  const approvePlan = useCallback(
+    async (taskId: string) => {
+      const result = await run(() => sendToBackground('plan.approve', { taskId }));
+      if (result) {
+        setTasks((current) =>
+          current.map((task) => (task.id === result.task.id ? result.task : task)),
+        );
+      }
+    },
+    [run],
+  );
+
+  /** Sends the proposal back. Authorises nothing. */
+  const revisePlan = useCallback(
+    async (taskId: string, note: string) => {
+      const result = await run(() =>
+        sendToBackground('plan.revise', {
+          taskId,
+          ...(note.length === 0 ? {} : { note }),
+        }),
+      );
+      if (result) {
+        setTasks((current) =>
+          current.map((task) => (task.id === result.task.id ? result.task : task)),
+        );
       }
     },
     [run],
@@ -344,6 +388,8 @@ export function useAgentState() {
     setActiveTaskId,
     refresh,
     startTask,
+    approvePlan,
+    revisePlan,
     runShortcutTarget,
     pauseTask,
     resumeTask,

@@ -64,6 +64,16 @@ export interface PermissionRequest {
 export type PermissionResponse =
   | { readonly kind: 'approve_once' }
   | { readonly kind: 'approve_site'; readonly maxRisk: GrantableRiskLevel }
+  /**
+   * Approve this site for the rest of this task, and no further.
+   *
+   * Offered only to a task running under an approved plan, and it adds the
+   * site to that plan. Deliberately *not* a weaker `approve_site`: nothing is
+   * written to the site policy, so the authorization ends when the task does
+   * and no later task inherits it. It carries no `maxRisk` because a plan has
+   * one ceiling, fixed in the engine, that a prompt cannot raise.
+   */
+  | { readonly kind: 'approve_task' }
   | { readonly kind: 'deny' };
 
 export interface PermissionOutcome {
@@ -95,6 +105,20 @@ export interface PermissionEngineOptions {
    * would turn an observability problem into a functional one.
    */
   readonly onDecision?: (entry: PermissionHistoryEntry) => Promise<void>;
+  /**
+   * Adds a site to a task's approved plan.
+   *
+   * The engine hands over the site the person was shown and nothing else: it
+   * does not build the approval, does not decide whether one exists, and
+   * cannot create one where there is none. The worker's implementation amends
+   * an existing approval or does nothing, which is what keeps this from being
+   * a second route to authorising a task that never planned.
+   *
+   * Absent in tests and wherever no plan exists; an `approve_task` response
+   * then approves this one action and widens nothing, which is the honest
+   * reading of a button that could not do what it said.
+   */
+  readonly amendPlan?: (taskId: string, site: string) => Promise<void>;
   readonly now?: () => number;
 }
 
@@ -172,6 +196,26 @@ export class PermissionEngine {
     if (response.kind === 'deny') {
       await this.record(input, 'denied', 'The user declined this action.');
       return { granted: false, response };
+    }
+
+    if (response.kind === 'approve_task') {
+      const site = grantSiteFor(input);
+      // No site, no amendment — and still an approval of this one action. A
+      // prompt with no site offers no standing anything, here or above.
+      if (site && this.options.amendPlan) {
+        try {
+          await this.options.amendPlan(input.taskId, site);
+        } catch (error) {
+          // The action was approved by a person; failing it now because the
+          // plan could not be widened would refuse what they just allowed.
+          // The narrower outcome is the safe one: this call runs, the next on
+          // the same site asks again.
+          log.warn('A site could not be added to the task plan.', {
+            taskId: input.taskId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
     }
 
     if (response.kind === 'approve_site') {

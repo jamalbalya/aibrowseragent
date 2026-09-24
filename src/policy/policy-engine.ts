@@ -6,8 +6,11 @@
  * output is one of ALLOW / ALLOW_WITH_CONFIRMATION / DENY.
  *
  * Evaluation order matters and is fixed:
- *   hard prohibition → site block → origin → exfiltration → risk/permission mode
- * Each stage can only make the decision stricter.
+ *   hard prohibition → site block → origin → exfiltration → risk floor →
+ *   unattended → task plan → permission mode
+ * Every stage that can refuse runs before either stage that can allow, so an
+ * authorization — a standing site grant or a task's approved plan — can only
+ * ever answer a question the refusing stages left open.
  */
 import {
   type RiskLevel,
@@ -23,6 +26,7 @@ import {
 } from '@/security/exfiltration/exfiltration-guard';
 import { taintSources, unknownTaint, type TaintState } from '@/security/taint/taint-state';
 import { findRule, type SitePolicyState } from './site-policy';
+import { planCoversSite, PLAN_MAX_RISK, type PlanApproval } from './plan-model';
 
 export type PolicyVerdict = 'ALLOW' | 'ALLOW_WITH_CONFIRMATION' | 'DENY';
 
@@ -99,6 +103,20 @@ export interface PolicyContext {
    * that does not set it.
    */
   readonly unattended?: boolean;
+  /**
+   * The plan this task is running under, when it runs under one.
+   *
+   * A second *source* of the site authorization the `sitePolicy` already
+   * carries, with a task's lifetime instead of a durable one — not a second
+   * engine and not a second set of rules. It is consulted at one point below,
+   * after every deny stage, and it is bounded by the same ceiling a standing
+   * grant has.
+   *
+   * Supplied by the worker from the durable task record, and only after
+   * `parsePlanApproval` has accepted it. A record that does not parse arrives
+   * here absent, which is "no plan authorization" and never "no restriction".
+   */
+  readonly planApproval?: PlanApproval;
 }
 
 export interface PolicyDecision {
@@ -122,6 +140,7 @@ export type PolicyDecisionCode =
   | 'MODE_REQUIRES_APPROVAL'
   | 'UNATTENDED_REQUIRES_APPROVAL'
   | 'SITE_ALLOWED'
+  | 'PLAN_ALLOWED'
   | 'LOW_RISK'
   | 'MODE_SKIP';
 
@@ -295,11 +314,48 @@ export function evaluatePolicy(request: PolicyRequest, context: PolicyContext): 
     );
   }
 
-  // 7. Permission mode.
   const allow = (code: PolicyDecisionCode, reason: string): PolicyDecision =>
     exfiltration === undefined
       ? { verdict: 'ALLOW', code, reason, effectiveRisk }
       : { verdict: 'ALLOW', code, reason, effectiveRisk, exfiltration };
+
+  // 7. Task-scoped plan authorization.
+  //
+  // Where a Classic run differs from a Cowork one, and the only place it
+  // does. The person approved a boundary up front; inside that boundary an
+  // ordinary action proceeds without asking again, which is what approving a
+  // plan meant.
+  //
+  // Placed here on purpose — after every stage that can refuse, and after the
+  // risk floor and the unattended rule, so it can only ever answer a question
+  // the stages above left open. Nothing at R3 or above reaches this line, so a
+  // plan cannot clear a prohibition, an R4 or R5 classification, a blocked
+  // site, an unautomatable origin, an exfiltration verdict or an origin drift:
+  // each of those has already returned.
+  //
+  // Which means the `PLAN_MAX_RISK` test below restates the floor rather than
+  // being what enforces it — removing it changes no answer today. It is kept
+  // as the bound this clause depends on, so that raising the floor without
+  // raising it would be caught rather than silently widening a plan. A test
+  // asserts the two constants stay adjacent; see
+  // `docs/testing/phase-c-negative-controls.md`, which records that this line
+  // does not discriminate on its own.
+  //
+  // `unattended` excludes it as well. A plan is a person authorising a run
+  // they are watching; a scheduled firing creates its own task and so has no
+  // plan to inherit, and this says the same thing a second time in the one
+  // place that decides.
+  if (
+    context.planApproval !== undefined &&
+    context.unattended !== true &&
+    request.siteScope !== undefined &&
+    RISK_RANK[effectiveRisk] <= RISK_RANK[PLAN_MAX_RISK] &&
+    planCoversSite(context.planApproval, request.siteScope)
+  ) {
+    return allow('PLAN_ALLOWED', 'This site is in the plan you approved for this task.');
+  }
+
+  // 8. Permission mode.
 
   switch (context.mode) {
     case 'skip':

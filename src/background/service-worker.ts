@@ -101,6 +101,7 @@ import {
   type SitePolicyState,
 } from '@/policy/site-policy';
 import type { PolicyContext } from '@/policy/policy-engine';
+import { parsePlanApproval } from '@/policy/plan-model';
 import { AgentRuntime } from '@/agent/runtime/agent-runtime';
 import { TaskManager } from './task-manager';
 import { PermissionBroker } from './permission-broker';
@@ -335,11 +336,17 @@ const loadPolicyContext = async (taskId: string): Promise<PolicyContext> => {
   // one that cannot silently authorise anything.
   const task = await taskStore.getTask(taskId).catch(() => undefined);
   const unattended = task === undefined || isUnattendedSessionId(task.sessionId);
+  // Re-parsed rather than trusted. The record came back from storage, and a
+  // stored approval that does not parse is no approval at all — never a weaker
+  // one. `parsePlanApproval` is the boundary where that is decided, so the
+  // engine only ever sees an approval this build would have produced.
+  const planApproval = parsePlanApproval(task?.planApproval);
   return {
     mode: settings.permissionMode,
     sitePolicy: await loadSitePolicy(),
     allowInsecureOrigins: settings.allowInsecureOrigins,
     unattended,
+    ...(planApproval === undefined ? {} : { planApproval }),
   };
 };
 
@@ -465,6 +472,20 @@ const fileSelectionBroker = new FileSelectionBroker({
 });
 
 const permissionEngine = new PermissionEngine({
+  /**
+   * "Allow for this task" adds the site to that task's plan.
+   *
+   * Deliberately narrower than the standing grant next to it: nothing is
+   * written to the site policy, so the authorization ends when the task does.
+   * It amends an approval that already exists and cannot create one, so a task
+   * that never planned gets a one-off approval and nothing more.
+   */
+  amendPlan: async (taskId, site) => {
+    await taskManager.addSiteToPlan(taskId, site);
+    await auditLog
+      .record({ type: 'plan.site_added', taskId, site, outcome: 'allowed', code: 'PLAN_AMENDED' })
+      .catch(() => undefined);
+  },
   onDecision: async (entry) => {
     await auditLog.record({
       type: 'permission.decided',
@@ -1820,9 +1841,50 @@ const router = new MessageRouter({
   },
 });
 
-router.on('task.create', async ({ objective }) => {
+router.on('task.create', async ({ objective, authorizationModel }) => {
   const session = await getOrCreateSession();
-  return { task: await taskManager.create(objective, session.id) };
+  return {
+    task: await taskManager.create(objective, session.id, {
+      ...(authorizationModel === undefined ? {} : { authorizationModel }),
+    }),
+  };
+});
+
+/**
+ * The single producer of a `PlanApproval`.
+ *
+ * One route, one call, one class. `MessageRouter` has already established that
+ * this message came from the side-panel document before the handler runs, so
+ * the approval below is created only for a sender that could not be a page, a
+ * content script, a connector, a skill or the model.
+ */
+router.on('plan.approve', async ({ taskId }) => {
+  const task = await taskManager.approvePlanFor(taskId);
+  // One record per site, written after the approval landed. A record for an
+  // approval that failed to persist would be a trail claiming an authorization
+  // the task does not have.
+  const sites = task.planApproval?.approvedSites ?? [];
+  for (const site of sites.length > 0 ? sites : [null]) {
+    await auditLog
+      .record({
+        type: 'plan.approved',
+        taskId,
+        ...(site === null ? {} : { site }),
+        outcome: 'allowed',
+        code: `v${task.planApproval?.version ?? 1}`,
+      })
+      .catch(() => undefined);
+  }
+  return { task };
+});
+
+router.on('plan.revise', async ({ taskId, note }) => {
+  const task = await taskManager.revisePlan(taskId, note);
+  // The note itself is not recorded. It is free text a person typed, and this
+  // trail holds no free text — that the proposal was sent back is the fact
+  // worth keeping.
+  await auditLog.record({ type: 'plan.revised', taskId, outcome: 'info' }).catch(() => undefined);
+  return { task };
 });
 
 router.on('task.get', async ({ taskId }) => ({

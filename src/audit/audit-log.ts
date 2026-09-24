@@ -76,6 +76,18 @@ export const AUDIT_EVENT_TYPES = [
   'schedule.run_blocked',
   'schedule.run_cancelled',
   'schedule.run_missed',
+  // The Classic plan (Phase C). An approved plan authorises page actions for a
+  // task's lifetime without asking again, so it is an authorization decision
+  // and belongs in the same trail as `permission.decided`. One record per
+  // approved site, so the trail answers "which sites was this task allowed to
+  // work on" rather than only "a plan existed".
+  //
+  // `plan.revised` is recorded because declining a proposal is a decision as
+  // much as accepting one, and a trail that held only the approvals would show
+  // a task's second plan with no sign that there had been a first.
+  'plan.approved',
+  'plan.site_added',
+  'plan.revised',
   // Written only by the log itself, when eviction removes records. It exists
   // so a reader can tell a quiet period from a truncated one.
   'retention.compacted',

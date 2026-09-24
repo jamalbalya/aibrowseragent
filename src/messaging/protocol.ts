@@ -15,6 +15,7 @@ import type { FileSelectionRequest } from '@/background/file-broker';
 import type { AuditEvent, AuditExport } from '@/audit/audit-log';
 import type { HealthDomain, HealthSnapshot } from '@/storage/persistence-health';
 import type { PermissionMode } from '@/policy/policy-engine';
+import type { AuthorizationModel } from '@/policy/plan-model';
 import type { ActedOnElement, SemanticPage } from '@/content/semantic-tree';
 import {
   MAX_HINT_LENGTH,
@@ -163,7 +164,30 @@ export interface ShortcutSummary {
 /** Request/response pairs handled by the service worker. */
 export interface PanelRequestMap {
   'task.create': {
-    request: { objective: string };
+    request: { objective: string; authorizationModel?: AuthorizationModel };
+    response: { task: AgentTask };
+  };
+  /**
+   * Approving the plan a Classic task proposed.
+   *
+   * The only route that produces a `PlanApproval`, and CLASS_B because of it:
+   * a control-plane message the side-panel document is the only sender of. A
+   * page, a content script, a connector, a skill and the model itself have no
+   * way to send one, which is what makes "the user approved this" a fact about
+   * where the message came from rather than a field somebody set.
+   */
+  'plan.approve': {
+    request: { taskId: string };
+    response: { task: AgentTask };
+  };
+  /**
+   * Sending a proposal back to be rewritten.
+   *
+   * Creates no authorization. The task returns to planning with the person's
+   * note attached, and nothing about its security state changes.
+   */
+  'plan.revise': {
+    request: { taskId: string; note?: string };
     response: { task: AgentTask };
   };
   'task.get': {

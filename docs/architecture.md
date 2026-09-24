@@ -93,7 +93,8 @@ exactly one path, in `src/tools/registry/tool-registry.ts`:
   3. classification    argument-aware risk; may raise, never lowers the floor
             ▼
   4. policy            hard prohibitions → site rules → origin → exfiltration
-            ▼                             → risk → permission mode
+            ▼                             → risk → unattended → task plan
+            ▼                             → permission mode
   5. permission        ALLOW / ALLOW_WITH_CONFIRMATION / DENY
             ▼
   6. execution         bounded by the tool's timeout and the task's abort signal
@@ -110,6 +111,11 @@ is bounded by the same rules in every case.
 
 Each policy stage can only make the outcome stricter. This is enforced by
 tests, not just convention — see `tests/unit/policy-engine.test.ts`.
+
+The two stages that can _permit_ — a task's approved plan, and a standing site
+rule in Auto mode — both sit at the end, after every stage that can refuse, so
+either can only answer a question the refusing stages left open. See
+"The task plan" in `docs/security.md`.
 
 ## Data flow for one turn
 
