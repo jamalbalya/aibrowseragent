@@ -141,7 +141,10 @@
     "P-019": {
       "unit": ["tests/unit/notifier.test.ts"]
     },
-    "P-020": {},
+    "P-020": {
+      "security": ["tests/security/scheduled-execution.test.ts"],
+      "e2e": ["tests/e2e/schedules.spec.ts"]
+    },
     "P-021": {
       "unit": ["tests/unit/shortcut-name.test.ts"],
       "integration": ["tests/integration/shortcut-invocation.test.ts"],

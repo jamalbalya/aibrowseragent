@@ -188,6 +188,7 @@ test('multi-account added no permission and no host access', async ({ serviceWor
   expect(manifest.permissions?.sort()).toEqual(
     [
       'activeTab',
+      'alarms',
       'debugger',
       'notifications',
       'scripting',

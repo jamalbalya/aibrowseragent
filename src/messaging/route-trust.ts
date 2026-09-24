@@ -442,6 +442,19 @@ export const PANEL_ROUTE_CLASSES: Record<PanelRequestType, RouteClass> = {
   'workflow.replay': 'CLASS_B_PANEL_CONTROL_PLANE',
   'workflow.cancelReplay': 'CLASS_B_PANEL_CONTROL_PLANE',
 
+  // Schedules (P-020). Reads are read-only; everything that changes a
+  // schedule, or runs one, is the panel's control plane. `schedule.runNow`
+  // executes, which is exactly why it is CLASS_B and not CLASS_E — and there
+  // is no route here a model could reach whatever class it carried, because
+  // nothing in this map is a tool.
+  'schedule.list': 'CLASS_E_PANEL_READ_ONLY',
+  'schedule.runs': 'CLASS_E_PANEL_READ_ONLY',
+  'schedule.create': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'schedule.edit': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'schedule.setEnabled': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'schedule.remove': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'schedule.runNow': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'schedule.cancelRun': 'CLASS_B_PANEL_CONTROL_PLANE',
   'shortcut.list': 'CLASS_E_PANEL_READ_ONLY',
   'shortcut.create': 'CLASS_B_PANEL_CONTROL_PLANE',
   'shortcut.retarget': 'CLASS_B_PANEL_CONTROL_PLANE',

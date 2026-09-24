@@ -99,9 +99,9 @@ capability, not necessarily a test of the capability itself.
 | Status          | Count  |
 | --------------- | ------ |
 | PASS            | 30     |
-| PARTIAL         | 7      |
+| PARTIAL         | 8      |
 | INTERFACES-ONLY | 0      |
-| NOT-STARTED     | 3      |
+| NOT-STARTED     | 2      |
 | **Total**       | **40** |
 
 These counts are checked against the table below, and the table against
@@ -110,11 +110,17 @@ separate classes of error have actually occurred here: a revision that claimed
 17 PASS while its own table said 23, and a revision whose per-column coverage
 claims were not backed by any test. The check now covers both.
 
-Movement in this revision: the audit trail (P-038) gains integration and
-security coverage and closes both of the gaps its entry named — there is now
-one unified cross-task log, and an export. **The counts do not move**: P-038
-was already PARTIAL and stays PARTIAL, because §84 condition 3 is unmet
-repository-wide. An implementation existing is not parity.
+Movement in this revision: scheduled tasks (P-020) move from NOT-STARTED to
+PARTIAL, taking PARTIAL from 7 to 8 and NOT-STARTED from 3 to 2. It is **not**
+PASS, and the reason is below rather than a missing test.
+
+### Earlier movement, kept for the record
+
+The audit trail (P-038) gained integration and security coverage and closed
+both of the gaps its entry named — there is now one unified cross-task log,
+and an export. The counts did not move: P-038 was already PARTIAL and stayed
+PARTIAL, because §84 condition 3 is unmet repository-wide. An implementation
+existing is not parity.
 
 ### Earlier movement, kept for the record
 
@@ -249,7 +255,7 @@ rather than folded into the verdict.
 | P-017 | Long-running task                    | yes  | —    | yes         | —        | yes | PASS        |
 | P-018 | Background task while Chrome is open | yes  | —    | yes         | —        | yes | PASS        |
 | P-019 | Notifications                        | yes  | yes  | —           | —        | —   | PASS        |
-| P-020 | Scheduled tasks                      | no   | —    | —           | —        | —   | NOT-STARTED |
+| P-020 | Scheduled tasks                      | yes  | —    | —           | yes      | yes | PARTIAL     |
 | P-021 | Shortcuts                            | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-022 | Workflow recording                   | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-023 | Connector framework                  | yes  | yes  | yes         | yes      | yes | PARTIAL     |
@@ -370,6 +376,44 @@ anything real.
 
 Nothing here is blocked externally. Both reasons resolve by building more, not
 by obtaining anything.
+
+**P-020 Scheduled tasks** — Schedules are implemented: create, edit, pause,
+resume, delete and Run now; daily, weekly, monthly and annual cadences;
+shortcut, workflow and skill targets; persisted state that survives a service
+worker eviction; a deterministic execution identity so a duplicate alarm
+cannot run an occurrence twice; missed-run recording; run history;
+cancellation; four notifications; and eleven audit event types. Execution goes
+through the existing replay and launch routes and the existing task lifecycle
+— there is no second task engine, no scheduled dispatch, and no policy
+evaluation inside the scheduler.
+
+Two columns show "—" rather than "yes" and are accurate: there is no
+`tests/unit/` or `tests/integration/` file for scheduling. The coverage is in
+`tests/security/scheduled-execution.test.ts` (87 cases, including the cadence
+arithmetic, the store and the clock, which would otherwise have been unit
+tests) and `tests/e2e/schedules.spec.ts` (7 cases in real Chromium). Citing
+those files under columns they do not sit in is exactly what this matrix's
+evidence check exists to prevent.
+
+It is **not** PASS for two reasons, neither of which is a missing test.
+
+The first is the §84 condition 3 that holds every other PARTIAL below PASS
+repository-wide. An implementation existing is not parity.
+
+The second is specific to this capability and is worth stating plainly.
+Parity is measured against a benchmark, and at the two points that matter most
+here — what a scheduled run does when it reaches an action needing approval,
+and what happens to an occurrence that was missed — **nothing published
+settles the benchmark's behaviour**. An evidence exercise went looking and
+found none for the Claude in Chrome extension specifically. So AI Browser
+Agent made its own decision, which is documented as its own decision in
+`docs/architecture/SCHEDULED_EXECUTION.md`: a run that reaches the
+confirmation boundary stops, and a missed occurrence is recorded and never
+replayed. Marking this PASS would be claiming a match with behaviour nobody
+has established. Calling the chosen behaviour "Claude behaviour" would be the
+same claim in different words, and the documentation says so explicitly.
+
+Nothing here is blocked externally.
 
 **P-021 Shortcuts** — A shortcut is a name for something that already exists
 and has already been reviewed: a stored workflow (P-022) or a bundled skill

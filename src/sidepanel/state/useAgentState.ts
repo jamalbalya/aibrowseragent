@@ -143,6 +143,11 @@ export function useAgentState() {
           // The workspace panel subscribes for itself and refreshes from the
           // worker; the main panel holds no workspace state to update.
           break;
+        case 'schedules.changed':
+          // The schedules view subscribes for itself. A scheduled run does
+          // show up here, but as an ordinary `task.updated` — a scheduled run
+          // is a task like any other, which is the point.
+          break;
         case 'accounts.changed':
           // The settings view owns the account list and refreshes itself.
           // Nothing in the main panel reads it, so there is nothing to do

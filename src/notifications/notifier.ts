@@ -66,6 +66,55 @@ export class Notifier {
     });
   }
 
+  /**
+   * Tells the user what one of their schedules did.
+   *
+   * A schedule runs while nobody is looking — that is the entire point — so
+   * the notification is the only way its outcome is ever seen. All four
+   * lifecycle points are surfaced, and the one that matters most is
+   * `blocked`: a run that stopped at the confirmation boundary did *not*
+   * happen, and a user who was not told would believe it had.
+   *
+   * The schedule's name is included because the user typed it themselves.
+   * Nothing else is: not the tool, not the site, not the step, and not the
+   * reason in any words but this extension's own — a notification is rendered
+   * by the operating system, outside every boundary this extension controls,
+   * and can outlive the task in a notification centre.
+   */
+  async scheduleStarted(name: string): Promise<void> {
+    await this.scheduleNotice('Scheduled task started', `"${trim(name)}" is running.`, 0);
+  }
+
+  async scheduleCompleted(name: string): Promise<void> {
+    await this.scheduleNotice('Scheduled task finished', `"${trim(name)}" completed.`, 0);
+  }
+
+  async scheduleFailed(name: string): Promise<void> {
+    await this.scheduleNotice('Scheduled task failed', `"${trim(name)}" did not finish.`, 2);
+  }
+
+  /**
+   * The one this phase exists to produce.
+   *
+   * `needsApproval` distinguishes the two ways a run stops, because they ask
+   * different things of the user: one is waiting for them, and the other is
+   * telling them something was not allowed at all.
+   */
+  async scheduleBlocked(name: string, needsApproval: boolean): Promise<void> {
+    await this.scheduleNotice(
+      'Scheduled task stopped',
+      needsApproval
+        ? `"${trim(name)}" needs your approval to continue. Open the panel and run it yourself.`
+        : `"${trim(name)}" was stopped because an action it needed is not permitted.`,
+      2,
+    );
+  }
+
+  private async scheduleNotice(title: string, message: string, priority: number): Promise<void> {
+    if (!(await this.enabled())) return;
+    await this.show({ type: 'basic', iconUrl: ICON, title, message, priority });
+  }
+
   private async enabled(): Promise<boolean> {
     try {
       return await this.deps.isEnabled();
@@ -97,4 +146,9 @@ export class Notifier {
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Keeps a user-chosen name inside what an operating-system toast will show. */
+function trim(name: string): string {
+  return name.length > 60 ? `${name.slice(0, 57)}...` : name;
 }

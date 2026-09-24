@@ -8,6 +8,7 @@ import { PermissionPrompt } from './components/PermissionPrompt';
 import { FilePrompt } from './components/FilePrompt';
 import { SettingsView } from './components/SettingsView';
 import { WorkflowsView } from './components/WorkflowsView';
+import { SchedulesView } from './components/SchedulesView';
 import { AuditView } from './components/AuditView';
 import { WelcomeNotice } from './components/WelcomeNotice';
 
@@ -15,6 +16,7 @@ export function App(): React.JSX.Element {
   const agent = useAgentState();
   const [showSettings, setShowSettings] = useState(false);
   const [showWorkflows, setShowWorkflows] = useState(false);
+  const [showSchedules, setShowSchedules] = useState(false);
   const [showAudit, setShowAudit] = useState(false);
 
   // A provider that has not demonstrated tool calling cannot run a task, so
@@ -54,6 +56,14 @@ export function App(): React.JSX.Element {
     );
   }
 
+  if (showSchedules) {
+    return (
+      <div className="app">
+        <SchedulesView onClose={() => setShowSchedules(false)} />
+      </div>
+    );
+  }
+
   if (showWorkflows) {
     return (
       <div className="app">
@@ -77,6 +87,7 @@ export function App(): React.JSX.Element {
         onChangeMode={(mode) => void agent.changePermissionMode(mode)}
         onOpenSettings={() => setShowSettings(true)}
         onOpenWorkflows={() => setShowWorkflows(true)}
+        onOpenSchedules={() => setShowSchedules(true)}
         onOpenAudit={() => setShowAudit(true)}
       />
 

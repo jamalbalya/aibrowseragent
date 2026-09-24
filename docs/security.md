@@ -299,6 +299,7 @@ Default posture: minimum collection, minimum retention, minimum transmission.
 | `debugger`                                    | Console, network and DOM inspection, and screenshot capture. Chrome offers no lesser API for either. | No — `browser.screenshot` depends on it          |
 | `notifications`                               | Telling the user a background task needs approval.                                                   | Yes, at the cost of silent stalls                |
 | `activeTab`                                   | Acting on the current tab without broad host access in simple flows.                                 | No                                               |
+| `alarms`                                      | Waking the service worker when a scheduled task is due (P-020).                                      | Yes, by dropping scheduled tasks                 |
 | `host_permissions: http://*/*`, `https://*/*` | Content script injection and tab access. See below.                                                  | No                                               |
 
 ### Why not `<all_urls>`
@@ -361,14 +362,22 @@ was throughout.
 Requested as **optional**, not granted until a person grants it: `downloads`
 (file handling), and nothing else.
 
-`alarms` used to be declared here too, for the scheduling the specification
-describes. It was removed during release preparation, because it had no
-feature behind it: no code path called `chrome.alarms`, and P-020 is
-NOT-STARTED. An optional permission is never granted until it is requested, so
-declaring it cost a user nothing — but a store listing has to justify every
-permission against what the extension does, and "we intend to use this" is not
-a justification. It is one line to add back when the feature that needs it
-exists.
+`alarms` is back, and now has the feature behind it that its earlier removal
+was waiting for. It was declared once before, for scheduling the specification
+describes, and taken out during release preparation because no code path called
+`chrome.alarms` — a store listing has to justify every permission against what
+the extension does, and "we intend to use this" is not a justification. P-020
+is implemented, one alarm named `aba.schedules` is created and cleared by
+`ScheduleRunner`, and the justification now matches the code.
+
+One alarm, not one per schedule: every wake-up reconciles every schedule, so a
+delayed or dropped alarm costs a delay rather than a lost schedule, and the
+extension stays inside Chrome's alarm quota whatever a user creates.
+
+What the permission does **not** buy is authority. A scheduled run is
+evaluated by the same policy engine under the same permission mode as a run
+somebody started by hand, and stops at the confirmation boundary because
+nobody is there to answer. See `architecture/SCHEDULED_EXECUTION.md`.
 
 `downloads` does have a feature behind it, and it stays optional. It is not granted at install, the
 agent cannot request it — `chrome.permissions.request` needs a user gesture in

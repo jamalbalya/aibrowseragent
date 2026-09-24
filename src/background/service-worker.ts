@@ -74,7 +74,17 @@ import { ShortcutStore, ShortcutError } from '@/shortcuts/shortcut-store';
 import { ShortcutResolver } from '@/shortcuts/shortcut-resolver';
 import { SkillLauncher } from './skill-launcher';
 import type { ShortcutRecord } from '@/shortcuts/shortcut-model';
-import type { ShortcutSummary } from '@/messaging/protocol';
+import type { ScheduleRunSummary, ScheduleSummary, ShortcutSummary } from '@/messaging/protocol';
+import { ScheduleStore, ScheduleError } from '@/schedules/schedule-store';
+import {
+  describeCadence,
+  isUnattendedSessionId,
+  type ScheduleRecord,
+  type ScheduleRunRecord,
+  type ScheduleTarget,
+} from '@/schedules/schedule-model';
+import { ScheduleRunner, type ScheduledExecution, type TargetResolution } from './schedule-runner';
+import { UnattendedPrompter } from './unattended-prompter';
 import { isIncomplete, type RecordedWorkflow } from '@/workflows/workflow-model';
 import type { WorkflowSummary } from '@/messaging/protocol';
 import {
@@ -303,15 +313,22 @@ const saveSitePolicy = async (state: SitePolicyState): Promise<void> => {
   await policyArea.set(SITE_POLICY_KEY, state);
 };
 
-const loadPolicyContext = async (): Promise<PolicyContext> => {
+const loadPolicyContext = async (taskId: string): Promise<PolicyContext> => {
   const settings = await settingsStore.get();
   // Kept for the audit observer, which cannot await storage on the dispatch
   // path. It labels a record; it decides nothing.
   currentPermissionMode = settings.permissionMode;
+  // Read from the durable task record, not from worker memory, so a run that
+  // outlives an eviction is still unattended when it wakes. A task that
+  // cannot be read is treated as unattended: the strict direction, and the
+  // one that cannot silently authorise anything.
+  const task = await taskStore.getTask(taskId).catch(() => undefined);
+  const unattended = task === undefined || isUnattendedSessionId(task.sessionId);
   return {
     mode: settings.permissionMode,
     sitePolicy: await loadSitePolicy(),
     allowInsecureOrigins: settings.allowInsecureOrigins,
+    unattended,
   };
 };
 
@@ -441,7 +458,25 @@ const permissionEngine = new PermissionEngine({
       code: entry.decision,
     });
   },
-  prompter: permissionBroker,
+  /**
+   * The confirmation boundary, in front of the one prompter (P-020).
+   *
+   * Not a second permission path: it evaluates nothing and can only turn a
+   * question into a denial. A run whose task belongs to an unattended session
+   * is denied here, because there is nobody to ask; everything else reaches
+   * `permissionBroker` exactly as before.
+   *
+   * The decision is read from the durable task record rather than from worker
+   * memory, so a run that outlives an eviction is still unattended when it
+   * wakes.
+   */
+  prompter: new UnattendedPrompter({
+    interactive: permissionBroker,
+    sessionOf: async (taskId) => (await taskStore.getTask(taskId))?.sessionId,
+    onUnattendedRefusal: (sessionId) => {
+      scheduleRunner.noteConfirmationRefusal(sessionId);
+    },
+  }),
   loadSitePolicy,
   saveSitePolicy,
 });
@@ -1079,6 +1114,8 @@ const workflowReplayer = new WorkflowReplayer({
   },
   onTaskChanged: (task) => {
     broadcastEvent({ type: 'task.updated', task });
+    // So a scheduled run in flight can be stopped by the person who set it.
+    scheduleRunner.observeTask(task.id, task.sessionId);
   },
 });
 
@@ -1205,6 +1242,7 @@ const skillLauncher = new SkillLauncher({
   },
   onTaskChanged: (task) => {
     broadcastEvent({ type: 'task.updated', task });
+    scheduleRunner.observeTask(task.id, task.sessionId);
   },
 });
 
@@ -1221,6 +1259,282 @@ async function summariseShortcut(record: ShortcutRecord): Promise<ShortcutSummar
     targetName: verdict.ok ? verdict.resolution.targetName : verdict.detail,
     usable: verdict.ok,
     createdAt: record.createdAt,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Schedules (P-020)
+// ---------------------------------------------------------------------------
+
+/**
+ * A clock attached to something that already exists.
+ *
+ * Everything below is scheduling and bookkeeping. Nothing here dispatches a
+ * tool, evaluates policy or grants anything: a firing resolves a reference
+ * and hands it to `workflowReplayer` or `skillLauncher`, which are the same
+ * routes a person reaches from the panel, and every action inside that run
+ * goes through the same policy and permission engines as any other.
+ */
+const scheduleStore = new ScheduleStore({
+  area: new NamespacedStorageArea(local, 'schedules'),
+  health: persistenceHealth,
+});
+
+/**
+ * The name Chrome knows the schedule alarm by.
+ *
+ * One alarm for every schedule, not one each. Chrome delivers alarms
+ * independently and caps how many an extension may hold; a single "wake me at
+ * the next interesting moment" alarm is inside every quota, and because each
+ * wake-up reconciles *every* schedule, a delayed or dropped alarm costs a
+ * delay rather than a lost schedule.
+ */
+const SCHEDULE_ALARM = 'aba.schedules';
+
+/**
+ * Resolves what a schedule points at, at the moment it fires.
+ *
+ * A shortcut is resolved through the shortcut store and resolver, so
+ * retargeting or deleting the shortcut changes or stops the schedule. A
+ * workflow or a skill is looked up in the store and registry that own it.
+ * Nothing is trusted from creation time.
+ */
+async function resolveScheduleTarget(target: ScheduleTarget): Promise<TargetResolution> {
+  if (target.kind === 'shortcut') {
+    const record = await shortcutStore.get(target.shortcutId);
+    if (!record) {
+      return {
+        ok: false,
+        reason: 'TARGET_MISSING',
+        detail: 'The shortcut this schedule points at has been deleted.',
+      };
+    }
+    const verdict = await shortcutResolver.resolveRecord(record);
+    if (!verdict.ok) {
+      return {
+        ok: false,
+        reason: verdict.reason === 'TARGET_MISSING' ? 'TARGET_MISSING' : 'TARGET_UNUSABLE',
+        detail: verdict.detail,
+      };
+    }
+    return resolveScheduleTarget(
+      verdict.resolution.targetKind === 'workflow'
+        ? { kind: 'workflow', workflowId: verdict.resolution.targetId }
+        : {
+            kind: 'skill',
+            skillId: verdict.resolution.targetId,
+            skillVersion: verdict.resolution.targetVersion ?? '',
+          },
+    );
+  }
+
+  if (target.kind === 'workflow') {
+    const record = await workflowStore.get(target.workflowId);
+    if (!record) {
+      return {
+        ok: false,
+        reason: 'TARGET_MISSING',
+        detail: 'The workflow this schedule points at has been deleted.',
+      };
+    }
+    if (isIncomplete(record)) {
+      return {
+        ok: false,
+        reason: 'TARGET_UNUSABLE',
+        detail: 'That recording is incomplete and cannot be replayed.',
+      };
+    }
+    // A run nobody is watching cannot answer a question, so a workflow that
+    // asks for a value at replay time is refused before it starts rather than
+    // failing partway through. This is also what keeps a schedule from ever
+    // needing somewhere to store an answer.
+    if (record.definition.inputs.some((input) => input.required)) {
+      return {
+        ok: false,
+        reason: 'INPUTS_REQUIRED',
+        detail: 'That workflow asks for values when it runs, so it cannot run unattended.',
+      };
+    }
+    return { ok: true, kind: 'workflow', workflowId: record.workflowId };
+  }
+
+  const entry = skillRegistry.get(target.skillId, target.skillVersion);
+  if (!entry) {
+    return {
+      ok: false,
+      reason: 'TARGET_MISSING',
+      detail: 'That workflow is not available in this version of the extension.',
+    };
+  }
+  if (entry.definition.inputs.some((input) => input.required)) {
+    return {
+      ok: false,
+      reason: 'INPUTS_REQUIRED',
+      detail: 'That workflow asks for values when it runs, so it cannot run unattended.',
+    };
+  }
+  return {
+    ok: true,
+    kind: 'skill',
+    skillId: entry.definition.id,
+    skillVersion: entry.definition.version,
+  };
+}
+
+/** Maps a replay or launch outcome onto what the scheduler records. */
+function asScheduledExecution(outcome: {
+  ok: boolean;
+  taskId?: string;
+  status?: string;
+  reason?: string;
+  detail?: string;
+  /** The step outcomes, read only for the refusal code the dispatch path set. */
+  steps?: readonly { error?: { code: string } }[];
+}): ScheduledExecution {
+  if (!outcome.ok || outcome.taskId === undefined) {
+    return {
+      ok: false,
+      reason: outcome.reason === 'INPUTS_INVALID' ? 'INPUTS_REQUIRED' : 'TARGET_UNUSABLE',
+      detail: outcome.detail ?? 'The run could not start.',
+    };
+  }
+  const status = outcome.status;
+  const refusal = firstRefusal(outcome.steps ?? []);
+  return {
+    ok: true,
+    taskId: outcome.taskId,
+    status:
+      status === 'completed' || status === 'cancelled' || status === 'refused' ? status : 'failed',
+    ...(refusal === undefined ? {} : { refusal }),
+  };
+}
+
+/**
+ * The first step refusal, as the dispatch path coded it.
+ *
+ * `POLICY_BLOCKED` means the action was not permitted at all;
+ * `PERMISSION_DENIED` means it needed somebody to approve it. Nothing else is
+ * read from a step: not its message, not its result, not its arguments.
+ */
+function firstRefusal(
+  steps: readonly { error?: { code: string } }[],
+): 'POLICY_BLOCKED' | 'PERMISSION_DENIED' | undefined {
+  for (const step of steps) {
+    if (step.error?.code === 'POLICY_BLOCKED') return 'POLICY_BLOCKED';
+    if (step.error?.code === 'PERMISSION_DENIED') return 'PERMISSION_DENIED';
+  }
+  return undefined;
+}
+
+const scheduleRunner = new ScheduleRunner({
+  store: scheduleStore,
+  health: persistenceHealth,
+  resolveTarget: resolveScheduleTarget,
+  runWorkflow: async ({ workflowId, sessionId }) => {
+    const outcome = await workflowReplayer.replay({ workflowId, sessionId, inputs: {} });
+    return asScheduledExecution(
+      outcome.ok
+        ? {
+            ok: true,
+            taskId: outcome.taskId,
+            status: outcome.result.status,
+            steps: outcome.result.steps,
+          }
+        : { ok: false, reason: outcome.reason, detail: outcome.detail },
+    );
+  },
+  runSkill: async ({ skillId, skillVersion, sessionId }) => {
+    const outcome = await skillLauncher.launch({ skillId, skillVersion, sessionId, inputs: {} });
+    return asScheduledExecution(
+      outcome.ok
+        ? {
+            ok: true,
+            taskId: outcome.taskId,
+            status: outcome.result.status,
+            steps: outcome.result.steps,
+          }
+        : { ok: false, reason: outcome.reason, detail: outcome.detail },
+    );
+  },
+  cancelTask: (taskId) => workflowReplayer.cancel(taskId) || skillLauncher.cancel(taskId),
+  audit: async (event) => {
+    await auditLog.record({
+      type: event.type,
+      scheduleId: event.scheduleId,
+      ...(event.runId === undefined ? {} : { runId: event.runId }),
+      ...(event.taskId === undefined ? {} : { taskId: event.taskId }),
+      outcome: event.outcome,
+      ...(event.code === undefined ? {} : { code: event.code }),
+    });
+  },
+  notify: (event) => {
+    switch (event.kind) {
+      case 'started':
+        void notifier.scheduleStarted(event.name);
+        return;
+      case 'completed':
+        void notifier.scheduleCompleted(event.name);
+        return;
+      case 'failed':
+        void notifier.scheduleFailed(event.name);
+        return;
+      case 'blocked':
+        void notifier.scheduleBlocked(event.name, event.reason === 'CONFIRMATION_REQUIRED');
+        return;
+    }
+  },
+  setWakeUp: async (at) => {
+    if (at === undefined) {
+      await chrome.alarms.clear(SCHEDULE_ALARM);
+      return;
+    }
+    // `when` rather than `periodInMinutes`: the cadence lives in the schedule
+    // record, which is durable, and a repeating alarm would be a second copy
+    // of it in a place that is not.
+    await chrome.alarms.clear(SCHEDULE_ALARM);
+    await chrome.alarms.create(SCHEDULE_ALARM, { when: Math.max(at, Date.now() + 1000) });
+  },
+  onChanged: () => {
+    broadcastEvent({ type: 'schedules.changed' });
+  },
+});
+
+/** A schedule as the panel sees it, with its target looked up now. */
+async function summariseSchedule(record: ScheduleRecord): Promise<ScheduleSummary> {
+  const resolution = await resolveScheduleTarget(record.target);
+  return {
+    scheduleId: record.scheduleId,
+    displayName: record.displayName,
+    target: record.target,
+    cadence: record.cadence,
+    cadenceDescription: describeCadence(record.cadence),
+    enabled: record.enabled,
+    nextRunAt: record.nextRunAt,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    ...(record.lastRunAt === undefined ? {} : { lastRunAt: record.lastRunAt }),
+    ...(record.lastRunStatus === undefined ? {} : { lastRunStatus: record.lastRunStatus }),
+    ...(record.lastRunReason === undefined ? {} : { lastRunReason: record.lastRunReason }),
+    targetUsable: resolution.ok,
+    targetName: resolution.ok
+      ? resolution.kind === 'workflow'
+        ? ((await workflowStore.get(resolution.workflowId))?.name ?? 'Workflow')
+        : (skillRegistry.get(resolution.skillId, resolution.skillVersion)?.definition.name ??
+          'Workflow')
+      : resolution.detail,
+  };
+}
+
+function summariseScheduleRun(record: ScheduleRunRecord): ScheduleRunSummary {
+  return {
+    runId: record.runId,
+    scheduleId: record.scheduleId,
+    occurrenceAt: record.occurrenceAt,
+    startedAt: record.startedAt,
+    ...(record.finishedAt === undefined ? {} : { finishedAt: record.finishedAt }),
+    status: record.status,
+    ...(record.reason === undefined ? {} : { reason: record.reason }),
+    ...(record.taskId === undefined ? {} : { taskId: record.taskId }),
   };
 }
 
@@ -3117,6 +3431,132 @@ router.on('shortcut.resolve', async ({ typed }) => {
 });
 
 /**
+ * The schedule routes (P-020).
+ *
+ * Create, read, edit, pause, delete and run. Every one of them is panel-only
+ * and none is a tool, so a model can neither create a schedule nor cause one
+ * to fire.
+ *
+ * `schedule.runNow` is the only route here that executes, and it runs
+ * *attended*: a person pressed it with the panel open, so it gets an ordinary
+ * session and the ordinary interactive prompter. A run the clock started gets
+ * an unattended session and stops at the confirmation boundary instead. That
+ * asymmetry is the product decision this phase implements — see
+ * `docs/architecture/SCHEDULED_EXECUTION.md` — and it is why "Run now" is how
+ * a user acts on a run that stopped.
+ */
+router.on('schedule.list', async () => ({
+  schedules: await Promise.all((await scheduleStore.list()).map(summariseSchedule)),
+}));
+
+router.on('schedule.runs', async ({ scheduleId }) => ({
+  runs: (await scheduleStore.listRuns(scheduleId)).map(summariseScheduleRun),
+}));
+
+router.on('schedule.create', async ({ name, target, cadence }) => {
+  // Checked at creation so a user is not allowed to schedule something that
+  // is already broken. It is checked again at every firing, because a target
+  // that exists now can be deleted later.
+  const resolution = await resolveScheduleTarget(target);
+  if (!resolution.ok) {
+    return { schedule: null, error: { reason: resolution.reason, detail: resolution.detail } };
+  }
+  try {
+    const record = await scheduleStore.create({
+      displayName: name,
+      target,
+      cadence,
+      // Stated, not defaulted: the person pressed "Create schedule", which is
+      // the decision that this runs on its own from now on.
+      enabled: true,
+    });
+    await auditLog.record({
+      type: 'schedule.created',
+      scheduleId: record.scheduleId,
+      outcome: 'info',
+      code: record.cadence.kind,
+    });
+    await scheduleRunner.rearm();
+    return { schedule: await summariseSchedule(record) };
+  } catch (error) {
+    if (error instanceof ScheduleError) {
+      return { schedule: null, error: { reason: error.reason, detail: error.message } };
+    }
+    throw error;
+  }
+});
+
+router.on('schedule.edit', async ({ scheduleId, name, target, cadence }) => {
+  if (target !== undefined) {
+    const resolution = await resolveScheduleTarget(target);
+    if (!resolution.ok) {
+      return { schedule: null, error: { reason: resolution.reason, detail: resolution.detail } };
+    }
+  }
+  try {
+    const record = await scheduleStore.edit(scheduleId, {
+      ...(name === undefined ? {} : { displayName: name }),
+      ...(target === undefined ? {} : { target }),
+      ...(cadence === undefined ? {} : { cadence }),
+    });
+    await auditLog.record({
+      type: 'schedule.updated',
+      scheduleId: record.scheduleId,
+      outcome: 'info',
+      code: record.cadence.kind,
+    });
+    await scheduleRunner.rearm();
+    return { schedule: await summariseSchedule(record) };
+  } catch (error) {
+    if (error instanceof ScheduleError) {
+      return { schedule: null, error: { reason: error.reason, detail: error.message } };
+    }
+    throw error;
+  }
+});
+
+router.on('schedule.setEnabled', async ({ scheduleId, enabled }) => {
+  try {
+    const record = await scheduleStore.setEnabled(scheduleId, enabled);
+    await auditLog.record({
+      type: enabled ? 'schedule.resumed' : 'schedule.paused',
+      scheduleId: record.scheduleId,
+      outcome: 'info',
+    });
+    await scheduleRunner.rearm();
+    return { schedule: await summariseSchedule(record) };
+  } catch (error) {
+    if (error instanceof ScheduleError) {
+      return { schedule: null, error: { reason: error.reason, detail: error.message } };
+    }
+    throw error;
+  }
+});
+
+router.on('schedule.remove', async ({ scheduleId }) => {
+  await scheduleStore.remove(scheduleId);
+  await auditLog.record({ type: 'schedule.deleted', scheduleId, outcome: 'info' });
+  await scheduleRunner.rearm();
+  return { ok: true } as const;
+});
+
+router.on('schedule.runNow', async ({ scheduleId }) => {
+  try {
+    const run = await scheduleRunner.runNow(scheduleId);
+    return { run: run ? summariseScheduleRun(run) : null };
+  } catch (error) {
+    if (error instanceof ScheduleError) {
+      return { run: null, error: { reason: error.reason, detail: error.message } };
+    }
+    throw error;
+  }
+});
+
+router.on('schedule.cancelRun', async ({ runId }) => ({
+  cancelled: await scheduleRunner.cancelRun(runId),
+}));
+
+/**
  * Runs a bundled skill because a person asked.
  *
  * Takes an id and a pinned version, never a definition. Every step still
@@ -3239,6 +3679,25 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   void workspaceReconciler.handleTabRemoved(tabId, origin).catch(() => undefined);
 });
 
+/**
+ * The schedule alarm (P-020).
+ *
+ * The only thing that wakes the worker for a schedule. Every delivery
+ * reconciles *every* schedule rather than the one the alarm was set for, so a
+ * duplicate delivery, an alarm that arrives late, and an alarm that arrives
+ * after an eviction all converge on the same reconciliation — and the
+ * occurrence claim in `ScheduleStore` makes running anything twice impossible
+ * whichever way they interleave.
+ */
+chrome.alarms?.onAlarm.addListener((alarm) => {
+  if (alarm.name !== SCHEDULE_ALARM) return;
+  void scheduleRunner.tick().catch((error: unknown) => {
+    log.error('A schedule wake-up failed.', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+});
+
 chrome.runtime.onSuspend?.addListener(() => {
   taskManager.abortAll();
   permissionBroker.denyAll();
@@ -3271,6 +3730,13 @@ async function startup(): Promise<void> {
   // results it would need were deliberately never persisted.
   const interruptedRuns = await skillRuns.reconcileAfterRestart();
 
+  // Scheduled runs are reconciled before the alarm is re-armed, so a run left
+  // `running` by a dead worker is closed as interrupted rather than being
+  // seen as still executing. Its occurrence stays claimed: an interrupted run
+  // is never retried, because half a sequence of browser actions repeated
+  // from the start is worse than a run that did not happen.
+  const interruptedScheduleRuns = await scheduleRunner.recover();
+
   const report = await lifecycle.recoverInterruptedTasks();
   if (report.recovered > 0) {
     for (const taskId of report.taskIds) {
@@ -3278,12 +3744,18 @@ async function startup(): Promise<void> {
       if (task) broadcastEvent({ type: 'task.updated', task });
     }
   }
+  // Reconciles every schedule against the clock and re-arms the single alarm.
+  // Startup is the only place a missed occurrence is normally discovered: the
+  // browser was closed, so no alarm was ever delivered.
+  await scheduleRunner.tick();
+
   log.info('Service worker ready.', {
     tools: toolRegistry.list().length,
     providers: providerRegistry.list().length,
     skills: skillRegistry.size,
     recoveredTasks: report.recovered,
     interruptedSkillRuns: interruptedRuns.length,
+    interruptedScheduleRuns,
   });
 }
 

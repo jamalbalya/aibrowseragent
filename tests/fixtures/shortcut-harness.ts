@@ -65,6 +65,7 @@ export function buildShortcutHarness(options: WorkflowHarnessOptions = {}): Shor
     getPermissionMode: () => Promise.resolve(options.permissionMode ?? 'auto'),
     getActiveTabId: () => Promise.resolve(undefined),
     publishSecurityContext: () => undefined,
+    ...(options.onTaskChanged === undefined ? {} : { onTaskChanged: options.onTaskChanged }),
   });
 
   return { ...base, shortcuts, resolver, launcher };

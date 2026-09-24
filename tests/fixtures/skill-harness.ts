@@ -20,6 +20,7 @@ import { SkillRegistry } from '@/skills/core/skill-registry';
 import { SkillRunner, type SkillRunContext } from '@/skills/runtime/skill-runner';
 import type { SkillDefinition } from '@/skills/core/skill-model';
 import { createHarness, ScriptedPrompter } from './policy-harness';
+import type { PermissionPrompter } from '@/policy/permission-engine';
 
 export const TASK = 'task_skill_1';
 
@@ -107,6 +108,10 @@ export interface HarnessOptions {
   readonly taintState?: TaintState;
   /** The registry's observation hook, for the workflow recorder's tests. */
   readonly onDispatched?: ToolRegistryOptions['onDispatched'];
+  /** Puts production code in front of the scripted prompter. See `createHarness`. */
+  readonly wrapPrompter?: (inner: PermissionPrompter) => PermissionPrompter;
+  /** Whether a task runs unattended. See `createHarness`. */
+  readonly resolveUnattended?: (taskId: string) => Promise<boolean>;
 }
 
 export function buildSkillHarness(options: HarnessOptions = {}): SkillHarness {
@@ -137,6 +142,10 @@ export function buildSkillHarness(options: HarnessOptions = {}): SkillHarness {
     prompter,
     egress: { consent, record: () => Promise.resolve() },
     ...(options.onDispatched === undefined ? {} : { onDispatched: options.onDispatched }),
+    ...(options.wrapPrompter === undefined ? {} : { wrapPrompter: options.wrapPrompter }),
+    ...(options.resolveUnattended === undefined
+      ? {}
+      : { resolveUnattended: options.resolveUnattended }),
   });
   const tools: ToolRegistry = harness.registry;
 

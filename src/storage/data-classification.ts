@@ -55,6 +55,15 @@ export const PERSISTED_DATA_KINDS = [
   'workspace',
   /** Skill run progress records, reconciled after a worker restart. */
   'skill-run',
+  /**
+   * Schedules (P-020): a clock, a reference to a workflow, skill or shortcut,
+   * and the bookkeeping that fires it once per occurrence. No inputs, no
+   * content, no credential — `assertScheduleSafe` refuses a record that grew
+   * one.
+   */
+  'schedule',
+  /** One firing of a schedule: when, how it ended, and which task it made. */
+  'schedule-run',
 ] as const;
 export type PersistedDataKind = (typeof PERSISTED_DATA_KINDS)[number];
 
@@ -97,6 +106,16 @@ export const DATA_CLASSIFICATION: Readonly<Record<PersistedDataKind, DataClass>>
   // same class as `task`, which already carries tab context.
   workspace: 'USER_SELECTABLE',
 
+  // Device-scoped and meaningless elsewhere. A run names a task id and a
+  // schedule id that exist on this installation and nowhere else.
+  'schedule-run': 'LOCAL_ONLY',
+  // A schedule is an instruction to act unattended, so it stays on the device
+  // where somebody set it up. Synced, it would start the same recurring runs
+  // on every other browser signed into the account — which is not what
+  // "keep my data" means, and is not a decision to make by classifying a
+  // record as ordinary user content. The same reasoning keeps it out of the
+  // export file; see `EXPORT_PORTABILITY` below.
+  schedule: 'LOCAL_ONLY',
   // Device-scoped and meaningless elsewhere.
   'skill-run': 'LOCAL_ONLY',
   evidence: 'LOCAL_ONLY',
@@ -152,6 +171,25 @@ export const EXPORT_PORTABILITY: Readonly<Record<PersistedDataKind, PortabilityC
   // in the most literal sense.
   policy: 'NOT_PORTABLE_BY_DESIGN',
 
+  /*
+   * A schedule is a standing instruction to act **with nobody watching**, and
+   * that is what keeps it out of a file somebody may be mailed.
+   *
+   * The asymmetry with `workflow` is the whole reason, and it is worth being
+   * explicit about because the two look alike: an imported workflow sits
+   * there until a person chooses to run it, so importing one grants nothing.
+   * An imported schedule runs on a clock. Accepting an archive would be
+   * accepting that this browser starts taking actions on websites every
+   * morning because of a decision made in a file, which is the same shape of
+   * problem `policy` has and is excluded for.
+   *
+   * It is `NOT_PORTABLE_BY_DESIGN` rather than a design waiting to be done:
+   * the user can import the workflow and set their own schedule for it in
+   * seconds, so there is nothing lost and an autonomous-execution vector
+   * avoided.
+   */
+  schedule: 'NOT_PORTABLE_BY_DESIGN',
+
   // Health *gates execution*. A `HEALTHY` record from another device would be
   // an archive clearing this device's own safety interlock: replay of stale
   // security state, and the clearest authorization bypass in this table.
@@ -171,6 +209,10 @@ export const EXPORT_PORTABILITY: Readonly<Record<PersistedDataKind, PortabilityC
   // Progress through a run on a worker generation that no longer exists,
   // naming a task id this installation does not have.
   'skill-run': 'LOCAL_ONLY',
+
+  // History of firings on this device, naming task ids and schedule ids that
+  // resolve to nothing anywhere else.
+  'schedule-run': 'LOCAL_ONLY',
 
   // Has its own scoped, user-initiated export route. The trail is a hash
   // chain anchored to this installation; re-anchoring it elsewhere would
@@ -308,6 +350,13 @@ export const K1_PROTECTION: Readonly<Record<PersistedDataKind, K1Protection>> = 
   task: 'PLAINTEXT_BY_DESIGN',
   workflow: 'PLAINTEXT_BY_DESIGN',
   shortcut: 'PLAINTEXT_BY_DESIGN',
+  // A schedule must be readable while K1 is locked, because the alarm that
+  // fires it wakes a worker nobody is looking at: a schedule the extension
+  // could not read until somebody typed a passphrase would be a schedule that
+  // silently stopped running. It holds no secret, so there is nothing that
+  // encryption would protect.
+  schedule: 'PLAINTEXT_BY_DESIGN',
+  'schedule-run': 'PLAINTEXT_BY_DESIGN',
   workspace: 'PLAINTEXT_BY_DESIGN',
   preference: 'PLAINTEXT_BY_DESIGN',
   audit: 'PLAINTEXT_BY_DESIGN',

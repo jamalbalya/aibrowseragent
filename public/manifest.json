@@ -31,7 +31,8 @@
     "scripting",
     "debugger",
     "notifications",
-    "activeTab"
+    "activeTab",
+    "alarms"
   ],
   "optional_permissions": ["downloads"],
   "host_permissions": ["http://*/*", "https://*/*"],

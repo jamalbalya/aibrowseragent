@@ -47,6 +47,23 @@ export function createHarness(
     resolveTabUrl?: ToolRegistryOptions['resolveTabUrl'];
     /** The observation hook, for the workflow recorder's tests. */
     onDispatched?: ToolRegistryOptions['onDispatched'];
+    /**
+     * Puts something in front of the prompter the engine will use.
+     *
+     * Exists for the scheduled-execution suites, which need the real
+     * `UnattendedPrompter` between the engine and the scripted answers — so a
+     * test can prove that an unattended run is denied by production code
+     * rather than by a stub that was told to deny.
+     */
+    wrapPrompter?: (inner: PermissionPrompter) => PermissionPrompter;
+    /**
+     * Whether a task is running with nobody watching.
+     *
+     * Supplied by the scheduling suites so the real policy engine sees the
+     * same `PolicyContext.unattended` the service worker gives it. Absent
+     * means attended, which is what every other suite is.
+     */
+    resolveUnattended?: (taskId: string) => Promise<boolean>;
   } = {},
 ): Harness {
   const area = new SerializedStorageArea(new MemoryStorageArea());
@@ -59,11 +76,16 @@ export function createHarness(
     await area.set('site-policy', state);
   };
 
-  const permissionEngine = new PermissionEngine({ prompter, loadSitePolicy, saveSitePolicy });
+  const permissionEngine = new PermissionEngine({
+    prompter: options.wrapPrompter ? options.wrapPrompter(prompter) : prompter,
+    loadSitePolicy,
+    saveSitePolicy,
+  });
 
-  const loadPolicyContext = async (): Promise<PolicyContext> => ({
+  const loadPolicyContext = async (taskId: string): Promise<PolicyContext> => ({
     mode,
     sitePolicy: await loadSitePolicy(),
+    unattended: (await options.resolveUnattended?.(taskId)) ?? false,
   });
 
   const registry = new ToolRegistry({

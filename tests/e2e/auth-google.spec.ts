@@ -80,6 +80,7 @@ test('authentication added no permission and no host access', async ({ serviceWo
     'debugger',
     'notifications',
     'activeTab',
+    'alarms',
   ]);
   // `identity` is the one a Google sign-in would reach for, and is not here.
   expect(manifest.permissions).not.toContain('identity');
