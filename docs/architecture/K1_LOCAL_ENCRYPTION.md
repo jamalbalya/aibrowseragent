@@ -398,3 +398,66 @@ place a provider-authored string becomes `technicalDetails`.
 
 The failure is still reported usefully — the code, the status and the
 user-facing message are unchanged. This is not a fix by silence.
+
+---
+
+## 14. Boundary audit findings
+
+A later pass challenged the boundary rather than confirming it. Three things
+changed; the threat model did not.
+
+### Changing the passphrase was implemented and unreachable
+
+`K1Store.changePassphrase` existed, was tested, and had no route and no
+control — so a user whose passphrase had been seen had no remedy at all.
+Disabling protection and re-enabling it is not one: it writes every protected
+record back to disk in plaintext in between. There is now a
+`k1.changePassphrase` route and a control in the protection panel. It re-wraps
+the same data key, so nothing stored is re-encrypted and an interrupted change
+cannot leave records under a key nobody holds.
+
+### Locking left the key in a connected adapter
+
+A provider adapter keeps the configuration it was connected with — including
+the API key — for the lifetime of the registry instance, because it needs it
+for every request. That is correct while unlocked and wrong the moment the
+user locks: they have said _stop being able to use my keys_, and a plaintext
+copy sitting in an adapter is the opposite.
+
+It was never an authorization hole. Every execution path re-resolves the
+provider and re-reads the credential, so a locked installation already refused
+to run. Locking now also drops the adapters' configuration.
+
+**This is not zeroization, and is not described as one.** JavaScript cannot
+scrub a string. What changed is that the last reference the extension holds is
+dropped, so the value becomes collectable rather than pinned for as long as
+the worker lives. A smaller claim than "the key is gone", and a true one.
+
+### Rollback now has a failing-if-fixed test
+
+The limitation was documented and had no test, which is how a limitation
+quietly becomes a claim. `k1-boundary.test.ts` case 12 now **demonstrates the
+break**: it writes a key, replaces it, restores the earlier ciphertext from
+outside, and asserts that the old key comes back. If that test ever starts
+failing, rollback protection has been added and this document has to say so.
+
+## 15. What a profile reader sees, exactly
+
+Asserted in `k1-exposure.spec.ts` against a populated installation rather than
+described. Visible **by design**:
+
+| Visible                                                  | Why it is not hidden                                                                                                        |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Which durable namespaces exist                           | structural                                                                                                                  |
+| Connection record names (`conn:<id>`)                    | encrypting them would make the store unlistable while locked without hiding anything the account records do not already say |
+| Provider id, model id, base URL, display name            | the panel has to name the account that needs unlocking, while locked                                                        |
+| The installation identity (`loc_…`)                      | the unlock screen must render before anything is unlocked                                                                   |
+| The KDF salt, iteration count and wrapped key            | none helps without the passphrase                                                                                           |
+| Tasks, workflows, shortcuts, workspaces, audit, evidence | classified `PLAINTEXT_BY_DESIGN`; protecting them would put a passphrase prompt in front of the side panel                  |
+
+Not obtainable: the provider API key, the refresh token, the data key, the key
+encryption key, the passphrase.
+
+The durable namespace list is asserted as a **ceiling**: a namespace that is
+not declared fails the test, so a new place data lives has to be classified in
+`K1_PROTECTION` before it can ship.

@@ -27,6 +27,8 @@ export function ProtectionPanel(): React.JSX.Element {
   const [status, setStatus] = useState<Status | null>(null);
   const [passphrase, setPassphrase] = useState('');
   const [confirmation, setConfirmation] = useState('');
+  const [changing, setChanging] = useState(false);
+  const [currentPassphrase, setCurrentPassphrase] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
 
@@ -56,6 +58,7 @@ export function ProtectionPanel(): React.JSX.Element {
         // failed attempt is a field somebody walks away from.
         setPassphrase('');
         setConfirmation('');
+        setCurrentPassphrase('');
         setBusy(false);
         await refresh();
       }
@@ -104,6 +107,34 @@ export function ProtectionPanel(): React.JSX.Element {
         };
       }),
     [run],
+  );
+
+  /**
+   * Changing the passphrase, which is the only remedy for one that may have
+   * been seen.
+   *
+   * There is no reset and no recovery service, and switching protection off
+   * and on again would write every protected record back to disk in
+   * plaintext in between — so this has to exist, and it has to be the thing
+   * people reach for.
+   */
+  const changePassphrase = useCallback(
+    () =>
+      run(async () => {
+        if (passphrase !== confirmation) {
+          return { tone: 'error', text: 'The two new passphrases are not the same.' };
+        }
+        const result = await sendToBackground('k1.changePassphrase', {
+          current: currentPassphrase,
+          next: passphrase,
+        });
+        setChanging(false);
+        setCurrentPassphrase('');
+        return result.ok
+          ? { tone: 'ok', text: 'Passphrase changed. The old one no longer works.' }
+          : { tone: 'error', text: result.detail };
+      }),
+    [run, currentPassphrase, passphrase, confirmation],
   );
 
   const disable = useCallback(
@@ -216,7 +247,64 @@ export function ProtectionPanel(): React.JSX.Element {
               onChange={(event) => setPassphrase(event.target.value)}
             />
           </label>
+          {changing ? (
+            <>
+              <label className="field">
+                <span>Current passphrase</span>
+                <input
+                  type="password"
+                  value={currentPassphrase}
+                  autoComplete="current-password"
+                  onChange={(event) => setCurrentPassphrase(event.target.value)}
+                />
+              </label>
+              <label className="field">
+                <span>New passphrase</span>
+                <input
+                  type="password"
+                  value={passphrase}
+                  autoComplete="new-password"
+                  onChange={(event) => setPassphrase(event.target.value)}
+                  placeholder="At least 8 characters"
+                />
+              </label>
+              <label className="field">
+                <span>Type the new one again</span>
+                <input
+                  type="password"
+                  value={confirmation}
+                  autoComplete="new-password"
+                  onChange={(event) => setConfirmation(event.target.value)}
+                />
+              </label>
+              <p className="field__hint">
+                Your keys stay exactly where they are. Only the passphrase that opens them changes,
+                and the old one stops working straight away.
+              </p>
+            </>
+          ) : null}
+
           <div className="settings__actions">
+            {changing ? (
+              <button
+                type="button"
+                className="button button--primary"
+                disabled={busy || passphrase.length < 8 || currentPassphrase.length === 0}
+                onClick={() => void changePassphrase()}
+              >
+                {busy ? 'Changing…' : 'Change passphrase'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="button"
+                disabled={busy}
+                onClick={() => setChanging(true)}
+                data-testid="protection-change"
+              >
+                Change passphrase
+              </button>
+            )}
             <button type="button" className="button" disabled={busy} onClick={() => void lock()}>
               Lock now
             </button>

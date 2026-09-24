@@ -299,6 +299,18 @@ export interface PanelRequestMap {
     response: { ok: true; state: K1State } | { ok: false; reason: string; detail: string };
   };
   'k1.lock': { request: Record<string, never>; response: { state: K1State } };
+  /**
+   * Changes the passphrase by re-wrapping the same data key.
+   *
+   * Reachable because a passphrase somebody may have seen is the one problem
+   * a protected installation has no other answer to: there is no reset, no
+   * recovery service, and disabling protection to re-enable it would decrypt
+   * every record to disk in between.
+   */
+  'k1.changePassphrase': {
+    request: { current: string; next: string };
+    response: { ok: true } | { ok: false; reason: string; detail: string };
+  };
   'k1.disable': {
     request: { passphrase: string };
     response: { ok: true; state: K1State } | { ok: false; reason: string; detail: string };

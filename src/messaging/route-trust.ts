@@ -349,6 +349,7 @@ export const PANEL_ROUTE_CLASSES: Record<PanelRequestType, RouteClass> = {
   'k1.enable': 'CLASS_B_PANEL_CONTROL_PLANE',
   'k1.unlock': 'CLASS_B_PANEL_CONTROL_PLANE',
   'k1.lock': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'k1.changePassphrase': 'CLASS_B_PANEL_CONTROL_PLANE',
   'k1.disable': 'CLASS_B_PANEL_CONTROL_PLANE',
   // Moving a user's own data in or out is a control-plane act, not a read: an
   // import writes, and an export decides what leaves. Neither is CLASS_E, and

@@ -2453,7 +2453,52 @@ router.on('k1.unlock', async ({ passphrase }) => {
 
 router.on('k1.lock', async () => {
   await k1.lock();
+  await dropConnectedAdapters();
   return await k1.status();
+});
+
+/**
+ * Drops the provider adapters' in-memory configuration.
+ *
+ * An adapter keeps the config it was connected with — including the API key —
+ * for the lifetime of the registry instance, because it needs it for every
+ * request. That is correct while unlocked and wrong the moment the user locks:
+ * they have said "stop being able to use my keys", and a plaintext copy of one
+ * sitting in an adapter is the opposite of that.
+ *
+ * It was never an authorization hole. Every execution path re-resolves the
+ * provider and re-reads the credential, so a locked installation already
+ * refused to run — this is about the copy, not the capability.
+ *
+ * **This is not zeroization.** JavaScript cannot scrub a string, and nothing
+ * here claims to. What it does is drop the last reference the extension holds,
+ * so the value becomes collectable instead of being pinned for as long as the
+ * worker lives. That is a real reduction in exposure and a smaller one than
+ * "the key is gone".
+ */
+async function dropConnectedAdapters(): Promise<void> {
+  for (const factory of providerRegistry.list()) {
+    // Never throws outward: failing to drop a reference must not turn locking
+    // — a safety action — into an error the user has to work around.
+    await providerRegistry.disconnect(factory.id).catch(() => undefined);
+  }
+}
+
+router.on('k1.changePassphrase', async ({ current, next }) => {
+  try {
+    // Re-wraps the same data key, so nothing stored is re-encrypted and an
+    // interrupted change cannot leave records under a key nobody holds:
+    // either the old wrapping is still there or the new one is, and both
+    // open the same key.
+    await k1.changePassphrase(current, next);
+    return { ok: true as const };
+  } catch (error) {
+    return {
+      ok: false as const,
+      reason: error instanceof UnlockError ? error.failure : 'CHANGE_FAILED',
+      detail: describeK1(error, 'The passphrase could not be changed.'),
+    };
+  }
 });
 
 router.on('k1.disable', async ({ passphrase }) => {
@@ -2473,6 +2518,7 @@ router.on('k1.disable', async ({ passphrase }) => {
       };
     }
     await k1.disable();
+    await dropConnectedAdapters();
     return { ok: true as const, state: 'OFF' as const };
   } catch (error) {
     return {
