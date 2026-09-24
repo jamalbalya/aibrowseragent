@@ -265,6 +265,56 @@ export interface PanelRequestMap {
       retryAfterMs: number | null;
     };
   };
+  /**
+   * The ways this account can be signed in to.
+   *
+   * **Authentication identities, not AI provider connections.** Those live on
+   * `accounts.*` and are a different thing entirely: one decides how a person
+   * proves who they are, the other decides which AI brain the agent uses.
+   * Carries no token and no Google subject.
+   */
+  'identities.list': {
+    request: Record<string, never>;
+    response: {
+      ok: boolean;
+      identities: readonly {
+        id: string;
+        kind: 'google' | 'email';
+        email: string | null;
+        emailVerified: boolean;
+        linkedAt: number;
+        lastUsedAt: number | null;
+        removable: boolean;
+      }[];
+      failure: string | null;
+    };
+  };
+  /** Links a Google account to the account already signed in. Issues no session. */
+  'identities.linkGoogle': {
+    request: Record<string, never>;
+    response: { ok: boolean; failure: string | null };
+  };
+  /** Asks the backend to mail a code for an address to be linked. */
+  'identities.startEmailLink': {
+    request: { email: string };
+    response: {
+      ok: boolean;
+      challengeId: string | null;
+      expiresAt: number | null;
+      resendAvailableAt: number | null;
+      failure: string | null;
+    };
+  };
+  /** Presents that code. Attaches the address; never signs anybody in. */
+  'identities.completeEmailLink': {
+    request: { challengeId: string; code: string };
+    response: { ok: boolean; failure: string | null };
+  };
+  /** Removes a linked identity, where the server permits it. */
+  'identities.detach': {
+    request: { identityId: string };
+    response: { ok: boolean; revokedSessions: number; failure: string | null };
+  };
   /** Ends the session, on the server as well as here. Deletes nothing. */
   'auth.signOut': {
     request: Record<string, never>;

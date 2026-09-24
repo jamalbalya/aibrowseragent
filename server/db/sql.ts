@@ -156,6 +156,24 @@ const SPECS: readonly MigrationSpec[] = [
     createTables: ['login_challenge'],
     addColumns: [{ table: 'session', column: 'digest_version', backfill: '1' }],
   },
+  {
+    id: 3,
+    file: '0003_identity_linking.sql',
+    title: '0003_identity_linking',
+    note: [
+      'Account linking. `login_challenge` already carried `purpose` and a',
+      'target account from the first migration; what it lacked was somewhere',
+      'for a link callback to put what it verified.',
+      '',
+      'Both columns are nullable and server-written. A sign-in challenge',
+      'leaves them null and resolves an account instead.',
+    ],
+    createTables: [],
+    addColumns: [
+      { table: 'login_challenge', column: 'resolved_subject' },
+      { table: 'login_challenge', column: 'resolved_email' },
+    ],
+  },
 ];
 
 function header(spec: MigrationSpec): string {

@@ -330,6 +330,16 @@ export const PANEL_ROUTE_CLASSES: Record<PanelRequestType, RouteClass> = {
   'auth.refresh': 'CLASS_B_PANEL_CONTROL_PLANE',
   'auth.signOut': 'CLASS_B_PANEL_CONTROL_PLANE',
 
+  // Authentication identities. Listing is a read; everything that links or
+  // unlinks changes how an account can be signed in to, which is as
+  // control-plane as anything gets. A page that could reach these could
+  // attach a sign-in method to somebody's account, or remove theirs.
+  'identities.list': 'CLASS_E_PANEL_READ_ONLY',
+  'identities.linkGoogle': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'identities.startEmailLink': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'identities.completeEmailLink': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'identities.detach': 'CLASS_B_PANEL_CONTROL_PLANE',
+
   // Connected AI accounts. Reads are CLASS_E; anything that creates, removes,
   // re-homes or selects an account is control plane, because each of those
   // moves a credential or changes which one a task will use. No content

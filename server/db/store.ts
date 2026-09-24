@@ -74,6 +74,8 @@ export interface LoginChallengeRow {
   readonly exchange_digest: string | null;
   readonly resolved_aba_user_id: string | null;
   readonly resolved_auth_identity_id: string | null;
+  readonly resolved_subject: string | null;
+  readonly resolved_email: string | null;
   readonly attempts: number;
   readonly created_at: number;
   readonly expires_at: number;
@@ -162,6 +164,23 @@ export interface Store {
       readonly exchangeDigest: string;
       readonly abaUserId: string;
       readonly authIdentityId: string;
+    },
+  ): Promise<void>;
+  /**
+   * Records what a **link** callback verified.
+   *
+   * Separate from `attachChallengeOutcome` because the two carry different
+   * things and must not be confusable: a sign-in resolves an *account*, and a
+   * link resolves an *identity* whose account is already fixed on the row.
+   * One method taking both would let a caller write a link outcome onto a
+   * sign-in challenge.
+   */
+  attachLinkOutcome(
+    id: string,
+    outcome: {
+      readonly exchangeDigest: string;
+      readonly subject: string | null;
+      readonly email: string | null;
     },
   ): Promise<void>;
   countChallengeAttempt(id: string): Promise<number>;

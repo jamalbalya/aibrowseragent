@@ -134,6 +134,8 @@ describe('TEST-SECURITY-062 — the transient store', () => {
     const store = new MemoryOtpChallengeStore({ maxAttempts: 5, capacity: 10 });
     await store.issue({
       id: 'otp_a',
+      purpose: 'sign_in',
+      abaUserId: null,
       email: CANONICAL,
       code: '111111',
       issuedAt: 0,
@@ -150,7 +152,14 @@ describe('TEST-SECURITY-062 — the transient store', () => {
 
   it('06 — issuing a new code invalidates every open one for that address', async () => {
     const store = new MemoryOtpChallengeStore({ maxAttempts: 5, capacity: 10 });
-    const base = { email: CANONICAL, issuedAt: 0, expiresAt: 1000, attempts: 0 };
+    const base = {
+      email: CANONICAL,
+      purpose: 'sign_in' as const,
+      abaUserId: null,
+      issuedAt: 0,
+      expiresAt: 1000,
+      attempts: 0,
+    };
     await store.issue({ ...base, id: 'otp_a', code: '111111' });
     await store.issue({ ...base, id: 'otp_b', code: '222222' });
 
@@ -164,6 +173,8 @@ describe('TEST-SECURITY-062 — the transient store', () => {
     const store = new MemoryOtpChallengeStore({ maxAttempts: 5, capacity: 10 });
     await store.issue({
       id: 'otp_a',
+      purpose: 'sign_in',
+      abaUserId: null,
       email: CANONICAL,
       code: '111111',
       issuedAt: 0,
@@ -180,6 +191,8 @@ describe('TEST-SECURITY-062 — the transient store', () => {
     const store = new MemoryOtpChallengeStore({ maxAttempts: 5, capacity: 10 });
     await store.issue({
       id: 'otp_a',
+      purpose: 'sign_in',
+      abaUserId: null,
       email: CANONICAL,
       code: '111111',
       issuedAt: 0,
@@ -199,6 +212,8 @@ describe('TEST-SECURITY-062 — the transient store', () => {
     const store = new MemoryOtpChallengeStore({ maxAttempts: 3, capacity: 10 });
     await store.issue({
       id: 'otp_a',
+      purpose: 'sign_in',
+      abaUserId: null,
       email: CANONICAL,
       code: '111111',
       issuedAt: 0,
@@ -230,6 +245,8 @@ describe('TEST-SECURITY-062 — the transient store', () => {
     const store = new MemoryOtpChallengeStore({ maxAttempts: 3, capacity: 10 });
     await store.issue({
       id: 'otp_spent',
+      purpose: 'sign_in',
+      abaUserId: null,
       email: CANONICAL,
       code: '111111',
       issuedAt: 0,
@@ -245,6 +262,8 @@ describe('TEST-SECURITY-062 — the transient store', () => {
     const store = new MemoryOtpChallengeStore({ maxAttempts: 5, capacity: 10 });
     await store.issue({
       id: 'otp_a',
+      purpose: 'sign_in',
+      abaUserId: null,
       email: CANONICAL,
       code: '111111',
       issuedAt: 0,
@@ -258,7 +277,14 @@ describe('TEST-SECURITY-062 — the transient store', () => {
 
   it('11 — the store refuses at capacity rather than evicting somebody else', async () => {
     const store = new MemoryOtpChallengeStore({ maxAttempts: 5, capacity: 2 });
-    const base = { issuedAt: 0, expiresAt: 10_000, attempts: 0, code: '111111' };
+    const base = {
+      purpose: 'sign_in' as const,
+      abaUserId: null,
+      issuedAt: 0,
+      expiresAt: 10_000,
+      attempts: 0,
+      code: '111111',
+    };
     expect((await store.issue({ ...base, id: 'otp_a', email: 'a@x.test' })).kind).toBe('issued');
     expect((await store.issue({ ...base, id: 'otp_b', email: 'b@x.test' })).kind).toBe('issued');
 

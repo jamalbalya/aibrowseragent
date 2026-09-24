@@ -67,7 +67,8 @@ import { otpMessage, type EmailDelivery } from './email-delivery';
 import type { MemoryRateLimiter, RateLimitRule } from './rate-limiter';
 import type { OtpChallengeStore } from './otp-challenge-store';
 import type { Clock } from '../domain/clock';
-import type { Store } from '../db/store';
+import type { AuthIdentityRow, Store } from '../db/store';
+import type { Principal } from '../domain/authorization';
 import type { AccountService } from './account-service';
 import type { IssuedSession, SessionService } from './session-service';
 import type { DeviceService } from './device-service';
@@ -245,6 +246,13 @@ export class EmailAuthService {
   async start(params: {
     readonly email: string;
     readonly source: string;
+    /**
+     * Present when this is a link rather than a sign-in.
+     *
+     * A `Principal`, so the target account comes from a verified session and
+     * there is no parameter in which a caller could name a different one.
+     */
+    readonly link?: Principal;
   }): Promise<Result<EmailStartOutcome>> {
     const raw = params.email.trim();
     const email = normaliseEmail(raw);
@@ -282,6 +290,8 @@ export class EmailAuthService {
       id,
       email,
       code,
+      purpose: params.link === undefined ? 'sign_in' : 'link',
+      abaUserId: params.link?.abaUserId ?? null,
       issuedAt: now,
       expiresAt: now + this.ttl,
       attempts: 0,
@@ -374,6 +384,14 @@ export class EmailAuthService {
         break;
     }
 
+    // A link proof is not a sign-in. Spending one here would create — or sign
+    // into — an account using a code the person requested in order to attach
+    // an address to the account they were already using.
+    if (attempt.challenge.purpose !== 'sign_in') {
+      this.options.log.warn('auth.email.verify.refused', { reason: 'wrong_purpose' });
+      return this.refuseVerify('EXPIRED', null);
+    }
+
     const email = attempt.challenge.email;
     const resolved = await this.resolveAccount(email);
     if (!resolved.ok) {
@@ -417,6 +435,82 @@ export class EmailAuthService {
       deviceRegistered,
       email,
     });
+  }
+
+  /**
+   * Finishes an email link: presents the code and attaches the address.
+   *
+   * **Two proofs.** The `Principal` is control of the target account; the
+   * code is control of the mailbox. Neither alone reaches the attach, and the
+   * challenge's recorded account must be the principal's own.
+   *
+   * The address attached is the one **the challenge carries** — the address
+   * the code was actually mailed to. There is no parameter here in which a
+   * caller could offer one, which is what makes "an email string is not
+   * proof" structural rather than checked.
+   *
+   * No session is created and the caller's own session is untouched: linking
+   * must never be a way to end up signed in as somebody else.
+   */
+  async completeLink(
+    principal: Principal,
+    params: {
+      readonly challengeId: string;
+      readonly code: string;
+      readonly source: string;
+    },
+  ): Promise<Result<AuthIdentityRow>> {
+    const perSource = this.options.limiter.consume(
+      BUCKET.verifySource,
+      params.source,
+      OTP_LIMITS.verifyPerSource,
+    );
+    if (!perSource.allowed) {
+      this.options.log.warn('auth.email.link.refused', { reason: 'rate_limited' });
+      return fail('INVALID_ARGUMENT');
+    }
+
+    const now = this.options.clock.now();
+    const attempt = await this.options.challenges.attempt(
+      params.challengeId,
+      isOtpShape(params.code) ? params.code : '',
+      now,
+    );
+    if (attempt.kind !== 'verified') {
+      this.options.log.warn('auth.email.link.refused', { reason: attempt.kind });
+      return fail('INVALID_ARGUMENT');
+    }
+
+    // The mirror of the check in `verify`: a sign-in proof must not attach.
+    if (attempt.challenge.purpose !== 'link') {
+      this.options.log.warn('auth.email.link.refused', { reason: 'wrong_purpose' });
+      return fail('INVALID_ARGUMENT');
+    }
+    // **The binding.** Started by this account, redeemable only by it.
+    if (attempt.challenge.abaUserId !== principal.abaUserId) {
+      this.options.log.warn('auth.email.link.refused', { reason: 'wrong_account' });
+      return fail('INVALID_ARGUMENT');
+    }
+
+    const attached = await this.options.identities.attachIdentity(principal, {
+      kind: 'email',
+      subject: null,
+      email: attempt.challenge.email,
+      // The code arriving is the attestation, and it is the only thing that
+      // may set this.
+      emailVerified: true,
+    });
+    if (!attached.ok) return fail(attached.error.code);
+
+    this.options.limiter.reset(BUCKET.resend, attempt.challenge.email);
+    this.options.limiter.reset(BUCKET.startEmail, attempt.challenge.email);
+
+    this.options.log.info('identity.linked', {
+      abaUserId: principal.abaUserId,
+      identityId: attached.value.id,
+      kind: 'email',
+    });
+    return ok(attached.value);
   }
 
   /** Removes challenges past their life. Codes do not outlive their purpose. */

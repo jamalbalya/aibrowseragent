@@ -38,6 +38,16 @@ const log = getLogger('security');
 /** The bytes this transport may send. Nothing else has a shape here. */
 export interface IdentityRequest {
   readonly path: string;
+  /**
+   * `POST` unless stated. `GET` exists for the one route that reads rather
+   * than acts — listing the caller's own identities — and carries no body,
+   * because a GET with a body is a request half the world's proxies discard.
+   *
+   * The method is the only thing it changes. The origin is still pinned, the
+   * gate still runs, redirects are still refused, and the payload policy is
+   * still opaque.
+   */
+  readonly method?: 'GET' | 'POST';
   readonly body: Record<string, string>;
   /** Set only for the requests that carry one. Never logged. */
   readonly bearer?: string;
@@ -100,9 +110,9 @@ export class IdentityTransport {
           destination: identityDestination(this.config.backendOrigin, url.toString()),
           url: url.toString(),
           init: {
-            method: 'POST',
+            method: request.method ?? 'POST',
             headers,
-            body: JSON.stringify(request.body),
+            ...(request.method === 'GET' ? {} : { body: JSON.stringify(request.body) }),
             redirect: 'manual',
           },
           // The gate records "[authentication]" rather than the body, so a

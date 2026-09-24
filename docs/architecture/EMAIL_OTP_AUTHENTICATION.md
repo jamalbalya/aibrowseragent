@@ -315,29 +315,66 @@ grant access.
 
 ---
 
-## 13. Account linking has no transport
+## 13. Account linking
 
-`IdentityService` implements linking completely, and the audit exercised all
-four behaviours against the real store: `attachIdentity` joins a second
-verified identity to an authenticated account and is idempotent on a repeat;
-`IDENTITY_IN_USE` refuses one already held elsewhere without naming the
-holder; `detachIdentity` removes one and revokes the sessions it established;
-`LAST_IDENTITY` refuses removing the only way in.
+`IdentityService` implements the rules; four routes under `/v1/me/` expose
+them, and every one requires a `Principal`:
 
-**None of it is reachable.** The router serves eight routes and not one of
-them is `attachIdentity`, `detachIdentity` or `listIdentities`, so no client
-can link, unlink, or even list its own identities. The gap is transport and
-UI, in that order — not backend logic.
+```
+  GET  /v1/me/identities          the caller's own identities
+  POST /v1/me/identities/start    begin a link — { method: 'google' | 'email', email? }
+  POST /v1/me/identities/attach   finish one   — { challengeId, code | exchangeCode }
+  POST /v1/me/identities/detach   remove one   — { identityId }
+```
 
-Until it is closed, a person who signs in with Google and then by email owns
-**two accounts** (§6) with no way to join them. That is the safe failure of
-the two available, and it is visible rather than silent, but it is a real
-product gap rather than a theoretical one.
+The prefix is the boundary: everything under `/v1/auth/` is reachable without
+a session and exists to create one; everything under `/v1/me/` requires one
+and acts on the account it names.
 
-Relatedly, `IDENTITY_PATHS` in `src/identity/identity-config.ts` declares
-`me: '/v1/me'` and `devices: '/v1/devices'`. Neither is served by the router
-and neither is called by any client. They are dead constants naming endpoints
-that do not exist.
+### 13.1 Why attach takes proof material and not an identity
+
+**There is no `email`, `subject`, `kind` or `emailVerified` field on the
+attach route.** A caller cannot describe who it is; it can only present
+material for a flow the server started and the server verifies. "An email
+string is proof of owning that address" is therefore not a mistake this
+endpoint can be talked into — there is nowhere to put the string.
+
+Linking reuses the sign-in flows rather than adding a mechanism. A link is the
+same `login_challenge` row with `purpose = 'link'` and a target account taken
+from the `Principal` at `start`; `aba_user_id` is `writeOnce`, so a challenge
+cannot be retargeted after it is created. Freshness is the existing expiry —
+ten minutes for a challenge, two for an exchange code — not a new clock.
+
+Both directions of the purpose check are enforced, and each is load-bearing in
+one direction: a link proof presented at the sign-in route would create or
+enter a _different_ account, and a sign-in proof presented at attach would
+join an identity the caller only proved in order to sign in. The account
+binding refuses the second case first, because a sign-in challenge carries no
+target; the purpose check is defence in depth there and is what refuses in the
+first case.
+
+### 13.2 What a link cannot do
+
+No session is created, replaced or ended by `attach`. The caller stays signed
+in as exactly who they were, which is what stops linking from becoming a
+silent account switch. No account is created. No device is touched. No
+browser-agent record moves: `auth_identity.aba_user_id` is `writeOnce`, so an
+identity cannot be re-homed, and linking does not read or write a task, a
+workflow, a workspace, a provider connection or a credential.
+
+`detach` does revoke the sessions established through the identity it removes
+— including the caller's own, when that is the identity they signed in with.
+That is correct: removing a route in removes the access it granted (AUTH-26).
+The panel says so plainly rather than letting the resulting sign-in screen
+look like a fault.
+
+### 13.3 Sign-in methods are not AI accounts
+
+The panel renders them as two sections, and the wording in each says what it
+is not. The distinction is a safety property rather than a presentational
+one: someone who believed that removing a sign-in method disconnected their
+OpenAI key, or that adding Google here granted a Claude subscription, would be
+making decisions about their credentials on a false model.
 
 ## 14. What this phase did not do
 

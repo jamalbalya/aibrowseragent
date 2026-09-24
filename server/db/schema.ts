@@ -668,6 +668,18 @@ const loginChallenge: TableSpec = {
       why: 'The identity row the callback resolved, so the session records the provenance the exchange did not have to trust.',
     },
     {
+      name: 'resolved_subject',
+      type: 'text',
+      nullable: true,
+      why: 'A **link** callback has no account to resolve — the target is already on the row — so it records the verified subject here instead, and the exchange attaches it under a Principal the client proves separately. Written by the server from a verified assertion, never from a request.',
+    },
+    {
+      name: 'resolved_email',
+      type: 'text',
+      nullable: true,
+      why: 'The verified address that travelled with that subject, carried for the same reason and under the same rule. Canonical by the time it is written, because the callback canonicalises before it records anything.',
+    },
+    {
       name: 'attempts',
       type: 'integer',
       nullable: false,

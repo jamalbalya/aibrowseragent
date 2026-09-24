@@ -4,6 +4,7 @@ import { AccountPanel } from './AccountPanel';
 import { TechnicalDetails } from './TechnicalDetails';
 import { DataPanel } from './DataPanel';
 import { ConnectedAccounts } from './ConnectedAccounts';
+import { SignInMethods } from './SignInMethods';
 import { ProtectionPanel } from './ProtectionPanel';
 import { WorkspaceView } from './WorkspaceView';
 import type { CapabilityReport } from '@/providers/capability-doctor/capability-doctor';
@@ -238,6 +239,11 @@ export function SettingsView({
       </div>
 
       <AccountPanel />
+
+      {/* How you sign in. Deliberately above, and visually separate from, the
+          AI accounts below: one governs identity, the other governs which AI
+          brain the agent uses, and they must never read as one list. */}
+      <SignInMethods />
 
       <DataPanel />
 

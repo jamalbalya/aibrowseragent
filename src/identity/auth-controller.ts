@@ -30,6 +30,7 @@ import type {
   EmailVerifyFailure,
 } from './email-sign-in';
 import type { RefreshResult, SessionClient } from './session-client';
+import type { DetachFailure, IdentityClient, LinkedIdentity, LinkFailure } from './identity-client';
 
 const log = getLogger('security');
 
@@ -75,6 +76,14 @@ export interface AuthControllerOptions {
    * request rather than as a guess made here.
    */
   readonly email: EmailSignIn | null;
+  /**
+   * Listing, linking and unlinking authentication identities.
+   *
+   * Null for the same reason the others are. **Not** a provider client: this
+   * touches how a person signs in to AI Browser Agent and nothing about which
+   * AI account the agent uses.
+   */
+  readonly identities: IdentityClient | null;
   /**
    * Refresh and logout against the backend. Null for the same reason
    * `google` is: with no configured origin there is nothing to talk to, and
@@ -267,6 +276,110 @@ export class AuthController {
       remainingAttempts: null,
       retryAfterMs: null,
     };
+  }
+
+  /**
+   * The ways this account can be signed in to.
+   *
+   * An empty list with `configured: false` is the honest answer for a build
+   * with no backend, and for a signed-out installation: there is no account,
+   * so there is nothing to list.
+   */
+  async listIdentities(): Promise<{
+    ok: boolean;
+    identities: readonly LinkedIdentity[];
+    failure: DetachFailure | null;
+  }> {
+    if (this.options.identities === null) {
+      return { ok: false, identities: [], failure: 'NOT_CONFIGURED' };
+    }
+    const result = await this.options.identities.list();
+    return result.ok
+      ? { ok: true, identities: result.identities, failure: null }
+      : { ok: false, identities: [], failure: result.failure };
+  }
+
+  /**
+   * Links a Google account to the account that is already signed in.
+   *
+   * **It cannot change who is signed in.** The flow attaches an identity and
+   * returns; no session is issued, stored or replaced, and the local identity
+   * profile is not written — which is what stops a link from becoming a
+   * silent account switch.
+   */
+  async linkGoogle(signal: AbortSignal): Promise<{ ok: boolean; failure: LinkFailure | null }> {
+    if (this.options.identities === null) return { ok: false, failure: 'NOT_CONFIGURED' };
+    const result = await this.options.identities.linkGoogle(signal);
+    if (!result.ok) {
+      log.info('Linking a Google identity did not complete.', { reason: result.failure });
+      return { ok: false, failure: result.failure };
+    }
+    return { ok: true, failure: null };
+  }
+
+  /** Asks the backend to mail a code for an address to be linked. */
+  async startEmailLink(email: string): Promise<{
+    ok: boolean;
+    challengeId: string | null;
+    expiresAt: number | null;
+    resendAvailableAt: number | null;
+    failure: LinkFailure | null;
+  }> {
+    if (this.options.identities === null) {
+      return {
+        ok: false,
+        challengeId: null,
+        expiresAt: null,
+        resendAvailableAt: null,
+        failure: 'NOT_CONFIGURED',
+      };
+    }
+    const result = await this.options.identities.startEmailLink(email);
+    return result.ok
+      ? {
+          ok: true,
+          challengeId: result.challengeId,
+          expiresAt: result.expiresAt,
+          resendAvailableAt: result.resendAvailableAt,
+          failure: null,
+        }
+      : {
+          ok: false,
+          challengeId: null,
+          expiresAt: null,
+          resendAvailableAt: null,
+          failure: result.failure,
+        };
+  }
+
+  /** Presents the mailed code. Attaches; never signs in. */
+  async completeEmailLink(
+    challengeId: string,
+    code: string,
+  ): Promise<{ ok: boolean; failure: LinkFailure | null }> {
+    if (this.options.identities === null) return { ok: false, failure: 'NOT_CONFIGURED' };
+    const result = await this.options.identities.completeEmailLink(challengeId, code);
+    return result.ok ? { ok: true, failure: null } : { ok: false, failure: result.failure };
+  }
+
+  /**
+   * Removes a linked identity.
+   *
+   * Removing the identity this session was established through revokes the
+   * session — correctly, since removing a route in removes the access it
+   * granted — so the caller is told how many sessions went and can refresh
+   * its own state.
+   */
+  async unlinkIdentity(
+    identityId: string,
+  ): Promise<{ ok: boolean; revokedSessions: number; failure: DetachFailure | null }> {
+    if (this.options.identities === null) {
+      return { ok: false, revokedSessions: 0, failure: 'NOT_CONFIGURED' };
+    }
+    const result = await this.options.identities.detach(identityId);
+    return result.ok
+      ? { ok: true, revokedSessions: result.revokedSessions, failure: null }
+      : { ok: false, revokedSessions: 0, failure: result.failure };
   }
 
   /**

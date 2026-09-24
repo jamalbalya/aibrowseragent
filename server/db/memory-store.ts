@@ -418,6 +418,26 @@ export class MemoryStore implements Store {
     );
   }
 
+  attachLinkOutcome(
+    id: string,
+    outcome: {
+      readonly exchangeDigest: string;
+      readonly subject: string | null;
+      readonly email: string | null;
+    },
+  ): Promise<void> {
+    return MemoryStore.run(() =>
+      this.challenges.update(
+        { id },
+        {
+          exchange_digest: outcome.exchangeDigest,
+          resolved_subject: outcome.subject,
+          resolved_email: outcome.email,
+        },
+      ),
+    );
+  }
+
   countChallengeAttempt(id: string): Promise<number> {
     return MemoryStore.run(() => {
       const row = this.challenges.get({ id });

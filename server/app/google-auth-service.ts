@@ -28,7 +28,8 @@ import { newChallengeId, newExchangeCode, newNonce, newState } from '../domain/i
 import { createCodeChallenge, newCodeVerifier } from './pkce';
 import type { TokenDigest } from './token';
 import type { Clock } from '../domain/clock';
-import type { LoginChallengeRow, Store } from '../db/store';
+import type { AuthIdentityRow, LoginChallengeRow, Store } from '../db/store';
+import type { Principal } from '../domain/authorization';
 import type { AccountService } from './account-service';
 import { normaliseEmail, type IdentityService } from './identity-service';
 import type { IssuedSession, SessionService } from './session-service';
@@ -138,7 +139,7 @@ export class GoogleAuthService {
    * never leaves this server, which is what makes a stolen authorization code
    * useless to whoever stole it.
    */
-  async start(): Promise<Result<GoogleAuthStart>> {
+  async start(options: { readonly link?: Principal } = {}): Promise<Result<GoogleAuthStart>> {
     const now = this.options.clock.now();
     const verifier = newCodeVerifier();
     const state = newState();
@@ -147,8 +148,13 @@ export class GoogleAuthService {
     const row: LoginChallengeRow = {
       id: newChallengeId(),
       method: 'google',
-      purpose: 'sign_in',
-      aba_user_id: null,
+      // A link and a sign-in are the same protocol and different
+      // authorizations, so they are the same row with a different purpose.
+      // The target account is taken from the `Principal` — never from a
+      // request — and the column is `writeOnce`, so a challenge cannot be
+      // retargeted after it is created.
+      purpose: options.link === undefined ? 'sign_in' : 'link',
+      aba_user_id: options.link?.abaUserId ?? null,
       state,
       nonce,
       pkce_verifier: verifier,
@@ -156,6 +162,8 @@ export class GoogleAuthService {
       exchange_digest: null,
       resolved_aba_user_id: null,
       resolved_auth_identity_id: null,
+      resolved_subject: null,
+      resolved_email: null,
       attempts: 0,
       created_at: now,
       expires_at: now + this.challengeTtl,
@@ -232,6 +240,33 @@ export class GoogleAuthService {
     });
     if (!verified.ok) return this.refuse('id_token_invalid');
 
+    // A link resolves an **identity**, not an account: the account is already
+    // on the row, put there by an authenticated `start`. So nothing is
+    // created here and nothing is attached here either — the attach needs a
+    // `Principal`, which only the client's own bearer token can produce, and
+    // that arrives at the exchange. What the callback does is record what it
+    // verified, so the exchange does not have to trust anything.
+    if (challenge.purpose === 'link') {
+      if (challenge.aba_user_id === null) return this.refuse('link_without_target');
+      const linkCode = newExchangeCode();
+      await this.options.store.attachLinkOutcome(challenge.id, {
+        exchangeDigest: await this.options.digest.compute(linkCode),
+        subject: verified.value.subject,
+        // Only a verified address is carried, exactly as on the sign-in path.
+        // An unverified one is a claim, and a claim is never written as an
+        // identity (AUTH-18).
+        email:
+          verified.value.emailVerified && verified.value.email !== null
+            ? normaliseEmail(verified.value.email)
+            : null,
+      });
+      this.options.log.info('auth.google.callback', {
+        challengeId: challenge.id,
+        abaUserId: challenge.aba_user_id,
+      });
+      return ok({ challengeId: challenge.id, exchangeCode: linkCode });
+    }
+
     const resolution = await this.resolveAccount(verified.value.subject, {
       // Canonicalised here, at the boundary where a provider's claim becomes
       // an identity of ours.
@@ -302,6 +337,11 @@ export class GoogleAuthService {
       await this.countAttempt(params.challengeId);
       return this.refuse('exchange_unknown');
     }
+    // A link proof is not a sign-in. Redeeming one here would mint a session
+    // on whatever account the resolution produced, which for a link is none —
+    // and a caller who could cross the two could turn "prove you own this
+    // Google account" into "sign me in as it".
+    if (byDigest.purpose !== 'sign_in') return this.refuse('exchange_wrong_purpose');
     if (byDigest.expires_at <= now) return this.refuse('exchange_expired');
     if (byDigest.consumed_at !== null && byDigest.consumed_at + this.exchangeTtl <= now) {
       return this.refuse('exchange_expired');
@@ -379,6 +419,79 @@ export class GoogleAuthService {
 
     const registered = await this.options.devices.registerDevice(principal.value, deviceId);
     return registered.ok;
+  }
+
+  /**
+   * Finishes a Google link: trades the one-time code for an attached identity.
+   *
+   * **Two proofs, and both are checked here.** The `Principal` is proof of
+   * control over the target account and can only come from a verified
+   * session. The exchange code is proof that this caller completed the Google
+   * flow the challenge started. Neither alone reaches the attach, and the
+   * challenge's recorded account must be the principal's own — a link
+   * challenge started by one account cannot be redeemed by another, and the
+   * column it is recorded in is `writeOnce`.
+   *
+   * No session is created, no account is created, and nothing is moved. The
+   * caller stays signed in as exactly who they were.
+   */
+  async completeLink(
+    principal: Principal,
+    params: { readonly challengeId: string; readonly exchangeCode: string },
+  ): Promise<Result<AuthIdentityRow>> {
+    const now = this.options.clock.now();
+
+    const digest = await this.options.digest.compute(params.exchangeCode);
+    const byDigest = await this.options.store.findChallengeByExchangeDigest(digest);
+    if (byDigest === null || byDigest.id !== params.challengeId) {
+      await this.countAttempt(params.challengeId);
+      return this.refuse('link_unknown');
+    }
+    if (byDigest.method !== 'google') return this.refuse('link_wrong_method');
+    // The mirror of the check in `exchange`: a sign-in proof must not be
+    // redeemable as a link, or completing a sign-in for somebody else's
+    // Google account would attach it to yours.
+    if (byDigest.purpose !== 'link') return this.refuse('link_wrong_purpose');
+    if (byDigest.expires_at <= now) return this.refuse('link_expired');
+    if (byDigest.consumed_at !== null && byDigest.consumed_at + this.exchangeTtl <= now) {
+      return this.refuse('link_expired');
+    }
+
+    const attempts = await this.options.store.countChallengeAttempt(byDigest.id);
+    if (attempts > MAX_EXCHANGE_ATTEMPTS) {
+      await this.options.store.deleteChallenge(byDigest.id);
+      return this.refuse('link_attempts');
+    }
+
+    // **The binding.** The account the challenge was started for must be the
+    // account this caller is authenticated as. Anything else is a cross-account
+    // attempt, and it is answered without saying whose challenge it was.
+    if (byDigest.aba_user_id !== principal.abaUserId) {
+      await this.options.store.deleteChallenge(byDigest.id);
+      return this.refuse('link_wrong_account');
+    }
+    if (byDigest.resolved_subject === null) return this.refuse('link_unresolved');
+
+    // Consumed before the attach, so a replay finds nothing whatever the
+    // attach then decides — the same ordering the callback uses.
+    await this.options.store.deleteChallenge(byDigest.id);
+
+    const attached = await this.options.identities.attachIdentity(principal, {
+      kind: 'google',
+      subject: byDigest.resolved_subject,
+      email: byDigest.resolved_email,
+      // The row only ever holds a *verified* address, so its presence is the
+      // attestation. `null` means Google did not verify one.
+      emailVerified: byDigest.resolved_email !== null,
+    });
+    if (!attached.ok) return fail(attached.error.code);
+
+    this.options.log.info('identity.linked', {
+      abaUserId: principal.abaUserId,
+      identityId: attached.value.id,
+      kind: 'google',
+    });
+    return ok(attached.value);
   }
 
   /** Removes challenges past their life. Credential material does not linger. */

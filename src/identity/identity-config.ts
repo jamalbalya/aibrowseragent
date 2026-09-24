@@ -55,6 +55,8 @@ export const IDENTITY_PATHS = {
   exchange: '/v1/auth/exchange',
   refresh: '/v1/auth/refresh',
   logout: '/v1/auth/logout',
-  me: '/v1/me',
-  devices: '/v1/devices',
+  identities: '/v1/me/identities',
+  identityLinkStart: '/v1/me/identities/start',
+  identityAttach: '/v1/me/identities/attach',
+  identityDetach: '/v1/me/identities/detach',
 } as const;
