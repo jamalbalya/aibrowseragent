@@ -2473,13 +2473,26 @@ no network carrier. See `docs/audit.md`.
 It stays PARTIAL because §84 condition 3 is unmet repository-wide, and
 because deletion is deliberately not exposed yet.
 
-Scheduling (P-020), MCP and plugins remain NOT-STARTED. Scheduling now has its
-dependencies met but not its security prerequisite: every control in this
-architecture terminates in a person who can answer a prompt, and an unattended
-run removes them. What a scheduled task does when it reaches an R2-or-above
-step is a policy decision that has not been made, and making it during
-implementation is how a pre-authorisation mechanism would get built by
-accident.
+MCP and plugins remain NOT-STARTED.
+
+Scheduling (P-020) is implemented, and its security prerequisite — the one
+that kept it NOT-STARTED — was settled first, as a decision rather than during
+implementation. Every control in this architecture terminates in a person who
+can answer a prompt, and an unattended run removes them; what a scheduled task
+does when it reaches an R2-or-above step was therefore decided explicitly
+before any code was written. **It stops.** No pre-authorisation mechanism was
+built: there is no saved grant, no per-task "always allow" and no scheduled
+authorization token anywhere in the feature. See
+`docs/architecture/SCHEDULED_EXECUTION.md`, which also records that the
+behaviour at the approval and missed-run boundaries is AI Browser Agent's own
+product decision and is **not** a claim about, or an inference from, Claude in
+Chrome — for which nothing published settles either question.
+
+P-020 is marked PARTIAL rather than PASS. The implementation is complete and
+covered by unit, security and real-Chromium suites, but completeness of
+implementation is not behavioural parity with the benchmark, and the same
+repository-wide §84 condition that holds every other capability below PASS
+holds this one.
 
 Skills (Phase 7) depended on connectors and are now unblocked. Workflow,
 recording, shortcuts and scheduling (Phase 8) depend on skills and on
@@ -2559,23 +2572,23 @@ after they were delivered — which made this the wrong place to read "what is
 left". They are corrected, and a mismatch between the two is a documentation
 bug rather than a difference of opinion.
 
-| ID    | Capability                  | Current Status | Spec Reference                          | Missing Work                                                           | Dependencies           | External Dependency             | Security Impact                 | Test Requirements                     |
-| ----- | --------------------------- | -------------- | --------------------------------------- | ---------------------------------------------------------------------- | ---------------------- | ------------------------------- | ------------------------------- | ------------------------------------- |
-| P-006 | Forms                       | PARTIAL        | §83                                     | complex control coverage                                               | none                   | none                            | low                             | unit, integration, E2E                |
-| P-009 | Image upload                | PASS           | §83                                     | none                                                                   | P-010                  | none                            | file-origin, redaction          | unit, integration, security, E2E      |
-| P-010 | File upload                 | PASS           | §83                                     | none                                                                   | permission review      | none                            | file-origin, redaction, consent | unit, integration, security, E2E      |
-| P-011 | Download                    | PARTIAL        | §83                                     | granted-path E2E needs a real user gesture                             | `downloads` permission | none                            | side-effect consent             | unit, integration, security, E2E      |
-| P-020 | Scheduled tasks             | NOT-STARTED    | §83, Phase 8                            | implementation                                                         | P-022, background exec | none                            | unattended autonomy             | unit, integration, E2E, manual        |
-| P-021 | Shortcuts                   | PARTIAL        | §50, §83, Phase 8                       | implementation                                                         | P-022                  | none                            | consent, name confusability     | unit, integration, security, E2E      |
-| P-022 | Workflow recording          | PARTIAL        | §49, §83, Phase 8                       | implementation                                                         | P-024                  | none                            | replay safety, evidence         | unit, integration, security, E2E      |
-| P-023 | Connector framework         | PARTIAL        | §33, §34, §88                           | further connectors; live authorization                                 | OAuth store, consent   | provider APIs, OAuth apps       | credential isolation, scopes    | unit, integration, security, E2E, §88 |
-| P-024 | Skills                      | PARTIAL        | §43, Phase 7                            | write workflows; multi-connector reference workflow                    | P-023                  | connector access                | inherits connector risk         | unit, integration, security, E2E      |
-| P-025 | Plugins                     | NOT-STARTED    | Phase 9                                 | implementation                                                         | trust model            | none                            | third-party code execution      | unit, security, E2E                   |
-| P-026 | MCP                         | NOT-STARTED    | Phase 9                                 | implementation                                                         | P-025 trust model      | MCP servers                     | third-party tool surface        | unit, security, E2E                   |
-| P-033 | Provider switching          | PARTIAL        | §85 F, §87                              | ≥2 further adapters + shared suite                                     | Phase 5                | provider API credentials        | credential isolation            | unit, integration, E2E, §87           |
-| P-038 | Audit trail                 | PARTIAL        | §83                                     | unified cross-task log, export                                         | none                   | none                            | export data exposure            | unit, integration, security           |
-| —     | Authenticated web providers | not in matrix  | no phase; constrained by §3.3, §15, §42 | architecture, trust boundary, per-provider validation                  | Q1, Q2                 | provider terms and UI stability | inverted trust model            | manual acceptance only                |
-| —     | End-user distribution       | not in matrix  | no phase                                | store listing, privacy docs, permission justification, release process | packaged build         | Chrome Web Store review         | permission scrutiny             | release verification                  |
+| ID    | Capability                  | Current Status | Spec Reference                          | Missing Work                                                              | Dependencies           | External Dependency             | Security Impact                 | Test Requirements                     |
+| ----- | --------------------------- | -------------- | --------------------------------------- | ------------------------------------------------------------------------- | ---------------------- | ------------------------------- | ------------------------------- | ------------------------------------- |
+| P-006 | Forms                       | PARTIAL        | §83                                     | complex control coverage                                                  | none                   | none                            | low                             | unit, integration, E2E                |
+| P-009 | Image upload                | PASS           | §83                                     | none                                                                      | P-010                  | none                            | file-origin, redaction          | unit, integration, security, E2E      |
+| P-010 | File upload                 | PASS           | §83                                     | none                                                                      | permission review      | none                            | file-origin, redaction, consent | unit, integration, security, E2E      |
+| P-011 | Download                    | PARTIAL        | §83                                     | granted-path E2E needs a real user gesture                                | `downloads` permission | none                            | side-effect consent             | unit, integration, security, E2E      |
+| P-020 | Scheduled tasks             | PARTIAL        | §83, Phase 8                            | §84 condition 3 repository-wide; parity with the benchmark undemonstrated | P-022, background exec | `alarms`                        | unattended autonomy             | unit, security, E2E                   |
+| P-021 | Shortcuts                   | PARTIAL        | §50, §83, Phase 8                       | implementation                                                            | P-022                  | none                            | consent, name confusability     | unit, integration, security, E2E      |
+| P-022 | Workflow recording          | PARTIAL        | §49, §83, Phase 8                       | implementation                                                            | P-024                  | none                            | replay safety, evidence         | unit, integration, security, E2E      |
+| P-023 | Connector framework         | PARTIAL        | §33, §34, §88                           | further connectors; live authorization                                    | OAuth store, consent   | provider APIs, OAuth apps       | credential isolation, scopes    | unit, integration, security, E2E, §88 |
+| P-024 | Skills                      | PARTIAL        | §43, Phase 7                            | write workflows; multi-connector reference workflow                       | P-023                  | connector access                | inherits connector risk         | unit, integration, security, E2E      |
+| P-025 | Plugins                     | NOT-STARTED    | Phase 9                                 | implementation                                                            | trust model            | none                            | third-party code execution      | unit, security, E2E                   |
+| P-026 | MCP                         | NOT-STARTED    | Phase 9                                 | implementation                                                            | P-025 trust model      | MCP servers                     | third-party tool surface        | unit, security, E2E                   |
+| P-033 | Provider switching          | PARTIAL        | §85 F, §87                              | ≥2 further adapters + shared suite                                        | Phase 5                | provider API credentials        | credential isolation            | unit, integration, E2E, §87           |
+| P-038 | Audit trail                 | PARTIAL        | §83                                     | unified cross-task log, export                                            | none                   | none                            | export data exposure            | unit, integration, security           |
+| —     | Authenticated web providers | not in matrix  | no phase; constrained by §3.3, §15, §42 | architecture, trust boundary, per-provider validation                     | Q1, Q2                 | provider terms and UI stability | inverted trust model            | manual acceptance only                |
+| —     | End-user distribution       | not in matrix  | no phase                                | store listing, privacy docs, permission justification, release process    | packaged build         | Chrome Web Store review         | permission scrutiny             | release verification                  |
 
 ---
 

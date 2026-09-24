@@ -337,6 +337,7 @@ test('protection required no network and no new permission', async ({
     'debugger',
     'notifications',
     'activeTab',
+    'alarms',
   ]);
   expect(manifest.host_permissions).toEqual(['http://*/*', 'https://*/*']);
 });

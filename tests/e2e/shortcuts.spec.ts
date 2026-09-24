@@ -341,6 +341,7 @@ test('shortcuts added no permission and no host access', async ({ serviceWorker 
     'debugger',
     'notifications',
     'activeTab',
+    'alarms',
   ]);
   expect(manifest.host_permissions ?? []).toEqual(['http://*/*', 'https://*/*']);
   expect((manifest.host_permissions ?? []).includes('<all_urls>')).toBe(false);

@@ -106,6 +106,7 @@ describe('1. no new way to reach the page', () => {
       'debugger',
       'notifications',
       'activeTab',
+      'alarms',
     ]);
     expect(parsed.content_scripts[0]?.all_frames).toBe(false);
   });

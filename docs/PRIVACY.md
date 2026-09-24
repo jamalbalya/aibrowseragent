@@ -124,6 +124,7 @@ intent can do those things.
 | `storage`, `unlimitedStorage`    | keep tasks, evidence and settings on your device           |
 | `sidePanel`                      | the agent's interface                                      |
 | `notifications`                  | tell you when a task needs your approval                   |
+| `alarms`                         | wake the extension when a scheduled task is due            |
 | `downloads`                      | optional; requested only when a download is attempted      |
 | `http://*/*`, `https://*/*`      | act on ordinary websites you direct the agent to           |
 

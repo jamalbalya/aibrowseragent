@@ -9,7 +9,9 @@
  */
 import { MemoryStorageArea, SerializedStorageArea } from '@/storage/storage-area';
 import { TaskStore } from '@/tasks/task-store';
+import type { AgentTask } from '@/tasks/task-model';
 import type { PermissionMode } from '@/policy/policy-engine';
+import type { PermissionPrompter } from '@/policy/permission-engine';
 import type { TaintState } from '@/security/taint/taint-state';
 import type { DispatchObservation } from '@/tools/registry/tool-registry';
 import { WorkflowStore } from '@/workflows/workflow-store';
@@ -35,6 +37,17 @@ export interface WorkflowHarnessOptions {
   readonly tools?: readonly FakeToolSpec[];
   readonly permissionMode?: PermissionMode;
   readonly taint?: TaintState;
+  /** Puts production code in front of the scripted prompter. See `createHarness`. */
+  readonly wrapPrompter?: (inner: PermissionPrompter) => PermissionPrompter;
+  /**
+   * Told about a task the moment the replayer or the launcher creates one.
+   *
+   * The same hook the service worker uses, so the scheduling suites learn
+   * which task an unattended session produced exactly as production does.
+   */
+  readonly onTaskChanged?: (task: AgentTask) => void;
+  /** Whether a task runs unattended. See `createHarness`. */
+  readonly resolveUnattended?: (taskId: string) => Promise<boolean>;
 }
 
 export function buildWorkflowHarness(options: WorkflowHarnessOptions = {}): WorkflowHarness {
@@ -48,6 +61,10 @@ export function buildWorkflowHarness(options: WorkflowHarnessOptions = {}): Work
   const skills = buildSkillHarness({
     ...(options.tools === undefined ? {} : { tools: options.tools }),
     ...(options.permissionMode === undefined ? {} : { permissionMode: options.permissionMode }),
+    ...(options.wrapPrompter === undefined ? {} : { wrapPrompter: options.wrapPrompter }),
+    ...(options.resolveUnattended === undefined
+      ? {}
+      : { resolveUnattended: options.resolveUnattended }),
     onDispatched: (observation) => {
       observed.push(observation);
       if (observer) {
@@ -77,6 +94,7 @@ export function buildWorkflowHarness(options: WorkflowHarnessOptions = {}): Work
       audited.push(event);
       return Promise.resolve();
     },
+    ...(options.onTaskChanged === undefined ? {} : { onTaskChanged: options.onTaskChanged }),
   });
 
   return {

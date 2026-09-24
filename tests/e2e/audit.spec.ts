@@ -351,6 +351,7 @@ test('audit added no permission and is invisible to the model', async ({ send, s
     'debugger',
     'notifications',
     'activeTab',
+    'alarms',
   ]);
   expect(manifest.host_permissions ?? []).toEqual(['http://*/*', 'https://*/*']);
   // `downloads` is still optional and still not requested: the export needs

@@ -74,7 +74,15 @@ export interface ToolDispatchResult {
 
 export interface ToolRegistryOptions {
   readonly permissionEngine: PermissionEngine;
-  readonly loadPolicyContext: () => Promise<PolicyContext>;
+  /**
+   * The policy context for one dispatch.
+   *
+   * Takes the task because part of the context depends on *which* run this
+   * is: a scheduled run has nobody watching it, and `PolicyContext.unattended`
+   * is how the policy engine is told. It is still one evaluation by one
+   * engine — the registry supplies the facts and decides nothing.
+   */
+  readonly loadPolicyContext: (taskId: string) => Promise<PolicyContext>;
   /**
    * Where evidence payloads are persisted.
    *
@@ -443,7 +451,7 @@ export class ToolRegistry {
     const risk = maxRisk(tool.risk, classification.risk ?? tool.risk);
 
     // 3. Policy.
-    const policyContext = await this.options.loadPolicyContext();
+    const policyContext = await this.options.loadPolicyContext(invocation.taskId);
     const decision = evaluatePolicy(
       {
         tool: canonicalName,

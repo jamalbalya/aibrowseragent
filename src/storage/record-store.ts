@@ -276,6 +276,42 @@ export class RecordStore<T> {
     });
   }
 
+  /**
+   * Reads, changes and writes one record without a gap in between.
+   *
+   * The read-modify-write cycle every other method avoids by only ever
+   * writing whole records. Scheduling needs it: two wake-ups can examine the
+   * same schedule at the same time, and "have I already claimed this
+   * occurrence" is only an answer if the check and the claim are one
+   * operation. Backed by `update`, which uses the area's transaction when the
+   * area has one.
+   *
+   * `mutate` receives the stored record and returns the replacement, or
+   * `undefined` to leave it exactly as it was. A record that is absent, or
+   * that no longer validates, is never mutated and never created — this
+   * changes records, it does not add them.
+   */
+  async mutate(id: string, mutate: (current: T) => T | undefined): Promise<T | undefined> {
+    await this.ensureUpgraded();
+    let result: T | undefined;
+    await update<Envelope | undefined>(
+      this.options.area,
+      this.recordKey(id),
+      undefined,
+      (stored) => {
+        if (!isEnvelope(stored)) return stored;
+        if (stored.v !== this.options.version) return stored;
+        if (!this.options.validate(stored.record)) return stored;
+        const next = mutate(stored.record);
+        if (next === undefined) return stored;
+        if (!this.options.validate(next)) return stored;
+        result = next;
+        return { v: this.options.version, record: next };
+      },
+    );
+    return result;
+  }
+
   async remove(id: string): Promise<void> {
     await this.ensureUpgraded();
     await update<RecordIndex>(this.options.area, this.indexKey(), { ids: [] }, (i) => ({

@@ -121,6 +121,7 @@ test('local-first added no permission and no host access', async ({ serviceWorke
   expect(manifest.permissions?.sort()).toEqual(
     [
       'activeTab',
+      'alarms',
       'debugger',
       'notifications',
       'scripting',

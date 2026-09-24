@@ -62,6 +62,20 @@ export const AUDIT_EVENT_TYPES = [
   // A person acknowledging that stored state was lost (D-3). Recorded because
   // it is the one action that lets work resume after a persistence failure.
   'persistence.health',
+  // Scheduled execution (P-020). A schedule's lifecycle, and every firing of
+  // it. `schedule.run_blocked` is the one this phase exists to produce: an
+  // unattended run that reached an action needing a person and stopped.
+  'schedule.created',
+  'schedule.updated',
+  'schedule.paused',
+  'schedule.resumed',
+  'schedule.deleted',
+  'schedule.run_started',
+  'schedule.run_completed',
+  'schedule.run_failed',
+  'schedule.run_blocked',
+  'schedule.run_cancelled',
+  'schedule.run_missed',
   // Written only by the log itself, when eviction removes records. It exists
   // so a reader can tell a quiet period from a truncated one.
   'retention.compacted',
@@ -173,6 +187,16 @@ export interface AuditEvent {
   readonly evidenceIds?: readonly string[];
   /** P-021 linkage. An opaque store id, never a name a user typed. */
   readonly shortcutId?: string;
+  /**
+   * P-020 linkage. The schedule, and the one firing of it.
+   *
+   * Opaque handles this extension minted, exactly like `shortcutId`. Never
+   * the schedule's display name, which is free text a user chose, and never
+   * its cadence — the trail says *that* a schedule fired, and the schedule
+   * record says what it is.
+   */
+  readonly scheduleId?: string;
+  readonly runId?: string;
   /** P-022 record version, alongside `skillHash` for the definition hash. */
   readonly workflowVersion?: number;
   /** Whether the call reached the tool at all. */
@@ -773,6 +797,8 @@ export class AuditLog {
       'sessionId',
       'workflowId',
       'shortcutId',
+      'scheduleId',
+      'runId',
       'connectorId',
       'route',
       'senderClass',

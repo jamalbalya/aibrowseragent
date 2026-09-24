@@ -279,6 +279,7 @@ describe('the manifest is the one it was reviewed as', () => {
       'debugger',
       'notifications',
       'activeTab',
+      'alarms',
     ]);
     expect(manifest.optional_permissions).toEqual(['downloads']);
     expect(manifest.host_permissions).toEqual(['http://*/*', 'https://*/*']);

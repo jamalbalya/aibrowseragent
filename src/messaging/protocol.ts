@@ -81,6 +81,57 @@ export interface WorkflowSummary {
   }[];
 }
 
+/** A schedule target, on the wire. Mirrors `ScheduleTarget` exactly. */
+export type ScheduleTargetWire =
+  | { kind: 'shortcut'; shortcutId: string }
+  | { kind: 'workflow'; workflowId: string }
+  | { kind: 'skill'; skillId: string; skillVersion: string };
+
+/** A cadence, on the wire. Mirrors `ScheduleCadence` exactly. */
+export type ScheduleCadenceWire =
+  | { kind: 'daily'; hour: number; minute: number }
+  | { kind: 'weekly'; weekday: number; hour: number; minute: number }
+  | { kind: 'monthly'; day: number; hour: number; minute: number }
+  | { kind: 'annual'; month: number; day: number; hour: number; minute: number };
+
+/**
+ * A schedule as the side panel sees it.
+ *
+ * `targetUsable` is resolved now, not stored: a schedule whose workflow was
+ * deleted is shown as broken rather than as something that will run. The
+ * cadence is described in the extension's own words, so nothing a page or a
+ * model produced reaches this summary.
+ */
+export interface ScheduleSummary {
+  scheduleId: string;
+  displayName: string;
+  target: ScheduleTargetWire;
+  cadence: ScheduleCadenceWire;
+  cadenceDescription: string;
+  enabled: boolean;
+  nextRunAt: number;
+  createdAt: number;
+  updatedAt: number;
+  lastRunAt?: number;
+  lastRunStatus?: string;
+  lastRunReason?: string;
+  /** False when the target is missing or cannot run. Such a schedule fires nothing. */
+  targetUsable: boolean;
+  targetName: string;
+}
+
+/** One firing, as the side panel sees it. */
+export interface ScheduleRunSummary {
+  runId: string;
+  scheduleId: string;
+  occurrenceAt: number;
+  startedAt: number;
+  finishedAt?: number;
+  status: string;
+  reason?: string;
+  taskId?: string;
+}
+
 /**
  * A shortcut as the side panel sees it.
  *
@@ -755,6 +806,75 @@ export interface PanelRequestMap {
   };
 
   /**
+   * Schedules (P-020).
+   *
+   * A schedule is a **clock** attached to a shortcut, a workflow or a bundled
+   * skill. Every route here creates, reads, edits, pauses or deletes one, or
+   * runs one because a person pressed a button. None of them describes what
+   * to do: a schedule carries a reference and a cadence, and nowhere to put
+   * an objective, an argument, a page value or a credential.
+   *
+   * There is deliberately **no scheduled execution route a model can reach**,
+   * and no `schedule.*` tool. Like every route in this map these are
+   * panel-only, so a model can neither create a schedule nor cause one to
+   * fire.
+   *
+   * `schedule.runNow` is the one route here that executes, and it is
+   * *attended* on purpose: a person pressed it with the panel open, so it
+   * runs under an ordinary session and can ask them to confirm an action. A
+   * run the clock started cannot, and stops at that boundary instead — see
+   * `docs/architecture/SCHEDULED_EXECUTION.md`.
+   */
+  'schedule.list': {
+    request: Record<string, never>;
+    response: { schedules: ScheduleSummary[] };
+  };
+  'schedule.create': {
+    request: {
+      name: string;
+      target: ScheduleTargetWire;
+      cadence: ScheduleCadenceWire;
+    };
+    response: { schedule: ScheduleSummary | null; error?: { reason: string; detail: string } };
+  };
+  'schedule.edit': {
+    request: {
+      scheduleId: string;
+      name?: string;
+      target?: ScheduleTargetWire;
+      cadence?: ScheduleCadenceWire;
+    };
+    response: { schedule: ScheduleSummary | null; error?: { reason: string; detail: string } };
+  };
+  /** Pauses or resumes. A paused schedule computes occurrences and runs none. */
+  'schedule.setEnabled': {
+    request: { scheduleId: string; enabled: boolean };
+    response: { schedule: ScheduleSummary | null; error?: { reason: string; detail: string } };
+  };
+  'schedule.remove': { request: { scheduleId: string }; response: { ok: true } };
+  /**
+   * Runs a schedule now, because a person asked.
+   *
+   * Does not touch the schedule's clock: no occurrence is claimed, the next
+   * firing is unchanged, and a missed occurrence stays missed. This is how
+   * somebody acts on a run that stopped at the confirmation boundary.
+   */
+  'schedule.runNow': {
+    request: { scheduleId: string };
+    response: { run: ScheduleRunSummary | null; error?: { reason: string; detail: string } };
+  };
+  /** Stops a run that is in flight. Steps already taken are not undone. */
+  'schedule.cancelRun': {
+    request: { runId: string };
+    response: { cancelled: boolean };
+  };
+  /** Firing history, newest first. Every schedule's, or one schedule's. */
+  'schedule.runs': {
+    request: { scheduleId?: string };
+    response: { runs: ScheduleRunSummary[] };
+  };
+
+  /**
    * Runs a bundled skill because a person asked (P-021).
    *
    * The user-initiated counterpart of the `skills.run` tool, reaching the
@@ -1058,6 +1178,14 @@ export type AgentEvent =
   | { readonly type: 'file.selectionResolved'; readonly requestId: string }
   | { readonly type: 'provider.statusChanged'; readonly connection: ProviderConnection | null }
   | { readonly type: 'workspace.changed' }
+  /**
+   * A schedule or one of its runs changed (P-020).
+   *
+   * Carries nothing: it is a hint to re-read, not a payload. A scheduled run
+   * finishes while the panel may be closed, and a broadcast that carried the
+   * outcome would be a copy of state the panel has to re-read anyway.
+   */
+  | { readonly type: 'schedules.changed' }
   | {
       readonly type: 'accounts.changed';
       readonly accounts: readonly ConnectedAccountView[];

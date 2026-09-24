@@ -50,6 +50,19 @@ export interface PolicyContext {
   readonly mode: PermissionMode;
   readonly sitePolicy: SitePolicyState;
   readonly allowInsecureOrigins?: boolean;
+  /**
+   * True when nobody is watching this run (P-020).
+   *
+   * A scheduled run has no panel to prompt into, and the product decision is
+   * that it stops at the confirmation boundary rather than crossing it. That
+   * decision is *taken here*, in the one place authorised to decide what an
+   * action needs, rather than in the scheduler — which evaluates no policy at
+   * all and could not be trusted to.
+   *
+   * Absent means attended, which is the existing behaviour for every caller
+   * that does not set it.
+   */
+  readonly unattended?: boolean;
 }
 
 export interface PolicyDecision {
@@ -71,6 +84,7 @@ export type PolicyDecisionCode =
   | 'EXFILTRATION_CONFIRM'
   | 'RISK_REQUIRES_APPROVAL'
   | 'MODE_REQUIRES_APPROVAL'
+  | 'UNATTENDED_REQUIRES_APPROVAL'
   | 'SITE_ALLOWED'
   | 'LOW_RISK'
   | 'MODE_SKIP';
@@ -198,7 +212,25 @@ export function evaluatePolicy(request: PolicyRequest, context: PolicyContext): 
     );
   }
 
-  // 6. Permission mode.
+  // 6. Unattended execution (P-020).
+  //
+  // `skip` mode would otherwise allow an R2 action — one that changes page
+  // state or transfers a file — to run with nobody present, silently. The
+  // product decision is that R2 and above are never *silently* authorised for
+  // an unattended run: they become confirmations, and a confirmation with
+  // nobody to answer it fails closed.
+  //
+  // It is deliberately placed after the deny rules and before the mode
+  // switch, so it can only ever make an answer stricter. A prohibition stays
+  // a denial, and nothing here turns a refusal into a question.
+  if (context.unattended && RISK_RANK[effectiveRisk] >= RISK_RANK[AUTO_APPROVE_BELOW]) {
+    return base(
+      'UNATTENDED_REQUIRES_APPROVAL',
+      'This action changes state and nobody is present to approve it.',
+    );
+  }
+
+  // 7. Permission mode.
   const allow = (code: PolicyDecisionCode, reason: string): PolicyDecision =>
     exfiltration === undefined
       ? { verdict: 'ALLOW', code, reason, effectiveRisk }
