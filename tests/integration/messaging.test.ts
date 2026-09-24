@@ -175,7 +175,11 @@ describe('sendToContent', () => {
   });
 
   it('passes the payload through to the tab', async () => {
-    const sendMessageToTab = vi.fn().mockResolvedValue(responseOk({ page: {} }));
+    // A page shaped the way a real one is. `{ page: {} }` no longer gets
+    // through: the transport validates the field observations a page read
+    // carries, and a response missing them is a response that did not come
+    // from this build's content script.
+    const sendMessageToTab = vi.fn().mockResolvedValue(responseOk({ page: { fields: [] } }));
     await sendToContent(
       7,
       'content.readPage',

@@ -1,6 +1,7 @@
 import type { PermissionRequest, PermissionResponse } from '@/policy/permission-engine';
 import type { RiskLevel } from '@/policy/risk-classifier';
 import { RISK_DESCRIPTIONS } from '@/policy/risk-classifier';
+import { clampToGrantable, type GrantableRiskLevel } from '@/policy/site-policy';
 
 interface PermissionPromptProps {
   readonly request: PermissionRequest;
@@ -90,7 +91,10 @@ export function PermissionPrompt({ request, onRespond }: PermissionPromptProps):
 /**
  * A standing site approval never covers more than R2.
  * R3 and above always re-prompt (specification section 26).
+ *
+ * The clamp lives in the policy module now, so the panel and the engine cannot
+ * disagree about what a grant is allowed to say.
  */
-function capForSite(risk: RiskLevel): RiskLevel {
-  return risk === 'R0' || risk === 'R1' ? risk : 'R2';
+function capForSite(risk: RiskLevel): GrantableRiskLevel {
+  return clampToGrantable(risk);
 }

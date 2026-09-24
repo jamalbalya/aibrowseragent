@@ -10,7 +10,13 @@
  * it, but the page fully controls the DOM it reads. Everything produced here
  * is therefore untrusted data.
  */
-import { ElementRegistry, describeActedOn, extractSemanticPage } from './semantic-tree';
+import {
+  ElementRegistry,
+  describeActedOn,
+  extractSemanticPage,
+  observeField,
+} from './semantic-tree';
+import { classifyField, exceedsCeiling, type FieldClass } from '@/policy/field-sensitivity';
 import {
   performAttachFiles,
   performClearFiles,
@@ -41,6 +47,31 @@ import {
 import { createError } from '@/types/result';
 
 const registry = new ElementRegistry();
+
+/**
+ * Refuses a write whose live target is more sensitive than it was authorised
+ * against.
+ *
+ * This closes the window the worker cannot: the worker classified a field as
+ * it was when the page was read, and a page is free to change it afterwards.
+ * Re-observing the element here, microseconds before the write, is the only
+ * place that mutation is visible at all.
+ *
+ * It refuses and nothing else. The ceiling is supplied by the worker and
+ * travels in one direction, so there is no value this function could compute
+ * that would let a write through that the worker had not already allowed —
+ * the most it can do is stop one. That asymmetry is the reason this is safe to
+ * run in a context the page shares a process with.
+ */
+function refuseIfAboveCeiling(element: Element, handle: string, ceiling: FieldClass): void {
+  const live = classifyField(observeField(element, handle, 'main'));
+  if (!exceedsCeiling(live, ceiling)) return;
+  throw new InteractionRejection(
+    'SENSITIVE_FIELD_REFUSED',
+    'This field is more sensitive than the action that was approved for it. ' +
+      'Read the page again so it can be checked afresh.',
+  );
+}
 
 /**
  * One handler per request type, each receiving its own payload type.
@@ -92,6 +123,7 @@ const handlers: Handlers = {
     // — a field labelled by its contents is named after whatever is in it —
     // so describing it afterwards would describe the state the action
     // produced rather than the one it targeted.
+    refuseIfAboveCeiling(resolved.element, payload.elementId, payload.sensitivityCeiling);
     const actedOn = describeActedOn(registry, resolved.element);
 
     performType(resolved.element, payload.text, {
@@ -105,6 +137,7 @@ const handlers: Handlers = {
     const resolved = resolveActionable(registry, payload.elementId);
     if (!resolved.ok)
       throw new InteractionRejection(resolved.error.failure, resolved.error.message);
+    refuseIfAboveCeiling(resolved.element, payload.elementId, payload.sensitivityCeiling);
     // Described before the change, for the same reason click and type are:
     // a field labelled by its own contents is named after whatever is in it.
     const actedOn = describeActedOn(registry, resolved.element);
@@ -239,13 +272,22 @@ function waitForSelector(selector: string, timeoutMs: number): Promise<{ found: 
 
 function toErrorEnvelope(error: unknown): ResponseEnvelope<never> {
   if (error instanceof InteractionRejection) {
+    // A sensitivity refusal is reported as one. Mapping it onto
+    // `ELEMENT_NOT_FOUND` would tell the model the handle was wrong, and the
+    // model would helpfully read the page again and retry — turning a refusal
+    // into a loop instead of a stop.
     const code =
-      error.failure === 'NOT_ENABLED' || error.failure === 'NOT_VISIBLE'
-        ? 'ELEMENT_NOT_INTERACTABLE'
-        : 'ELEMENT_NOT_FOUND';
+      error.failure === 'SENSITIVE_FIELD_REFUSED'
+        ? 'POLICY_BLOCKED'
+        : error.failure === 'NOT_ENABLED' || error.failure === 'NOT_VISIBLE'
+          ? 'ELEMENT_NOT_INTERACTABLE'
+          : 'ELEMENT_NOT_FOUND';
     return {
       ok: false,
-      error: createError(code, error.message, { userMessage: error.message, retryable: true }),
+      error: createError(code, error.message, {
+        userMessage: error.message,
+        retryable: error.failure !== 'SENSITIVE_FIELD_REFUSED',
+      }),
     };
   }
   if (error instanceof TypeError || error instanceof RangeError) {

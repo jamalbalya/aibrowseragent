@@ -27,6 +27,7 @@ import {
 } from '../fixtures/fake-provider';
 import { createHarness, ScriptedPrompter, type Harness } from '../fixtures/policy-harness';
 import type { SemanticPage } from '@/content/semantic-tree';
+import { FieldObservationStore } from '@/policy/field-observation-store';
 
 /** Distinct pages, so successive reads are genuine progress, not repetition. */
 const pageAt = (n: number): SemanticPage => ({
@@ -49,6 +50,7 @@ const pageAt = (n: number): SemanticPage => ({
     },
   ],
   elementsTruncated: false,
+  fields: [],
   scrollY: 0,
   documentHeight: 2000,
   viewportHeight: 800,
@@ -81,7 +83,11 @@ beforeEach(() => {
     return {};
   });
   harness = createHarness(
-    createBrowserTools({ adapter, debuggerManager: fakeDebugger().manager }),
+    createBrowserTools({
+      fieldObservations: new FieldObservationStore(),
+      adapter,
+      debuggerManager: fakeDebugger().manager,
+    }),
     {
       prompter: new ScriptedPrompter({ kind: 'approve_once' }),
     },

@@ -28,6 +28,7 @@ import { FakeBrowserAdapter } from '../fixtures/fake-browser';
 import { FakeDebuggerPort, TINY_PNG_BASE64 } from '../fixtures/fake-debugger';
 import { DebuggerManager } from '@/tools/debugger/debugger-manager';
 import { createHarness, ScriptedPrompter, type Harness } from '../fixtures/policy-harness';
+import { FieldObservationStore } from '@/policy/field-observation-store';
 
 let adapter: FakeBrowserAdapter;
 let port: FakeDebuggerPort;
@@ -37,7 +38,11 @@ function build(options: ConstructorParameters<typeof FakeDebuggerPort>[0] = {}):
   adapter = new FakeBrowserAdapter();
   port = new FakeDebuggerPort(options);
   harness = createHarness(
-    createBrowserTools({ adapter, debuggerManager: new DebuggerManager(port) }),
+    createBrowserTools({
+      fieldObservations: new FieldObservationStore(),
+      adapter,
+      debuggerManager: new DebuggerManager(port),
+    }),
     { prompter: new ScriptedPrompter({ kind: 'approve_once' }) },
   );
 }
@@ -185,6 +190,7 @@ describe('how the permission layer treats a capture', () => {
   // declares through `requires_debugger`.
   it('declares itself as a debugger-attaching, read-only action', () => {
     const tool = createBrowserTools({
+      fieldObservations: new FieldObservationStore(),
       adapter: new FakeBrowserAdapter(),
       debuggerManager: new DebuggerManager(new FakeDebuggerPort()),
     }).find((candidate) => candidate.name === 'browser.screenshot');

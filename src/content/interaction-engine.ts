@@ -19,7 +19,8 @@ export type InteractionFailure =
   | 'WRONG_ELEMENT_TYPE'
   | 'TOO_MANY_FILES'
   | 'ACCEPT_MISMATCH'
-  | 'ASSIGNMENT_REFUSED';
+  | 'ASSIGNMENT_REFUSED'
+  | 'SENSITIVE_FIELD_REFUSED';
 
 export interface InteractionError {
   readonly failure: InteractionFailure;

@@ -23,6 +23,7 @@ import { fakeDebugger, TINY_PNG_BASE64 } from '../fixtures/fake-debugger';
 import { FakeBrowserAdapter } from '../fixtures/fake-browser';
 import { ScriptedPrompter } from '../fixtures/policy-harness';
 import type { SemanticPage } from '@/content/semantic-tree';
+import { FieldObservationStore } from '@/policy/field-observation-store';
 
 const page: SemanticPage = {
   url: 'https://example.com/',
@@ -44,6 +45,7 @@ const page: SemanticPage = {
     },
   ],
   elementsTruncated: false,
+  fields: [],
   scrollY: 0,
   documentHeight: 100,
   viewportHeight: 100,
@@ -90,7 +92,13 @@ beforeEach(() => {
     loadPolicyContext: () => Promise.resolve({ mode: 'auto', sitePolicy }),
     evidenceStore: store,
   });
-  registry.registerAll(createBrowserTools({ adapter, debuggerManager }));
+  registry.registerAll(
+    createBrowserTools({
+      fieldObservations: new FieldObservationStore(),
+      adapter,
+      debuggerManager,
+    }),
+  );
   registry.registerAll(createDebuggerTools({ adapter, manager: debuggerManager }));
 });
 
@@ -201,7 +209,13 @@ describe('without a configured store', () => {
       loadPolicyContext: () =>
         Promise.resolve({ mode: 'auto', sitePolicy: emptySitePolicyState() }),
     });
-    storeless.registerAll(createBrowserTools({ adapter, debuggerManager }));
+    storeless.registerAll(
+      createBrowserTools({
+        fieldObservations: new FieldObservationStore(),
+        adapter,
+        debuggerManager,
+      }),
+    );
 
     const result = await storeless.dispatch({
       toolCallId: 'tc_1',

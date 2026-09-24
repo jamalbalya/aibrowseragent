@@ -15,6 +15,7 @@ import { TaskStore } from '@/tasks/task-store';
 import { LifecycleManager } from '@/background/lifecycle-manager';
 import { DebuggerManager } from '@/tools/debugger/debugger-manager';
 import { createTask, type AgentTask, type TaskState } from '@/tasks/task-model';
+import { FieldObservationStore } from '@/policy/field-observation-store';
 
 const backing = { area: new MemoryStorageArea() };
 
@@ -23,6 +24,7 @@ function newWorkerGeneration(): { store: TaskStore; lifecycle: LifecycleManager 
   const area = new NamespacedStorageArea(new SerializedStorageArea(backing.area), 'tasks');
   const store = new TaskStore(area);
   const lifecycle = new LifecycleManager({
+    fieldObservations: new FieldObservationStore(),
     store,
     debuggerManager: new DebuggerManager({
       attach: () => Promise.resolve(),

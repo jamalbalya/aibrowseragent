@@ -23,12 +23,18 @@
  *     This case **passes while a gap is open**, which is unusual and
  *     deliberate: it fails the moment somebody adds a producer, which is the
  *     moment `docs/security.md` has to stop calling it undetected.
- *  4. The documentation says what the code says.
+ *  4. The one category marked `DETECTED_AND_ENFORCED` has a producer, and the
+ *     producer is named. A row claiming detection with nothing behind it would
+ *     be worse than the overclaiming this suite was written to remove.
+ *  5. The documentation says what the code says.
  *
- * Nothing here asserts that the gap is acceptable. It asserts that the gap is
- * described accurately, which is the only claim this repository is entitled to
- * make until detection is designed. See `architecture/CLAUDE_BENCHMARK.md`
- * §Gap-1.
+ * Gate 1 moved exactly one row. `payment_instrument_entry` acquired a producer
+ * in `browser.type` and `browser.set_value`; the other four that need
+ * *action*-intent detection — knowing what a button does — did not, and case
+ * 06 still holds them to that. Nothing here asserts the remaining gap is
+ * acceptable. It asserts that the gap is described accurately, which is the
+ * only claim this repository is entitled to make until that detection is
+ * designed. See `architecture/CLAUDE_BENCHMARK.md` §Gap-1.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -67,7 +73,7 @@ describe('the prohibition table is total and honest', () => {
     expect(Object.keys(PROHIBITION_ENFORCEMENT).sort()).toEqual([...PROHIBITED_CATEGORIES].sort());
     for (const category of PROHIBITED_CATEGORIES) {
       expect(PROHIBITION_ENFORCEMENT[category], category).toMatch(
-        /^(UNREACHABLE_BY_CONSTRUCTION|REQUIRES_DETECTION)$/,
+        /^(UNREACHABLE_BY_CONSTRUCTION|REQUIRES_DETECTION|DETECTED_AND_ENFORCED)$/,
       );
       expect(PROHIBITED_DESCRIPTIONS[category], category).toBeTruthy();
     }
@@ -122,18 +128,71 @@ describe('the categories called unreachable really have no tool behind them', ()
 });
 
 describe('the categories called undetected are, in fact, raised by nothing', () => {
-  it('06 no production source supplies a prohibited category to a classification', () => {
-    const offenders: string[] = [];
+  it('06 the only production source supplying a prohibited category is the one that claims to', () => {
+    const producers: string[] = [];
     for (const file of sources(SRC_ROOT)) {
       // The declaration site itself names every category; it is not a producer.
       if (file.endsWith('risk-classifier.ts')) continue;
       const code = codeOnly(readFileSync(file, 'utf8'));
-      if (/prohibited\s*:\s*\[/.test(code)) offenders.push(file);
+      if (/prohibited\s*:\s*\[/.test(code)) producers.push(file);
     }
-    // Passes while the gap is open, and fails the moment detection lands —
-    // at which point `docs/security.md` and PROHIBITION_ENFORCEMENT must move
-    // together. That is the point of the case.
-    expect(offenders).toEqual([]);
+
+    // Exactly one file, and the categories it names must all be marked
+    // detected. A file that raised `permanent_deletion` while the table still
+    // called it undetected would fail here, which is the same protection the
+    // original "no producers at all" assertion gave — now expressed as a
+    // correspondence rather than an absence, because an absence stopped being
+    // true the moment a real producer landed.
+    expect(producers.map((file) => file.replace(`${SRC_ROOT}/`, ''))).toEqual([
+      'tools/browser/browser-tools.ts',
+    ]);
+
+    const raised = new Set<string>();
+    for (const file of producers) {
+      const code = codeOnly(readFileSync(file, 'utf8'));
+      for (const match of code.matchAll(/prohibited\s*:\s*\[([^\]]*)\]/g)) {
+        for (const literal of (match[1] ?? '').matchAll(/'([a-z_]+)'/g)) {
+          raised.add(literal[1] as string);
+        }
+      }
+      // The category can also arrive via a variable rather than a literal, and
+      // it does: `dispositionToClassification` passes `disposition.category`
+      // through. The literal it comes from is in `field-sensitivity.ts`, so
+      // that file is read too rather than the indirection being waved past.
+      const sensitivity = codeOnly(
+        readFileSync(join(SRC_ROOT, 'policy/field-sensitivity.ts'), 'utf8'),
+      );
+      for (const match of sensitivity.matchAll(/category:\s*'([a-z_]+)'/g)) {
+        raised.add(match[1] as string);
+      }
+    }
+
+    expect([...raised].sort()).toEqual(['payment_instrument_entry']);
+    for (const category of raised) {
+      expect(PROHIBITION_ENFORCEMENT[category as ProhibitedCategory], category).toBe(
+        'DETECTED_AND_ENFORCED',
+      );
+    }
+  });
+
+  it('06b every category still marked undetected is raised by nothing', () => {
+    const production = sources(SRC_ROOT)
+      .filter((file) => !file.endsWith('risk-classifier.ts'))
+      .map((file) => codeOnly(readFileSync(file, 'utf8')))
+      .join('\n');
+
+    for (const category of UNDETECTED_PROHIBITIONS) {
+      expect(production, category).not.toContain(`'${category}'`);
+    }
+    // The four that need action-intent detection, named so that closing one
+    // without moving its row is a failure rather than a silent drift.
+    expect([...UNDETECTED_PROHIBITIONS].sort()).toEqual([
+      'account_creation',
+      'credential_submission_to_third_party',
+      'financial_transaction',
+      'permanent_deletion',
+      'securities_trading',
+    ]);
   });
 
   it('07 the engine would still refuse one if it arrived', async () => {
@@ -164,7 +223,7 @@ describe('the documentation says what the code says', () => {
   it('09 lists every unreachable category under the tool-surface heading', () => {
     const section = doc.slice(
       doc.indexOf('### Kept by the tool surface'),
-      doc.indexOf('### Declared, enforced if raised'),
+      doc.indexOf('### Declared, detected and enforced'),
     );
     expect(section.length).toBeGreaterThan(0);
     const unreachable = PROHIBITED_CATEGORIES.filter(
@@ -184,6 +243,19 @@ describe('the documentation says what the code says', () => {
     for (const category of unreachable) {
       expect(section, category).toContain(expectedPhrases[category]);
     }
+  });
+
+  it('09b names the producer for the one category that has one', () => {
+    const start = doc.indexOf('### Declared, detected and enforced');
+    const section = doc.slice(start, doc.indexOf('### Declared, enforced if raised'));
+    expect(start).toBeGreaterThan(-1);
+    expect(section).toContain('browser.type');
+    expect(section).toContain('browser.set_value');
+    // The limits are part of the claim. A section that named a producer but
+    // not what it fails to cover would be the overclaiming this suite exists
+    // to prevent, in a new place.
+    expect(section).toContain('cross-origin iframe');
+    expect(section).toContain('shadow root');
   });
 
   it('10 no longer claims all of them are refused in every mode', () => {

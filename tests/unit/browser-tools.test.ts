@@ -10,6 +10,7 @@ import { FakeBrowserAdapter } from '../fixtures/fake-browser';
 import { fakeDebugger, TINY_PNG_BASE64 } from '../fixtures/fake-debugger';
 import { createHarness, ScriptedPrompter, type Harness } from '../fixtures/policy-harness';
 import type { SemanticPage } from '@/content/semantic-tree';
+import { FieldObservationStore } from '@/policy/field-observation-store';
 
 const samplePage = (overrides: Partial<SemanticPage> = {}): SemanticPage => ({
   url: 'https://example.com/',
@@ -31,6 +32,7 @@ const samplePage = (overrides: Partial<SemanticPage> = {}): SemanticPage => ({
     },
   ],
   elementsTruncated: false,
+  fields: [],
   scrollY: 0,
   documentHeight: 2000,
   viewportHeight: 800,
@@ -39,13 +41,38 @@ const samplePage = (overrides: Partial<SemanticPage> = {}): SemanticPage => ({
 
 let adapter: FakeBrowserAdapter;
 let harness: Harness;
+let fieldObservations: FieldObservationStore;
+
+/**
+ * An observation describing an unremarkable text box.
+ *
+ * Tests that are not about field sensitivity still have to record one, because
+ * a write with no observation behind it is `UNKNOWN` and no longer runs at the
+ * tool's baseline risk. That is the fail-closed behaviour working, so the
+ * fixture supplies the fact rather than the tests asserting around it.
+ */
+const ordinaryField = (elementId: string) => ({
+  elementId,
+  fieldType: 'text',
+  autocompleteToken: '',
+  inputMode: '',
+  maxLength: -1,
+  formActionSite: 'example.com',
+  nameHint: 'q',
+  idHint: 'q',
+  isInShadowRoot: false,
+  isInSubframe: false,
+});
 
 /** Rebuilds the registry so a test can script the debugger's replies. */
 function withDebugger(options: Parameters<typeof fakeDebugger>[0] = {}) {
   const { manager, port } = fakeDebugger(options);
-  harness = createHarness(createBrowserTools({ adapter, debuggerManager: manager }), {
-    prompter: new ScriptedPrompter({ kind: 'approve_once' }),
-  });
+  harness = createHarness(
+    createBrowserTools({ fieldObservations, adapter, debuggerManager: manager }),
+    {
+      prompter: new ScriptedPrompter({ kind: 'approve_once' }),
+    },
+  );
   return { manager, port };
 }
 
@@ -68,6 +95,10 @@ const dispatch = (
 beforeEach(() => {
   adapter = new FakeBrowserAdapter();
   adapter.addTab({ id: 1, url: 'https://example.com/', title: 'Example', active: true });
+  fieldObservations = new FieldObservationStore();
+  // Stands in for the `browser.read_page` these tests skip. Generation 1
+  // matches the `e1-…` handles they use.
+  fieldObservations.record(1, 1, [ordinaryField('e1-0'), ordinaryField('e1-1')]);
   withDebugger();
 });
 
@@ -204,6 +235,17 @@ describe('browser.type', () => {
     });
     expect(plain.risk).toBe('R1');
     expect(submitting.risk).toBe('R2');
+  });
+
+  it('falls back to R2 when nothing is known about the target field', async () => {
+    // What an evicted service worker looks like: the handle is still current
+    // as far as the page is concerned, and the worker has lost what it knew
+    // about it. The baseline for an unclassified target is a confirmation, not
+    // the R1 an ordinary text box would have got.
+    fieldObservations.clear();
+    adapter.onContent(() => ({ typed: true }));
+    const result = await dispatch('browser.type', { elementId: 'e1-0', text: 'x' });
+    expect(result.risk).toBe('R2');
   });
 });
 

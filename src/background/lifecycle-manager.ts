@@ -12,12 +12,22 @@ import type { TaskStore } from '@/tasks/task-store';
 import { recoveryStateFor } from '@/tasks/task-store';
 import { isTerminal } from '@/tasks/task-model';
 import type { DebuggerManager } from '@/tools/debugger/debugger-manager';
+import type { FieldObservationStore } from '@/policy/field-observation-store';
 
 const log = getLogger('agent');
 
 export interface LifecycleOptions {
   readonly store: TaskStore;
   readonly debuggerManager: DebuggerManager;
+  /**
+   * Field observations to drop when a tab goes away.
+   *
+   * Not a security boundary — a handle from a closed tab is refused by its
+   * generation anyway, and by the content script that no longer exists to
+   * receive it. This is housekeeping: without it the map keeps one entry per
+   * tab the browser ever opened, for as long as the worker lives.
+   */
+  readonly fieldObservations: FieldObservationStore;
   readonly now?: () => number;
 }
 
@@ -76,6 +86,7 @@ export class LifecycleManager {
     if (this.options.debuggerManager.isAttached(tabId)) {
       void this.options.debuggerManager.detach(tabId);
     }
+    this.options.fieldObservations.forget(tabId);
   }
 
   /** Releases every external resource this worker generation holds. */

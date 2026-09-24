@@ -39,6 +39,7 @@ import {
   type ProviderWirePack,
 } from '../fixtures/provider-wire';
 import type { SemanticPage } from '@/content/semantic-tree';
+import { FieldObservationStore } from '@/policy/field-observation-store';
 
 const page: SemanticPage = {
   url: 'https://example.com/',
@@ -60,6 +61,7 @@ const page: SemanticPage = {
     },
   ],
   elementsTruncated: false,
+  fields: [],
   scrollY: 0,
   documentHeight: 600,
   viewportHeight: 600,
@@ -166,7 +168,11 @@ beforeEach(() => {
     return {};
   });
   harness = createHarness(
-    createBrowserTools({ adapter: browser, debuggerManager: fakeDebugger().manager }),
+    createBrowserTools({
+      fieldObservations: new FieldObservationStore(),
+      adapter: browser,
+      debuggerManager: fakeDebugger().manager,
+    }),
     { prompter: new ScriptedPrompter({ kind: 'approve_once' }) },
   );
   consent = new ConsentStore();
