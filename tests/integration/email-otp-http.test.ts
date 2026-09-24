@@ -254,3 +254,111 @@ describe('TEST-SERVER-030', () => {
     expect(written).not.toContain(source);
   });
 });
+
+/**
+ * The §9 convergence requirement: an email-OTP session is an ordinary session.
+ *
+ * Every case above proves the OTP flow itself. These prove the thing the flow
+ * is *for* — that what it issues is the same session every other method
+ * issues, governed by the same rotation, the same reuse detection and the
+ * same logout, over the same two routes.
+ *
+ * That was not covered anywhere before this audit. The session suites drive
+ * sessions created directly or by the Google flow; the OTP suites stopped at
+ * the point a session came back. Nothing joined the two, so "there is one
+ * authentication architecture" rested on reading the code rather than on a
+ * test — and the property is exactly the kind that a second, well-meaning
+ * implementation would quietly break.
+ */
+describe('TEST-SERVER-030 — an email-OTP session is an ordinary session', () => {
+  /** Signs in by email and returns the issued credentials. */
+  async function signIn(): Promise<{
+    abaUserId: string;
+    accessToken: string;
+    refreshToken: string;
+  }> {
+    const started = await start();
+    const response = await post(DEFAULT_PATHS.emailVerifyPath, {
+      challengeId: started.body.challengeId,
+      code: mail.lastCode(),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    return {
+      abaUserId: body.abaUserId as string,
+      accessToken: body.accessToken as string,
+      refreshToken: body.refreshToken as string,
+    };
+  }
+
+  it('15 — it refreshes over the same route, and the successor is a real session', async () => {
+    const session = await signIn();
+
+    const rotated = await post(DEFAULT_PATHS.refreshPath, { refreshToken: session.refreshToken });
+    expect(rotated.status).toBe(200);
+    const next = (await rotated.json()) as Record<string, unknown>;
+
+    // The same account, a new refresh token, and no code anywhere near it.
+    expect(next.abaUserId).toBe(session.abaUserId);
+    expect(next.refreshToken).not.toBe(session.refreshToken);
+    expect(JSON.stringify(next)).not.toContain(mail.lastCode());
+  });
+
+  it('16 — presenting the spent refresh token again revokes the whole family', async () => {
+    const session = await signIn();
+    const first = await post(DEFAULT_PATHS.refreshPath, { refreshToken: session.refreshToken });
+    expect(first.status).toBe(200);
+    const successor = ((await first.json()) as Record<string, unknown>).refreshToken as string;
+
+    // Reuse of the predecessor. Not a stale-token error — a capture signal.
+    const replay = await post(DEFAULT_PATHS.refreshPath, { refreshToken: session.refreshToken });
+    expect(replay.status).toBe(401);
+
+    // And the successor the honest client holds is revoked too, because the
+    // token was presented twice and only one of the two holders is the user.
+    const afterwards = await post(DEFAULT_PATHS.refreshPath, { refreshToken: successor });
+    expect(afterwards.status).toBe(401);
+
+    const rows = await store.store.listSessions(session.abaUserId);
+    const live = rows.filter((row) => row.revoked_at === null);
+    expect(live).toHaveLength(0);
+  });
+
+  it('17 — it logs out through the same route, with the access token as the credential', async () => {
+    const session = await signIn();
+
+    const loggedOut = await router(
+      new Request(`${ORIGIN}${DEFAULT_PATHS.logoutPath}`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${session.accessToken}`,
+        },
+      }),
+    );
+    expect(loggedOut.status).toBe(200);
+
+    // The session is dead on the server, so its refresh token is too.
+    const afterwards = await post(DEFAULT_PATHS.refreshPath, {
+      refreshToken: session.refreshToken,
+    });
+    expect(afterwards.status).toBe(401);
+  });
+
+  it('18 — an email sign-in registers a device through the same DeviceService', async () => {
+    const started = await start();
+    const response = await post(DEFAULT_PATHS.emailVerifyPath, {
+      challengeId: started.body.challengeId,
+      code: mail.lastCode(),
+      deviceId: 'dev_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    });
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body.deviceRegistered).toBe(true);
+
+    const rows = await store.store.listDevices(body.abaUserId as string);
+    expect(rows).toHaveLength(1);
+    // Client-minted, shape-checked, and derived from nothing about the person.
+    expect(rows[0]?.device_id).toMatch(/^dev_[0-9a-f-]{36}$/);
+    expect(rows[0]?.device_id).not.toContain('example.test');
+  });
+});

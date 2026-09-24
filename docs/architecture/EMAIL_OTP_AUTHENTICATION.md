@@ -108,8 +108,43 @@ Concurrent verification of one valid code therefore succeeds **at most once**.
 That is a genuine guarantee for a single-process, in-memory store, and it is
 **not** a guarantee across processes. A multi-instance deployment needs a
 shared store with a compare-and-set, exactly as `Store.claimSessionRotation`
-already documents for sessions. The same applies to the rate limiter: it is per
-process, so the effective limit multiplies by the instance count.
+already documents for sessions.
+
+### 5.1 Exactly what a second process breaks
+
+Measured, not reasoned about — `email-otp-security.test.ts` cases 48–52 drive
+two backends over one shared store and assert each row below. They are
+**limitation tests**: if one starts failing, the limitation has been removed
+and this section is wrong.
+
+| Property                                 | Single process  | Two processes                                                                       |
+| ---------------------------------------- | --------------- | ----------------------------------------------------------------------------------- |
+| A new code invalidates the previous one  | Holds           | **Breaks** — the older code stays usable (case 48)                                  |
+| A code verifies wherever it is presented | Holds           | **Breaks** — a code minted by A is refused by B (case 49)                           |
+| Sends per address                        | 5 per 15 min    | **5 × instance count** (case 50)                                                    |
+| One first sign-in creates one account    | Holds (case 52) | **Breaks** — the losing process leaves an `aba_user` row with no identity (case 51) |
+
+The last is the only one with a durable consequence, and it is worth being
+precise about what is and is not at risk. **Nobody signs in as somebody
+else**: `auth_identity_email_key` still admits exactly one identity for the
+address, so the loser is refused and the winner owns it. What the loser leaves
+behind is an empty account row, because `resolveAccount` creates the account
+before the attach that then fails, and has no rollback. Giving it one needs a
+delete the `Store` port deliberately does not have — which is deletion
+semantics, and those are deferred. `GoogleAuthService.resolveAccount` has the
+identical shape and the identical exposure, so this is a property of the
+account-creation pattern rather than of email sign-in.
+
+### 5.2 The sweeper has no caller
+
+`EmailAuthService.sweep()` and `GoogleAuthService.sweep()` both exist and
+**nothing in the repository calls either**. For email this is largely
+self-healing: `issue` prunes expired challenges before every write and the
+store is capacity-bounded, so expired codes cannot accumulate without bound.
+For Google it is not — `login_challenge` is a durable table, so in a deployed
+database the PKCE verifiers and nonces of abandoned sign-ins would sit past
+their expiry until something ran the purge. Scheduling it is a deployment
+concern, recorded here rather than invented.
 
 ---
 
@@ -175,6 +210,38 @@ policy.** Refusing is reversible; merging is not — the same asymmetry that
 decided the local-part rule. A punycode domain, being ASCII, is accepted as the
 literal domain it is; nothing maps between it and its Unicode spelling, and
 that absence is the open question, not an answer to it.
+
+### 8.1 The refusal is asymmetric, and does not keep non-ASCII out of the system
+
+The completeness audit established this by running it, and it qualifies the
+paragraph above rather than contradicting it.
+
+**A non-ASCII address is refused only on the email path.** The Google path
+canonicalises whatever the verified ID token asserts and attaches it, so an
+address carrying non-ASCII characters is accepted as a `kind = google`
+identity and stored in `auth_identity.email` today. `isDeliverableEmail`
+guards one door of two.
+
+The asymmetry is defensible and is not an oversight, because the two paths
+have different provenance. On the email path the address is a **destination
+this server chooses to send a secret to**, so declining one whose identity
+semantics are undecided costs a single refusal. On the Google path the address
+is **a claim a verified assertion carried**; refusing it would refuse the
+sign-in of somebody whose account is already established, over a field that
+authorises nothing for a subject-bearing identity (AUTH-29).
+
+It has a consequence that must be stated plainly: **the OTP refusal does not
+mean the open Unicode question is un-exercised.** Non-ASCII addresses can
+already exist in the identity table, where `normaliseEmail` applies
+JavaScript's full Unicode lowercasing to the domain. Whether that is the right
+folding — and whether it agrees with what a database's `lower()` does under
+its collation — is part of what remains open. The decision is therefore
+**deferred in the one place that refuses it, and already exercised in the
+other**, and whoever closes it must account for rows the Google path may
+already have written.
+
+Nothing here settles NFC/NFKC, IDN, punycode mapping or confusables. The
+asymmetry is recorded so the eventual decision is taken with it in view.
 
 Canonicalisation is `normaliseEmail` and nothing else: local part byte for
 byte, domain lowercased, surrounding whitespace trimmed, interior whitespace
@@ -248,7 +315,31 @@ grant access.
 
 ---
 
-## 13. What this phase did not do
+## 13. Account linking has no transport
+
+`IdentityService` implements linking completely, and the audit exercised all
+four behaviours against the real store: `attachIdentity` joins a second
+verified identity to an authenticated account and is idempotent on a repeat;
+`IDENTITY_IN_USE` refuses one already held elsewhere without naming the
+holder; `detachIdentity` removes one and revokes the sessions it established;
+`LAST_IDENTITY` refuses removing the only way in.
+
+**None of it is reachable.** The router serves eight routes and not one of
+them is `attachIdentity`, `detachIdentity` or `listIdentities`, so no client
+can link, unlink, or even list its own identities. The gap is transport and
+UI, in that order — not backend logic.
+
+Until it is closed, a person who signs in with Google and then by email owns
+**two accounts** (§6) with no way to join them. That is the safe failure of
+the two available, and it is visible rather than silent, but it is a real
+product gap rather than a theoretical one.
+
+Relatedly, `IDENTITY_PATHS` in `src/identity/identity-config.ts` declares
+`me: '/v1/me'` and `devices: '/v1/devices'`. Neither is served by the router
+and neither is called by any client. They are dead constants naming endpoints
+that do not exist.
+
+## 14. What this phase did not do
 
 - **Cloud Sync.** Untouched.
 - **Account deletion.** Still deferred, still blocked on the audit hash chain.
