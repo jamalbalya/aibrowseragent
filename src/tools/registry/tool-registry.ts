@@ -46,7 +46,14 @@ export interface ToolInvocation {
   readonly name: string;
   readonly arguments: Record<string, unknown>;
   readonly tabId?: number;
-  /** URL observed when the model proposed this call. */
+  /**
+   * The tab's URL when the agent asked the model what to do.
+   *
+   * Supplied by whoever builds the invocation, from `chrome.tabs`, and never
+   * from the model's arguments: a URL the model chose would be a security
+   * comparison the model gets to win. Absent when no tab is involved, which
+   * is not the same as "no drift" — it is "no page to drift".
+   */
   readonly plannedUrl?: string;
   /**
    * Task-level taint, carried as a state rather than a bare list so an
@@ -462,6 +469,10 @@ export class ToolRegistry {
           : { prohibited: classification.prohibited }),
         ...(classification.targetUrl === undefined ? {} : { targetUrl: classification.targetUrl }),
         ...(invocation.plannedUrl === undefined ? {} : { plannedUrl: invocation.plannedUrl }),
+        // Resolved above from `chrome.tabs`, not from the call. It is the
+        // other half of the drift comparison: where the page is now, against
+        // where it was when the model was asked.
+        ...(currentUrl === undefined ? {} : { currentUrl }),
         ...(classification.writeDestination === undefined
           ? {}
           : { writeDestination: classification.writeDestination }),

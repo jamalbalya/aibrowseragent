@@ -638,6 +638,24 @@ async function resolveWorkspaceTabs(taskId: string): Promise<readonly number[]> 
   return tabs.map((tab) => tab.id).filter((id): id is number => id !== undefined);
 }
 
+/**
+ * The one place a tab's URL is read for policy purposes.
+ *
+ * Shared by the registry, the agent loop and the skill runner rather than
+ * written three times, because three readings of "where is this tab" would
+ * eventually disagree and the one that disagreed permissively would be the
+ * bug. It reads `chrome.tabs` and nothing else: not the page, not the model,
+ * not a tool argument.
+ */
+const resolveTabUrl = async (tabId: number): Promise<string | undefined> => {
+  try {
+    return (await browserAdapter.getTab(tabId))?.url;
+  } catch {
+    // Unknown means unknown: the gate denies rather than guessing an origin.
+    return undefined;
+  }
+};
+
 const toolRegistry = new ToolRegistry({
   checkWorkspaceMember,
   resolveWorkspaceTabs,
@@ -650,14 +668,7 @@ const toolRegistry = new ToolRegistry({
   },
   // A page write's destination is the page itself, so the tab's URL has to be
   // known before the call is classified rather than found inside the tool.
-  resolveTabUrl: async (tabId) => {
-    try {
-      return (await browserAdapter.getTab(tabId))?.url;
-    } catch {
-      // Unknown means unknown: the gate denies rather than guessing an origin.
-      return undefined;
-    }
-  },
+  resolveTabUrl,
   publishSecurityContext: (taskId, context) => {
     connectorEgressContexts.set(taskId, context);
   },
@@ -1004,6 +1015,9 @@ const skillRuns = new SkillRunStore(new NamespacedStorageArea(local, 'skill-runs
 const skillRunner = new SkillRunner({
   tools: toolRegistry,
   skills: skillRegistry,
+  // Per step, so a step that follows a navigation is judged against the page
+  // it will actually run on. See `SkillRunnerOptions.resolveTabUrl`.
+  resolveTabUrl,
   /**
    * Per-step progress into the audit trail.
    *
@@ -1741,7 +1755,13 @@ const taskManager = new TaskManager({
 });
 
 taskManager.setRuntime(
-  new AgentRuntime({ registry: toolRegistry, callbacks: taskManager.createCallbacks() }),
+  new AgentRuntime({
+    registry: toolRegistry,
+    callbacks: taskManager.createCallbacks(),
+    // Read before each provider request, which is where the page has the most
+    // time to move without the agent noticing.
+    resolveTabUrl,
+  }),
 );
 
 const lifecycle = new LifecycleManager({ store: taskStore, debuggerManager, fieldObservations });

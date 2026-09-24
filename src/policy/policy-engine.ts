@@ -36,10 +36,33 @@ export interface PolicyRequest {
   readonly risk: RiskLevel;
   /** Hard-prohibited categories this specific call falls into, if any. */
   readonly prohibited?: readonly ProhibitedCategory[];
-  /** URL the tool will act on. Absent for tools with no page target. */
+  /**
+   * Where a navigation is going. Absent for tools with no page target.
+   *
+   * Deliberately *not* the same thing as `currentUrl`. This is a destination
+   * the call names; `currentUrl` is the page it stands on. Only
+   * `browser.navigate` supplies one, and conflating the two would make every
+   * navigation look like the page moving underneath the agent.
+   */
   readonly targetUrl?: string;
-  /** URL recorded when the action was planned, for origin-drift detection. */
+  /**
+   * The page the agent was standing on when it asked the model what to do.
+   *
+   * Resolved from `chrome.tabs`, by the worker, before the provider request
+   * goes out — never from the model's arguments and never from page content.
+   * That timing is the point: the provider round trip is the longest window in
+   * which a page can move without the agent noticing, so an observation taken
+   * after the response arrives would miss exactly the case worth catching.
+   */
   readonly plannedUrl?: string;
+  /**
+   * The page the call is about to act on, read fresh at dispatch.
+   *
+   * Compared against `plannedUrl` to detect drift. Both sides come from the
+   * browser rather than from the call, so neither is something a page or a
+   * model can choose.
+   */
+  readonly currentUrl?: string;
   /** Destination for an outbound write, if this call sends data somewhere. */
   readonly writeDestination?: string;
   readonly writePayload?: unknown;
@@ -150,24 +173,34 @@ export function evaluatePolicy(request: PolicyRequest, context: PolicyContext): 
         effectiveRisk,
       };
     }
+  }
 
-    // 3. Origin drift between planning and execution.
-    if (request.plannedUrl) {
-      const transition = evaluateTransition(request.plannedUrl, request.targetUrl);
-      if (transition.requiresRevalidation) {
-        // Read-only actions tolerate drift; anything with a side effect does not.
-        if (RISK_RANK[effectiveRisk] >= RISK_RANK.R1) {
-          return {
-            verdict: 'ALLOW_WITH_CONFIRMATION',
-            code: 'ORIGIN_CHANGED',
-            reason:
-              `The page moved from ${transition.from} to ${transition.to} ` +
-              `(${transition.relation}) after this action was planned. Confirm before continuing.`,
-            effectiveRisk: maxRisk(effectiveRisk, 'R2'),
-          };
-        }
-        effectiveRisk = maxRisk(effectiveRisk, 'R1');
+  // 3. Origin drift between planning and execution.
+  //
+  // Deliberately outside the `targetUrl` block it used to sit in. Nested
+  // there it compared a planned URL against a *navigation destination*, and
+  // only `browser.navigate` supplies one of those — so for every page tool
+  // the check could not run, and for `browser.navigate` it compared a
+  // destination against itself. It was a control that could not fire.
+  //
+  // Both sides are now URLs the worker read from `chrome.tabs`: where the
+  // page was when the model was asked, and where it is now. A navigation is
+  // not drift, because the page has not moved yet when the call is evaluated.
+  if (request.plannedUrl && request.currentUrl) {
+    const transition = evaluateTransition(request.plannedUrl, request.currentUrl);
+    if (transition.requiresRevalidation) {
+      // Read-only actions tolerate drift; anything with a side effect does not.
+      if (RISK_RANK[effectiveRisk] >= RISK_RANK.R1) {
+        return {
+          verdict: 'ALLOW_WITH_CONFIRMATION',
+          code: 'ORIGIN_CHANGED',
+          reason:
+            `The page moved from ${transition.from} to ${transition.to} ` +
+            `(${transition.relation}) after this action was planned. Confirm before continuing.`,
+          effectiveRisk: maxRisk(effectiveRisk, 'R2'),
+        };
       }
+      effectiveRisk = maxRisk(effectiveRisk, 'R1');
     }
   }
 

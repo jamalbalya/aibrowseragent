@@ -112,6 +112,8 @@ export interface HarnessOptions {
   readonly wrapPrompter?: (inner: PermissionPrompter) => PermissionPrompter;
   /** Whether a task runs unattended. See `createHarness`. */
   readonly resolveUnattended?: (taskId: string) => Promise<boolean>;
+  /** Supplies the runner's origin-drift reading. See `SkillRunnerOptions`. */
+  readonly resolveTabUrl?: (tabId: number) => Promise<string | undefined>;
 }
 
 export function buildSkillHarness(options: HarnessOptions = {}): SkillHarness {
@@ -155,6 +157,7 @@ export function buildSkillHarness(options: HarnessOptions = {}): SkillHarness {
     tools,
     skills,
     remainingToolCalls: () => remaining,
+    ...(options.resolveTabUrl === undefined ? {} : { resolveTabUrl: options.resolveTabUrl }),
   });
 
   return {

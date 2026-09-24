@@ -129,12 +129,18 @@ describe('origin handling', () => {
     expect(decision.code).toBe('ORIGIN_NOT_AUTOMATABLE');
   });
 
-  it('requires confirmation when the origin changed after planning', () => {
+  // Drift is `plannedUrl` against `currentUrl` — where the page was when the
+  // model was asked, against where it is now. These cases used to compare
+  // against `targetUrl`, which is a navigation *destination*: only
+  // `browser.navigate` supplies one, so the check could not run for any page
+  // tool, and for `browser.navigate` it compared a destination against
+  // itself. They pinned a comparison the product could never make.
+  it('requires confirmation when the page moved after planning', () => {
     const decision = evaluatePolicy(
       request({
         risk: 'R1',
         plannedUrl: 'https://bank.test/transfer',
-        targetUrl: 'https://evil.test/steal',
+        currentUrl: 'https://evil.test/steal',
       }),
       context('skip'),
     );
@@ -142,29 +148,65 @@ describe('origin handling', () => {
     expect(decision.code).toBe('ORIGIN_CHANGED');
   });
 
-  it('tolerates origin drift for a read-only action', () => {
+  it('tolerates the page moving under a read-only action', () => {
     const decision = evaluatePolicy(
       request({
         tool: 'browser.read_page',
         risk: 'R0',
         plannedUrl: 'https://a.test/page',
-        targetUrl: 'https://b.test/page',
+        currentUrl: 'https://b.test/page',
       }),
       context('auto'),
     );
     expect(decision.verdict).toBe('ALLOW');
   });
 
-  it('ignores drift within the same origin', () => {
+  it('ignores movement within the same origin', () => {
     const decision = evaluatePolicy(
       request({
         risk: 'R1',
         plannedUrl: 'https://example.com/a',
-        targetUrl: 'https://example.com/b',
+        currentUrl: 'https://example.com/b',
       }),
       context('skip'),
     );
     expect(decision.verdict).toBe('ALLOW');
+  });
+
+  it('does not treat a navigation as the page moving', () => {
+    // `browser.navigate` names a destination and stands on the page it is
+    // leaving. Reporting that as drift would confirm every cross-site
+    // navigation, which is the one thing navigation is for.
+    const decision = evaluatePolicy(
+      request({
+        tool: 'browser.navigate',
+        risk: 'R1',
+        plannedUrl: 'https://example.com/start',
+        currentUrl: 'https://example.com/start',
+        targetUrl: 'https://elsewhere.test/landing',
+      }),
+      context('skip'),
+    );
+    expect(decision.verdict).toBe('ALLOW');
+    expect(decision.code).not.toBe('ORIGIN_CHANGED');
+  });
+
+  it('makes no comparison when either side is unknown', () => {
+    // Not knowing where a page is says nothing about whether it moved. The
+    // call is judged on everything else rather than on a guess — and the case
+    // exists so that "no drift reported" cannot be reached by simply omitting
+    // a field, which is how the previous shape passed vacuously.
+    const plannedOnly = evaluatePolicy(
+      request({ risk: 'R1', plannedUrl: 'https://a.test/page' }),
+      context('skip'),
+    );
+    expect(plannedOnly.code).not.toBe('ORIGIN_CHANGED');
+
+    const currentOnly = evaluatePolicy(
+      request({ risk: 'R1', currentUrl: 'https://b.test/page' }),
+      context('skip'),
+    );
+    expect(currentOnly.code).not.toBe('ORIGIN_CHANGED');
   });
 });
 

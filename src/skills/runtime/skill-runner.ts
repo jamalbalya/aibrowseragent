@@ -112,6 +112,20 @@ export interface SkillRunnerOptions {
   readonly onStepFinished?: (outcome: SkillStepOutcome) => Promise<void>;
   /** Persists progress so an evicted worker can resume. */
   readonly onProgress?: (progress: SkillRunProgress) => Promise<void>;
+  /**
+   * Reads a tab's current URL, for origin-drift detection.
+   *
+   * Observed per step rather than once per run. A skill is a sequence, and a
+   * step that navigates is supposed to change the page — taking one reading
+   * for the whole run would report every step after a navigation as drift.
+   * What is worth catching is a page moving *between* a step being decided
+   * and that same step landing.
+   *
+   * Optional, so a skill run is testable without a browser. Absent means no
+   * planned URL, and an absent planned URL disables the comparison rather
+   * than passing it.
+   */
+  readonly resolveTabUrl?: (tabId: number) => Promise<string | undefined>;
 }
 
 export interface SkillRunProgress {
@@ -271,6 +285,22 @@ export class SkillRunner {
     return finish('completed', `Ran ${definition.name}: ${steps.length} steps.`);
   }
 
+  /**
+   * The tab's URL, or `undefined` when it cannot be established.
+   *
+   * Every failure is the same answer, for the reason the runtime gives: not
+   * knowing where a page is says nothing about whether it moved, and a guess
+   * either way would be worse than declining to compare.
+   */
+  private async observeTabUrl(tabId: number | undefined): Promise<string | undefined> {
+    if (tabId === undefined || !this.options.resolveTabUrl) return undefined;
+    try {
+      return await this.options.resolveTabUrl(tabId);
+    } catch {
+      return undefined;
+    }
+  }
+
   /** One tool step, dispatched exactly as a model-proposed call would be. */
   private async runToolStep(
     step: Extract<SkillStep, { kind: 'tool' }>,
@@ -287,6 +317,7 @@ export class SkillRunner {
     // part of the consent key, and a step that runs after the taint grew must
     // not reuse the signature from before it did.
     const signature = await taintSignature(taintState);
+    const plannedUrl = await this.observeTabUrl(context.tabId);
 
     const dispatched = await this.options.tools.dispatch({
       toolCallId: `${context.toolCallId}.${step.id}.${newToolCallId()}`,
@@ -295,6 +326,7 @@ export class SkillRunner {
       name: step.tool,
       arguments: args,
       ...(context.tabId === undefined ? {} : { tabId: context.tabId }),
+      ...(plannedUrl === undefined ? {} : { plannedUrl }),
       taintState,
       taintSalt: context.taintSalt,
       saltEpoch: context.saltEpoch,

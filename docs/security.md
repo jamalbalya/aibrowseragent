@@ -135,16 +135,53 @@ Authorisation is never carried across an origin change.
 
 Checked twice, deliberately:
 
-1. **Policy engine** — compares the URL the action was planned against with the
-   URL it will act on.
+1. **Policy engine** — compares the page the action was planned against with
+   the page it will act on.
 2. **Inside the tool** — re-reads the tab's live URL immediately before acting.
 
 The second check is not redundant: a page can navigate in the gap between the
-two.
+two. The two can also disagree, and that is intended — the engine asks the
+person whether to continue, and the primitive still declines to act on a page
+nobody authorised. Approving drift is not the same as authorising the new
+origin.
 
 A cross-site or same-site-different-subdomain transition forces re-evaluation.
 Read-only actions tolerate drift; anything with a side effect does not. An
 unparseable URL is treated as changed.
+
+### Where the two URLs come from
+
+Both are read from `chrome.tabs` by the service worker. Neither comes from the
+model's arguments and neither comes from page content, so neither is a value a
+page or a provider can choose.
+
+- **Planned** — the tab's URL taken _before the provider request goes out_.
+  That timing is the point: the provider round trip is the longest window in
+  which a page can move without the agent noticing, and a reading taken after
+  the response arrives would already contain the drifted URL and report no
+  drift at all. `AgentRuntime` takes it once per turn; `SkillRunner` takes it
+  per step, because a skill step that navigates is supposed to change the page
+  and one reading for a whole run would report every later step as drift.
+- **Current** — the tab's URL resolved again at dispatch, by the registry.
+
+A navigation is not drift. `browser.navigate` names a _destination_, which is a
+different thing from the page it is standing on; the destination governs site
+blocking and automatability, and the drift comparison is left to the page.
+
+Both producers are the only two in the build, and a test asserts that: a third
+dispatch site added without a planned URL fails
+`tests/security/origin-drift-producer.test.ts`. That case exists because this
+control previously had none. The rule and the tool-level re-check were both
+implemented and both covered by unit tests, but nothing in production populated
+`plannedUrl`, and the rule was additionally nested under a navigation
+destination that only `browser.navigate` supplies — so it could not have fired
+even with a producer. It was found by a pipeline trace, not by a failing test,
+which is why the structural guard is now part of the suite.
+
+**Not covered.** An origin change that happens _after_ the tool's own re-check
+and before the browser acts on it is outside both checks. An action whose
+effect is delivered by the page itself — a script that navigates on click — is
+not visible to either. Neither is claimed as closed.
 
 Never automatable, under any setting: `chrome:`, `chrome-extension:`,
 `chrome-untrusted:`, `devtools:`, `javascript:`, `data:`, `blob:`,
