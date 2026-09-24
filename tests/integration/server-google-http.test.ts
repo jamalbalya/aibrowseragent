@@ -76,7 +76,14 @@ describe('the Google auth HTTP surface', () => {
         tokens,
       },
     });
-    router = createAuthRouter({ backend, log: createLogger(recorder.sink), accessTokens: issuer });
+    router = createAuthRouter({
+      backend,
+      log: createLogger(recorder.sink),
+      accessTokens: issuer,
+      // These suites drive the Google and session routes, which are not rate
+      // limited, so one constant source is all the limiter needs.
+      sourceOf: () => 'suite',
+    });
   });
 
   const post = (path: string, body?: unknown): Promise<Response> =>
@@ -142,6 +149,7 @@ describe('the Google auth HTTP surface', () => {
   it('03 — every route is absent when Google is not configured', async () => {
     const plain = createIdentityBackend({ clock, log: createLogger(recorder.sink) });
     const bare = createAuthRouter({
+      sourceOf: () => 'suite',
       backend: plain,
       log: createLogger(recorder.sink),
       accessTokens: issuer,

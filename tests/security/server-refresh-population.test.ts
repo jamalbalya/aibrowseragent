@@ -60,7 +60,14 @@ describe('a refresh creates no account, identity or device', () => {
       clock,
       log: createLogger(recorder.sink),
     });
-    router = createAuthRouter({ backend, log: createLogger(recorder.sink), accessTokens: issuer });
+    router = createAuthRouter({
+      backend,
+      log: createLogger(recorder.sink),
+      accessTokens: issuer,
+      // These suites drive the Google and session routes, which are not rate
+      // limited, so one constant source is all the limiter needs.
+      sourceOf: () => 'suite',
+    });
   });
 
   /**

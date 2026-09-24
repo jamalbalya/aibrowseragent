@@ -23,6 +23,18 @@ const PREFIXES = {
   session: 'ses',
   family: 'fam',
   challenge: 'chl',
+  /**
+   * An email OTP challenge.
+   *
+   * A prefix of its own, although the value is minted exactly as a
+   * `login_challenge` id is, because the two live in different stores with
+   * different lifetimes: one is a row, the other is a transient in-memory
+   * record that is never written anywhere. A shared prefix would make a log
+   * line, a test fixture or a future reader unable to tell which of the two a
+   * value came from, and "it is only ever in memory" is a claim worth being
+   * able to check by looking.
+   */
+  otp: 'otp',
 } as const;
 
 export type IdKind = keyof typeof PREFIXES;
@@ -40,6 +52,7 @@ export function newId(kind: IdKind): string {
 
 export const newAbaUserId = (): string => newId('user');
 export const newChallengeId = (): string => newId('challenge');
+export const newOtpChallengeId = (): string => newId('otp');
 
 /**
  * Opaque CSPRNG values that are not row identifiers.

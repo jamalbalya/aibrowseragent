@@ -2422,18 +2422,18 @@ the code, and covered by a test — or **OPEN**, with what would have to be
 decided before it can be closed. Nothing is listed as final on the strength of
 a plan.
 
-| #   | Decision                                                                                        | Status                             | Where it lives                                          |
-| --- | ----------------------------------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------- |
-| 1   | **Local-part case: preserved.** Option B.                                                       | **FINAL**                          | `normaliseEmail`; `email-identity-policy.test.ts` 01–03 |
-| 2   | **Interior whitespace: rejected**, as validation and not canonicalisation                       | **FINAL**                          | `INTERIOR_WHITESPACE` in `isUsable`; case 05            |
-| 3   | Unicode normalisation (NFC/NFKC/NFD/NFKD)                                                       | **OPEN**                           | —                                                       |
-| 4   | IDN / punycode / confusables                                                                    | **OPEN**                           | —                                                       |
-| 5   | **Display address: one field, no second copy**                                                  | **FINAL**                          | §23.2                                                   |
-| 6   | **Email change: attach-then-unlink, never mutation**                                            | **FINAL**                          | §20.9, `AUTH-25`                                        |
-| 7   | **Google subject authority vs `(kind,email)`**: uniqueness applies only where `subject IS NULL` | **FINAL**                          | `auth_identity_email_key.requiresNull`; cases 10–13     |
-| 8   | Deletion semantics                                                                              | **DEFERRED** by design             | §23.4 checklist                                         |
-| 9   | **OTP transient classification**                                                                | **FINAL** as policy; unimplemented | §23.5                                                   |
-| 10  | Schema/index consequence                                                                        | **FINAL**, one correction applied  | §23.3                                                   |
+| #   | Decision                                                                                        | Status                            | Where it lives                                                 |
+| --- | ----------------------------------------------------------------------------------------------- | --------------------------------- | -------------------------------------------------------------- |
+| 1   | **Local-part case: preserved.** Option B.                                                       | **FINAL**                         | `normaliseEmail`; `email-identity-policy.test.ts` 01–03        |
+| 2   | **Interior whitespace: rejected**, as validation and not canonicalisation                       | **FINAL**                         | `INTERIOR_WHITESPACE` in `isUsable`; case 05                   |
+| 3   | Unicode normalisation (NFC/NFKC/NFD/NFKD)                                                       | **OPEN**                          | Non-ASCII refused meanwhile — `EMAIL_OTP_AUTHENTICATION.md` §8 |
+| 4   | IDN / punycode / confusables                                                                    | **OPEN**                          | Non-ASCII refused meanwhile — `EMAIL_OTP_AUTHENTICATION.md` §8 |
+| 5   | **Display address: one field, no second copy**                                                  | **FINAL**                         | §23.2                                                          |
+| 6   | **Email change: attach-then-unlink, never mutation**                                            | **FINAL**                         | §20.9, `AUTH-25`                                               |
+| 7   | **Google subject authority vs `(kind,email)`**: uniqueness applies only where `subject IS NULL` | **FINAL**                         | `auth_identity_email_key.requiresNull`; cases 10–13            |
+| 8   | Deletion semantics                                                                              | **DEFERRED** by design            | §23.4 checklist                                                |
+| 9   | **OTP transient classification**                                                                | **FINAL**, and now implemented    | §23.5; `EMAIL_OTP_AUTHENTICATION.md` §4                        |
+| 10  | Schema/index consequence                                                                        | **FINAL**, one correction applied | §23.3                                                          |
 
 ### 23.1 Local-part case, and what stays provider-dependent
 
@@ -2533,24 +2533,31 @@ answer, and the last one is the hard one:
 Until the audit-chain question is answered, an erasure route would either lie
 about what it deleted or silently break integrity verification.
 
-### 23.5 What a future OTP must satisfy
+### 23.5 The OTP classification, and how it is met
 
-Policy only. Nothing here is built, and no production code was renamed for it.
+An email OTP challenge is **transient**: memory-backed, never durable. This
+section stated the requirement as policy; it is now implemented, and
+`EMAIL_OTP_AUTHENTICATION.md` is the design document. Each requirement and
+where it is met:
 
-An email OTP challenge is **transient**: `oauth-transient` in the
-classification table, memory-backed, never durable. A future implementation
-must satisfy all of:
+| Requirement                                                       | Where it is met                                                             |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| single use — consumed on first successful verification            | `MemoryOtpChallengeStore.attempt`, synchronously; OTP §5                    |
+| TTL-bounded, short                                                | `OTP_TTL_MS` = 10 minutes                                                   |
+| never persisted to durable storage, and never exported            | No table, column, migration, `Store` method or serialisation exists; OTP §4 |
+| a bounded attempt count per challenge                             | `MAX_OTP_ATTEMPTS` = 5, enforced in the store                               |
+| replay prevention                                                 | Every terminal outcome removes the challenge, so a replay reads `unknown`   |
+| verification server-side only                                     | The code exists only in the backend process and the mailbox                 |
+| rate limiting, per address and per source, designed before launch | `OTP_LIMITS` + `MemoryRateLimiter`; OTP §3                                  |
 
-- single use — consumed on first verification, success or failure
-- TTL-bounded, short
-- never persisted to durable storage, and never exported
-- a bounded attempt count per challenge
-- replay prevention: a consumed or expired challenge is not re-offerable
-- verification server-side only; the client never learns the expected value
-- rate limiting, per address and per source, designed before launch
+**The hashing question was answered by not having one.** A digest defends a
+stolen database; a six-digit code has a million candidates and no hash changes
+that. So there is no OTP digest anywhere — the code never reaches a database
+for one to protect. `token.ts`'s note anticipating Argon2id for this phase was
+deliberately not acted on, for that reason.
 
-Delivery, generation, hashing and the KDF choice are all out of scope until
-the gate that precedes implementation.
+**Delivery is a port with no implementation, and none is configured.** No
+build in this repository can send a code to a real mailbox. See OTP §11.
 
 ### 23.6 Google display email
 

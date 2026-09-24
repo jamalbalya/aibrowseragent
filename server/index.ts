@@ -24,6 +24,14 @@ import {
   type GoogleAuthConfig,
   type GoogleTokenEndpoint,
 } from './app/google-auth-service';
+import {
+  EmailAuthService,
+  OTP_CHALLENGE_CAPACITY,
+  MAX_OTP_ATTEMPTS,
+} from './app/email-auth-service';
+import { MemoryOtpChallengeStore, type OtpChallengeStore } from './app/otp-challenge-store';
+import { MemoryRateLimiter } from './app/rate-limiter';
+import { unconfiguredDelivery, type EmailDelivery } from './app/email-delivery';
 import type { JwksProvider } from './domain/oidc';
 import type { Store } from './db/store';
 
@@ -49,6 +57,32 @@ export interface ServerOptions {
     readonly challengeTtlMs?: number;
     readonly exchangeTtlMs?: number;
   };
+  /**
+   * Email OTP sign-in, wired only when a deployment supplies a mail transport.
+   *
+   * Optional for the same reason `google` is, and absent by default: with no
+   * way to send a code there is no sign-in to offer, and a deployment that
+   * accepted the request and then failed would be worse than one whose routes
+   * are simply not there. `unconfiguredDelivery` reports `configured: false`,
+   * which is what makes the wiring below skip the service entirely.
+   *
+   * **No credential lives here or anywhere in this repository.** The adapter
+   * is supplied by the deployment.
+   */
+  readonly email?: {
+    readonly delivery: EmailDelivery;
+    readonly ttlMs?: number;
+    /** Overridden only by tests that assert the cap. */
+    readonly challengeCapacity?: number;
+    readonly rateLimitCapacity?: number;
+    /**
+     * The transient challenge store.
+     *
+     * Injected only so a test can observe it. There is deliberately no
+     * durable implementation to inject: see `otp-challenge-store.ts`.
+     */
+    readonly challenges?: OtpChallengeStore;
+  };
 }
 
 export interface IdentityBackend {
@@ -60,6 +94,8 @@ export interface IdentityBackend {
   readonly devices: DeviceService;
   /** Present only when Google credentials were supplied. */
   readonly google: GoogleAuthService | null;
+  /** Present only when a mail transport was supplied and reports itself configured. */
+  readonly email: EmailAuthService | null;
 }
 
 export function createIdentityBackend(options: ServerOptions = {}): IdentityBackend {
@@ -103,7 +139,35 @@ export function createIdentityBackend(options: ServerOptions = {}): IdentityBack
             : { exchangeTtlMs: options.google.exchangeTtlMs }),
         });
 
-  return { store, clock, accounts, identities, sessions, devices, google };
+  // `configured: false` is the default and is treated as "no email sign-in",
+  // so a deployment that wires the option without a real transport gets the
+  // same absent routes as one that wires nothing.
+  const delivery = options.email?.delivery ?? unconfiguredDelivery;
+  const email = !delivery.configured
+    ? null
+    : new EmailAuthService({
+        store,
+        clock,
+        log,
+        delivery,
+        challenges:
+          options.email?.challenges ??
+          new MemoryOtpChallengeStore({
+            maxAttempts: MAX_OTP_ATTEMPTS,
+            capacity: options.email?.challengeCapacity ?? OTP_CHALLENGE_CAPACITY,
+          }),
+        limiter: new MemoryRateLimiter({
+          clock,
+          capacity: options.email?.rateLimitCapacity ?? 50_000,
+        }),
+        accounts,
+        identities,
+        sessions,
+        devices,
+        ...(options.email?.ttlMs === undefined ? {} : { ttlMs: options.email.ttlMs }),
+      });
+
+  return { store, clock, accounts, identities, sessions, devices, google, email };
 }
 
 export {
@@ -150,6 +214,34 @@ export {
   type JwksProvider,
 } from './domain/oidc';
 export { createCodeChallenge, newCodeVerifier } from './app/pkce';
+export {
+  EmailAuthService,
+  isDeliverableEmail,
+  MAX_OTP_ATTEMPTS,
+  OTP_CHALLENGE_CAPACITY,
+  OTP_LIMITS,
+  OTP_TTL_MS,
+  type EmailStartOutcome,
+  type EmailStartRefusal,
+  type EmailVerifyOutcome,
+  type EmailVerifyRefusal,
+} from './app/email-auth-service';
+export {
+  MemoryOtpChallengeStore,
+  type OtpAttemptOutcome,
+  type OtpChallenge,
+  type OtpChallengeStore,
+  type OtpChallengeView,
+  type OtpIssueOutcome,
+} from './app/otp-challenge-store';
+export { MemoryRateLimiter, type RateLimitOutcome, type RateLimitRule } from './app/rate-limiter';
+export {
+  otpMessage,
+  unconfiguredDelivery,
+  type EmailDelivery,
+  type EmailMessage,
+} from './app/email-delivery';
+export { isOtpShape, newOtpCode, otpMatches, OTP_DIGITS, OTP_SPACE } from './app/otp';
 export { owns, requireOwned, principalFromSession, type Principal } from './domain/authorization';
 export {
   DOMAIN_ERROR_CODES,

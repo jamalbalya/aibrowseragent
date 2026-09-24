@@ -319,6 +319,12 @@ export const PANEL_ROUTE_CLASSES: Record<PanelRequestType, RouteClass> = {
   // could start without the user.
   'auth.status': 'CLASS_E_PANEL_READ_ONLY',
   'auth.signInWithGoogle': 'CLASS_B_PANEL_CONTROL_PLANE',
+  // Email sign-in, both halves. Control plane for the same reason: starting
+  // one sends mail to an address the caller named, and completing one creates
+  // a session. A page that could reach either could mail a stranger a code,
+  // or finish a sign-in the person did not start. No tool reaches them.
+  'auth.startEmailSignIn': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'auth.verifyEmailSignIn': 'CLASS_B_PANEL_CONTROL_PLANE',
   // Control plane, not a read: a refresh rotates a credential and can end a
   // session. No tool reaches it.
   'auth.refresh': 'CLASS_B_PANEL_CONTROL_PLANE',

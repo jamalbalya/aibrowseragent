@@ -75,12 +75,45 @@ describe('what the authentication layer must never accept', () => {
 
   it('03 — the exchange route reads no identity field from the client', () => {
     // Mutation: reading `abaUserId`, `sub` or `email` out of the request body.
-    // The router must take only the two flow artifacts and an opaque device id.
+    // The route must take only the two flow artifacts and an opaque device id.
+    //
+    // **Scoped to the exchange handler, by brace matching.** This scanned the
+    // whole file until the email OTP routes arrived, at which point it failed
+    // on `requiredString(body, 'email'` in `email/start` — where reading an
+    // address is correct, because there it is the destination of a proof
+    // rather than an assertion of identity. Widening the forbidden list would
+    // have been wrong and deleting the case would have been worse, so the
+    // case now asserts what it always meant: *this* route reads no identity.
+    // The address-is-not-authority property of the OTP routes is a different
+    // claim, proved behaviourally in `email-otp-security.test.ts`.
     const source = readFileSync(resolve(ROOT, 'server/http/router.ts'), 'utf8');
+    const exchange = routeBlock(source, 'paths.exchangePath');
     for (const field of ['abaUserId', "'sub'", "'email'", 'emailVerified', 'idToken']) {
-      expect(source, field).not.toContain(`requiredString(body, ${field}`);
-      expect(source, field).not.toContain(`optionalString(body, ${field}`);
+      expect(exchange, field).not.toContain(`requiredString(body, ${field}`);
+      expect(exchange, field).not.toContain(`optionalString(body, ${field}`);
     }
+
+    // The scoping must not have made the case vacuous: the block has to be
+    // the real one, and it has to still be reading the two artifacts it is
+    // allowed to read.
+    expect(exchange).toContain("requiredString(body, 'challengeId')");
+    expect(exchange).toContain("requiredString(body, 'exchangeCode')");
+  });
+
+  it('03b — the email verify route reads no address at all', () => {
+    // The address a session is issued for comes from the challenge the code
+    // was minted against, never from the request that presents the code. A
+    // verify route that accepted an `email` field would let a caller present
+    // somebody else's code — or their own code — against an address of their
+    // choosing.
+    const source = readFileSync(resolve(ROOT, 'server/http/router.ts'), 'utf8');
+    const verify = routeBlock(source, 'paths.emailVerifyPath');
+    for (const field of ['abaUserId', "'email'", 'emailVerified', "'sub'"]) {
+      expect(verify, field).not.toContain(`requiredString(body, ${field}`);
+      expect(verify, field).not.toContain(`optionalString(body, ${field}`);
+    }
+    expect(verify).toContain("requiredString(body, 'challengeId'");
+    expect(verify).toContain("requiredString(body, 'code'");
   });
 
   it('04 — the router performs no Google verification of its own', () => {
@@ -298,3 +331,25 @@ describe('what the authentication layer must never accept', () => {
     }
   });
 });
+
+/**
+ * The body of one route handler, by brace matching.
+ *
+ * A fixed-size window after the `if` would run into whichever route happened
+ * to be declared next, which is how a scan of "the exchange route" quietly
+ * became a scan of the file. Counting braces from the opening one is exact.
+ */
+function routeBlock(source: string, pathExpression: string): string {
+  const start = source.indexOf(`if (path === ${pathExpression}) {`);
+  if (start < 0) throw new Error(`No route handler for ${pathExpression}`);
+  let depth = 0;
+  for (let index = source.indexOf('{', start); index < source.length; index += 1) {
+    const character = source[index];
+    if (character === '{') depth += 1;
+    else if (character === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, index + 1);
+    }
+  }
+  throw new Error(`Unbalanced braces after ${pathExpression}`);
+}

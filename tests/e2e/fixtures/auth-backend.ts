@@ -37,6 +37,7 @@ import {
 } from '../../../server/index';
 import { GoogleFixture } from '../../fixtures/google-oidc-fixture';
 import { censusStore } from '../../fixtures/census-store';
+import { RecordingEmailDelivery } from '../../fixtures/recording-email-delivery';
 
 /**
  * Fixed, because the extension's backend origin is inlined at build time.
@@ -55,6 +56,17 @@ export interface AuthBackend {
   readonly seen: string[];
   /** The Google subject the next sign-in will present. */
   setSubject(subject: string): void;
+  /** The rate-limiting source the backend attributes requests to. */
+  setSource(source: string): void;
+  /**
+   * Every OTP this backend has sent.
+   *
+   * A fixture, and only a fixture: the production delivery port hands the
+   * message to a mail transport and keeps nothing. A test has to read the
+   * code from somewhere, and reading it from the thing that "sent" it is the
+   * only place that does not require the product to expose it.
+   */
+  readonly otps: RecordingEmailDelivery;
   /** Every device row the backend holds for an account. */
   devices(abaUserId: string): Promise<readonly { device_id: string }[]>;
   /** Every session row for an account, so revocation can be asserted. */
@@ -126,11 +138,13 @@ export async function startAuthBackend(): Promise<AuthBackend> {
   const clock = { now: () => Date.now() + offset };
 
   const census = censusStore();
+  const otps = new RecordingEmailDelivery();
 
   const backend = createIdentityBackend({
     store: census.store,
     clock,
     log: silentLogger,
+    email: { delivery: otps },
     google: {
       config: {
         clientId: CLIENT_ID,
@@ -142,10 +156,23 @@ export async function startAuthBackend(): Promise<AuthBackend> {
     },
   });
 
+  /**
+   * The rate-limiting source this fixture reports.
+   *
+   * Every request in a Playwright run genuinely comes from `127.0.0.1`, so a
+   * real peer-address `sourceOf` would put unrelated tests in one bucket and
+   * make them interfere. The fixture is the deployment here, and choosing
+   * what a deployment calls a caller is a deployment's job — so a test may
+   * set it. Nothing in the product is weakened: the limiter still counts
+   * whatever it is given, and the value authorises nothing.
+   */
+  let source = '127.0.0.1';
+
   const router = createAuthRouter({
     backend,
     log: silentLogger,
     accessTokens: await createAccessTokenIssuer('e2e-fixture-signing-key-'.padEnd(64, 'x')),
+    sourceOf: () => source,
   });
 
   const seen: string[] = [];
@@ -219,6 +246,10 @@ export async function startAuthBackend(): Promise<AuthBackend> {
     setSubject(next: string) {
       subject = next;
     },
+    setSource(next: string) {
+      source = next;
+    },
+    otps,
     devices: (abaUserId: string) => backend.store.listDevices(abaUserId),
     sessions: (abaUserId: string) => backend.store.listSessions(abaUserId),
     accounts: () => census.census().accounts,

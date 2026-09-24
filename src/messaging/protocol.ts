@@ -226,6 +226,45 @@ export interface PanelRequestMap {
       failure: string | null;
     };
   };
+  /**
+   * Asks the backend to mail a one-time code.
+   *
+   * **The response cannot carry a code.** The fields are a challenge id and
+   * two timestamps, and the panel needs all three: the id to present the
+   * code against, `expiresAt` for the countdown, `resendAvailableAt` for the
+   * resend button. A code has no field to travel in, here or anywhere on the
+   * panel's side of the boundary.
+   */
+  'auth.startEmailSignIn': {
+    request: { email: string };
+    response: {
+      ok: boolean;
+      challengeId: string | null;
+      expiresAt: number | null;
+      resendAvailableAt: number | null;
+      /** A safe code. Never says whether an account exists. */
+      failure: string | null;
+      retryAfterMs: number | null;
+    };
+  };
+  /**
+   * Presents a code and, on a match, establishes a session.
+   *
+   * The code travels panel → worker → backend and is stored nowhere on the
+   * way. `failure` describes **this** sign-in attempt — a wrong code, an
+   * expired challenge, spent attempts — and never an account.
+   */
+  'auth.verifyEmailSignIn': {
+    request: { challengeId: string; code: string };
+    response: {
+      ok: boolean;
+      abaUserId: string | null;
+      email: string | null;
+      failure: string | null;
+      remainingAttempts: number | null;
+      retryAfterMs: number | null;
+    };
+  };
   /** Ends the session, on the server as well as here. Deletes nothing. */
   'auth.signOut': {
     request: Record<string, never>;
