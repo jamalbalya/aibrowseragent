@@ -14,6 +14,7 @@ import type { PolicyDecision } from './policy-engine';
 import {
   appendHistory,
   upsertRule,
+  type GrantableRiskLevel,
   type PermissionHistoryEntry,
   type SitePolicyState,
   siteForUrl,
@@ -37,7 +38,7 @@ export interface PermissionRequest {
 
 export type PermissionResponse =
   | { readonly kind: 'approve_once' }
-  | { readonly kind: 'approve_site'; readonly maxRisk: RiskLevel }
+  | { readonly kind: 'approve_site'; readonly maxRisk: GrantableRiskLevel }
   | { readonly kind: 'deny' };
 
 export interface PermissionOutcome {

@@ -24,7 +24,7 @@ import type {
   PanelResponse,
   ResponseEnvelope,
 } from './protocol';
-import { EVENT_MESSAGE_TYPE } from './protocol';
+import { EVENT_MESSAGE_TYPE, validateFieldObservations } from './protocol';
 
 const log = getLogger('messaging');
 
@@ -136,10 +136,39 @@ export async function sendToContent<T extends ContentRequestType>(
       timeoutMs,
       type,
     );
-    return unwrap<ContentResponse<T>>(raw, type);
+    return validateContentResponse(type, unwrap<ContentResponse<T>>(raw, type));
   } catch (error) {
     throw toMessagingError(error, type);
   }
+}
+
+/**
+ * Checks, at run time, the part of a content response the policy engine reads.
+ *
+ * `unwrap` above establishes only that an envelope came back and that it says
+ * it succeeded; the value inside it is asserted into its type, not checked
+ * against it. That gap is where a page read's field observations would
+ * otherwise enter the worker unexamined, and they are the one thing here that
+ * a security decision is made from.
+ *
+ * Applied at the transport boundary rather than at the consumer so there is
+ * one place it happens. A check in `browser.read_page` would be a check the
+ * next caller of `content.readPage` has to remember to repeat.
+ */
+function validateContentResponse<T extends ContentRequestType>(
+  type: T,
+  value: ContentResponse<T>,
+): ContentResponse<T> {
+  if (type !== 'content.readPage') return value;
+
+  const response = value as ContentResponse<'content.readPage'>;
+  const page = response.page as unknown;
+  if (typeof page !== 'object' || page === null) {
+    throw new Error('Page read returned no page.');
+  }
+
+  const fields = validateFieldObservations((page as { fields?: unknown }).fields);
+  return { ...response, page: { ...response.page, fields } };
 }
 
 /**

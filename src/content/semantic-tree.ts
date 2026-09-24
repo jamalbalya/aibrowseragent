@@ -10,6 +10,7 @@
  * silently resolving to a different element.
  */
 import { STRUCTURED_INPUT_TYPES } from './form-controls';
+import { MAX_HINT_LENGTH, type FieldObservation } from '@/policy/field-sensitivity';
 
 export interface SemanticElement {
   /** Snapshot-scoped handle the model uses to target this element. */
@@ -64,6 +65,18 @@ export interface SemanticPage {
   readonly textTruncated: boolean;
   readonly elements: readonly SemanticElement[];
   readonly elementsTruncated: boolean;
+  /**
+   * Raw field-sensitivity observations, one per reported element.
+   *
+   * Kept beside `elements` rather than folded into `SemanticElement` for one
+   * reason: `elements` is what the model is shown, and these are not for the
+   * model. Separating the two structurally means the boundary is the shape of
+   * the data rather than a filter someone has to remember to apply — a filter
+   * is a thing that gets forgotten when a new call site is added.
+   *
+   * Nothing in here is a conclusion. See `FieldObservation`.
+   */
+  readonly fields: readonly FieldObservation[];
   readonly scrollY: number;
   readonly documentHeight: number;
   readonly viewportHeight: number;
@@ -452,6 +465,7 @@ export function extractSemanticPage(
   const generation = registry.beginSnapshot();
   const candidates = [...doc.querySelectorAll(INTERACTIVE_SELECTOR)];
   const elements: SemanticElement[] = [];
+  const fields: FieldObservation[] = [];
 
   let index = 0;
   for (const candidate of candidates) {
@@ -473,6 +487,7 @@ export function extractSemanticPage(
     const handle = registry.register(candidate, index);
     index += 1;
     elements.push(describeElement(candidate, handle, frameId, visible));
+    fields.push(observeField(candidate, handle, frameId));
   }
 
   const view = doc.defaultView;
@@ -489,6 +504,7 @@ export function extractSemanticPage(
     textTruncated,
     elements,
     elementsTruncated: candidates.length > elements.length && elements.length >= maxElements,
+    fields,
     scrollY: view?.scrollY ?? 0,
     documentHeight: doc.documentElement?.scrollHeight ?? 0,
     viewportHeight: view?.innerHeight ?? 0,
@@ -498,6 +514,87 @@ export function extractSemanticPage(
 /** A file input the page has hidden behind its own styled control. */
 export function isHiddenFileInput(element: Element): boolean {
   return element instanceof HTMLInputElement && element.type.toLowerCase() === 'file';
+}
+
+/**
+ * Raw structural facts about one element, for the worker to classify.
+ *
+ * Reports attributes, not conclusions. There is no field here a page could
+ * set to "ordinary"; the worker decides what these add up to, and the worst a
+ * page can do by lying is describe a sensitive field as unremarkable — which
+ * `classifyField` answers with `UNKNOWN` rather than `ORDINARY` whenever the
+ * control is one it does not recognise.
+ *
+ * Reads no value. In particular it does not read a password's, which is the
+ * rule the rest of this file already keeps.
+ */
+export function observeField(element: Element, handle: string, frameId: string): FieldObservation {
+  const input = element instanceof HTMLInputElement ? element : null;
+  const fieldType = input
+    ? input.type.toLowerCase()
+    : element instanceof HTMLSelectElement
+      ? element.type.toLowerCase()
+      : element.getAttribute('contenteditable') === 'true'
+        ? 'contenteditable'
+        : element.tagName.toLowerCase();
+
+  // `maxLength` is -1 when undeclared on the elements that have it, and the
+  // elements that do not have it are reported the same way. A single "not
+  // declared" value keeps the worker from having to tell two absences apart.
+  const maxLength = input
+    ? input.maxLength
+    : element instanceof HTMLTextAreaElement
+      ? element.maxLength
+      : -1;
+
+  return {
+    elementId: handle,
+    fieldType,
+    autocompleteToken: hint(element.getAttribute('autocomplete')),
+    inputMode: hint(element.getAttribute('inputmode')),
+    maxLength,
+    formActionSite: formActionSite(element),
+    nameHint: hint(element.getAttribute('name')),
+    idHint: hint(element.getAttribute('id')),
+    // `all_frames` is false and shadow roots are not traversed, so neither of
+    // these is reachable in this build. They are reported rather than assumed
+    // so that the worker's rule about them is exercised by real data the day
+    // either becomes reachable, instead of being dead code until then.
+    isInShadowRoot: element.getRootNode() !== element.ownerDocument,
+    isInSubframe: frameId !== 'main',
+  };
+}
+
+/** Lowercases, trims and truncates an attribute the worker will pattern-match. */
+function hint(value: string | null): string {
+  if (value === null) return '';
+  return value.trim().toLowerCase().slice(0, MAX_HINT_LENGTH);
+}
+
+/**
+ * Registrable site of the form this control submits to.
+ *
+ * Half of what a third-party credential submission looks like: the other half
+ * is the field being a credential field, and neither alone means anything.
+ * Computed here because the owning form is only knowable from the DOM; it is
+ * reported as a bare site string and judged in the worker.
+ */
+function formActionSite(element: Element): string {
+  const form =
+    element instanceof HTMLInputElement ||
+    element instanceof HTMLTextAreaElement ||
+    element instanceof HTMLSelectElement
+      ? element.form
+      : element.closest('form');
+  if (!form) return '';
+  try {
+    // `form.action` resolves against the document, so a relative action yields
+    // the page's own origin, which is the correct answer rather than a missing
+    // one: a form with no action posts to the page it is on.
+    return new URL(form.action, element.ownerDocument.location?.href ?? undefined).hostname;
+  } catch {
+    return '';
+  }
 }
 
 function describeElement(

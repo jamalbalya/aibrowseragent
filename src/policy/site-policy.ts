@@ -10,11 +10,36 @@ import type { RiskLevel } from './risk-classifier';
 
 export type SiteDecision = 'allow' | 'block';
 
+/**
+ * The risks a standing site approval is able to cover.
+ *
+ * Narrower than `RiskLevel`, and narrowed for a reason that is a fact about
+ * the engine rather than a preference: `evaluatePolicy` returns at its R3
+ * floor before it ever reaches the branch that consults a site rule, so a
+ * stored grant of R3 or above has never been honoured and never could be. A
+ * type that could express one was a type that described an authority the
+ * product does not have — and a rule sitting in storage saying "allow up to
+ * R4" reads, to anyone auditing it, as though it did.
+ */
+export type GrantableRiskLevel = Extract<RiskLevel, 'R0' | 'R1' | 'R2'>;
+
+/** The highest risk a standing grant may carry. */
+export const MAX_GRANTABLE_RISK: GrantableRiskLevel = 'R2';
+
+export function isGrantableRisk(risk: RiskLevel): risk is GrantableRiskLevel {
+  return risk === 'R0' || risk === 'R1' || risk === 'R2';
+}
+
+/** Lowers a risk to what a grant may express. Never raises one. */
+export function clampToGrantable(risk: RiskLevel): GrantableRiskLevel {
+  return isGrantableRisk(risk) ? risk : MAX_GRANTABLE_RISK;
+}
+
 export interface SiteRule {
   readonly site: string;
   readonly decision: SiteDecision;
   /** Highest risk this standing approval covers. Higher risks still prompt. */
-  readonly maxRisk: RiskLevel;
+  readonly maxRisk: GrantableRiskLevel;
   readonly createdAt: number;
   readonly note?: string;
 }
@@ -48,6 +73,29 @@ export function findRule(state: SitePolicyState, url: string): SiteRule | null {
   if (!site) return null;
   const matches = state.rules.filter((rule) => rule.site === site);
   return matches.find((r) => r.decision === 'block') ?? matches[0] ?? null;
+}
+
+/**
+ * Repairs rules read back from storage.
+ *
+ * The type above stops new rules carrying more than R2. It says nothing about
+ * rules already on disk, written when the field was a plain `RiskLevel`, or
+ * about a record an import supplied. Those are clamped down rather than
+ * discarded: the user approved that site, and dropping the rule would silently
+ * revoke a decision they made, while clamping keeps the decision and removes
+ * only the part of it the engine was never going to honour anyway.
+ *
+ * `block` rules are untouched by the clamp. A block is a denial, and its
+ * `maxRisk` bounds nothing.
+ */
+export function sanitiseSitePolicyState(state: SitePolicyState): SitePolicyState {
+  let changed = false;
+  const rules = state.rules.map((rule) => {
+    if (isGrantableRisk(rule.maxRisk)) return rule;
+    changed = true;
+    return { ...rule, maxRisk: MAX_GRANTABLE_RISK };
+  });
+  return changed ? { ...state, rules } : state;
 }
 
 export function upsertRule(state: SitePolicyState, rule: SiteRule): SitePolicyState {

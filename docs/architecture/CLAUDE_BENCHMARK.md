@@ -129,15 +129,31 @@ The shape worth copying is not the vendor integration — it is the property:
 
 ## Gaps this benchmark opened
 
-### Gap-1 — declared prohibitions with no producer
+### Gap-1 — declared prohibitions with no producer (partially closed)
 
 Claude documents purchases, account creation, card/ID entry and permanent
 deletion as blocked. This repository declares the equivalent categories and
-enforces them in the policy engine, but **no tool raises five of them**, so the
-guarantee is about a call nobody constructs. Recorded in
-`PROHIBITION_ENFORCEMENT` and in `../security.md`. Closing it is an
-architecture decision — where detection happens, and whether the outcome is a
-refusal or a confirmation — not a patch.
+enforces them in the policy engine, but originally **no tool raised five of
+them**, so the guarantee was about a call nobody constructs.
+
+Gate 1 closed one of the five. `payment_instrument_entry` now has a producer in
+`browser.type` and `browser.set_value`, from a page-derived field signal and a
+page-independent value signal. Card and bank-detail entry is denied before
+permission mode, site policy or any standing grant is consulted.
+
+Four remain open, and the reason is specific: they need **action**-intent
+detection — knowing that a button completes a purchase, creates an account,
+deletes something permanently or places a trade — whereas Gate 1 detects the
+sensitivity of a _field_. Those are different problems and the second is much
+the easier one. Nothing in this build infers what a control does from what it
+is called, and nothing here should be read as claiming otherwise.
+
+`credential_submission_to_third_party` sits between the two. Its field half
+exists and its destination half is observed, but password entry is refused
+before the destination is ever consulted, so the third-party condition has
+never had to be correct. It is not counted as closed.
+
+Recorded in `PROHIBITION_ENFORCEMENT` and in `../security.md`.
 
 ### Gap-2 — Chrome scheduled-run semantics
 
@@ -162,9 +178,18 @@ Manual mode's plan step, and the restriction of execution to the sites named in
 the approved plan, have no analogue here. Not represented in any of the forty
 capability rows.
 
-### Gap-4 — credential-manager boundary
+### Gap-4 — credential-manager boundary (half closed, half deliberately open)
 
-No analogue. Typing a password is an ordinary `browser.type` at R1 today.
+The _refusal_ half is now closed and, by product decision, is stricter than a
+confirmation would be: `browser.type` and `browser.set_value` refuse a password
+or one-time-code field outright, in Manual, Auto and Skip alike. An agent that
+can be talked into typing a credential behind a prompt is an agent that can be
+talked into typing a credential; the prompt only moves who is blamed.
+
+The _manager_ half is open and stays open. The comparison product documents a
+password-manager boundary (E1); this build has no password-manager integration
+and does not claim one. Credential entry belongs to the person until that
+changes, which is a separate design with its own trust questions.
 
 ### Gap-5 — outbound MCP
 

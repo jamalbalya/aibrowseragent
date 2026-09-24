@@ -13,7 +13,7 @@ import {
   type PolicyContext,
   type PolicyRequest,
 } from '@/policy/policy-engine';
-import { emptySitePolicyState, upsertRule } from '@/policy/site-policy';
+import { emptySitePolicyState, upsertRule, type GrantableRiskLevel } from '@/policy/site-policy';
 
 const context = (mode: PermissionMode = 'auto'): PolicyContext => ({
   mode,
@@ -48,7 +48,10 @@ describe('hard prohibitions', () => {
     const sitePolicy = upsertRule(emptySitePolicyState(), {
       site: 'example.com',
       decision: 'allow',
-      maxRisk: 'R5',
+      // A grant the type no longer admits, constructed on purpose: what is
+      // under test is the engine's behaviour if a record like this reaches it
+      // from an older build or a hostile import, not whether it compiles.
+      maxRisk: 'R5' as GrantableRiskLevel,
       createdAt: 0,
     });
     const decision = evaluatePolicy(

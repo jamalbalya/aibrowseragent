@@ -18,6 +18,15 @@ import { activeWorkspaceTab } from '@/tools/tabs/tab-tools';
 import type { BrowserAdapter, TabInfo } from './chrome-adapter';
 import type { DebuggerManager } from '@/tools/debugger/debugger-manager';
 import { MessagingError } from '@/messaging/bus';
+import { matchedSecretRule } from '@/security/exfiltration/exfiltration-guard';
+import type { FieldObservationStore } from '@/policy/field-observation-store';
+import {
+  classifyField,
+  writeDisposition,
+  type FieldClass,
+  type FieldWriteDisposition,
+} from '@/policy/field-sensitivity';
+import type { CallClassification } from '@/tools/core/tool-types';
 
 const log = getLogger('browser');
 
@@ -110,6 +119,71 @@ export interface BrowserToolDeps {
    * files stays in place.
    */
   readonly debuggerManager: DebuggerManager;
+  /**
+   * What the last page read observed about each field (Gate 1).
+   *
+   * Written by `browser.read_page` and read by the tools that write into a
+   * page. Injected rather than reached for as a module singleton so a test can
+   * hand a tool an empty store and see what an evicted worker does, which is
+   * the case that has to fail closed.
+   */
+  readonly fieldObservations: FieldObservationStore;
+}
+
+/**
+ * Turns a write target into the policy facts a page write may carry.
+ *
+ * Shared by `browser.type` and `browser.set_value` so the two cannot drift.
+ * Every branch either leaves the tool's declared risk alone or raises it:
+ * there is no return value here that makes an action more permitted than the
+ * tool already declared it to be.
+ *
+ * Two independent signals feed it, and they fail differently on purpose:
+ *
+ *  - the **field** signal comes from the page and can be lied about, so an
+ *    unrecognised or unobserved field is `UNKNOWN` rather than ordinary;
+ *  - the **value** signal is computed from the agent's own text and the page
+ *    has no say in it at all, which is why a card number is caught even on a
+ *    field a page has described as an ordinary text box.
+ */
+function writeTargetClassification(
+  store: FieldObservationStore,
+  context: ToolExecutionContext,
+  elementId: string,
+  payload: string,
+): { readonly ceiling: FieldClass; readonly policy: CallClassification } {
+  const ceiling = classifyField(store.lookup(context.tabId, elementId));
+
+  // Page-independent first. A Luhn-valid, issuer-prefixed card number is a
+  // card number wherever it is being typed, and this is the half of the
+  // payment control that a hostile page cannot affect.
+  if (matchedSecretRule(payload) === 'credit-card') {
+    return {
+      ceiling,
+      policy: { prohibited: ['payment_instrument_entry'] },
+    };
+  }
+
+  return { ceiling, policy: dispositionToClassification(writeDisposition(ceiling)) };
+}
+
+/** Exhaustive, with no `default`: a new disposition is a compile error here. */
+function dispositionToClassification(disposition: FieldWriteDisposition): CallClassification {
+  switch (disposition.kind) {
+    case 'ALLOW_AT_BASELINE':
+      return {};
+    case 'RAISE_RISK':
+      return { risk: disposition.risk };
+    case 'PROHIBIT':
+      return { prohibited: [disposition.category] };
+    case 'REFUSE':
+      // R5 is the build's existing "never executed" level, denied by
+      // `evaluatePolicy` before site policy, permission mode or any grant is
+      // consulted. Routing a refusal through it rather than through a new
+      // decision path is deliberate: there is one place that denies, and this
+      // is not a second one.
+      return { risk: 'R5' };
+  }
 }
 
 const readPageInput = z.object({
@@ -126,7 +200,10 @@ const readPageInput = z.object({
     .describe('Include the page’s visible text. Defaults to true.'),
 });
 
-export function createReadPageTool({ adapter }: BrowserToolDeps): AgentTool<typeof readPageInput> {
+export function createReadPageTool({
+  adapter,
+  fieldObservations,
+}: BrowserToolDeps): AgentTool<typeof readPageInput> {
   return {
     name: 'browser.read_page',
     version: '1.0.0',
@@ -156,6 +233,13 @@ export function createReadPageTool({ adapter }: BrowserToolDeps): AgentTool<type
       } catch (error) {
         rethrowContentError(error, tab.url);
       }
+
+      // The field observations go to the worker's own store and no further.
+      // They are not put in `data`, not recorded as evidence and not returned:
+      // they exist for the policy engine, and the model is the one component
+      // that must not be able to reason about them, because reasoning about
+      // them is how it would learn which fields to avoid naming.
+      fieldObservations.record(tab.id, page.generation, page.fields);
 
       // Page text is untrusted data. It is wrapped so the model cannot mistake
       // it for an instruction, and scanned so the UI can warn the user.
@@ -296,7 +380,10 @@ const typeInput = z.object({
     .describe('Press Enter and submit the containing form after typing.'),
 });
 
-export function createTypeTool({ adapter }: BrowserToolDeps): AgentTool<typeof typeInput> {
+export function createTypeTool({
+  adapter,
+  fieldObservations,
+}: BrowserToolDeps): AgentTool<typeof typeInput> {
   return {
     name: 'browser.type',
     version: '1.0.0',
@@ -312,6 +399,11 @@ export function createTypeTool({ adapter }: BrowserToolDeps): AgentTool<typeof t
     classify: (input, context) => ({
       // Submitting a form is a state change of a different order to typing.
       ...(input.submit ? { risk: 'R2' as const } : {}),
+      // Field sensitivity, spread after the submit escalation and before the
+      // rest. It can only ever add a higher `risk` or a `prohibited` entry,
+      // and the registry then takes the maximum against the tool's declared
+      // floor — so neither this nor the line above can lower the other.
+      ...writeTargetClassification(fieldObservations, context, input.elementId, input.text).policy,
       summary: input.submit
         ? `Type into element ${input.elementId} and submit the form.`
         : `Type into element ${input.elementId}.`,
@@ -333,6 +425,15 @@ export function createTypeTool({ adapter }: BrowserToolDeps): AgentTool<typeof t
         const result = await adapter.callContent(tab.id, 'content.type', {
           elementId: input.elementId,
           text: input.text,
+          // Re-derived here rather than carried over from `classify`: the two
+          // run at different moments, and the ceiling that matters is the one
+          // current when the write leaves.
+          sensitivityCeiling: writeTargetClassification(
+            fieldObservations,
+            context,
+            input.elementId,
+            input.text,
+          ).ceiling,
           ...(input.clearFirst === undefined ? {} : { clearFirst: input.clearFirst }),
           ...(input.submit === undefined ? {} : { submit: input.submit }),
         });
@@ -422,7 +523,10 @@ const setValueInput = z.object({
  * at all. The page model reports the control's `inputType` and its bounds so
  * the choice between the two tools is visible rather than guessed.
  */
-export function createSetValueTool({ adapter }: BrowserToolDeps): AgentTool<typeof setValueInput> {
+export function createSetValueTool({
+  adapter,
+  fieldObservations,
+}: BrowserToolDeps): AgentTool<typeof setValueInput> {
   return {
     name: 'browser.set_value',
     version: '1.0.0',
@@ -438,6 +542,7 @@ export function createSetValueTool({ adapter }: BrowserToolDeps): AgentTool<type
     // same state.
     idempotent: true,
     classify: (input, context) => ({
+      ...writeTargetClassification(fieldObservations, context, input.elementId, input.value).policy,
       summary: `Set element ${input.elementId} to "${input.value}".`,
       // Model output written into the page, gated like every other page write.
       // A date is smaller than a paragraph and is still a value the page will
@@ -457,6 +562,12 @@ export function createSetValueTool({ adapter }: BrowserToolDeps): AgentTool<type
         const result = await adapter.callContent(tab.id, 'content.setValue', {
           elementId: input.elementId,
           value: input.value,
+          sensitivityCeiling: writeTargetClassification(
+            fieldObservations,
+            context,
+            input.elementId,
+            input.value,
+          ).ceiling,
         });
         return {
           success: true,

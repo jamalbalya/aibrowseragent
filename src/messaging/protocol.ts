@@ -16,6 +16,11 @@ import type { AuditEvent, AuditExport } from '@/audit/audit-log';
 import type { HealthDomain, HealthSnapshot } from '@/storage/persistence-health';
 import type { PermissionMode } from '@/policy/policy-engine';
 import type { ActedOnElement, SemanticPage } from '@/content/semantic-tree';
+import {
+  MAX_HINT_LENGTH,
+  type FieldClass,
+  type FieldObservation,
+} from '@/policy/field-sensitivity';
 import type { EvidenceReference } from '@/evidence/evidence-model';
 import type { LogRecord } from '@/logging/logger';
 import type { SitePolicyState } from '@/policy/site-policy';
@@ -1089,8 +1094,24 @@ export interface ContentRequestMap {
     request: { elementId: string };
     response: { clicked: true; navigated: boolean; actedOn?: ActedOnElement };
   };
+  /**
+   * `sensitivityCeiling` is the most sensitive class of field the worker
+   * authorised this write against. It travels in this direction only. The
+   * content script compares the live element against it and may *refuse*; it
+   * has no way to express anything else, and nothing in the page can raise it.
+   *
+   * Required, not optional. An optional ceiling would have an absent case, and
+   * the absent case would have to mean something — whichever meaning it were
+   * given, a caller that forgot to set it would get that meaning by accident.
+   */
   'content.type': {
-    request: { elementId: string; text: string; clearFirst?: boolean; submit?: boolean };
+    request: {
+      elementId: string;
+      text: string;
+      sensitivityCeiling: FieldClass;
+      clearFirst?: boolean;
+      submit?: boolean;
+    };
     response: { typed: true; actedOn?: ActedOnElement };
   };
   'content.select': {
@@ -1105,7 +1126,7 @@ export interface ContentRequestMap {
    * at all.
    */
   'content.setValue': {
-    request: { elementId: string; value: string };
+    request: { elementId: string; value: string; sensitivityCeiling: FieldClass };
     response: { value: string; type: string; adjusted?: boolean; actedOn?: ActedOnElement };
   };
   /** Sets the whole selection of a multi-select, rather than adding to it. */
@@ -1198,3 +1219,102 @@ export const EVENT_MESSAGE_TYPE = 'agent.event';
 /** Envelope for a response, so failures cross the boundary as data. */
 export type ResponseEnvelope<T> =
   { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: AgentError };
+
+/**
+ * Runtime validation for the field observations a page read carries.
+ *
+ * Everything else crossing this boundary is unwrapped by envelope shape and
+ * then asserted into its TypeScript type, which is a promise about a value
+ * rather than a check of one. That was tolerable while the payload only ever
+ * reached the model, which treats all of it as untrusted text anyway. It stops
+ * being tolerable the moment a payload reaches the policy engine: a compile-
+ * time type cannot stop a hostile shape, and a hostile shape that reached
+ * `classifyField` would be choosing its own class.
+ *
+ * Scope is deliberately this payload and no other. Validating all thirteen
+ * content responses is the right eventual shape and is a larger change than
+ * this one should carry.
+ *
+ * Fails by throwing rather than by substituting a default. A malformed
+ * observation set is not a page that lacks fields — the content script is
+ * first-party code and cannot emit one — so it means the channel is not
+ * carrying what it claims. Answering that with an empty array would let a
+ * tampered response present itself as an ordinary page with no inputs.
+ */
+export function validateFieldObservations(raw: unknown): readonly FieldObservation[] {
+  if (!Array.isArray(raw)) {
+    throw new Error('Page read returned a malformed field observation set.');
+  }
+
+  const validated: FieldObservation[] = [];
+  for (const entry of raw) {
+    validated.push(validateFieldObservation(entry));
+  }
+  return validated;
+}
+
+/** Keys that are never legitimate on a received record. */
+const FORBIDDEN_KEYS: readonly string[] = ['__proto__', 'constructor', 'prototype'];
+
+function validateFieldObservation(raw: unknown): FieldObservation {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error('Page read returned a malformed field observation.');
+  }
+
+  // `Object.keys` reports own enumerable keys, so an inherited property
+  // planted on a prototype is not mistaken for a supplied one — and a literal
+  // `__proto__` key, which is what a pollution attempt actually sends, is
+  // refused outright rather than silently reassigning a prototype below.
+  for (const key of Object.keys(raw)) {
+    if (FORBIDDEN_KEYS.includes(key)) {
+      throw new Error('Page read returned a field observation with a forbidden key.');
+    }
+  }
+
+  const record = raw as Record<string, unknown>;
+
+  // Rebuilt field by field into a fresh literal rather than spread. A spread
+  // would carry across whatever else the sender put in the object, and an
+  // extra key on a value the policy engine reads is exactly the thing worth
+  // dropping.
+  return {
+    elementId: boundedString(record['elementId'], 'elementId'),
+    fieldType: boundedString(record['fieldType'], 'fieldType'),
+    autocompleteToken: boundedString(record['autocompleteToken'], 'autocompleteToken'),
+    inputMode: boundedString(record['inputMode'], 'inputMode'),
+    maxLength: finiteInteger(record['maxLength'], 'maxLength'),
+    formActionSite: boundedString(record['formActionSite'], 'formActionSite'),
+    nameHint: boundedString(record['nameHint'], 'nameHint'),
+    idHint: boundedString(record['idHint'], 'idHint'),
+    isInShadowRoot: strictBoolean(record['isInShadowRoot'], 'isInShadowRoot'),
+    isInSubframe: strictBoolean(record['isInSubframe'], 'isInSubframe'),
+  };
+}
+
+/**
+ * A string, of a sane length, and nothing that merely converts to one.
+ *
+ * `typeof` rather than a coercion because an object with a `toString` is not a
+ * string, and treating it as one is how a value that pattern-matches as
+ * harmless at validation time becomes something else when read again.
+ */
+function boundedString(value: unknown, field: string): string {
+  if (typeof value !== 'string') {
+    throw new Error(`Page read returned a non-string ${field}.`);
+  }
+  return value.slice(0, MAX_HINT_LENGTH);
+}
+
+function finiteInteger(value: unknown, field: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
+    throw new Error(`Page read returned a non-integer ${field}.`);
+  }
+  return value;
+}
+
+function strictBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== 'boolean') {
+    throw new Error(`Page read returned a non-boolean ${field}.`);
+  }
+  return value;
+}

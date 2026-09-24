@@ -49,6 +49,7 @@ import { ChromeBrowserAdapter } from '@/tools/browser/chrome-adapter';
 import { createBrowserTools } from '@/tools/browser/browser-tools';
 import { createTabTools, TabOwnership } from '@/tools/tabs/tab-tools';
 import { DebuggerManager } from '@/tools/debugger/debugger-manager';
+import { FieldObservationStore } from '@/policy/field-observation-store';
 import { createDebuggerTools } from '@/tools/debugger/debugger-tools';
 import { createFileTools } from '@/tools/files/file-tools';
 import { StagedFileStore } from '@/files/file-store';
@@ -93,7 +94,12 @@ import {
   type ConnectorCallContext,
 } from '@/connectors/adapters/github';
 import { PermissionEngine } from '@/policy/permission-engine';
-import { emptySitePolicyState, removeRule, type SitePolicyState } from '@/policy/site-policy';
+import {
+  emptySitePolicyState,
+  removeRule,
+  sanitiseSitePolicyState,
+  type SitePolicyState,
+} from '@/policy/site-policy';
 import type { PolicyContext } from '@/policy/policy-engine';
 import { AgentRuntime } from '@/agent/runtime/agent-runtime';
 import { TaskManager } from './task-manager';
@@ -307,7 +313,12 @@ const SITE_POLICY_KEY = 'site-policy';
 const SESSION_KEY = 'active-session';
 
 const loadSitePolicy = async (): Promise<SitePolicyState> =>
-  (await policyArea.get<SitePolicyState>(SITE_POLICY_KEY)) ?? emptySitePolicyState();
+  // Sanitised on the way out rather than on the way in: a record written by an
+  // older build, or restored from an export, never passes through the save
+  // path. Repairing at the read is what makes every reader see the same thing.
+  sanitiseSitePolicyState(
+    (await policyArea.get<SitePolicyState>(SITE_POLICY_KEY)) ?? emptySitePolicyState(),
+  );
 
 const saveSitePolicy = async (state: SitePolicyState): Promise<void> => {
   await policyArea.set(SITE_POLICY_KEY, state);
@@ -405,6 +416,14 @@ const capabilityDoctor = new CapabilityDoctor();
 
 const browserAdapter = new ChromeBrowserAdapter();
 const debuggerManager = new DebuggerManager();
+/**
+ * Gate 1's field observations, held for this worker generation only.
+ *
+ * Deliberately not persisted. An observation is a fact about a page a
+ * moment ago; surviving an eviction would make a stale fact durable, and
+ * `classifyField(undefined)` already answers an empty store correctly.
+ */
+const fieldObservations = new FieldObservationStore();
 const tabOwnership = new TabOwnership();
 
 const notifier = new Notifier({
@@ -956,7 +975,9 @@ toolRegistry.registerAll(
   }),
 );
 toolRegistry.registerAll(connectorRegistry.allTools());
-toolRegistry.registerAll(createBrowserTools({ adapter: browserAdapter, debuggerManager }));
+toolRegistry.registerAll(
+  createBrowserTools({ adapter: browserAdapter, debuggerManager, fieldObservations }),
+);
 toolRegistry.registerAll(createTabTools({ adapter: browserAdapter, ownership: tabOwnership }));
 toolRegistry.registerAll(
   createDebuggerTools({ adapter: browserAdapter, manager: debuggerManager }),
@@ -1723,7 +1744,7 @@ taskManager.setRuntime(
   new AgentRuntime({ registry: toolRegistry, callbacks: taskManager.createCallbacks() }),
 );
 
-const lifecycle = new LifecycleManager({ store: taskStore, debuggerManager });
+const lifecycle = new LifecycleManager({ store: taskStore, debuggerManager, fieldObservations });
 
 // ---------------------------------------------------------------------------
 // Session

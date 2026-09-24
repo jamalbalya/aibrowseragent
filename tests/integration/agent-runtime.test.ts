@@ -19,6 +19,7 @@ import {
 } from '../fixtures/fake-provider';
 import { createHarness, ScriptedPrompter, type Harness } from '../fixtures/policy-harness';
 import type { SemanticPage } from '@/content/semantic-tree';
+import { FieldObservationStore } from '@/policy/field-observation-store';
 
 const page: SemanticPage = {
   url: 'https://example.com/',
@@ -40,6 +41,7 @@ const page: SemanticPage = {
     },
   ],
   elementsTruncated: false,
+  fields: [],
   scrollY: 0,
   documentHeight: 600,
   viewportHeight: 600,
@@ -115,7 +117,11 @@ beforeEach(() => {
     return {};
   });
   harness = createHarness(
-    createBrowserTools({ adapter, debuggerManager: fakeDebugger().manager }),
+    createBrowserTools({
+      fieldObservations: new FieldObservationStore(),
+      adapter,
+      debuggerManager: fakeDebugger().manager,
+    }),
     {
       prompter: new ScriptedPrompter({ kind: 'approve_once' }),
     },
@@ -258,7 +264,11 @@ describe('multi-step execution', () => {
   it('records a blocked action separately from a failure', async () => {
     const prompter = new ScriptedPrompter({ kind: 'deny' });
     harness = createHarness(
-      createBrowserTools({ adapter, debuggerManager: fakeDebugger().manager }),
+      createBrowserTools({
+        fieldObservations: new FieldObservationStore(),
+        adapter,
+        debuggerManager: fakeDebugger().manager,
+      }),
       { prompter, mode: 'manual' },
     );
 

@@ -24,6 +24,7 @@ import {
 import { createHarness, ScriptedPrompter } from '../fixtures/policy-harness';
 import type { SemanticPage } from '@/content/semantic-tree';
 import type * as MessagingBus from '@/messaging/bus';
+import { FieldObservationStore } from '@/policy/field-observation-store';
 
 vi.mock('@/messaging/bus', async (importOriginal) => {
   const actual = await importOriginal<typeof MessagingBus>();
@@ -41,6 +42,7 @@ const page: SemanticPage = {
   textTruncated: false,
   elements: [],
   elementsTruncated: false,
+  fields: [],
   scrollY: 0,
   documentHeight: 100,
   viewportHeight: 100,
@@ -55,7 +57,11 @@ function build(script = [textResponse('Finished.')]) {
   adapter.onContent((type) => (type === 'content.readPage' ? { page } : {}));
 
   const harness = createHarness(
-    createBrowserTools({ adapter, debuggerManager: fakeDebugger().manager }),
+    createBrowserTools({
+      fieldObservations: new FieldObservationStore(),
+      adapter,
+      debuggerManager: fakeDebugger().manager,
+    }),
     {
       prompter: new ScriptedPrompter({ kind: 'approve_once' }),
     },

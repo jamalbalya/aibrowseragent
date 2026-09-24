@@ -21,6 +21,7 @@
  * context is the one adversary that matters: extension-privileged, adjacent
  * to a page, and until this wave able to call every route in the product.
  */
+import type { GrantableRiskLevel } from '@/policy/site-policy';
 import type { BrowserContext, CDPSession, Page } from '@playwright/test';
 import {
   connectProvider,
@@ -206,7 +207,10 @@ test.describe('route trust', () => {
     const tasksAfter = await send('task.list', { limit: 50 });
     expect(tasksAfter.tasks.length).toBe(tasksBefore.tasks.length);
     const { state } = await send('policy.getSitePolicy', {});
-    expect(state.rules.every((rule) => rule.maxRisk !== 'R5')).toBe(true);
+    // Compared as a plain string on purpose. `GrantableRiskLevel` cannot
+    // express R5 any more, and a comparison the compiler folds away would
+    // stop checking what actually reached storage.
+    expect(state.rules.every((rule) => (rule.maxRisk as string) !== 'R5')).toBe(true);
 
     // The refusals are recorded, and recorded as what they were. This pins
     // the classification itself rather than only the denial: a classifier
@@ -274,7 +278,10 @@ test.describe('route trust', () => {
       denied(
         await world.send('permission.respond', {
           requestId: pendingId,
-          response: { kind: 'approve_site', maxRisk: 'R5' },
+          // Deliberately a value the type no longer admits: the point of this
+          // case is what the worker does with one that arrives anyway, over a
+          // wire that carries JSON and not types.
+          response: { kind: 'approve_site', maxRisk: 'R5' as GrantableRiskLevel },
         }),
         'permission.respond',
       );
@@ -286,7 +293,10 @@ test.describe('route trust', () => {
     const { requests } = await send('permission.listPending', {});
     expect(requests.some((request) => request.id === pendingId)).toBe(true);
     const { state } = await send('policy.getSitePolicy', {});
-    expect(state.rules.every((rule) => rule.maxRisk !== 'R5')).toBe(true);
+    // Compared as a plain string on purpose. `GrantableRiskLevel` cannot
+    // express R5 any more, and a comparison the compiler folds away would
+    // stop checking what actually reached storage.
+    expect(state.rules.every((rule) => (rule.maxRisk as string) !== 'R5')).toBe(true);
 
     await send('permission.respond', { requestId: pendingId!, response: { kind: 'deny' } });
     await send('task.cancel', { taskId: task.id });
@@ -393,11 +403,14 @@ test.describe('route trust', () => {
   test('RC-8 — an answer to a prompt that is gone still changes nothing', async ({ send }) => {
     const answered = await send('permission.respond', {
       requestId: 'req_that_never_existed',
-      response: { kind: 'approve_site', maxRisk: 'R5' },
+      response: { kind: 'approve_site', maxRisk: 'R5' as GrantableRiskLevel },
     });
     expect(answered.ok).toBe(true);
     const { state } = await send('policy.getSitePolicy', {});
-    expect(state.rules.every((rule) => rule.maxRisk !== 'R5')).toBe(true);
+    // Compared as a plain string on purpose. `GrantableRiskLevel` cannot
+    // express R5 any more, and a comparison the compiler folds away would
+    // stop checking what actually reached storage.
+    expect(state.rules.every((rule) => (rule.maxRisk as string) !== 'R5')).toBe(true);
   });
 
   test('RC-9 — an export with no scope is refused', async ({ panel }) => {

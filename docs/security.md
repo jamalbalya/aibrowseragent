@@ -199,31 +199,120 @@ These hold because the call cannot be built out of the tools that ship. They
 stay true for as long as that is true, which is what the debugger allowlist and
 CSP tests exist to keep checking.
 
+### Declared, detected and enforced
+
+| Category                              | What raises it                                                                                                           |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Entering payment card or bank details | `browser.type` and `browser.set_value`, from a field signal and a value signal, either of which is sufficient on its own |
+
+The field signal is the page's own `autocomplete` token (`cc-number`,
+`cc-csc`, `cc-exp*`, `cc-name`) or a name/id naming a card, CVV, IBAN or
+account number. A page can lie about those, so it is not relied on alone. The
+value signal runs the existing card rule — issuer prefix plus a Luhn check —
+over the text the agent is about to write, and the page has no say in it at
+all. Either produces the category, and the engine denies it before permission
+mode, site policy or any standing grant is consulted.
+
+Two limits, so the row is not read as more than it is. A card field inside a
+**cross-origin iframe** is not covered, because `all_frames` is false and the
+agent cannot reach into one to type there either. A card field behind a
+**shadow root** is not covered, because the page model does not walk shadow
+DOM; such a field is also not in the model, so no handle names it.
+
 ### Declared, enforced if raised, and currently raised by nothing
 
 | Category                                                   |
 | ---------------------------------------------------------- |
 | Payments and financial transactions                        |
-| Entering payment card or government identity data          |
 | Account creation on the user's behalf                      |
 | Submitting credentials into a page that did not issue them |
 | Permanent deletion of records                              |
 | Securities trading                                         |
 
-**No tool in this build raises any of these.** Each is reachable through
-ordinary page interaction — a purchase is a click, a card number is a
-`browser.type`, a signup form is both, and "delete forever" is a button like
-any other — and nothing today tells those calls apart from any other click or
-keystroke. The engine would refuse them the instant a call arrived carrying the
-category; no call does.
+**No tool in this build raises any of these.** Each needs _action_-intent
+detection rather than field detection: knowing that a particular button
+completes a purchase, creates an account, deletes something permanently or
+places a trade. A purchase is a click, a signup form is a form, and "delete
+forever" is a button like any other; nothing in this build infers what a
+control does from what it is called. The engine would refuse them the instant a
+call arrived carrying the category; no call does.
+
+`credential_submission_to_third_party` deserves a specific note, because half
+of it now exists and half does not. The field half — recognising a password
+box — is implemented, and the destination half — comparing the owning form's
+action against the page's own site — is observed and carried to the worker. It
+is **not** claimed as closed: password entry is refused outright before the
+destination is consulted, so the third-party condition has never had to be
+correct, and a control that is never exercised is not a control that has been
+shown to work.
 
 An earlier revision of this section listed all eight together under "refused in
 every permission mode", which read as a stronger claim than the code makes. It
 is corrected here rather than left to mislead somebody deciding what is already
-protected. Closing one of these rows means adding a producer and moving it into
-the table above in the same commit; the benchmark note in
+protected. Closing one of the remaining rows means adding a producer and moving
+it into a table above in the same commit; the benchmark note in
 `architecture/CLAUDE_BENCHMARK.md` §Gap-1 records what the comparison product
 documents at these points.
+
+### Fields the agent never writes into
+
+Separate from the prohibited categories, and stricter than them: two classes of
+field are refused outright rather than confirmed.
+
+| Class                               | Signals                                                                                                 |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Password                            | `type="password"`, `autocomplete="current-password"` / `"new-password"`, or a name/id naming a password |
+| One-time code / authentication code | `autocomplete="one-time-code"`, or a name/id naming an OTP, 2FA, MFA or verification code               |
+
+A confirmation was considered and rejected. An agent that can be talked into
+typing a credential behind a prompt is an agent that can be talked into typing
+a credential; the prompt only moves who is blamed. Credential entry belongs to
+the person, or to a credential manager they chose. This build has no password
+manager integration and does not claim one.
+
+Two further classes raise the action to R3, which always confirms in every
+permission mode and can never be covered by a standing site grant:
+
+| Class                                | Signals                                                               |
+| ------------------------------------ | --------------------------------------------------------------------- |
+| National ID, passport, SSN, tax ID   | name/id naming one; no standard `autocomplete` token exists for these |
+| API key, access token, client secret | name/id naming one; the payload is also checked by the secret rules   |
+
+The national-ID signal is weak in both directions and is treated as a
+confirmation rather than a prohibition for that reason: a hard denial built on
+a name-attribute guess would refuse ordinary forms and would still miss the
+sites that name the field something else.
+
+### How a field's sensitivity reaches the policy engine
+
+The content script reports **raw attributes and no conclusion** — the literal
+`type`, `autocomplete`, `inputmode`, `maxlength`, `name`, `id`, the owning
+form's action site, and whether the element sits in a shadow root or a
+subframe. It computes no class, no risk and no verdict. There is no field a
+page could set to "this one is fine".
+
+Those observations are validated at the messaging boundary — a malformed or
+prototype-polluting payload is rejected rather than asserted into its type —
+and classified in the service worker, in `src/policy/field-sensitivity.ts`, a
+module with no `chrome.*`, no `fetch`, no storage and no clock.
+
+Three properties make the split hold rather than merely look tidy:
+
+- **Restriction only travels upward.** A class either leaves the tool's
+  declared risk alone or raises it. Nothing page-derived can lower a risk,
+  clear a prohibition or satisfy a site grant.
+- **Uncertainty is not permission.** No observation, an unrecognised control, a
+  shadow root or a subframe all resolve to `UNKNOWN`, which raises the write to
+  R2 — more restricted than an ordinary field, not less. A service worker that
+  was evicted between the page read and the write therefore confirms rather
+  than proceeds.
+- **The write is re-checked against the live element.** The worker sends the
+  sensitivity ceiling it authorised, and the content script re-observes the
+  element immediately before writing and refuses if it is now more sensitive.
+  That is the only case the worker cannot see: a page that changes a field
+  after it was read. The ceiling travels worker-to-content only, and the
+  content script can answer with a refusal or with nothing — it has no way to
+  express a permission.
 
 ---
 

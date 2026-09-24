@@ -123,6 +123,39 @@ const PAGES: Record<string, string> = {
 
   // Redirects cross-origin, to exercise origin drift.
   '/redirect': 'REDIRECT',
+
+  /**
+   * A sign-in form that changes what its fields are after they are read.
+   *
+   * The Gate 1 time-of-check/time-of-use case needs a page that is honest when
+   * inspected and dishonest afterwards, which is exactly what a hostile site
+   * would do: declare an ordinary text box, wait to be read, then turn it into
+   * a password field before anything is typed into it. `mutate()` is called
+   * from the test rather than on a timer, so the ordering is deterministic and
+   * the test is not racing the page.
+   */
+  '/shifty-form': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Sign in</title></head>
+<body>
+  <h1>Sign in</h1>
+  <form id="f" method="POST" action="/collect-local">
+    <label for="who">Account name</label>
+    <input id="who" name="who" type="text" autocomplete="username">
+    <label for="ordinary">Nickname</label>
+    <input id="ordinary" name="nickname" type="text">
+    <label for="later">Memorable word</label>
+    <input id="later" name="memorable" type="text">
+    <button id="send" type="submit">Continue</button>
+  </form>
+  <script>
+    // Turns the innocuous field into a credential field, on demand.
+    window.mutate = () => {
+      const field = document.getElementById('later');
+      field.setAttribute('type', 'password');
+      field.setAttribute('autocomplete', 'current-password');
+      return field.type;
+    };
+  </script>
+</body></html>`,
 };
 
 /**

@@ -315,12 +315,31 @@ is well-formed and is not a date. A rejected value is restored rather than left
 cleared. Bounds are enforced rather than clamped: moving a date into the allowed
 window would submit something nobody chose.
 
-PARTIAL still, and for two narrower reasons than before. The §85 A–F manual
-acceptance scenarios are unexecuted, as for every row in this file. And two
-controls remain without a dedicated tool: `<input type="file">` is handled
-through the separate user-mediated path (see P-010) rather than as a form
-control, and a `<datalist>`-backed combobox is typed into like the text input
-it is, which works but is not a distinct capability.
+Field sensitivity now reaches the policy engine (Gate 1). A write into a
+password or one-time-code field is refused outright in every permission mode; a
+card, CVV or bank-detail field produces the `payment_instrument_entry`
+prohibition, as does a Luhn-valid card number typed into a field the page
+described as ordinary; a national-ID or API-secret field raises the action to
+R3, which always confirms and can never be covered by a standing site grant. A
+field the worker knows nothing about — an evicted service worker, a stale
+handle — is R2 rather than R1, so uncertainty costs a confirmation instead of
+running silently. A positively classified ordinary field keeps its R1 baseline,
+so the usual case is unchanged.
+
+The classification happens in the worker, from raw attributes the content
+script reports without drawing any conclusion, and the write is re-checked
+against the live element immediately before it lands — which is the only way to
+catch a page that changes a field after it was read. See `docs/security.md`.
+
+PARTIAL still, and for three narrow reasons. The §85 A–F manual acceptance
+scenarios are unexecuted, as for every row in this file. Two controls remain
+without a dedicated tool: `<input type="file">` is handled through the separate
+user-mediated path (see P-010) rather than as a form control, and a
+`<datalist>`-backed combobox is typed into like the text input it is, which
+works but is not a distinct capability. And field sensitivity is not detectable
+inside a shadow root or a cross-origin iframe — neither is walked by the page
+model, and neither is reachable by the agent either, so the limit bounds what
+the agent can do as well as what it can see.
 
 **P-038 Audit trail** — One append-only stream across every task, recording
 what was proposed and what was decided. Tool executions now reach it through

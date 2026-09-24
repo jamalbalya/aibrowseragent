@@ -80,11 +80,17 @@ export type ProhibitedCategory = (typeof PROHIBITED_CATEGORIES)[number];
  * stronger claim than the code makes. The table is the claim now, a test holds
  * the documentation to it, and closing a `REQUIRES_DETECTION` row means adding
  * a producer and moving it here in the same commit.
+ *
+ * One row has since been closed that way. Gate 1 gave
+ * `payment_instrument_entry` a producer, so it moved to
+ * `DETECTED_AND_ENFORCED`. Four of the original six did not move, and the
+ * reason they did not is worth being exact about: they need *action*-intent
+ * detection — knowing that a button completes a purchase, creates an account,
+ * deletes something permanently or places a trade — and Gate 1 detects the
+ * sensitivity of a *field*, which is a different and easier problem. Nothing
+ * in this build infers what a control does from what it is called.
  */
-export const PROHIBITION_ENFORCEMENT: Record<
-  ProhibitedCategory,
-  'UNREACHABLE_BY_CONSTRUCTION' | 'REQUIRES_DETECTION'
-> = {
+export const PROHIBITION_ENFORCEMENT: Record<ProhibitedCategory, ProhibitionEnforcement> = {
   /*
    * Kept by the tool surface, not by a classifier.
    *
@@ -110,12 +116,40 @@ export const PROHIBITION_ENFORCEMENT: Record<
    * confirmation), and guessing at it here would be worse than saying so.
    */
   financial_transaction: 'REQUIRES_DETECTION',
-  payment_instrument_entry: 'REQUIRES_DETECTION',
   account_creation: 'REQUIRES_DETECTION',
   credential_submission_to_third_party: 'REQUIRES_DETECTION',
   permanent_deletion: 'REQUIRES_DETECTION',
   securities_trading: 'REQUIRES_DETECTION',
+
+  /*
+   * Declared, enforced, and raised by something real.
+   *
+   * `browser.type` and `browser.set_value` raise it from two independent
+   * signals. The field signal reads the page's own `autocomplete` tokens and
+   * name attributes, and a page can lie about those. The value signal runs the
+   * existing card rule — issuer prefix plus Luhn — over the text the agent is
+   * about to write, and a page has no say in that at all. Either one produces
+   * the category; `evaluatePolicy` denies it before mode, site policy or any
+   * grant is consulted.
+   *
+   * What this does *not* cover, stated so the row is not read as more than it
+   * is: a card number entered into a field inside a cross-origin iframe, which
+   * this build cannot reach at all, and one entered through a control behind a
+   * shadow root, which the page model does not walk.
+   */
+  payment_instrument_entry: 'DETECTED_AND_ENFORCED',
 };
+
+/**
+ * How a prohibition is kept.
+ *
+ * Three states rather than two, because "nothing can build this call" and
+ * "something detects this call and refuses it" are different guarantees with
+ * different failure modes, and collapsing them would lose exactly the
+ * distinction this table exists to make.
+ */
+export type ProhibitionEnforcement =
+  'UNREACHABLE_BY_CONSTRUCTION' | 'REQUIRES_DETECTION' | 'DETECTED_AND_ENFORCED';
 
 /** The prohibitions no tool can currently raise. Derived, so it cannot drift. */
 export const UNDETECTED_PROHIBITIONS: readonly ProhibitedCategory[] = PROHIBITED_CATEGORIES.filter(
