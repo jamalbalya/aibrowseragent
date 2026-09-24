@@ -164,9 +164,13 @@ verification and the screenshots in one sitting.
 ### 4. The upload itself
 
 - Upload `release/ai-browser-agent-0.1.0.zip`.
-- Verify the dashboard reports SHA-256
-  `2a648dc36c3a71ccdd68c8351aa527f6a57eeb77d2654af3e366dd82dc862236`, or
-  re-derive it locally with `sha256sum -c release/*.sha256` before uploading.
+- Verify the dashboard reports the SHA-256 that
+  `release/ai-browser-agent-0.1.0.zip.sha256` records for the build you are
+  uploading. Confirm that file first, from inside `release/`:
+  `cd release && sha256sum -c ai-browser-agent-0.1.0.zip.sha256`, which prints
+  `ai-browser-agent-0.1.0.zip: OK`. No digest is pinned in this checklist on
+  purpose — it is a function of the source and changes at every commit that
+  touches `src/` or `public/`.
 - Complete the permission justifications — the twelve in
   [store-listing.md](store-listing.md) are written to be pasted.
 - Complete the data-disclosure form. **Answer yes to "collects website
