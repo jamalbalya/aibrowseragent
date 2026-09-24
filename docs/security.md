@@ -178,17 +178,52 @@ The debugger is the most powerful capability in the extension.
 
 ## Hard prohibitions
 
-Refused in **every** permission mode, including Skip, and not unlockable by a
-site allowlist entry:
+Nine categories are declared in `src/policy/risk-classifier.ts`. The policy
+engine refuses any call carrying one of them in **every** permission mode
+including Skip, unlockable by no site allowlist and no user instruction.
 
-- Payments and financial transactions
-- Entering payment card or government identity details
-- Account creation on the user's behalf
-- Submitting credentials into a page that did not issue them
-- Permanent deletion of records
-- Securities trading
-- Modifying system or browser configuration files
-- Defeating CAPTCHA or other bot authorisation
+That is a statement about what the engine does with a category. Whether a
+category ever reaches it is a second question, and the honest answer differs
+between them. `PROHIBITION_ENFORCEMENT` records which is which, and
+`tests/security/prohibition-enforcement.test.ts` holds this section to it.
+
+### Kept by the tool surface
+
+| Category                                 | Why it holds                                                                                                         |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Modifying system or browser config files | No filesystem tool exists. Downloads land through Chrome's own API; nothing writes an arbitrary path                 |
+| Defeating CAPTCHA or bot authorisation   | No solver exists, and no tool accepts one                                                                            |
+| Executing model-supplied script          | The debugger allowlist holds no code-evaluation method, no tool takes a method name, and the CSP omits `unsafe-eval` |
+
+These hold because the call cannot be built out of the tools that ship. They
+stay true for as long as that is true, which is what the debugger allowlist and
+CSP tests exist to keep checking.
+
+### Declared, enforced if raised, and currently raised by nothing
+
+| Category                                                   |
+| ---------------------------------------------------------- |
+| Payments and financial transactions                        |
+| Entering payment card or government identity data          |
+| Account creation on the user's behalf                      |
+| Submitting credentials into a page that did not issue them |
+| Permanent deletion of records                              |
+| Securities trading                                         |
+
+**No tool in this build raises any of these.** Each is reachable through
+ordinary page interaction — a purchase is a click, a card number is a
+`browser.type`, a signup form is both, and "delete forever" is a button like
+any other — and nothing today tells those calls apart from any other click or
+keystroke. The engine would refuse them the instant a call arrived carrying the
+category; no call does.
+
+An earlier revision of this section listed all eight together under "refused in
+every permission mode", which read as a stronger claim than the code makes. It
+is corrected here rather than left to mislead somebody deciding what is already
+protected. Closing one of these rows means adding a producer and moving it into
+the table above in the same commit; the benchmark note in
+`architecture/CLAUDE_BENCHMARK.md` §Gap-1 records what the comparison product
+documents at these points.
 
 ---
 

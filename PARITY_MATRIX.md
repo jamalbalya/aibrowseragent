@@ -3,9 +3,14 @@
 Tracks each mandatory capability (P-001 … P-040) from the specification
 against what this repository actually contains.
 
-**This project does not claim baseline capability parity.** Most capabilities
-are not implemented. This document exists so the gap is visible rather than
-implied.
+**This project does not claim baseline capability parity.** This document
+exists so the gap is visible rather than implied.
+
+An earlier revision of this paragraph said "most capabilities are not
+implemented", which was true when it was written and is not now: thirty rows
+carry full automated evidence. What has not changed is the thing the sentence
+was guarding — §84 condition 3 is unmet repository-wide, so no row here is
+§84 PASS and the project still claims no parity.
 
 ## Parity is not the same measure as a stage
 
@@ -520,7 +525,9 @@ Not claimable until every P-001…P-040 row reaches PASS, which requires at
 minimum:
 
 1. Playwright E2E coverage, so no row reads `E2E: no`.
-2. The nine NOT-STARTED capability groups implemented and tested.
+2. The remaining NOT-STARTED capabilities implemented and tested — **two**
+   today, P-025 Plugins and P-026 MCP. This line read "nine" until the count
+   was checked against the table beneath it.
 3. ~~At least three provider adapters passing the same suite, proving P-033
    rather than asserting it.~~ **Done.** Three adapters —
    `openai-compatible`, `anthropic`, `gemini` — pass one 21-case conformance
