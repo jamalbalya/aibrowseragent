@@ -26,6 +26,7 @@ function makeTool(
     inputSchema: echoInput,
     risk: 'R0',
     executionMode: 'immediate',
+    siteAuthorization: 'none',
     sideEffects: [],
     timeoutMs: 1000,
     idempotent: true,

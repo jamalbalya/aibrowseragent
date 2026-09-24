@@ -22,6 +22,22 @@ import {
 
 const log = getLogger('permission');
 
+/**
+ * The site a standing grant is written against.
+ *
+ * One function, used by both the prompt and the write, so the site a person
+ * was shown is exactly the site that gets stored. Two derivations would
+ * eventually disagree, and the disagreement would be a grant for a site
+ * nobody was asked about.
+ */
+function grantSiteFor(input: {
+  readonly siteScopeUrl?: string;
+  readonly targetUrl?: string;
+}): string | null {
+  const url = input.siteScopeUrl ?? input.targetUrl;
+  return url ? siteForUrl(url) : null;
+}
+
 export interface PermissionRequest {
   readonly id: string;
   readonly taskId: string;
@@ -29,6 +45,15 @@ export interface PermissionRequest {
   readonly risk: RiskLevel;
   readonly reason: string;
   readonly targetUrl?: string;
+  /**
+   * The site a standing grant would be written against.
+   *
+   * Distinct from `targetUrl`, which is where a navigation is going. A page
+   * action has no destination and still has a site, and offering "always
+   * allow" only where a destination exists is what limited standing grants to
+   * navigation.
+   */
+  readonly siteScopeUrl?: string;
   readonly site: string | null;
   readonly summary: string;
   readonly createdAt: number;
@@ -79,6 +104,8 @@ export interface RequestApprovalInput {
   readonly decision: PolicyDecision;
   readonly summary: string;
   readonly targetUrl?: string;
+  /** See `PermissionRequest.siteScopeUrl`. */
+  readonly siteScopeUrl?: string;
   readonly signal?: AbortSignal;
 }
 
@@ -115,7 +142,12 @@ export class PermissionEngine {
       risk: decision.effectiveRisk,
       reason: decision.reason,
       ...(input.targetUrl === undefined ? {} : { targetUrl: input.targetUrl }),
-      site: input.targetUrl ? siteForUrl(input.targetUrl) : null,
+      ...(input.siteScopeUrl === undefined ? {} : { siteScopeUrl: input.siteScopeUrl }),
+      // The authorization scope decides which site a standing grant names. It
+      // falls back to the navigation destination only because the two
+      // coincide for the tools that have both, and because a prompt with no
+      // site simply offers no standing grant.
+      site: grantSiteFor(input),
       summary: input.summary,
       createdAt: this.now(),
       elevated: decision.code === 'EXFILTRATION_CONFIRM',
@@ -142,8 +174,8 @@ export class PermissionEngine {
       return { granted: false, response };
     }
 
-    if (response.kind === 'approve_site' && input.targetUrl) {
-      const site = siteForUrl(input.targetUrl);
+    if (response.kind === 'approve_site') {
+      const site = grantSiteFor(input);
       if (site) {
         const state = await this.options.loadSitePolicy();
         await this.options.saveSitePolicy(

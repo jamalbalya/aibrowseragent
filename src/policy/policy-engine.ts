@@ -63,6 +63,19 @@ export interface PolicyRequest {
    * model can choose.
    */
   readonly currentUrl?: string;
+  /**
+   * The site whose authorization governs this call.
+   *
+   * For a page action it is the tab's live URL, read from `chrome.tabs` by the
+   * worker; for a call that names a destination it is that destination. Never
+   * supplied by `classify`, so a model cannot choose which site's permission
+   * it is judged under.
+   *
+   * Absent means the scope could not be established, which is read below as
+   * "not established" and never as "no restriction": an absent scope consults
+   * no rule and therefore inherits no grant.
+   */
+  readonly siteScope?: string;
   /** Destination for an outbound write, if this call sends data somewhere. */
   readonly writeDestination?: string;
   readonly writePayload?: unknown;
@@ -145,6 +158,25 @@ export function evaluatePolicy(request: PolicyRequest, context: PolicyContext): 
       reason: 'This action is classified as prohibited and is never executed.',
       effectiveRisk,
     };
+  }
+
+  // 2a. Site-level block on the authorization scope.
+  //
+  //     Separate from the `targetUrl` block below, and deliberately so. A
+  //     blocked site should stop an agent *typing into a page on it*, not only
+  //     navigating to it — and until this existed only two tools named a URL,
+  //     so a block governed navigation and nothing else. Deny-side only: a
+  //     rule here can refuse a call, never permit one.
+  if (request.siteScope) {
+    const rule = findRule(context.sitePolicy, request.siteScope);
+    if (rule?.decision === 'block') {
+      return {
+        verdict: 'DENY',
+        code: 'SITE_BLOCKED',
+        reason: `${rule.site} is on the blocked-sites list.`,
+        effectiveRisk,
+      };
+    }
   }
 
   // 2. Site-level block, and origin automatability.
@@ -281,8 +313,15 @@ export function evaluatePolicy(request: PolicyRequest, context: PolicyContext): 
       if (RISK_RANK[effectiveRisk] < RISK_RANK[AUTO_APPROVE_BELOW]) {
         return allow('LOW_RISK', 'Low-risk action approved automatically in Auto mode.');
       }
-      if (request.targetUrl) {
-        const rule = findRule(context.sitePolicy, request.targetUrl);
+      // A standing grant is consulted against the call's authorization scope,
+      // which for a page action is the page it is on. Reaching this line at
+      // all means the call is below R3 and carries no prohibition, no
+      // exfiltration block, no origin drift and no unattended flag: every one
+      // of those returns above. So a grant can only ever cover the ordinary
+      // middle of the range, which is what `GrantableRiskLevel` already says.
+      const scope = request.siteScope ?? request.targetUrl;
+      if (scope) {
+        const rule = findRule(context.sitePolicy, scope);
         if (rule?.decision === 'allow' && RISK_RANK[effectiveRisk] <= RISK_RANK[rule.maxRisk]) {
           return allow(
             'SITE_ALLOWED',

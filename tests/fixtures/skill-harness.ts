@@ -14,7 +14,11 @@ import { noEgress, urlDestination } from '@/security/egress/destination';
 import { freshTaint, type TaintState } from '@/security/taint/taint-state';
 import type { PermissionMode } from '@/policy/policy-engine';
 import type { RiskLevel } from '@/policy/risk-classifier';
-import type { AgentTool, ToolExecutionResult } from '@/tools/core/tool-types';
+import type {
+  AgentTool,
+  SiteAuthorizationScope,
+  ToolExecutionResult,
+} from '@/tools/core/tool-types';
 import type { TaintSource } from '@/security/exfiltration/exfiltration-guard';
 import { SkillRegistry } from '@/skills/core/skill-registry';
 import { SkillRunner, type SkillRunContext } from '@/skills/runtime/skill-runner';
@@ -44,6 +48,8 @@ export interface FakeToolSpec {
   readonly egressTo?: string;
   /** Called before the tool returns, for cancellation races. */
   readonly onCall?: (args: Record<string, unknown>) => void;
+  /** Whose site authorization applies. Defaults to `none`, like a fake tool. */
+  readonly siteAuthorization?: SiteAuthorizationScope;
 }
 
 export interface SkillHarness {
@@ -72,6 +78,7 @@ export function fakeTool(spec: FakeToolSpec): AgentTool<z.ZodType> {
     inputSchema: schema,
     risk: spec.risk ?? 'R0',
     executionMode: 'immediate',
+    siteAuthorization: spec.siteAuthorization ?? 'none',
     sideEffects: [],
     timeoutMs: 5_000,
     idempotent: true,

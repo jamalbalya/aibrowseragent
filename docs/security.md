@@ -183,6 +183,54 @@ and before the browser acts on it is outside both checks. An action whose
 effect is delivered by the page itself — a script that navigates on click — is
 not visible to either. Neither is claimed as closed.
 
+---
+
+## Site authorization
+
+Every tool declares **whose site permission covers it**, and the worker — not
+the tool, and never the model — decides which URL that is.
+
+| Scope         | Meaning                                                | Resolved from                     |
+| ------------- | ------------------------------------------------------ | --------------------------------- |
+| `page`        | the call acts on whatever page its tab is showing      | the tab's live URL, `chrome.tabs` |
+| `destination` | the call names where it is going, and that is the site | the URL the call declares         |
+| `none`        | no page and no destination                             | nothing                           |
+
+The declaration is **required**, with no default, so a new tool cannot be added
+without answering the question. That is the whole point: this replaces a
+site-permission model that governed two tools because nothing forced the others
+to say anything. `PermissionRequest.site` was derived from a navigation
+destination, and only `browser.navigate` and `tabs.create` set one — so "always
+allow on this site" was offered for going to a site and for nothing the agent
+then did there.
+
+**The scope is not a field `classify` can set.** `classify` receives the
+model's arguments, so a scope it could return is a scope the model could
+choose. The tool states a kind; the registry resolves the URL.
+
+An unresolvable scope is **absent**, and absent consults no rule — so it
+inherits no grant. Not knowing which site a call is on is never permission to
+act on it.
+
+### What a standing grant can and cannot reach
+
+A grant covers **R0–R2 only** (`GrantableRiskLevel`), and is consulted in `auto`
+mode after every deny rule has already returned. So a grant cannot reach:
+
+- any prohibited category, or an R5 refusal — password and one-time-code entry
+  included;
+- anything at R3 or above, which is the floor downloads, sensitive identifiers
+  and authorization-granting sit at;
+- an exfiltration block;
+- the unattended boundary (P-020);
+- **origin drift** — a grant says a site is trusted, and drift says the page
+  moved. They answer different questions, and a covering grant at the
+  registrable domain does not suppress the confirmation for a move to a
+  subdomain of it. That asymmetry is deliberate and is asserted by a test.
+
+A blocked site now stops page actions too, not only navigation — the deny side
+of the same change, and a tightening with no counterpart.
+
 Never automatable, under any setting: `chrome:`, `chrome-extension:`,
 `chrome-untrusted:`, `devtools:`, `javascript:`, `data:`, `blob:`,
 `filesystem:`, `view-source:`, `about:`, `file:`, `ftp:`, and the extension
