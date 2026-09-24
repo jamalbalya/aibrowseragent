@@ -41,17 +41,18 @@ strength of the first half being done.
 Store review asks for a justification per permission, and the narrow ones are
 easy. These are the answers this repository can give from its own code:
 
-| Permission                                  | Justification                                                                                                                          |
-| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `sidePanel`                                 | The entire user interface is the side panel                                                                                            |
-| `storage`, `unlimitedStorage`               | Tasks, audit trail and settings persist locally; MV3 evicts the worker, so in-memory state is not an option                            |
-| `tabs`, `tabGroups`                         | The agent acts on tabs the user names and groups results                                                                               |
-| `scripting`                                 | Injects the content script that reads the page model                                                                                   |
-| `debugger`                                  | Reads console and network for the diagnosis capability (§85 C)                                                                         |
-| `notifications`                             | Tells the user a task needs them when the panel is closed                                                                              |
-| `activeTab`                                 | The access path that still works when a user restricts site access to "on click" — not redundant with host permissions for that reason |
-| `host_permissions: http://*/*, https://*/*` | The agent works on whatever page the user asks about                                                                                   |
-| `optional_permissions: downloads`           | Requested only when a download is attempted, granted under the user's own gesture                                                      |
+| Permission                                  | Justification                                                                                                                                     |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sidePanel`                                 | The entire user interface is the side panel                                                                                                       |
+| `storage`, `unlimitedStorage`               | Tasks, audit trail and settings persist locally; MV3 evicts the worker, so in-memory state is not an option                                       |
+| `tabs`, `tabGroups`                         | The agent acts on tabs the user names and groups results                                                                                          |
+| `scripting`                                 | Injects the content script that reads the page model                                                                                              |
+| `debugger`                                  | Reads console and network for the diagnosis capability (§85 C)                                                                                    |
+| `notifications`                             | Tells the user a task needs them when the panel is closed                                                                                         |
+| `activeTab`                                 | The access path that still works when a user restricts site access to "on click" — not redundant with host permissions for that reason            |
+| `alarms`                                    | Wakes the service worker when a scheduled task is due; one alarm for all schedules, and MV3 offers no other way to run something at a chosen time |
+| `host_permissions: http://*/*, https://*/*` | The agent works on whatever page the user asks about                                                                                              |
+| `optional_permissions: downloads`           | Requested only when a download is attempted, granted under the user's own gesture                                                                 |
 
 Two of these will attract reviewer attention, and it is better to know which
 before a reviewer raises them:
@@ -137,7 +138,7 @@ until a host is chosen.
 | Item name                 | Yes                                    | **Repository complete** — `AI Browser Agent`, from the manifest                                                    |
 | Short description         | Yes, ≤132 chars                        | **Repository complete** — 108 characters, in [store-listing.md](store-listing.md)                                  |
 | Detailed description      | Yes                                    | **Repository complete** — drafted in [store-listing.md](store-listing.md), ready to paste                          |
-| Permission justifications | Yes, one per permission                | **Repository complete** — eleven, in [store-listing.md](store-listing.md)                                          |
+| Permission justifications | Yes, one per permission                | **Repository complete** — twelve, in [store-listing.md](store-listing.md)                                          |
 | Data disclosure answers   | Yes                                    | **Repository complete** — twelve, in [store-listing.md](store-listing.md); audit in [data-flows.md](data-flows.md) |
 | Icon 128×128              | Yes                                    | Present, verified 128×128                                                                                          |
 | Icons 16, 32, 48          | For the toolbar                        | Present, each verified at its declared size                                                                        |
@@ -166,7 +167,7 @@ verification and the screenshots in one sitting.
 - Verify the dashboard reports SHA-256
   `2a648dc36c3a71ccdd68c8351aa527f6a57eeb77d2654af3e366dd82dc862236`, or
   re-derive it locally with `sha256sum -c release/*.sha256` before uploading.
-- Complete the permission justifications — the eleven in
+- Complete the permission justifications — the twelve in
   [store-listing.md](store-listing.md) are written to be pasted.
 - Complete the data-disclosure form. **Answer yes to "collects website
   content"**: page content is website content, it is transmitted to the
