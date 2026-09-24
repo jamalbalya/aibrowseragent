@@ -11,6 +11,7 @@ import {
 } from '@/policy/permission-engine';
 import { emptySitePolicyState, type SitePolicyState } from '@/policy/site-policy';
 import type { PermissionMode, PolicyContext } from '@/policy/policy-engine';
+import type { PlanApproval } from '@/policy/plan-model';
 import { ToolRegistry, type ToolRegistryOptions } from '@/tools/registry/tool-registry';
 import type { AgentTool } from '@/tools/core/tool-types';
 
@@ -64,6 +65,17 @@ export function createHarness(
      * means attended, which is what every other suite is.
      */
     resolveUnattended?: (taskId: string) => Promise<boolean>;
+    /**
+     * The plan a task is running under, the way the worker supplies it.
+     *
+     * Present so the Classic suites exercise the real dispatch path: the
+     * registry resolves the site scope from `chrome.tabs`, and the engine
+     * consults the plan against that scope. A test that built a
+     * `PolicyRequest` by hand would prove the rule and not the wiring.
+     */
+    resolvePlanApproval?: (taskId: string) => Promise<PlanApproval | undefined>;
+    /** Where "allow for this task" lands. */
+    amendPlan?: (taskId: string, site: string) => Promise<void>;
   } = {},
 ): Harness {
   const area = new SerializedStorageArea(new MemoryStorageArea());
@@ -80,13 +92,18 @@ export function createHarness(
     prompter: options.wrapPrompter ? options.wrapPrompter(prompter) : prompter,
     loadSitePolicy,
     saveSitePolicy,
+    ...(options.amendPlan === undefined ? {} : { amendPlan: options.amendPlan }),
   });
 
-  const loadPolicyContext = async (taskId: string): Promise<PolicyContext> => ({
-    mode,
-    sitePolicy: await loadSitePolicy(),
-    unattended: (await options.resolveUnattended?.(taskId)) ?? false,
-  });
+  const loadPolicyContext = async (taskId: string): Promise<PolicyContext> => {
+    const planApproval = await options.resolvePlanApproval?.(taskId);
+    return {
+      mode,
+      sitePolicy: await loadSitePolicy(),
+      unattended: (await options.resolveUnattended?.(taskId)) ?? false,
+      ...(planApproval === undefined ? {} : { planApproval }),
+    };
+  };
 
   const registry = new ToolRegistry({
     permissionEngine,

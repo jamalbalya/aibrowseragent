@@ -47,11 +47,10 @@ what the agent is permitted to do.
 
 ### Not implemented
 
-Tracked in `PARITY_MATRIX.md`: 30 PASS, 7 PARTIAL, 3 NOT-STARTED across the 40
-specification capabilities. Notably absent: scheduled tasks (P-020), plugins
-(P-025), MCP (P-026), and every connector except GitHub — so the Jira,
-Confluence, Figma and Google Sheets flows the specification's acceptance tests
-name cannot be run at all.
+Tracked in `PARITY_MATRIX.md`: 30 PASS, 8 PARTIAL, 2 NOT-STARTED across the 40
+specification capabilities. Notably absent: plugins (P-025), MCP (P-026), and
+every connector except GitHub — so the Jira, Confluence, Figma and Google
+Sheets flows the specification's acceptance tests name cannot be run at all.
 
 Web AI inference and provider-specific Web AI enablement are gated by design
 and are not implemented.

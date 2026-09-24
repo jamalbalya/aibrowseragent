@@ -2,13 +2,14 @@ import { useState } from 'react';
 import { sendToBackground } from '@/messaging/bus';
 import { ShortcutConfirm } from './ShortcutConfirm';
 import type { PanelResponse } from '@/messaging/protocol';
+import type { AuthorizationModel } from '@/policy/plan-model';
 
 type Resolution = NonNullable<PanelResponse<'shortcut.resolve'>['resolution']>;
 
 interface TaskComposerProps {
   readonly disabled: boolean;
   readonly disabledReason?: string;
-  readonly onSubmit: (objective: string) => void;
+  readonly onSubmit: (objective: string, authorizationModel: AuthorizationModel) => void;
   /** Runs what a confirmed shortcut resolved to. */
   readonly onRunShortcut: (resolution: Resolution) => Promise<void>;
 }
@@ -30,6 +31,10 @@ export function TaskComposer({
   onRunShortcut,
 }: TaskComposerProps): React.JSX.Element {
   const [value, setValue] = useState('');
+  // Per task, chosen before it starts, because it cannot change afterwards.
+  // `cowork` is the default: it asks more often, and defaulting to the shape
+  // that asks less would be choosing the wider boundary on the user's behalf.
+  const [authorizationModel, setAuthorizationModel] = useState<AuthorizationModel>('cowork');
   const [resolution, setResolution] = useState<Resolution | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -41,7 +46,7 @@ export function TaskComposer({
     if (typed.length === 0 || disabled || busy) return;
 
     if (!isShortcut) {
-      onSubmit(typed);
+      onSubmit(typed, authorizationModel);
       setValue('');
       return;
     }
@@ -124,6 +129,35 @@ export function TaskComposer({
             }
           }}
         />
+        {/* Hidden for a shortcut, which runs a saved target rather than
+            starting a planned task. */}
+        {isShortcut ? null : (
+          <fieldset className="composer__mode">
+            <legend className="composer__mode-label">How should it ask?</legend>
+            <label className="composer__mode-option">
+              <input
+                type="radio"
+                name="authorization-model"
+                value="cowork"
+                checked={authorizationModel === 'cowork'}
+                onChange={() => setAuthorizationModel('cowork')}
+              />
+              <span>Ask before each action</span>
+            </label>
+            <label className="composer__mode-option">
+              <input
+                type="radio"
+                name="authorization-model"
+                value="classic"
+                data-testid="composer-classic"
+                checked={authorizationModel === 'classic'}
+                onChange={() => setAuthorizationModel('classic')}
+              />
+              <span>Approve a plan first</span>
+            </label>
+          </fieldset>
+        )}
+
         <button
           type="submit"
           className="button button--primary composer__submit"

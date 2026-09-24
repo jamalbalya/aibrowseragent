@@ -298,6 +298,17 @@ export const PANEL_ROUTE_CLASSES: Record<PanelRequestType, RouteClass> = {
   'task.cancel': 'CLASS_B_PANEL_CONTROL_PLANE',
   'task.retry': 'CLASS_B_PANEL_CONTROL_PLANE',
 
+  // The plan routes.
+  //
+  // `plan.approve` is the one route in the product that creates a
+  // `PlanApproval`, so its class *is* the authorization check: CLASS_B admits
+  // the side-panel document and refuses every other sender, which is how a
+  // page, a content script, a connector or a model-produced message cannot
+  // approve anything. `plan.revise` creates no authorization and is CLASS_B
+  // for the ordinary reason — it mutates a task and restarts its planning.
+  'plan.approve': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'plan.revise': 'CLASS_B_PANEL_CONTROL_PLANE',
+
   // `session.get` creates a session when none exists, so it is not a read.
   'session.get': 'CLASS_B_PANEL_CONTROL_PLANE',
   'session.setPermissionMode': 'CLASS_B_PANEL_CONTROL_PLANE',

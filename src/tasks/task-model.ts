@@ -6,6 +6,7 @@ import type { AgentError } from '@/types/result';
 import type { PermissionMode } from '@/policy/policy-engine';
 import type { TaintState } from '@/security/taint/taint-state';
 import { freshTaint } from '@/security/taint/taint-state';
+import type { AuthorizationModel, PlanApproval, PlanProposal } from '@/policy/plan-model';
 
 export const TASK_STATES = [
   'QUEUED',
@@ -178,6 +179,39 @@ export interface AgentTask {
   readonly workspaceId?: string;
   readonly modelId: string;
   readonly permissionMode: PermissionMode;
+  /**
+   * Which authorization shape this task runs under.
+   *
+   * Fixed at creation, like the workspace, because a task whose authorization
+   * shape could change mid-run would be a task whose boundary depends on when
+   * you asked. Absent means `cowork`, which is what every task before this
+   * existed already did: each changing action is authorised on its own.
+   */
+  readonly authorizationModel?: AuthorizationModel;
+  /**
+   * What the model proposed, when this task plans first.
+   *
+   * Model output. It authorizes nothing, and no policy decision reads it —
+   * `planApproval` below is the only record with authority. Kept on the task
+   * so the panel can show the same proposal after the worker is evicted.
+   */
+  readonly planProposal?: PlanProposal;
+  /**
+   * What the person authorised.
+   *
+   * Task-scoped, and deliberately stored here rather than in the site policy:
+   * a plan dies with its task, so it cannot outlive the objective it was
+   * approved for, cannot be inherited by a scheduled firing (which creates its
+   * own task), and cannot be exported — the task record is not portable.
+   */
+  readonly planApproval?: PlanApproval;
+  /**
+   * What the person asked to change about the last proposal.
+   *
+   * User-authored text, carried into the next proposal request. It steers what
+   * the model suggests and nothing else: no authorization reads it.
+   */
+  readonly planRevisionNote?: string;
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly startedAt?: number;
@@ -245,6 +279,7 @@ export interface CreateTaskInput {
   readonly workspaceId?: string;
   readonly modelId: string;
   readonly permissionMode: PermissionMode;
+  readonly authorizationModel?: AuthorizationModel;
   readonly now: number;
   /**
    * Hex-encoded 32-byte HMAC key for egress evidence.
@@ -284,6 +319,9 @@ export function createTask(input: CreateTaskInput): AgentTask {
     providerId: input.providerId,
     modelId: input.modelId,
     permissionMode: input.permissionMode,
+    ...(input.authorizationModel === undefined
+      ? {}
+      : { authorizationModel: input.authorizationModel }),
     createdAt: input.now,
     updatedAt: input.now,
     plan: [],

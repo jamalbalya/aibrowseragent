@@ -134,6 +134,29 @@ export const TASK_FIELD_PORTABILITY: Readonly<Record<keyof AgentTask, FieldPorta
   // is itself NOT_PORTABLE_BY_DESIGN. Carrying the ids would produce a task
   // that appears to cite proof and cites nothing.
   evidenceIds: 'NOT_PORTABLE_BY_DESIGN',
+
+  // The Classic plan.
+  //
+  // `planApproval` is an authorization a person gave on this device, for this
+  // task, in front of this proposal. Accepting one from a file would be a file
+  // deciding which sites this installation's agent may act on without asking —
+  // the same downgrade as an imported `taintState`, from the other direction.
+  // It is SECURITY_SENSITIVE rather than merely excluded because the
+  // destination has a conservative value to start from: no plan, which
+  // authorises nothing.
+  planApproval: 'SECURITY_SENSITIVE',
+  // Model-authored text and a site list derived from it, produced against
+  // pages and an objective this installation has not seen.
+  planProposal: 'NOT_PORTABLE_BY_DESIGN',
+  // The person's own words about what to change. Free text, like a step
+  // summary, and worth no more than one.
+  planRevisionNote: 'NOT_PORTABLE_BY_DESIGN',
+  // Which authorization shape governs is this installation's decision, taken
+  // when a task is created here. A file naming `classic` on a record whose
+  // approval is refused above would produce a task that plans and a plan that
+  // authorises nothing; naming it at all is a file choosing how the agent
+  // asks.
+  authorizationModel: 'SECURITY_SENSITIVE',
 };
 
 /** Every field of the durable `Workspace` record. */

@@ -7,7 +7,7 @@
  */
 import { getLogger } from '@/logging/logger';
 import { createError, type AgentError } from '@/types/result';
-import { newTaskId } from '@/utils/ids';
+import { newId, newTaskId } from '@/utils/ids';
 import type { AgentRuntime, RuntimeCallbacks } from '@/agent/runtime/agent-runtime';
 import type { AIProviderAdapter, ModelCapabilities } from '@/providers/core/types';
 import type { TaskStore } from '@/tasks/task-store';
@@ -22,6 +22,14 @@ import {
   type TaskUsage,
 } from '@/tasks/task-model';
 import type { PermissionMode } from '@/policy/policy-engine';
+import {
+  amendPlan,
+  approvePlan,
+  MAX_REVISION_NOTE,
+  type AuthorizationModel,
+  type PlanProposal,
+} from '@/policy/plan-model';
+import { requestPlanProposal } from '@/agent/runtime/plan-turn';
 import { broadcastEvent } from '@/messaging/bus';
 import type { EvidenceReference } from '@/evidence/evidence-model';
 import { describeBlock, type PersistenceHealthStore } from '@/storage/persistence-health';
@@ -144,8 +152,19 @@ export class TaskManager {
     );
   }
 
-  /** Creates a task and starts it. Execution proceeds in the background. */
-  async create(objective: string, sessionId: string): Promise<AgentTask> {
+  /**
+   * Creates a task and starts it. Execution proceeds in the background.
+   *
+   * `authorizationModel` is fixed here and nowhere else. A task that could
+   * change shape after it started would be a task whose boundary depends on
+   * when you asked, and the approval a person gave would have been given
+   * against a different thing.
+   */
+  async create(
+    objective: string,
+    sessionId: string,
+    options: { readonly authorizationModel?: AuthorizationModel } = {},
+  ): Promise<AgentTask> {
     await this.requireHealthyPersistence('starting a task');
     const trimmed = objective.trim();
     if (trimmed.length === 0) {
@@ -167,6 +186,9 @@ export class TaskManager {
       ...(workspaceId === undefined ? {} : { workspaceId }),
       modelId: provider.modelId,
       permissionMode: await this.options.getPermissionMode(),
+      ...(options.authorizationModel === undefined
+        ? {}
+        : { authorizationModel: options.authorizationModel }),
       now: this.now(),
     });
 
@@ -255,10 +277,19 @@ export class TaskManager {
         return;
       }
 
-      const tabId = await this.options.getActiveTabId();
-
       const started = await this.transition(taskId, 'PLANNING');
       if (!started) return;
+
+      // A Classic task with no approved plan does not run. It proposes, and
+      // stops. Nothing is dispatched on this path — no tool, no page, no
+      // navigation — so the boundary a person is about to approve is the same
+      // boundary that will be in force when they approve it.
+      if (task.authorizationModel === 'classic' && task.planApproval === undefined) {
+        await this.proposePlan(task, provider.adapter, controller.signal);
+        return;
+      }
+
+      const tabId = await this.options.getActiveTabId();
 
       // The runtime records the final state and result atomically through
       // `onComplete`, so nothing needs writing here.
@@ -443,6 +474,157 @@ export class TaskManager {
   }
 
   /**
+   * Asks the model for a plan and parks the task in front of the person.
+   *
+   * The proposal is written to the durable record before the task is parked,
+   * so a worker eviction between here and the approval loses the turn rather
+   * than the proposal: the panel reads it back and shows the same plan.
+   */
+  private async proposePlan(
+    task: AgentTask,
+    provider: AIProviderAdapter,
+    signal: AbortSignal,
+  ): Promise<void> {
+    let proposal: PlanProposal;
+    try {
+      proposal = await requestPlanProposal({ task, provider, signal, now: this.now() });
+    } catch (error) {
+      if (signal.aborted) return;
+      log.error('The planning turn failed.', {
+        taskId: task.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      await this.fail(
+        task.id,
+        createError('MODEL_ERROR', 'The AI provider could not produce a plan.', {
+          userMessage:
+            'The AI model could not produce a plan for this task. Try again, or start it ' +
+            'without planning first.',
+          retryable: true,
+        }),
+      );
+      return;
+    }
+    // A task stopped mid-turn is not parked waiting for approval: pause and
+    // cancel have already moved it, and writing a proposal onto it now would
+    // show the user a plan for a run they stopped.
+    if (signal.aborted) return;
+
+    await this.options.store.updateTask(task.id, (current) => {
+      // The note asked for *this* proposal. Leaving it would steer the next
+      // one as well, and a revision the user already got would keep applying.
+      const { planRevisionNote: _spent, ...rest } = current;
+      return { ...rest, planProposal: proposal, updatedAt: this.now() };
+    });
+    await this.transition(task.id, 'WAITING_FOR_USER', 'Waiting for you to approve the plan.');
+  }
+
+  /**
+   * Turns the proposal a person is looking at into the authorization they gave.
+   *
+   * The only caller of `approvePlan`, and reachable only from the panel's
+   * CLASS_B route. Everything about that is deliberate: the model produces the
+   * proposal and cannot reach this, and the approval it produces is a separate
+   * record rather than a field flipped on the proposal.
+   *
+   * Refuses a second approval. Re-approving would mint version 1 again and
+   * silently discard every site the person added during the run.
+   */
+  async approvePlanFor(taskId: string): Promise<AgentTask> {
+    let failure: PlanFailure | null = null;
+    const updated = await this.options.store.updateTask(taskId, (task) => {
+      // A finished task cannot be authorised. The approval would never govern
+      // anything, and the record would read as though it had.
+      if (isTerminal(task.state)) {
+        failure = 'finished';
+        return task;
+      }
+      if (task.planApproval !== undefined) {
+        failure = 'already-approved';
+        return task;
+      }
+      if (task.planProposal === undefined) {
+        failure = 'no-proposal';
+        return task;
+      }
+      return {
+        ...task,
+        planApproval: approvePlan(task.planProposal, newId('plan'), this.now()),
+        updatedAt: this.now(),
+      };
+    });
+
+    if (!updated) failure ??= 'missing';
+    if (failure !== null) throw plannedTaskError(failure);
+
+    const task = updated as AgentTask;
+    this.emit(task);
+    // Resuming is what makes the approval take effect, and it goes through the
+    // ordinary resume path: nothing about an approved plan starts a task any
+    // differently from a person pressing Resume.
+    await this.resume(taskId);
+    return task;
+  }
+
+  /**
+   * Sends a proposal back to be rewritten.
+   *
+   * Creates no authorization, widens nothing and touches no security state:
+   * the proposal is dropped, the person's note is kept, and the task goes
+   * round the planning turn again. A task that is already approved is refused,
+   * because re-proposing under an authorization already given would produce a
+   * plan the person never saw approved.
+   */
+  async revisePlan(taskId: string, note?: string): Promise<AgentTask> {
+    const trimmed = note?.trim().slice(0, MAX_REVISION_NOTE) ?? '';
+    let failure: PlanFailure | null = null;
+    const updated = await this.options.store.updateTask(taskId, (task) => {
+      if (isTerminal(task.state)) {
+        failure = 'finished';
+        return task;
+      }
+      if (task.planApproval !== undefined) {
+        failure = 'already-approved';
+        return task;
+      }
+      const { planProposal: _rejected, planRevisionNote: _previous, ...rest } = task;
+      return {
+        ...rest,
+        ...(trimmed.length === 0 ? {} : { planRevisionNote: trimmed }),
+        updatedAt: this.now(),
+      };
+    });
+
+    if (!updated) failure ??= 'missing';
+    if (failure !== null) throw plannedTaskError(failure);
+
+    const task = updated as AgentTask;
+    this.emit(task);
+    await this.resume(taskId);
+    return task;
+  }
+
+  /**
+   * Adds a site to a task's approved plan.
+   *
+   * Called when a person answers a prompt with "allow for this task". It
+   * amends an existing approval and can never create one: a task that never
+   * planned has nothing to amend, and this returns having changed nothing
+   * rather than inventing an authorization the person was never shown.
+   *
+   * No `SiteRule` is written. The site is authorised for as long as this task
+   * runs and not one moment longer.
+   */
+  async addSiteToPlan(taskId: string, site: string): Promise<void> {
+    await this.options.store.updateTask(taskId, (task) => {
+      if (task.planApproval === undefined) return task;
+      const amended = amendPlan(task.planApproval, site, this.now());
+      if (amended === task.planApproval) return task;
+      return { ...task, planApproval: amended, updatedAt: this.now() };
+    });
+  }
+
+  /**
    * Parks a task while a person does something only they can do.
    *
    * Choosing a file in a picker is the first such case. There is deliberately
@@ -506,7 +688,14 @@ export class TaskManager {
       throw new TaskManagerError(createError('INVALID_ARGUMENT', 'That task no longer exists.'));
     }
     if (!isTerminal(previous.state)) await this.cancel(taskId);
-    return this.create(previous.objective, previous.sessionId);
+    // The shape carries; the authorization does not. A retry is a new task,
+    // and a plan approved for the previous one was approved against a proposal
+    // this one has not made yet.
+    return this.create(previous.objective, previous.sessionId, {
+      ...(previous.authorizationModel === undefined
+        ? {}
+        : { authorizationModel: previous.authorizationModel }),
+    });
   }
 
   private async fail(taskId: string, error: AgentError): Promise<void> {
@@ -536,6 +725,38 @@ export class TaskManager {
 
   private emit(task: AgentTask): void {
     broadcastEvent({ type: 'task.updated', task });
+  }
+}
+
+/** The ways a plan operation can arrive at a task that cannot take it. */
+type PlanFailure = 'missing' | 'no-proposal' | 'already-approved' | 'finished';
+
+function plannedTaskError(reason: PlanFailure): TaskManagerError {
+  switch (reason) {
+    case 'missing':
+      return new TaskManagerError(createError('INVALID_ARGUMENT', 'That task no longer exists.'));
+    case 'no-proposal':
+      return new TaskManagerError(
+        createError('INVALID_ARGUMENT', 'That task has no plan to approve.', {
+          userMessage: 'There is no plan waiting for approval on this task.',
+        }),
+      );
+    case 'finished':
+      return new TaskManagerError(
+        createError('INVALID_ARGUMENT', 'That task has already finished.', {
+          userMessage: 'This task has finished. Start a new one to plan again.',
+          retryable: false,
+        }),
+      );
+    case 'already-approved':
+      return new TaskManagerError(
+        createError('POLICY_BLOCKED', 'That task already has an approved plan.', {
+          userMessage:
+            'This task is already running under an approved plan. Stop it and start a new ' +
+            'one to plan again.',
+          retryable: false,
+        }),
+      );
   }
 }
 

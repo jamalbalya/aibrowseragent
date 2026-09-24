@@ -5,6 +5,15 @@ import { clampToGrantable, type GrantableRiskLevel } from '@/policy/site-policy'
 
 interface PermissionPromptProps {
   readonly request: PermissionRequest;
+  /**
+   * True when the task this prompt belongs to is running under an approved
+   * plan, which is the only case where "allow for this task" means anything.
+   *
+   * A display decision, not a security one: the worker amends a plan that
+   * exists and does nothing where there is none, so a stale `true` here
+   * approves the action and widens nothing.
+   */
+  readonly planned?: boolean;
   readonly onRespond: (requestId: string, response: PermissionResponse) => void;
 }
 
@@ -16,7 +25,11 @@ interface PermissionPromptProps {
  * (private data leaving its source) is one-off by design, because a standing
  * grant is exactly what an injected page would try to obtain.
  */
-export function PermissionPrompt({ request, onRespond }: PermissionPromptProps): React.JSX.Element {
+export function PermissionPrompt({
+  request,
+  planned,
+  onRespond,
+}: PermissionPromptProps): React.JSX.Element {
   return (
     <section className={`prompt ${request.elevated ? 'prompt--elevated' : ''}`}>
       <header className="prompt__header">
@@ -53,6 +66,20 @@ export function PermissionPrompt({ request, onRespond }: PermissionPromptProps):
         >
           Allow once
         </button>
+
+        {/* Offered before the standing grant, because it is the narrower of
+            the two and the one most answers want: this site, this task, gone
+            when the task is. */}
+        {planned && request.site && !request.elevated ? (
+          <button
+            type="button"
+            className="button"
+            data-testid="approve-task-site"
+            onClick={() => onRespond(request.id, { kind: 'approve_task' })}
+          >
+            Allow {request.site} for this task
+          </button>
+        ) : null}
 
         {request.site && !request.elevated ? (
           <button

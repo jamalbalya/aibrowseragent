@@ -231,6 +231,71 @@ mode after every deny rule has already returned. So a grant cannot reach:
 A blocked site now stops page actions too, not only navigation — the deny side
 of the same change, and a tightening with no counterpart.
 
+### The task plan: the same authorization, with a task's lifetime
+
+A task can be started in one of two shapes, chosen before it runs and fixed for
+its lifetime:
+
+| Shape     | What the person authorises                   | When they are asked  |
+| --------- | -------------------------------------------- | -------------------- |
+| `cowork`  | each changing action, on its own             | as each one comes up |
+| `classic` | a set of sites, once, before the work starts | before anything runs |
+
+`cowork` is the default and is what the product did before this existed.
+
+A Classic task **proposes and stops**. The model is asked for a plan — an
+approach in plain words, and the sites the work needs — over one provider
+request that offers it no tools at all. The task then parks in
+`WAITING_FOR_USER`. Nothing has been dispatched, so the boundary the person is
+about to approve is the boundary that will be in force when they approve it.
+
+Two objects, never one:
+
+- a **`PlanProposal`**, written by the model, with no field on it that could
+  authorise anything;
+- a **`PlanApproval`**, produced only by the panel's `plan.approve` route.
+
+There is nothing on the proposal to flip. `approvePlan` is imported by exactly
+one module, which is called from exactly one CLASS_B route — the class is the
+authorization check, because CLASS_B admits the side-panel document and refuses
+every other sender. No tool, skill, connector or content module imports the
+plan model at all, which is why "the model cannot approve its own plan" is a
+property rather than a convention.
+
+**A plan is a source of the same site authorization above, not a second
+engine.** It reaches `evaluatePolicy` at the one existing call site, alongside
+`SiteRule`, and it is consulted at one point: after every stage that can
+refuse. So a plan cannot reach a prohibited category, an R5 refusal, an R3+
+action, a blocked site, an unautomatable origin, an exfiltration verdict, an
+origin drift or the unattended boundary — each of those has already returned.
+The ordering is asserted structurally as well as case by case, so a stage added
+later stays upstream of it.
+
+What a plan _does_ do is stop an ordinary action on an approved site from
+asking again. In Manual mode that is the whole visible difference between the
+two shapes.
+
+Three narrower properties, each with a test:
+
+- **Amendment, not accumulation.** "Allow this site for this task" adds a site
+  to the plan as a _new version_, naming the one it superseded. It writes no
+  `SiteRule`, so the authorization ends when the task does. "Always allow on
+  this site" still writes one — the two answers are different authorizations
+  and the panel offers both.
+- **No inheritance.** The approval lives on the task record. A retry is a new
+  task and starts with none; a scheduled firing creates its own task and so has
+  nothing to inherit; and the engine ignores a plan on an unattended run in any
+  case.
+- **No export.** A task record does not cross the installation boundary at all,
+  and `planApproval` is classified `SECURITY_SENSITIVE` besides. An imported
+  approval would be a file deciding which sites this installation may act on
+  without asking.
+
+The approach text is shown to the person and read by nothing. The benchmark's
+"will not deviate from the plan" has a machine-checkable half — the sites — and
+a half that is not, and a field that looked enforced and was not would be worse
+than an absent one.
+
 Never automatable, under any setting: `chrome:`, `chrome-extension:`,
 `chrome-untrusted:`, `devtools:`, `javascript:`, `data:`, `blob:`,
 `filesystem:`, `view-source:`, `about:`, `file:`, `ftp:`, and the extension
@@ -427,7 +492,10 @@ Skip is not unrestricted. R3 and above always require explicit approval,
 because that is where irreversible external effects begin.
 
 A standing "always allow on this site" approval is capped at R2 and never
-covers an elevated exfiltration confirmation.
+covers an elevated exfiltration confirmation. A Classic task's approved plan
+sits at the same ceiling — and in practice the R3 floor above returns first, so
+the plan's own ceiling restates a bound rather than being the only one holding
+it.
 
 ---
 

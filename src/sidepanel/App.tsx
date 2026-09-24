@@ -5,6 +5,7 @@ import { PersistenceBanner } from './components/PersistenceBanner';
 import { TaskComposer } from './components/TaskComposer';
 import { TaskView } from './components/TaskView';
 import { PermissionPrompt } from './components/PermissionPrompt';
+import { PlanPrompt } from './components/PlanPrompt';
 import { FilePrompt } from './components/FilePrompt';
 import { SettingsView } from './components/SettingsView';
 import { WorkflowsView } from './components/WorkflowsView';
@@ -32,6 +33,24 @@ export function App(): React.JSX.Element {
     : !ready
       ? 'This AI model has not shown it can use browser actions. Check it in Settings.'
       : undefined;
+
+  // A proposal is shown only while it is still a proposal. Once the task has
+  // an approval, the plan is what the run is bounded by rather than something
+  // waiting on an answer.
+  const activeTaskId = agent.activeTask?.id ?? '';
+  const plan =
+    agent.activeTask?.state === 'WAITING_FOR_USER' &&
+    agent.activeTask.planApproval === undefined &&
+    agent.activeTask.planProposal !== undefined
+      ? agent.activeTask.planProposal
+      : null;
+
+  // Which tasks are running under an approved plan, so a prompt from one can
+  // offer "allow for this task". Read from the task records rather than from
+  // the prompt, because whether a plan exists is the worker's fact.
+  const plannedTaskIds = new Set(
+    agent.tasks.filter((task) => task.planApproval !== undefined).map((task) => task.id),
+  );
 
   if (showSettings) {
     return (
@@ -104,10 +123,21 @@ export function App(): React.JSX.Element {
         </div>
       ) : null}
 
+      {/* A plan waiting for approval comes before the action prompts: a task
+          that has not been authorised at all has no action to approve yet. */}
+      {plan ? (
+        <PlanPrompt
+          proposal={plan}
+          onApprove={() => void agent.approvePlan(activeTaskId)}
+          onRevise={(note) => void agent.revisePlan(activeTaskId, note)}
+        />
+      ) : null}
+
       {agent.permissionRequests.map((request) => (
         <PermissionPrompt
           key={request.id}
           request={request}
+          planned={plannedTaskIds.has(request.taskId)}
           onRespond={(requestId, response) => void agent.respondToPermission(requestId, response)}
         />
       ))}
@@ -164,7 +194,9 @@ export function App(): React.JSX.Element {
       <TaskComposer
         disabled={!ready}
         {...(disabledReason === undefined ? {} : { disabledReason })}
-        onSubmit={(objective) => void agent.startTask(objective)}
+        onSubmit={(objective, authorizationModel) =>
+          void agent.startTask(objective, authorizationModel)
+        }
         onRunShortcut={async (resolution) => {
           // The shortcut is spent here: what runs is the route that already
           // existed for that kind of target, so every gate applies as it
