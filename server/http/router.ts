@@ -101,6 +101,19 @@ export interface AuthRouterPaths {
   readonly emailStartPath: string;
   /** Where the extension presents that code. */
   readonly emailVerifyPath: string;
+  /**
+   * The authenticated caller's own identities.
+   *
+   * Under `/v1/me/` rather than `/v1/auth/` deliberately: everything under
+   * `/v1/auth/` is reachable without a session and exists to create one,
+   * while everything here **requires** one and acts on the account it names.
+   * The prefix is the boundary, so a route added to the wrong group looks
+   * wrong.
+   */
+  readonly identitiesPath: string;
+  readonly identityLinkStartPath: string;
+  readonly identityAttachPath: string;
+  readonly identityDetachPath: string;
 }
 
 export const DEFAULT_PATHS: AuthRouterPaths = {
@@ -112,6 +125,10 @@ export const DEFAULT_PATHS: AuthRouterPaths = {
   logoutPath: '/v1/auth/logout',
   emailStartPath: '/v1/auth/email/start',
   emailVerifyPath: '/v1/auth/email/verify',
+  identitiesPath: '/v1/me/identities',
+  identityLinkStartPath: '/v1/me/identities/start',
+  identityAttachPath: '/v1/me/identities/attach',
+  identityDetachPath: '/v1/me/identities/detach',
 };
 
 export interface AuthRouterOptions {
@@ -621,8 +638,208 @@ export function createAuthRouter(options: AuthRouterOptions): AuthRouter {
       );
     }
 
+    /* --------------------- me: list own identities --------------------- */
+    if (path === paths.identitiesPath) {
+      if (request.method !== 'GET') return errorResponse('method_not_allowed', 405);
+
+      const principal = await authenticate(request);
+      if (principal === null) return errorResponse('invalid_request', 401);
+
+      // `listIdentities` takes the principal and has no account parameter, so
+      // there is no way to ask for somebody else's — the enumeration this
+      // route would otherwise offer is unrepresentable rather than refused.
+      const rows = await backend.identities.listIdentities(principal);
+      return json(
+        {
+          identities: rows.map((row) => ({
+            id: row.id,
+            kind: row.kind,
+            // The address, for display. No subject: a Google `sub` is an
+            // opaque provider identifier that says nothing to the person and
+            // is the authority the account rests on, so it stays server-side.
+            email: row.email,
+            emailVerified: row.email_verified,
+            linkedAt: row.linked_at,
+            lastUsedAt: row.last_used_at,
+            // Whether removing it is permitted *right now*, computed here so
+            // the panel does not have to re-derive the last-identity rule and
+            // get it subtly different.
+            removable: rows.filter((other) => isVerified(other)).length > 1 && isVerified(row),
+          })),
+        },
+        200,
+      );
+    }
+
+    /* -------------------- me: start a linking flow --------------------- */
+    if (path === paths.identityLinkStartPath) {
+      if (request.method !== 'POST') return errorResponse('method_not_allowed', 405);
+
+      const principal = await authenticate(request);
+      if (principal === null) return errorResponse('invalid_request', 401);
+
+      const body = await readJsonBody(request, limit);
+      if (body === null) return errorResponse('invalid_request', 400);
+      const method = requiredString(body, 'method', 16);
+
+      if (method === 'google') {
+        if (google === null) return errorResponse('not_found', 404);
+        // The principal is passed, never an account id from the body. The
+        // challenge records the target from the session and the column is
+        // write-once.
+        const started = await google.start({ link: principal });
+        if (!started.ok) return errorResponse('server_error', 500);
+        return json(
+          {
+            method: 'google',
+            challengeId: started.value.challengeId,
+            authorizationUrl: started.value.authorizationUrl,
+          },
+          200,
+        );
+      }
+
+      if (method === 'email') {
+        if (email === null) return errorResponse('not_found', 404);
+        const address = requiredString(body, 'email', 320);
+        if (address === null) return errorResponse('invalid_request', 400);
+
+        const started = await email.start({
+          email: address,
+          source: sourceOf(request),
+          link: principal,
+        });
+        if (!started.ok) return errorResponse('server_error', 500);
+        if (started.value.kind === 'refused') {
+          log.warn('auth.http.link_start_refused', { reason: started.value.reason });
+          return refuseStart(started.value.reason, started.value.retryAfterMs);
+        }
+        return json(
+          {
+            method: 'email',
+            challengeId: started.value.challengeId,
+            expiresAt: started.value.expiresAt,
+            resendAvailableAt: started.value.resendAvailableAt,
+          },
+          200,
+        );
+      }
+
+      return errorResponse('invalid_request', 400);
+    }
+
+    /* ------------------------ me: attach identity ----------------------- */
+    if (path === paths.identityAttachPath) {
+      if (request.method !== 'POST') return errorResponse('method_not_allowed', 405);
+
+      const principal = await authenticate(request);
+      if (principal === null) return errorResponse('invalid_request', 401);
+
+      const body = await readJsonBody(request, limit);
+      if (body === null) return errorResponse('invalid_request', 400);
+
+      const challengeId = requiredString(body, 'challengeId', 64);
+      if (challengeId === null) return errorResponse('invalid_request', 400);
+
+      // **There is no identity field on this route.** No email, no subject,
+      // no kind, no `emailVerified`. The only thing a caller may send is
+      // proof material for a flow the server itself started and the server
+      // itself verifies, so "an email string is proof" is not a mistake this
+      // endpoint can be talked into — there is nowhere to put the string.
+      const code = optionalString(body, 'code', 16);
+      const exchangeCode = optionalString(body, 'exchangeCode', 256);
+      if ((code === undefined) === (exchangeCode === undefined)) {
+        // Exactly one. Both would be a caller trying to pick whichever branch
+        // the server happens to check first.
+        return errorResponse('invalid_request', 400);
+      }
+
+      const attached =
+        exchangeCode !== undefined
+          ? google === null
+            ? null
+            : await google.completeLink(principal, { challengeId, exchangeCode })
+          : email === null
+            ? null
+            : await email.completeLink(principal, {
+                challengeId,
+                code: code as string,
+                source: sourceOf(request),
+              });
+
+      if (attached === null) return errorResponse('not_found', 404);
+      if (!attached.ok) {
+        log.warn('auth.http.attach_refused', { errorCode: attached.error.code });
+        // `IDENTITY_IN_USE` is the one refusal a caller is entitled to tell
+        // apart, because it is the only one that changes what they should do
+        // next — and it names no account, says nothing about which one holds
+        // the identity, and does not reveal that any particular account
+        // exists (AUTH-28). Everything else collapses.
+        return json(
+          {
+            error: 'invalid_request',
+            reason: attached.error.code === 'IDENTITY_IN_USE' ? 'IDENTITY_IN_USE' : 'REFUSED',
+          },
+          attached.error.code === 'IDENTITY_IN_USE' ? 409 : 401,
+        );
+      }
+
+      return json(
+        {
+          identity: {
+            id: attached.value.id,
+            kind: attached.value.kind,
+            email: attached.value.email,
+          },
+        },
+        200,
+      );
+    }
+
+    /* ------------------------ me: detach identity ----------------------- */
+    if (path === paths.identityDetachPath) {
+      if (request.method !== 'POST') return errorResponse('method_not_allowed', 405);
+
+      const principal = await authenticate(request);
+      if (principal === null) return errorResponse('invalid_request', 401);
+
+      const body = await readJsonBody(request, limit);
+      if (body === null) return errorResponse('invalid_request', 400);
+      const identityId = requiredString(body, 'identityId', 64);
+      if (identityId === null) return errorResponse('invalid_request', 400);
+
+      // An identity on another account answers `NOT_FOUND`, identically to one
+      // that does not exist, so detach cannot be used to discover whose an
+      // identity is (AUTH-8).
+      const detached = await backend.identities.detachIdentity(principal, identityId);
+      if (!detached.ok) {
+        log.warn('auth.http.detach_refused', { errorCode: detached.error.code });
+        return json(
+          {
+            error: 'invalid_request',
+            // `LAST_IDENTITY` is actionable — it tells the person to add a
+            // second way in first — and reveals nothing about anybody else.
+            reason: detached.error.code === 'LAST_IDENTITY' ? 'LAST_IDENTITY' : 'NOT_FOUND',
+          },
+          detached.error.code === 'LAST_IDENTITY' ? 409 : 404,
+        );
+      }
+
+      return json({ revokedSessions: detached.value.revokedSessions }, 200);
+    }
+
     return errorResponse('not_found', 404);
   };
+}
+
+/** A row that can actually be signed in with. Mirrors `IdentityService`. */
+function isVerified(row: {
+  readonly subject: string | null;
+  readonly email: string | null;
+  readonly email_verified: boolean;
+}): boolean {
+  if (row.subject !== null) return true;
+  return row.email !== null && row.email_verified;
 }
 
 /**

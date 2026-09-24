@@ -83,6 +83,16 @@ export interface AuthBackend {
   accounts(): number;
   /** Moves the backend's clock, so an access token can be aged past expiry. */
   advance(ms: number): void;
+  /**
+   * Establishes a **second, independent** account on this backend by email.
+   *
+   * Server-side only: the browser under test is not involved, and its own
+   * session is untouched. That is the point — a test needs an identity some
+   * *other* account already holds, and the only honest way to get one is for
+   * that account to exist. Signing the browser in as somebody else would
+   * change the installation under test instead.
+   */
+  signInFresh(email: string): Promise<{ abaUserId: string }>;
   close(): Promise<void>;
 }
 
@@ -255,6 +265,22 @@ export async function startAuthBackend(): Promise<AuthBackend> {
     accounts: () => census.census().accounts,
     advance(ms: number) {
       offset += ms;
+    },
+    async signInFresh(email: string) {
+      if (backend.email === null) throw new Error('email sign-in is not wired');
+      const started = await backend.email.start({ email, source: `fixture-${email}` });
+      if (!started.ok || started.value.kind !== 'sent') {
+        throw new Error(`fixture sign-in did not start: ${JSON.stringify(started)}`);
+      }
+      const verified = await backend.email.verify({
+        challengeId: started.value.challengeId,
+        code: otps.lastCode(),
+        source: `fixture-${email}`,
+      });
+      if (!verified.ok || verified.value.kind !== 'verified') {
+        throw new Error(`fixture sign-in did not verify: ${JSON.stringify(verified)}`);
+      }
+      return { abaUserId: verified.value.session.abaUserId };
     },
     close: () =>
       new Promise<void>((resolve) => {

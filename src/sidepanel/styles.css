@@ -1147,3 +1147,58 @@ body {
   color: var(--text-muted);
   margin: 8px 0 0;
 }
+
+/**
+ * Sign-in methods.
+ *
+ * Deliberately styled as a list of *statements* rather than as connectable
+ * tiles: the AI account cards below are things you connect and disconnect,
+ * and making these look the same would invite the exact confusion the
+ * component's wording works to prevent.
+ */
+.identity-list {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.identity-list__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--border, #d8dade);
+  border-radius: 6px;
+}
+
+.identity-list__kind {
+  font-weight: 600;
+  font-size: 0.8125rem;
+}
+
+.identity-list__label {
+  flex: 1 1 8rem;
+  overflow-wrap: anywhere;
+  font-size: 0.8125rem;
+}
+
+.identity-list__note {
+  flex: 1 1 100%;
+  font-size: 0.75rem;
+  color: var(--muted, #5a5f68);
+}
+
+.identity-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.identity-add__form {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}

@@ -150,6 +150,7 @@ import { LocalIdentityStore, resolveOwner } from '@/identity/local-identity';
 import { SessionStore } from '@/identity/session-store';
 import { AuthController } from '@/identity/auth-controller';
 import { EmailSignIn } from '@/identity/email-sign-in';
+import { IdentityClient } from '@/identity/identity-client';
 import { GoogleSignIn } from '@/identity/google-sign-in';
 import { SessionClient } from '@/identity/session-client';
 import { IdentityTransport } from '@/identity/identity-transport';
@@ -2150,6 +2151,14 @@ const identityClients =
             deviceId: () => dataStoragePreference.deviceId(),
           }),
           session: new SessionClient({ transport, sessions: sessionStore }),
+          // Linking runs the same tab flow sign-in does, through the same
+          // port, with no new permission.
+          identities: new IdentityClient({
+            config: identityConfig,
+            transport,
+            sessions: sessionStore,
+            authFlow: new TabAuthFlow(chromeTabs()),
+          }),
         };
       })();
 
@@ -2158,6 +2167,7 @@ const authController = new AuthController({
   profile: identityProfile,
   google: identityClients?.google ?? null,
   email: identityClients?.email ?? null,
+  identities: identityClients?.identities ?? null,
   session: identityClients?.session ?? null,
 });
 
@@ -2201,6 +2211,33 @@ router.on('auth.refresh', async () => {
 });
 
 router.on('auth.signOut', async () => authController.signOut());
+
+/**
+ * Authentication identities.
+ *
+ * None of these touches a provider connection, a provider credential, K1
+ * material or any browser-agent record. Linking joins a way of signing in to
+ * the account that is already signed in; it does not move data and does not
+ * replace the session.
+ */
+router.on('identities.list', async () => authController.listIdentities());
+
+router.on('identities.linkGoogle', async () => {
+  const controller = new AbortController();
+  return authController.linkGoogle(controller.signal);
+});
+
+router.on('identities.startEmailLink', async (request) =>
+  authController.startEmailLink(request.email),
+);
+
+router.on('identities.completeEmailLink', async (request) =>
+  authController.completeEmailLink(request.challengeId, request.code),
+);
+
+router.on('identities.detach', async (request) =>
+  authController.unlinkIdentity(request.identityId),
+);
 
 /**
  * Re-derives the panel's connection record from the brain.

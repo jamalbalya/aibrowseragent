@@ -48,11 +48,26 @@
  */
 import { otpMatches } from './otp';
 
-/** One in-flight email sign-in. Never leaves the process. */
+/** What a challenge is for. A link and a sign-in are not interchangeable. */
+export type OtpPurpose = 'sign_in' | 'link';
+
+/** One in-flight email flow. Never leaves the process. */
 export interface OtpChallenge {
   readonly id: string;
   /** The address, already canonical per `normaliseEmail`. */
   readonly email: string;
+  /**
+   * Sign-in or link.
+   *
+   * Carried on the challenge rather than decided at redemption, because the
+   * authorization for the two differs: a sign-in creates an account, a link
+   * attaches to one that is already authenticated. A redemption path that
+   * accepted either would let a proof obtained for one purpose be spent on
+   * the other.
+   */
+  readonly purpose: OtpPurpose;
+  /** The account a link attaches to. Non-null only for a link. */
+  readonly abaUserId: string | null;
   /**
    * The code. **Read only by `attempt`**, which is why nothing else on this
    * interface returns a whole challenge to a caller.
@@ -68,6 +83,8 @@ export interface OtpChallenge {
 export interface OtpChallengeView {
   readonly id: string;
   readonly email: string;
+  readonly purpose: OtpPurpose;
+  readonly abaUserId: string | null;
   readonly issuedAt: number;
   readonly expiresAt: number;
   readonly attempts: number;
@@ -237,6 +254,8 @@ function view(challenge: OtpChallenge): OtpChallengeView {
   return {
     id: challenge.id,
     email: challenge.email,
+    purpose: challenge.purpose,
+    abaUserId: challenge.abaUserId,
     issuedAt: challenge.issuedAt,
     expiresAt: challenge.expiresAt,
     attempts: challenge.attempts,
