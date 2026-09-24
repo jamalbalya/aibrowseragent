@@ -76,6 +76,18 @@ export interface RuntimeCallbacks {
 export interface RuntimeOptions {
   readonly registry: ToolRegistry;
   readonly callbacks: RuntimeCallbacks;
+  /**
+   * Reads a tab's current URL, for origin-drift detection.
+   *
+   * The same function the registry uses, injected here as well because the
+   * two need it at different moments: the registry wants the URL at dispatch,
+   * and this loop wants it before the provider request, which is where the
+   * gap between "what the model was shown" and "what the action will hit"
+   * opens. Optional so the loop is testable without a browser; a run without
+   * it simply supplies no planned URL, and an absent planned URL disables the
+   * comparison rather than passing it.
+   */
+  readonly resolveTabUrl?: (tabId: number) => Promise<string | undefined>;
   readonly budget?: ResourceBudget;
   readonly contextBudget?: ContextBudget;
   /** Injected for deterministic tests. */
@@ -204,6 +216,15 @@ export class AgentRuntime {
       // ---- Model turn -------------------------------------------------
       this.options.callbacks.onActivity(task.id, 'Thinking');
       await this.options.callbacks.onStateChange(task.id, 'RUNNING');
+
+      // Where the page is *before* the model is asked. Taken here rather than
+      // after the response because the provider round trip is the longest
+      // window in which a page can move — a meta refresh, a delayed script
+      // redirect, or the person simply typing somewhere else. An observation
+      // taken after the response would already have the drifted URL in it and
+      // would report no drift at all, which is the failure mode worth
+      // avoiding rather than the one worth optimising.
+      const plannedUrl = await this.observeTabUrl(input.tabId);
 
       // Built fresh on every turn, so a retry re-enters the gate with the
       // taint the task has *now* rather than inheriting an earlier decision.
@@ -357,6 +378,7 @@ export class AgentRuntime {
           name: call.name,
           arguments: call.arguments,
           ...(input.tabId === undefined ? {} : { tabId: input.tabId }),
+          ...(plannedUrl === undefined ? {} : { plannedUrl }),
           taintState,
           taintSalt,
           saltEpoch,
@@ -475,6 +497,24 @@ export class AgentRuntime {
 
       messages.push({ role: 'tool', content: resultParts });
       await this.options.callbacks.onUsage(task.id, usage);
+    }
+  }
+
+  /**
+   * The tab's URL, or `undefined` when it cannot be established.
+   *
+   * Every failure is the same answer. A closed tab, a tab the extension
+   * cannot see, a browser that threw: none of them is evidence that the page
+   * stayed put, and none of them is evidence that it moved. `undefined`
+   * disables the comparison, which leaves the call to be judged on everything
+   * else rather than on a guess about an origin.
+   */
+  private async observeTabUrl(tabId: number | undefined): Promise<string | undefined> {
+    if (tabId === undefined || !this.options.resolveTabUrl) return undefined;
+    try {
+      return await this.options.resolveTabUrl(tabId);
+    } catch {
+      return undefined;
     }
   }
 
