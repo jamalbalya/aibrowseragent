@@ -2355,17 +2355,18 @@ holds none today and must continue to hold none.
 
 Current state, which is the Stage 2 outcome and must be preserved:
 
-| Permission                    | Purpose                                    | Narrower alternative | Notes                                      |
-| ----------------------------- | ------------------------------------------ | -------------------- | ------------------------------------------ |
-| `sidePanel`                   | primary UI                                 | none                 | required                                   |
-| `storage`, `unlimitedStorage` | task/session/evidence persistence          | none                 | evidence exceeds default quota             |
-| `tabs`, `tabGroups`           | tab read, grouping                         | drop grouping tools  | `tabGroups` is droppable at a feature cost |
-| `scripting`                   | inject into pre-existing tabs              | none                 | required                                   |
-| `debugger`                    | inspection tools and screenshot capture    | drop those tools     | **highest review risk**                    |
-| `notifications`               | approval prompts while the panel is closed | none                 | silent stalls otherwise                    |
-| `activeTab`                   | act on the current tab                     | none                 |                                            |
-| `host_permissions`            | `http://*/*`, `https://*/*`                | —                    | **`<all_urls>` must not return**           |
-| optional: `downloads`         | file download, requested on use            | —                    | not granted                                |
+| Permission                    | Purpose                                    | Narrower alternative | Notes                                       |
+| ----------------------------- | ------------------------------------------ | -------------------- | ------------------------------------------- |
+| `sidePanel`                   | primary UI                                 | none                 | required                                    |
+| `storage`, `unlimitedStorage` | task/session/evidence persistence          | none                 | evidence exceeds default quota              |
+| `tabs`, `tabGroups`           | tab read, grouping                         | drop grouping tools  | `tabGroups` is droppable at a feature cost  |
+| `scripting`                   | inject into pre-existing tabs              | none                 | required                                    |
+| `debugger`                    | inspection tools and screenshot capture    | drop those tools     | **highest review risk**                     |
+| `notifications`               | approval prompts while the panel is closed | none                 | silent stalls otherwise                     |
+| `activeTab`                   | act on the current tab                     | none                 |                                             |
+| `alarms`                      | wake the worker when a schedule is due     | drop scheduled tasks | added by P-020; one alarm for all schedules |
+| `host_permissions`            | `http://*/*`, `https://*/*`                | —                    | **`<all_urls>` must not return**            |
+| optional: `downloads`         | file download, requested on use            | —                    | not granted                                 |
 
 `<all_urls>` was removed in Stage 2 after it was measured to grant local file
 read; three independent checks now block its return. **It must not be
