@@ -544,3 +544,68 @@ describe('TEST-SECURITY-058 — what K1 covers, as a table', () => {
     expect(K1_PROTECTION['connection-metadata']).toBe('PLAINTEXT_BY_DESIGN');
   });
 });
+
+describe('TEST-SECURITY-058 — the routing between protected and plain', () => {
+  it('29 — a locked read throws whatever is stored, plaintext included', async () => {
+    const { K1AwareArea } = await import('@/crypto/k1-aware-area');
+    const { k1 } = stores();
+    const backing = new MemoryStorageArea();
+    const area = new K1AwareArea(backing, k1, 'credentials');
+
+    // Off: straight through, because most installations never switch K1 on
+    // and a key lookup that can only return null would fail every read.
+    expect(await area.get('conn:one')).toBeUndefined();
+    await area.set('conn:one', SECRET);
+    expect(await backing.get('conn:one')).toBe(SECRET);
+
+    await k1.initialize(PASSPHRASE);
+    await area.set('conn:one', SECRET);
+    expect(JSON.stringify(await backing.get('conn:one'))).not.toContain(SECRET);
+
+    // A plaintext record that the conversion never touched — written after
+    // protection was switched on, which is the only way a genuinely
+    // unencrypted credential and a locked installation coexist.
+    await backing.set('conn:legacy', 'sk-plaintext-left-behind');
+
+    await k1.lock();
+
+    // Both refuse. The routing decision is made on the *state*, not on what
+    // happens to be stored, so a plaintext value cannot become a fallback for
+    // a protected one that cannot be read. Returning the plaintext here would
+    // be a locked installation quietly using an unencrypted credential — and
+    // it would look exactly like a working one.
+    await expect(area.get('conn:one')).rejects.toMatchObject({ failure: 'LOCKED' });
+    await expect(area.get('conn:legacy')).rejects.toMatchObject({ failure: 'LOCKED' });
+    await expect(area.set('conn:two', SECRET)).rejects.toMatchObject({ failure: 'LOCKED' });
+  });
+
+  it('30 — a recovery state refuses reads rather than reporting them empty', async () => {
+    const { K1AwareArea } = await import('@/crypto/k1-aware-area');
+    const { k1, durable } = stores();
+    const backing = new MemoryStorageArea();
+    const area = new K1AwareArea(backing, k1, 'credentials');
+    await k1.initialize(PASSPHRASE);
+    await area.set('conn:one', SECRET);
+
+    await durable.remove('k1-key');
+
+    // `NEEDS_RECOVERY` is not "locked" — no passphrase will fix it — but it is
+    // equally not "there is no credential". Both are refusals.
+    expect((await k1.status()).state).toBe('NEEDS_RECOVERY');
+    await expect(area.get('conn:one')).rejects.toMatchObject({ failure: 'UNREADABLE' });
+  });
+
+  it('31 — removing and listing work in every state, so nothing becomes undeletable', async () => {
+    const { K1AwareArea } = await import('@/crypto/k1-aware-area');
+    const { k1 } = stores();
+    const backing = new MemoryStorageArea();
+    const area = new K1AwareArea(backing, k1, 'credentials');
+    await k1.initialize(PASSPHRASE);
+    await area.set('conn:one', SECRET);
+    await k1.lock();
+
+    expect(await area.keys()).toEqual(['conn:one']);
+    await area.remove('conn:one');
+    expect(await backing.get('conn:one')).toBeUndefined();
+  });
+});

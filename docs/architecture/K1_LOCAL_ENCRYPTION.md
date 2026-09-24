@@ -328,3 +328,73 @@ before, and none of them takes the encryption state as an input.
 - **JavaScript cannot reliably zero memory.** The key and the decrypted values
   are ordinary values subject to garbage collection at a time nothing here
   controls. This document does not claim otherwise.
+
+---
+
+## 12. The credential access matrix
+
+Traced from the code rather than from this document, and re-derived after K1
+to answer one question: did the encryption layer create a _second_ way to
+reach a credential?
+
+**It did not.** Every call that returns or accepts a plaintext credential lives
+in `background/service-worker.ts`. No other module in `src/` can reach the
+credential store at all — not the panel, not the audit trail, not evidence,
+export, import, the tool registry, workflows, shortcuts, tasks or workspaces.
+That is asserted by a test that sweeps those directories, so a path added
+anywhere else fails before anybody has to reason about what it does with it.
+
+| Component                                | Reads a credential? | Why                                                         | Output boundary                                                     |
+| ---------------------------------------- | ------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------- |
+| `resolveFromAccount`                     | **yes**             | the one runtime path that executes a user-selected provider | hands it to `adapter.connect`; returns an adapter and never the key |
+| `resolveProvider` (pre-account fallback) | **yes**             | the path an unmigrated installation runs on                 | same                                                                |
+| `accounts.connect`                       | **writes**          | stores what the user typed                                  | writes to the credential store only                                 |
+| `runLegacyMigration`                     | **yes**             | moves a key between two storage schemes                     | writes to the credential store only                                 |
+| K1 protect / unprotect                   | **yes**             | converts a record in place between plaintext and ciphertext | writes back to the same key                                         |
+| `AccountStore.remove`                    | clears only         | disconnection deletes the key                               | no read                                                             |
+| **everything else**                      | **no**              | —                                                           | —                                                                   |
+
+The credential is looked up by `connectionId`, never by provider id, on the
+account path. There is no call on that path that could be handed a provider —
+which is what makes two accounts on one provider incapable of reading each
+other.
+
+### What a decrypted credential does not grant
+
+Nothing. Holding it is not authorization: provider pinning, the egress gate,
+consent, taint and the audit trail all run exactly as they did, and none of
+them takes the encryption state or the credential as an input.
+
+---
+
+## 13. A leak this audit found and fixed
+
+A provider's HTTP error body was being stored verbatim.
+
+`readErrorBody` truncates the body to 500 characters and it becomes
+`technicalDetails` on an `AgentError`. That field is **persisted on the task
+record and read by the panel** — so what a provider chooses to put in an error
+body became something this extension stored and displayed.
+
+Providers really do echo the key. OpenAI's 401 reads `Incorrect API key
+provided: sk-…`; a self-hosted gateway may echo it in full. Measured in a
+browser before the fix: a 401 whose body contained the key produced a stored
+task record containing the key. Logs and the audit trail were already clean —
+the logger redacts — but the task record was not on that path.
+
+Two lines of defence now, and the first is the one that matters:
+
+1. **The exact credential in use is removed.** Each adapter threads the key
+   this request was made with down to `readErrorBody`, so the match is exact
+   and works for **any** format — including a gateway key like
+   `test-key-abcdefghijklmnop`, which no shape rule recognises. This is why
+   the key is passed explicitly rather than left to the redactor.
+2. **Then the shape rules run**, for a secret this call does not hold: another
+   account's key quoted by a shared gateway, a bearer token, a connection
+   string.
+
+The same treatment applies to the JSON-parse failure path, which is the other
+place a provider-authored string becomes `technicalDetails`.
+
+The failure is still reported usefully — the code, the status and the
+user-facing message are unchanged. This is not a fix by silence.

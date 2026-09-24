@@ -13,6 +13,7 @@
  * Nothing in this file performs I/O of its own: there is no `fetch`, and the
  * only way out remains the transport the registry injected.
  */
+import { redact, REDACTED } from '@/security/redaction/secret-redactor';
 import { delayFromRetryAfter } from '@/agent/recovery/retry-policy';
 import {
   ProviderRequestError,
@@ -101,17 +102,51 @@ export function toNetworkError(
 }
 
 /**
- * Reads an error body without letting the read itself become a failure.
+ * Reads an error body without letting the read itself become a failure, and
+ * without letting the provider hand us back our own credential.
  *
- * Truncated because the body is a provider diagnostic of unbounded length and
- * it ends up in `technicalDetails`, which is written to logs.
+ * Truncated because the body is a provider diagnostic of unbounded length. It
+ * ends up in `technicalDetails`, which is written to logs **and persisted on
+ * the task record, where the panel reads it** — so what a provider chooses to
+ * put in an error body becomes something this extension stores and displays.
+ *
+ * Providers really do echo the key. OpenAI's 401 reads `Incorrect API key
+ * provided: sk-…`, and a self-hosted gateway may echo it in full. Measured:
+ * before this, a 401 body containing the key produced a stored task record
+ * containing the key.
+ *
+ * Two lines of defence, and the first is the one that matters:
+ *
+ *  - **The exact credential in use is removed.** `secret` is the key this
+ *    request was actually made with, so the match is exact and works for any
+ *    format — including a custom gateway key that no pattern could recognise.
+ *  - **Then the shape-based rules run**, for a secret this call does not hold:
+ *    another account's key quoted by a shared gateway, a bearer token, a
+ *    connection string.
+ *
+ * Shape rules alone are not enough, which is why the credential is threaded
+ * down here rather than left to the redactor: `test-key-abcdefghijklmnop`
+ * matches nothing, and is a perfectly ordinary gateway key.
  */
-export async function readErrorBody(response: Response, limit = 500): Promise<string> {
+export async function readErrorBody(
+  response: Response,
+  options: { readonly limit?: number; readonly secret?: string | undefined } = {},
+): Promise<string> {
+  const limit = options.limit ?? 500;
   try {
-    return (await response.text()).slice(0, limit);
+    const raw = (await response.text()).slice(0, limit);
+    return redact(withoutSecret(raw, options.secret));
   } catch {
     return '';
   }
+}
+
+/** Exact removal of a known credential. Nothing clever: split and rejoin. */
+function withoutSecret(text: string, secret: string | undefined): string {
+  // A very short "secret" would match everywhere and redact the whole message
+  // into uselessness, so it is left to the shape rules instead.
+  if (secret === undefined || secret.length < 8) return text;
+  return text.split(secret).join(REDACTED);
 }
 
 /**
@@ -224,7 +259,9 @@ export async function parseJsonBody<T>(providerId: string, response: Response): 
         'The provider returned a body that was not JSON.',
         {
           userMessage: 'The provider replied with something this extension could not read.',
-          technicalDetails: text.slice(0, 200),
+          // Same reasoning as `readErrorBody`: this is a provider-authored
+          // string that ends up stored on a task record.
+          technicalDetails: redact(text.slice(0, 200)),
         },
       ),
     );

@@ -327,7 +327,10 @@ export class AnthropicAdapter implements AIProviderAdapter {
         managementContext(ANTHROPIC_PROVIDER_ID, config.model ?? '', this.managementSalt),
       );
       if (!response.ok) {
-        return { reachable: false, error: (await toHttpFailure(response)).error };
+        return {
+          reachable: false,
+          error: (await toHttpFailure(response, this.config?.apiKey)).error,
+        };
       }
       return { reachable: true, latencyMs: Date.now() - started };
     } catch (error) {
@@ -358,7 +361,7 @@ export class AnthropicAdapter implements AIProviderAdapter {
       throw toThrowable(toNetworkError(ANTHROPIC_PROVIDER_ID, error, '/v1/messages'));
     }
 
-    if (!response.ok) throw toThrowable(await toHttpFailure(response));
+    if (!response.ok) throw toThrowable(await toHttpFailure(response, this.config?.apiKey));
 
     const message = await parseJsonBody<WireMessageResponse>(ANTHROPIC_PROVIDER_ID, response);
     return parseMessage(message);
@@ -392,7 +395,7 @@ export class AnthropicAdapter implements AIProviderAdapter {
     }
 
     if (!response.ok) {
-      yield { type: 'error', error: (await toHttpFailure(response)).error };
+      yield { type: 'error', error: (await toHttpFailure(response, this.config?.apiKey)).error };
       return;
     }
     if (!response.body) {
@@ -881,8 +884,16 @@ function failureFromErrorBody(
   });
 }
 
-async function toHttpFailure(response: Response): Promise<ProviderFailure> {
-  const raw = await readErrorBody(response);
+/**
+ * Normalises an HTTP failure.
+ *
+ * `secret` is the credential this request was made with, threaded down so the
+ * provider's own error body cannot hand it back to us — see `readErrorBody`.
+ * Passed explicitly rather than read from ambient state, because the thing
+ * that must not emit a secret should be given it deliberately.
+ */
+async function toHttpFailure(response: Response, secret?: string): Promise<ProviderFailure> {
+  const raw = await readErrorBody(response, { ...(secret === undefined ? {} : { secret }) });
   let body: WireErrorBody = {};
   try {
     body = JSON.parse(raw) as WireErrorBody;

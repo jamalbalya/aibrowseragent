@@ -349,7 +349,10 @@ export class GeminiAdapter implements AIProviderAdapter {
         managementContext(GEMINI_PROVIDER_ID, model, this.managementSalt),
       );
       if (!response.ok) {
-        return { reachable: false, error: (await toHttpFailure(response)).error };
+        return {
+          reachable: false,
+          error: (await toHttpFailure(response, this.config?.apiKey)).error,
+        };
       }
       return { reachable: true, latencyMs: Date.now() - started };
     } catch (error) {
@@ -381,7 +384,7 @@ export class GeminiAdapter implements AIProviderAdapter {
       throw toThrowable(toNetworkError(GEMINI_PROVIDER_ID, error, ':generateContent'));
     }
 
-    if (!response.ok) throw toThrowable(await toHttpFailure(response));
+    if (!response.ok) throw toThrowable(await toHttpFailure(response, this.config?.apiKey));
 
     const body = await parseJsonBody<WireGenerateResponse>(GEMINI_PROVIDER_ID, response);
     // A 200 carrying an error object is documented and must not be read as a
@@ -424,7 +427,7 @@ export class GeminiAdapter implements AIProviderAdapter {
     }
 
     if (!response.ok) {
-      yield { type: 'error', error: (await toHttpFailure(response)).error };
+      yield { type: 'error', error: (await toHttpFailure(response, this.config?.apiKey)).error };
       return;
     }
     if (!response.body) {
@@ -865,8 +868,16 @@ function failureFromError(
   });
 }
 
-async function toHttpFailure(response: Response): Promise<ProviderFailure> {
-  const raw = await readErrorBody(response);
+/**
+ * Normalises an HTTP failure.
+ *
+ * `secret` is the credential this request was made with, threaded down so the
+ * provider's own error body cannot hand it back to us — see `readErrorBody`.
+ * Passed explicitly rather than read from ambient state, because the thing
+ * that must not emit a secret should be given it deliberately.
+ */
+async function toHttpFailure(response: Response, secret?: string): Promise<ProviderFailure> {
+  const raw = await readErrorBody(response, { ...(secret === undefined ? {} : { secret }) });
   let error: WireError = {};
   try {
     const parsed = JSON.parse(raw) as { error?: WireError };

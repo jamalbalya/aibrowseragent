@@ -253,7 +253,10 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
         managementContext(OPENAI_COMPATIBLE_PROVIDER_ID, config.model ?? '', this.managementSalt),
       );
       if (!response.ok) {
-        return { reachable: false, error: (await toHttpFailure(response)).error };
+        return {
+          reachable: false,
+          error: (await toHttpFailure(response, this.config?.apiKey)).error,
+        };
       }
       return { reachable: true, latencyMs: Date.now() - started };
     } catch (error) {
@@ -287,7 +290,7 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
     }
 
     if (!response.ok) {
-      throw toThrowable(await toHttpFailure(response));
+      throw toThrowable(await toHttpFailure(response, this.config?.apiKey));
     }
 
     const completion = await parseJsonBody<WireCompletion>(OPENAI_COMPATIBLE_PROVIDER_ID, response);
@@ -324,7 +327,7 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
     }
 
     if (!response.ok) {
-      yield { type: 'error', error: (await toHttpFailure(response)).error };
+      yield { type: 'error', error: (await toHttpFailure(response, this.config?.apiKey)).error };
       return;
     }
     if (!response.body) {
@@ -649,8 +652,16 @@ class StreamAccumulator {
  * entitled are different problems with different fixes, and reporting both as
  * "the key was rejected" sends the user to change something that was correct.
  */
-async function toHttpFailure(response: Response): Promise<ProviderFailure> {
-  const detail = await readErrorBody(response);
+/**
+ * Normalises an HTTP failure.
+ *
+ * `secret` is the credential this request was made with, threaded down so the
+ * provider's own error body cannot hand it back to us — see `readErrorBody`.
+ * Passed explicitly rather than read from ambient state, because the thing
+ * that must not emit a secret should be given it deliberately.
+ */
+async function toHttpFailure(response: Response, secret?: string): Promise<ProviderFailure> {
+  const detail = await readErrorBody(response, { ...(secret === undefined ? {} : { secret }) });
   const category = categoryForStatus(response.status);
   const retry = retryAfterMs(response);
 
