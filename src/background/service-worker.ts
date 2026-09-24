@@ -149,6 +149,7 @@ import { IdentityProfileStore } from '@/identity/identity-profile';
 import { LocalIdentityStore, resolveOwner } from '@/identity/local-identity';
 import { SessionStore } from '@/identity/session-store';
 import { AuthController } from '@/identity/auth-controller';
+import { EmailSignIn } from '@/identity/email-sign-in';
 import { GoogleSignIn } from '@/identity/google-sign-in';
 import { SessionClient } from '@/identity/session-client';
 import { IdentityTransport } from '@/identity/identity-transport';
@@ -2131,6 +2132,14 @@ const identityClients =
         // module, so no network primitive is created here.
         const transport = new IdentityTransport(identityConfig);
         return {
+          // Email sign-in is built whenever the origin is; whether the
+          // *deployment* offers it is the backend's answer, not a guess made
+          // here. An unconfigured backend answers 404 and the first request
+          // surfaces `NOT_CONFIGURED`.
+          email: new EmailSignIn({
+            transport,
+            deviceId: () => dataStoragePreference.deviceId(),
+          }),
           google: new GoogleSignIn({
             config: identityConfig,
             transport,
@@ -2148,6 +2157,7 @@ const authController = new AuthController({
   sessions: sessionStore,
   profile: identityProfile,
   google: identityClients?.google ?? null,
+  email: identityClients?.email ?? null,
   session: identityClients?.session ?? null,
 });
 
@@ -2159,6 +2169,29 @@ router.on('auth.signInWithGoogle', async () => {
   const controller = new AbortController();
   return authController.signInWithGoogle(controller.signal);
 });
+
+/**
+ * Asks the backend to mail a code.
+ *
+ * The address is the only thing the panel sends, and the challenge id is the
+ * only durable-looking thing that comes back — which is not durable at all:
+ * it is held in the panel's own state and lost when the panel closes, exactly
+ * as an in-flight sign-in should be.
+ */
+router.on('auth.startEmailSignIn', async (request) =>
+  authController.startEmailSignIn(request.email),
+);
+
+/**
+ * Presents a code.
+ *
+ * The code passes through this handler into the transport and is not written
+ * anywhere: not to `chrome.storage.local`, not to `chrome.storage.session`,
+ * not to the audit trail, and not to a log line.
+ */
+router.on('auth.verifyEmailSignIn', async (request) =>
+  authController.verifyEmailSignIn(request.challengeId, request.code),
+);
 
 router.on('auth.refresh', async () => {
   const result = await authController.refresh();

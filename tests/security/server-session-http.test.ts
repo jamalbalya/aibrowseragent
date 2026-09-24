@@ -42,7 +42,14 @@ describe('the session lifecycle over HTTP', () => {
     recorder = new RecordingLogSink();
     issuer = await createAccessTokenIssuer(KEY);
     backend = createIdentityBackend({ clock, log: createLogger(recorder.sink) });
-    router = createAuthRouter({ backend, log: createLogger(recorder.sink), accessTokens: issuer });
+    router = createAuthRouter({
+      backend,
+      log: createLogger(recorder.sink),
+      accessTokens: issuer,
+      // These suites drive the Google and session routes, which are not rate
+      // limited, so one constant source is all the limiter needs.
+      sourceOf: () => 'suite',
+    });
   });
 
   const post = (path: string, body: unknown, bearer?: string): Promise<Response> =>

@@ -50,6 +50,8 @@ export function isIdentityConfigured(): boolean {
 /** The endpoints this phase uses. Relative, so the origin stays pinned. */
 export const IDENTITY_PATHS = {
   googleStart: '/v1/auth/start',
+  emailStart: '/v1/auth/email/start',
+  emailVerify: '/v1/auth/email/verify',
   exchange: '/v1/auth/exchange',
   refresh: '/v1/auth/refresh',
   logout: '/v1/auth/logout',

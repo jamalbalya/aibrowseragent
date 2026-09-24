@@ -1,5 +1,5 @@
 /**
- * The HTTP surface for authentication. Six routes and nothing else.
+ * The HTTP surface for authentication. Eight routes and nothing else.
  *
  * Phase 1 deliberately shipped no transport, because a routing layer with no
  * endpoint behind it is scaffolding. There is an endpoint behind it now, so
@@ -97,6 +97,10 @@ export interface AuthRouterPaths {
   readonly refreshPath: string;
   /** Where a session revokes itself. */
   readonly logoutPath: string;
+  /** Where the extension asks for a one-time code by email. */
+  readonly emailStartPath: string;
+  /** Where the extension presents that code. */
+  readonly emailVerifyPath: string;
 }
 
 export const DEFAULT_PATHS: AuthRouterPaths = {
@@ -106,6 +110,8 @@ export const DEFAULT_PATHS: AuthRouterPaths = {
   exchangePath: '/v1/auth/exchange',
   refreshPath: '/v1/auth/refresh',
   logoutPath: '/v1/auth/logout',
+  emailStartPath: '/v1/auth/email/start',
+  emailVerifyPath: '/v1/auth/email/verify',
 };
 
 export interface AuthRouterOptions {
@@ -120,6 +126,26 @@ export interface AuthRouterOptions {
    * place in the transport that holds the means to do it.
    */
   readonly accessTokens: AccessTokenIssuer;
+  /**
+   * How this deployment tells one caller from another, for rate limiting.
+   *
+   * **Required, and required even for a deployment with no email sign-in.**
+   * The alternative was an optional field, and an optional field is one a
+   * deployment forgets: email routes would then ship with every caller
+   * sharing a single counter, which is either no protection or a global
+   * denial of service, and nothing would have failed to make that visible.
+   * A required parameter makes it a decision somebody took.
+   *
+   * What it should return is whatever the deployment genuinely knows — a peer
+   * address, a proxy-supplied client address it trusts, a tenant id. It is
+   * used for counting and for nothing else: it is never stored, never logged,
+   * never compared against an account, and authorises nothing, so a wrong
+   * value weakens a limit and cannot grant access.
+   *
+   * A deployment that truly cannot distinguish callers returns a constant and
+   * accepts one shared bucket. That is a weaker limit, taken knowingly.
+   */
+  readonly sourceOf: (request: Request) => string;
   readonly paths?: AuthRouterPaths;
   /**
    * Cap on a request body, in bytes.
@@ -157,7 +183,15 @@ const SAFE_HEADERS: Readonly<Record<string, string>> = {
  * another account, or which check failed. Telling an attacker which step
  * rejected them tells them what to change.
  */
-type ErrorCode = 'invalid_request' | 'not_found' | 'method_not_allowed' | 'server_error';
+type ErrorCode =
+  | 'invalid_request'
+  | 'not_found'
+  | 'method_not_allowed'
+  | 'server_error'
+  /** Too many requests for this address or this caller. Carries a retry hint. */
+  | 'rate_limited'
+  /** A code could not be sent, or the server is at capacity. Try again later. */
+  | 'unavailable';
 
 function json(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -261,7 +295,7 @@ export type AuthRouter = (request: Request) => Promise<Response>;
 export function createAuthRouter(options: AuthRouterOptions): AuthRouter {
   const paths = options.paths ?? DEFAULT_PATHS;
   const limit = options.maxBodyBytes ?? MAX_BODY_BYTES;
-  const { backend, log, accessTokens } = options;
+  const { backend, log, accessTokens, sourceOf } = options;
 
   /**
    * The body every session-issuing route returns.
@@ -337,6 +371,10 @@ export function createAuthRouter(options: AuthRouterOptions): AuthRouter {
     // depends on it is absent rather than failing — a 404 says the same thing
     // to everyone, which is what an unconfigured feature should say.
     const google = backend.google;
+    // The same rule for email: a deployment with no mail transport has no
+    // email routes, rather than routes that accept a request and then cannot
+    // send anything.
+    const email = backend.email;
 
     /* ------------------------------ start ------------------------------ */
     if (path === paths.startPath) {
@@ -491,8 +529,146 @@ export function createAuthRouter(options: AuthRouterOptions): AuthRouter {
       return json({ ok: true }, 200);
     }
 
+    /* -------------------------- email: start --------------------------- */
+    if (path === paths.emailStartPath) {
+      if (request.method !== 'POST') return errorResponse('method_not_allowed', 405);
+      if (email === null) return errorResponse('not_found', 404);
+
+      const body = await readJsonBody(request, limit);
+      if (body === null) return errorResponse('invalid_request', 400);
+
+      // 320 rather than the default 512: the service refuses anything over
+      // 254, and a shorter bound here means an oversized value is refused
+      // before it is read as a field at all.
+      const address = requiredString(body, 'email', 320);
+      if (address === null) return errorResponse('invalid_request', 400);
+
+      const started = await email.start({ email: address, source: sourceOf(request) });
+      if (!started.ok) {
+        log.warn('auth.http.email_start_failed', { errorCode: started.error.code });
+        return errorResponse('server_error', 500);
+      }
+
+      if (started.value.kind === 'refused') {
+        log.warn('auth.http.email_start_refused', { reason: started.value.reason });
+        return refuseStart(started.value.reason, started.value.retryAfterMs);
+      }
+
+      // The same body whether or not this address has ever been seen, because
+      // the service never looked. The code is not in it, and no field here
+      // could carry one.
+      return json(
+        {
+          challengeId: started.value.challengeId,
+          expiresAt: started.value.expiresAt,
+          resendAvailableAt: started.value.resendAvailableAt,
+        },
+        200,
+      );
+    }
+
+    /* -------------------------- email: verify -------------------------- */
+    if (path === paths.emailVerifyPath) {
+      if (request.method !== 'POST') return errorResponse('method_not_allowed', 405);
+      if (email === null) return errorResponse('not_found', 404);
+
+      const body = await readJsonBody(request, limit);
+      if (body === null) return errorResponse('invalid_request', 400);
+
+      const challengeId = requiredString(body, 'challengeId', 64);
+      // 16 rather than 6: the service decides what a code looks like, and a
+      // transport that pre-judged it would be a second place the rule lives.
+      const code = requiredString(body, 'code', 16);
+      if (challengeId === null || code === null) return errorResponse('invalid_request', 400);
+      const deviceId = optionalString(body, 'deviceId', 64);
+
+      const verified = await email.verify({
+        challengeId,
+        code,
+        source: sourceOf(request),
+        ...(deviceId === undefined ? {} : { deviceId }),
+      });
+      if (!verified.ok) {
+        log.warn('auth.http.email_verify_failed', { errorCode: verified.error.code });
+        return errorResponse('server_error', 500);
+      }
+
+      if (verified.value.kind === 'refused') {
+        log.warn('auth.http.email_verify_refused', { reason: verified.value.reason });
+        if (verified.value.reason === 'RATE_LIMITED') {
+          return rateLimited(verified.value.retryAfterMs);
+        }
+        // 401 with a reason that describes **this caller's own challenge** and
+        // nothing else. Whether an account exists, and whether an address is
+        // already held elsewhere, are both folded into `UNAVAILABLE`.
+        return json(
+          {
+            error: 'invalid_request',
+            reason: verified.value.reason,
+            remainingAttempts: verified.value.remainingAttempts,
+          },
+          401,
+        );
+      }
+
+      return json(
+        {
+          ...(await sessionBody(verified.value.session)),
+          deviceRegistered: verified.value.deviceRegistered,
+          email: verified.value.email,
+        },
+        200,
+      );
+    }
+
     return errorResponse('not_found', 404);
   };
+}
+
+/**
+ * The refusal shapes for `email/start`.
+ *
+ * A malformed address is a 400 and says so, because the caller already knows
+ * what they typed and nothing about any account is revealed by telling them
+ * it is not deliverable. Everything else is either a limit or an outage.
+ */
+function refuseStart(
+  reason: 'INVALID_EMAIL' | 'RATE_LIMITED' | 'DELIVERY_FAILED' | 'BUSY',
+  retryAfterMs: number | null,
+): Response {
+  switch (reason) {
+    case 'INVALID_EMAIL':
+      return errorResponse('invalid_request', 400);
+    case 'RATE_LIMITED':
+      return rateLimited(retryAfterMs);
+    case 'DELIVERY_FAILED':
+      // 502: this server is fine and the thing it depends on is not. Never
+      // 200, which would leave a person waiting for a message that is not
+      // coming.
+      return errorResponse('unavailable', 502);
+    case 'BUSY':
+      return errorResponse('unavailable', 503);
+  }
+}
+
+/**
+ * 429, with the wait in the body and in the header.
+ *
+ * `Retry-After` is in whole seconds by the specification, rounded up so a
+ * client that honours it never retries early. The body carries milliseconds
+ * because the panel renders a countdown and a one-second granularity makes it
+ * stutter.
+ */
+function rateLimited(retryAfterMs: number | null): Response {
+  const ms = retryAfterMs ?? 0;
+  return new Response(JSON.stringify({ error: 'rate_limited', retryAfterMs: ms }), {
+    status: 429,
+    headers: {
+      ...SAFE_HEADERS,
+      'content-type': 'application/json; charset=utf-8',
+      'retry-after': String(Math.ceil(ms / 1000)),
+    },
+  });
 }
 
 /**

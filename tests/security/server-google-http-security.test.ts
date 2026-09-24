@@ -75,7 +75,14 @@ describe('attacking Google sign-in over HTTP', () => {
         tokens,
       },
     });
-    router = createAuthRouter({ backend, log: createLogger(recorder.sink), accessTokens: issuer });
+    router = createAuthRouter({
+      backend,
+      log: createLogger(recorder.sink),
+      accessTokens: issuer,
+      // These suites drive the Google and session routes, which are not rate
+      // limited, so one constant source is all the limiter needs.
+      sourceOf: () => 'suite',
+    });
   });
 
   const post = (path: string, body: unknown): Promise<Response> =>
@@ -275,6 +282,7 @@ describe('attacking Google sign-in over HTTP', () => {
       },
     });
     const forgedRouter = createAuthRouter({
+      sourceOf: () => 'suite',
       backend: forged,
       log: createLogger(recorder.sink),
       accessTokens: issuer,
