@@ -47,12 +47,19 @@ digest. Otherwise it identifies the build run rather than the code, which is
 the opposite of what recording it is for.
 
 Two clean builds of the same commit, each deleting `dist/` first, produced
-byte-identical archives:
+byte-identical archives. Measured at commit `f7e09e6` (2026-09-22):
 
 ```text
 2a648dc36c3a71ccdd68c8351aa527f6a57eeb77d2654af3e366dd82dc862236
 2a648dc36c3a71ccdd68c8351aa527f6a57eeb77d2654af3e366dd82dc862236
 ```
+
+**That digest is the measurement, not the current artifact.** The archive is a
+function of the source, so every commit that changes `src/` or `public/`
+produces a different one — which is the property being demonstrated, not a
+defect in it. What the two lines establish is that repeating the build does
+not change the bytes. For the digest of the artifact you are about to ship,
+see [The artifact you are shipping](#the-artifact-you-are-shipping) below.
 
 That did not happen by itself. An ordinary ZIP stores a modification time per
 entry and takes whatever order the filesystem returned, so two builds of
@@ -108,19 +115,45 @@ establishes cross-machine reproducibility, and it is not claimed. What is
 established is that this repository's own packaging contributes no variance,
 so a digest mismatch points at the toolchain rather than at the packer.
 
-## The current artifact
+## The artifact you are shipping
 
 Produced from `dist/` after `npm run build:release`:
 
-|                  |                                                                    |
-| ---------------- | ------------------------------------------------------------------ |
-| File             | `ai-browser-agent-0.1.0.zip`                                       |
-| SHA-256          | `2a648dc36c3a71ccdd68c8351aa527f6a57eeb77d2654af3e366dd82dc862236` |
-| Size             | 208,798 bytes compressed, 698,629 uncompressed                     |
-| Entries          | 12                                                                 |
-| Manifest version | 3                                                                  |
+|                  |                                                  |
+| ---------------- | ------------------------------------------------ |
+| File             | `release/ai-browser-agent-0.1.0.zip`             |
+| SHA-256          | read `release/ai-browser-agent-0.1.0.zip.sha256` |
+| Size and entries | read `release/ai-browser-agent-0.1.0.zip.json`   |
+| Manifest version | 3, enforced by `validate-package.mjs`            |
 
-Twelve files, and no thirteenth:
+**No digest is written into this document any more, and that is the fix for a
+defect this repository has had three times.** The digest is a function of the
+source tree, so it changes with every commit that touches `src/` or `public/`.
+Pinning it in prose means the prose is true only until the next commit, and
+keeping it true means remembering to re-run the packager and hand-edit three
+documents in step. That was tried: `4c1ed7b9…` was replaced by `8ac43891…`
+(commit `f01ec29`, titled "Record the new release digest: the previous one no
+longer builds"), which was replaced by `2a648dc3…`. It then went stale again
+across twenty further commits, which is how it was found.
+
+`scripts/package-release.mjs` already writes the answer twice, mechanically,
+every time it runs:
+
+```bash
+npm run release
+cd release && sha256sum -c ai-browser-agent-0.1.0.zip.sha256
+# ai-browser-agent-0.1.0.zip: OK
+```
+
+`sha256sum -c` must run from inside `release/`, because the `.sha256` file
+records a bare filename in the format the tool reads. `release/<name>.json`
+carries the same digest, the byte count and every entry, for anything that
+wants to read it rather than eyeball it.
+
+The file list below is from the `f7e09e6` measurement and is kept because the
+shape is the claim — twelve entries, and what each one is. The names carry
+content hashes and the sizes move, so read `release/<name>.json` for the
+build in front of you:
 
 ```text
 assets/sidepanel-Dp7WyO9m.css      13,177

@@ -16,17 +16,26 @@ citations themselves are checked by `scripts/check-acceptance.mjs`, which runs
 in `scripts/verify.sh` and in CI, so a citation cannot survive the test it
 names being renamed or deleted.
 
+**This is a dated execution record, like every other entry in this file. It is
+not a current count and is not updated in place.**
+
 |                                |                                                                                                |
 | ------------------------------ | ---------------------------------------------------------------------------------------------- |
-| Commit                         | the commit that introduced this directory — see `git log` for this file                        |
+| Commit                         | `492a66e`, 2026-09-22 — the commit that introduced this directory                              |
 | Unit, integration and security | 2119 tests in 79 files, all passing                                                            |
 | Real Chromium (Playwright)     | 189 tests, all passing                                                                         |
 | Chromium                       | the Playwright-managed build at `/opt/pw-browsers/chromium` locally, and the build CI installs |
 | Command                        | `./scripts/verify.sh --e2e`                                                                    |
 
-This table is a statement about the suite as a whole. It is deliberately not a
-per-item result: an item is `AUTOMATED` because named tests establish it, and
-those tests are part of the run above.
+Later waves added tests, so the suite is larger now than the figures above.
+Those figures are left exactly as recorded, because rewriting a result to
+match a later run would destroy the thing that makes it evidence. For the
+count at any given commit, run `npm run verify` there, or read the CI run for
+it — that is the current number, and this table is not.
+
+This table is a statement about the suite as a whole at that commit. It is
+deliberately not a per-item result: an item is `AUTOMATED` because named tests
+establish it, and those tests are part of the run above.
 
 ---
 

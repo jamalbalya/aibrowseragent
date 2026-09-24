@@ -113,19 +113,30 @@ the ZIP and verifies the packing is deterministic.
 **12. Verify the checksum — YOU, one command**
 
 ```bash
-sha256sum -c release/ai-browser-agent-0.1.0.zip.sha256
+cd release && sha256sum -c ai-browser-agent-0.1.0.zip.sha256
 ```
 
 Expect:
 
 ```text
-2a648dc36c3a71ccdd68c8351aa527f6a57eeb77d2654af3e366dd82dc862236
+ai-browser-agent-0.1.0.zip: OK
 ```
 
-Two clean builds of commit `a3da142` produce byte-identical archives on the
-same toolchain (Node v22.22.2). A different Node or OS may legitimately
-differ — vite's minifier is not promised reproducible across versions — so
-treat a mismatch as a toolchain question, not necessarily tampering.
+Run it from inside `release/`: the `.sha256` file records a bare filename, so
+from the repository root the tool looks for the ZIP in the wrong place and
+reports `FAILED open or read`.
+
+This checks the ZIP against the digest the packager recorded for **this**
+build, which is what you want — the digest is a function of the source, so it
+differs at every commit that changes `src/` or `public/`. There is deliberately
+no digest written here to compare against by eye; see
+[README.md](README.md#the-artifact-you-are-shipping) for why.
+
+Two clean builds of the same commit produce byte-identical archives on the
+same toolchain (Node v22.22.2), which is what makes the recorded digest worth
+having. A different Node or OS may legitimately differ — vite's minifier is
+not promised reproducible across versions — so treat a `FAILED` on a _re-built_
+archive as a toolchain question, not necessarily tampering.
 
 ---
 
@@ -187,9 +198,9 @@ A listing that installs but does not work is worse than no listing.
 **24. Verify the installed version matches what you shipped — YOU**
 Confirm the installed version reads `0.1.0` and that its behaviour matches the
 build you tested. Chrome re-signs the package, so the installed CRX will not
-hash to `2a648dc3…` — that digest identifies **what you uploaded**, not what
-Chrome distributes. Compare the version and the manifest contents, not the
-archive hash.
+hash to the digest in `release/ai-browser-agent-0.1.0.zip.sha256` — that digest
+identifies **what you uploaded**, not what Chrome distributes. Compare the
+version and the manifest contents, not the archive hash.
 
 ---
 
