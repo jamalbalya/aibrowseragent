@@ -17,16 +17,30 @@ import type { AgentTool } from '@/tools/core/tool-types';
 
 export class ScriptedPrompter implements PermissionPrompter {
   readonly seen: PermissionRequest[] = [];
+  private decide: ((request: PermissionRequest) => PermissionResponse) | null = null;
 
   constructor(private response: PermissionResponse = { kind: 'approve_once' }) {}
 
   setResponse(response: PermissionResponse): void {
     this.response = response;
+    this.decide = null;
+  }
+
+  /**
+   * Answers each prompt on its own terms.
+   *
+   * For the cases where "approve this one and refuse that one" is the thing
+   * being tested — a workflow whose second step is declined has to leave the
+   * first step's effect and the third step unrun, and a single blanket answer
+   * cannot express that.
+   */
+  setDecider(decide: (request: PermissionRequest) => PermissionResponse): void {
+    this.decide = decide;
   }
 
   prompt(request: PermissionRequest): Promise<PermissionResponse> {
     this.seen.push(request);
-    return Promise.resolve(this.response);
+    return Promise.resolve(this.decide ? this.decide(request) : this.response);
   }
 }
 
@@ -38,6 +52,15 @@ export interface Harness {
   /** Seeds a rule the way the product would have written one. */
   saveSitePolicy(state: SitePolicyState): Promise<void>;
   setMode(mode: PermissionMode): void;
+  /**
+   * The mode in force right now.
+   *
+   * Production reads the mode from settings on every dispatch rather than from
+   * anything a run carries, so a fixture that stamped a mode captured at
+   * construction would be recording a different fact from the one the engine
+   * enforces.
+   */
+  getMode(): PermissionMode;
 }
 
 export function createHarness(
@@ -125,5 +148,6 @@ export function createHarness(
     setMode: (next) => {
       mode = next;
     },
+    getMode: () => mode,
   };
 }

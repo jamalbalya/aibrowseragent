@@ -71,16 +71,36 @@ A task whose security context is `UNKNOWN` has nothing said about it, so
 nothing from it is stored at all: the step is dropped rather than recorded with
 values nobody can vouch for.
 
-| Captured value                                | Stored as                       |
-| --------------------------------------------- | ------------------------------- |
-| A URL a clean task navigated to               | a literal                       |
-| A `submit` flag, an element handle            | a literal — structure, not data |
-| Anything credential-shaped, at any provenance | a slot, asked for at replay     |
-| A long value from a task that had read a page | a slot                          |
-| Anything from a task with unknown provenance  | nothing; the step is dropped    |
+| Captured value                                     | Stored as                       |
+| -------------------------------------------------- | ------------------------------- |
+| A URL a clean task navigated to                    | a literal                       |
+| A `submit` flag, an element handle                 | a literal — structure, not data |
+| A short list of options or ids, element by element | a literal                       |
+| Anything credential-shaped, at any provenance      | a slot, asked for at replay     |
+| A long value from a task that had read a page      | a slot                          |
+| A list that cannot be stored                       | nothing; the step is dropped    |
+| Anything from a task with unknown provenance       | nothing; the step is dropped    |
 
 A slot's description says what to supply. It never quotes what was captured,
 because the captured value is the thing that must not reach disk.
+
+### Why a list is either stored or dropped, and never asked for
+
+A slot supplies one scalar: `SkillInputType` is `string | number | boolean` and
+nothing coerces a scalar into a list. So an argument captured as a list has two
+honest outcomes and not three. Either every element passes the same test a lone
+value would — short, no whitespace, no scheme, no address, and the list itself
+bounded — in which case it is kept as written; or it cannot be stored, in which
+case the step is dropped, the recording says so in position, and it refuses to
+replay.
+
+The third outcome, turning it into a slot, was what the recorder did until
+Wave 5, and it is the interesting kind of wrong: the step looked complete in the
+review surface, the workflow reported no gaps, and the replayed call failed the
+tool's own schema every single time. A multi-select recording could never run,
+and nothing said why. Recording reads the page first, so a recording task is
+almost always tainted, which is the branch that had no list case — the defect
+applied to essentially every multi-select and tab-group recording ever made.
 
 ## Element bindings and provenance
 
@@ -293,7 +313,28 @@ outcome. Never by its steps, its arguments or anything they produced.
 ## Scope
 
 Recording and replay cover navigation, page reads, element interactions, and
-tab and connector steps.
+tab and connector steps. Every interaction tool this build ships is recorded
+and replayed against a real browser: a click, a checkbox, a radio group, a
+single-select dropdown, a multi-select listbox, the structured inputs of P-006,
+and a text field that submits.
+
+### What is left
+
+Two things, both named rather than implied:
+
+- **A multi-connector workflow.** Specification §44 names a reference workflow
+  spanning four services. None of those connectors exists (see P-023), so the
+  workflow cannot be recorded against anything real. This is the only remaining
+  item that is blocked externally rather than by effort.
+- **The §85 A–F manual acceptance scenarios**, which are unmet for every
+  capability in this repository, not only this one.
+
+And one thing that is a stated position rather than a gap: the risk a review
+surface shows for a stored recording is the maximum of its tools' _declared_
+risks. That is a floor. An escalation that depends on the arguments — a form
+submit, a field that has become sensitive — can only be computed against a live
+page, so it appears when the step runs and not before. The floor therefore
+understates a review screen and never an authorization.
 
 P-022 is recording and replay, and nothing else. It does not add Web AI
 inference, provider-site automation, MCP, plugins, remote execution, a

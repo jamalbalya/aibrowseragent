@@ -283,6 +283,7 @@ conventions to follow when adding a tool, a provider, or a connector.
 | [docs/testing.md](docs/testing.md)                                                                             | Test strategy and what each suite proves             |
 | [docs/provider-architecture.md](docs/provider-architecture.md)                                                 | Adding a provider adapter                            |
 | [docs/tool-architecture.md](docs/tool-architecture.md)                                                         | Adding a tool                                        |
+| [docs/architecture/PLUGIN_TRUST_MODEL.md](docs/architecture/PLUGIN_TRUST_MODEL.md)                             | Design gate for P-025/P-026. Nothing implemented     |
 | [PARITY_MATRIX.md](PARITY_MATRIX.md)                                                                           | Per-capability implementation status                 |
 | [docs/repository-state.md](docs/repository-state.md)                                                           | Repository-level issues that code cannot fix         |
 | [CHANGELOG.md](CHANGELOG.md)                                                                                   | What this version is, and what it is not             |

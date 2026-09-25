@@ -147,6 +147,14 @@ export function parameteriseArgument(input: ParameteriseInput): ParameterDecisio
       // be page-derived, and a slot is the safe reading.
       return { kind: 'literal', binding: { kind: 'literal', value } };
     }
+    // The same judgement, applied to each element of a list. A multi-select's
+    // chosen options and a tab-group's ids are lists of exactly the short,
+    // structural values the line above keeps, so the rule was already the
+    // right one; it simply had no array case, and every such recording became
+    // a slot that nothing could fill.
+    if (isStructuralList(value)) {
+      return { kind: 'literal', binding: { kind: 'literal', value } };
+    }
     return slot(input, 'a value this task may have derived from what it read');
   }
 
@@ -164,6 +172,23 @@ export function parameteriseArgument(input: ParameteriseInput): ParameterDecisio
 }
 
 function slot(input: ParameteriseInput, why: string): ParameterDecision {
+  // A slot supplies one scalar. `SkillInputType` is `string | number |
+  // boolean` and nothing coerces a scalar into a list, so an argument that was
+  // captured as a list cannot be turned into one: the tool's own schema would
+  // refuse the replayed call every single time.
+  //
+  // Refused rather than slotted, because the alternative is what this used to
+  // do — store a step that looks complete in the review surface and can never
+  // run. A refusal drops the step, marks the recording incomplete and says
+  // why, which is the same fail-closed shape as a step whose element could not
+  // be described.
+  if (Array.isArray(input.value)) {
+    return {
+      kind: 'refused',
+      reason: `${why}, and a list cannot be asked for when the workflow runs`,
+    };
+  }
+
   const name = slotName(input.stepId, input.argument);
   return {
     kind: 'slot',
@@ -203,6 +228,37 @@ export function looksSecret(argument: string, value: unknown): boolean {
   if (value.length === 0) return false;
   const redacted = redact(value);
   return redacted !== value || redacted.includes(REDACTED);
+}
+
+/**
+ * Longest list that can still be read as structure rather than as content.
+ *
+ * Generous enough for a real multi-select or tab group — the tools themselves
+ * cap at 100 and 50 — and bounded so that a list long enough to be a payload
+ * is not stored because each of its elements happened to be short.
+ */
+const MAX_STRUCTURAL_LIST = 32;
+
+/**
+ * Whether a captured list is structure this recording may keep as written.
+ *
+ * Every element has to pass the same test a scalar would, so nothing gets in
+ * by being wrapped in an array. Mixed and nested lists are refused rather than
+ * partially judged: an element this function cannot reason about is a reason
+ * to refuse the whole list, not to keep the rest of it.
+ */
+function isStructuralList(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  if (value.length === 0 || value.length > MAX_STRUCTURAL_LIST) return false;
+  return value.every(
+    (element) =>
+      typeof element === 'number' ||
+      typeof element === 'boolean' ||
+      (typeof element === 'string' &&
+        element.length > 0 &&
+        element.length <= SHORT_VALUE &&
+        !hasPayloadShape(element)),
+  );
 }
 
 /**

@@ -25,6 +25,7 @@ import { SkillRunner, type SkillRunContext } from '@/skills/runtime/skill-runner
 import type { SkillDefinition } from '@/skills/core/skill-model';
 import { createHarness, ScriptedPrompter } from './policy-harness';
 import type { PermissionPrompter } from '@/policy/permission-engine';
+import type { SitePolicyState } from '@/policy/site-policy';
 
 export const TASK = 'task_skill_1';
 
@@ -54,6 +55,20 @@ export interface FakeToolSpec {
 
 export interface SkillHarness {
   readonly tools: ToolRegistry;
+  /**
+   * Seeds a site rule the way the product would have written one.
+   *
+   * Exposed because a replay's authorization has to be testable against a
+   * policy that changed *after* the recording was made, which is the whole
+   * question "does a recording carry authority" turns on. The engine reading
+   * it is the real one.
+   */
+  saveSitePolicy: (state: SitePolicyState) => Promise<void>;
+  loadSitePolicy: () => Promise<SitePolicyState>;
+  /** Changes the permission mode in force, as the settings surface does. */
+  setMode: (mode: PermissionMode) => void;
+  /** The mode in force right now, which is what the engine reads per dispatch. */
+  getMode: () => PermissionMode;
   readonly skills: SkillRegistry;
   readonly runner: SkillRunner;
   readonly consent: ConsentStore;
@@ -62,6 +77,8 @@ export interface SkillHarness {
   prompts(): string[];
   /** Answer every permission prompt this way. */
   respondWith: (kind: 'approve_once' | 'deny') => void;
+  /** Answer each prompt on its own terms, by the tool it is about. */
+  respondPerTool: (decide: (tool: string) => 'approve_once' | 'deny') => void;
   register: (definition: SkillDefinition) => Promise<void>;
   context: (overrides?: Partial<SkillRunContext>) => SkillRunContext;
   /** Tool calls the run may still take. */
@@ -162,6 +179,11 @@ export function buildSkillHarness(options: HarnessOptions = {}): SkillHarness {
     ...(options.resolveUnattended === undefined
       ? {}
       : { resolveUnattended: options.resolveUnattended }),
+    // The registry needs it too, not only the runner: a page-scoped tool's
+    // site authorization is resolved from the tab's URL inside `dispatch`, so
+    // a fixture that gave it only to the runner would leave every page action
+    // scoped to nothing and every site rule inapplicable.
+    ...(options.resolveTabUrl === undefined ? {} : { resolveTabUrl: options.resolveTabUrl }),
   });
   const tools: ToolRegistry = harness.registry;
 
@@ -188,9 +210,20 @@ export function buildSkillHarness(options: HarnessOptions = {}): SkillHarness {
     runner,
     consent,
     seen,
+    // Wrapped rather than passed by reference: the lint rule that objects to
+    // a detached method is right in general, and these are the harness's own.
+    saveSitePolicy: (state) => harness.saveSitePolicy(state),
+    loadSitePolicy: () => harness.loadSitePolicy(),
+    setMode: (next) => {
+      harness.setMode(next);
+    },
+    getMode: () => harness.getMode(),
     prompts: () => prompter.seen.map((request) => request.tool),
     respondWith: (kind) => {
       prompter.setResponse({ kind });
+    },
+    respondPerTool: (decide) => {
+      prompter.setDecider((request) => ({ kind: decide(request.tool) }));
     },
     register: async (definition) => {
       await skills.register(definition);

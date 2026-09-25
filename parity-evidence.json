@@ -154,8 +154,15 @@
     "P-022": {
       "unit": ["tests/unit/workflow-recording.test.ts"],
       "integration": ["tests/integration/workflow-lifecycle.test.ts"],
-      "security": ["tests/security/workflow-security.test.ts"],
-      "e2e": ["tests/e2e/workflow-controls.spec.ts", "tests/e2e/workflows.spec.ts"]
+      "security": [
+        "tests/security/workflow-replay-authority.test.ts",
+        "tests/security/workflow-security.test.ts"
+      ],
+      "e2e": [
+        "tests/e2e/workflow-controls.spec.ts",
+        "tests/e2e/workflow-replay-conditions.spec.ts",
+        "tests/e2e/workflows.spec.ts"
+      ]
     },
     "P-023": {
       "unit": [
