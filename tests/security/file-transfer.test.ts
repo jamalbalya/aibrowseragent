@@ -541,6 +541,73 @@ describe('downloads', () => {
     expect(result.taint).toEqual([downloadTaint('files.example')]);
   });
 
+  it('taints the task with both sites when Chrome followed a redirect', async () => {
+    // Chrome follows redirects itself and the tool never sees the hops, so the
+    // only place the real source appears is the finished item. Taint decides
+    // what later egress is allowed to carry, so tainting with the requested
+    // site alone would have the rest of the task reason about a site that
+    // never served the bytes.
+    const downloads = fakeDownloads();
+    downloads.setOutcome({
+      id: 1,
+      state: 'complete',
+      filename: 'report.pdf',
+      finalUrl: 'https://cdn.elsewhere/blob/9',
+    });
+    const h = harness({ downloads });
+
+    const result = await h
+      .byName('browser.download')
+      .execute({ url: 'https://files.example/report.pdf' }, context());
+
+    expect(result.taint).toEqual([downloadTaint('cdn.elsewhere'), downloadTaint('files.example')]);
+    expect(result.data).toMatchObject({ servedBy: 'cdn.elsewhere' });
+  });
+
+  it('records the site that served a redirected file, and says where it was asked for', async () => {
+    const downloads = fakeDownloads();
+    downloads.setOutcome({
+      id: 1,
+      state: 'complete',
+      filename: 'report.pdf',
+      finalUrl: 'https://cdn.elsewhere/blob/9',
+    });
+    const h = harness({ downloads });
+
+    await h
+      .byName('browser.download')
+      .execute({ url: 'https://files.example/report.pdf' }, context());
+
+    expect(h.events.at(-1)).toMatchObject({
+      type: 'file.downloaded',
+      outcome: 'allowed',
+      origin: 'cdn.elsewhere',
+      detail: 'Requested from files.example and redirected to cdn.elsewhere.',
+    });
+  });
+
+  it('says nothing about a redirect when Chrome reports the URL it was given', async () => {
+    // Chrome sets `finalUrl` even when nothing redirected, so an implementation
+    // that reported a hop whenever the field was present would claim a redirect
+    // on every download.
+    const downloads = fakeDownloads();
+    downloads.setOutcome({
+      id: 1,
+      state: 'complete',
+      filename: 'report.pdf',
+      finalUrl: 'https://files.example/report.pdf',
+    });
+    const h = harness({ downloads });
+
+    const result = await h
+      .byName('browser.download')
+      .execute({ url: 'https://files.example/report.pdf' }, context());
+
+    expect(result.taint).toEqual([downloadTaint('files.example')]);
+    expect(result.data).not.toHaveProperty('servedBy');
+    expect(h.events.at(-1)).not.toHaveProperty('detail');
+  });
+
   it('reports an interrupted download as a failure, not as a success', async () => {
     const downloads = fakeDownloads();
     downloads.setOutcome({ id: 1, state: 'interrupted', error: 'NETWORK_FAILED' });

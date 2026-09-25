@@ -30,6 +30,14 @@ export interface DownloadOutcome {
   readonly state: DownloadState;
   /** Name Chrome actually used, which may be uniquified. */
   readonly filename?: string;
+  /**
+   * Where the bytes actually came from, after any redirects Chrome followed.
+   *
+   * Separate from the requested URL because they can differ, and when they do
+   * the difference is the interesting fact: the requested URL is what a person
+   * approved, and this is what served the file.
+   */
+  readonly finalUrl?: string;
   readonly byteLength?: number;
   readonly mimeType?: string;
   /** Chrome's own interruption reason, e.g. `NETWORK_FAILED`. */
@@ -148,6 +156,9 @@ export class ChromeDownloadPort implements DownloadPort {
       // The basename only. The full local path is the user's business and is
       // not needed to report that a download finished.
       ...(item.filename ? { filename: basenameOf(item.filename) } : {}),
+      // Chrome reports this as the requested URL when nothing redirected, so
+      // the comparison is made by the caller rather than guessed at here.
+      ...(item.finalUrl ? { finalUrl: item.finalUrl } : {}),
       ...(typeof item.bytesReceived === 'number' ? { byteLength: item.bytesReceived } : {}),
       ...(item.mime ? { mimeType: item.mime } : {}),
       ...(item.error ? { error: item.error } : {}),

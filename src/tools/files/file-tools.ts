@@ -541,6 +541,19 @@ export function createDownloadTool(deps: FileToolDeps): AgentTool<typeof downloa
       // for.
       const savedAs = outcome.filename ?? verdict.filename;
 
+      // Where the bytes came from, which is not always where they were asked
+      // for: Chrome follows redirects itself, and the tool never sees the
+      // hops. Recording only the requested site would put a file on disk whose
+      // trail names an origin that never served it, and would taint the task
+      // with that origin instead of the one it actually read from — so a later
+      // exfiltration check would reason about the wrong site.
+      //
+      // The confirmation the person answered still named the requested site,
+      // and that is correct: you approve what you asked for. What changes here
+      // is only the record of what happened.
+      const servedBy = outcome.finalUrl === undefined ? site : siteOfUrl(outcome.finalUrl);
+      const redirected = servedBy !== site;
+
       context.recordEvidence(
         {
           id: newEvidenceId(),
@@ -552,7 +565,7 @@ export function createDownloadTool(deps: FileToolDeps): AgentTool<typeof downloa
           sensitivity: 'internal',
           // A downloaded file is page-controlled content, whatever it is.
           trust: 'untrusted_external_content',
-          origin: site,
+          origin: servedBy,
           label: `Downloaded ${savedAs}`,
         },
         {
@@ -560,12 +573,22 @@ export function createDownloadTool(deps: FileToolDeps): AgentTool<typeof downloa
             savedAs,
             mimeType: outcome.mimeType,
             byteLength: outcome.byteLength,
-            origin: site,
+            origin: servedBy,
+            ...(redirected ? { requestedFrom: site } : {}),
           }),
           encoding: 'utf8',
           mimeType: 'application/json',
         },
       );
+
+      // Two things can be worth saying about one download, so they are
+      // collected rather than written as a single conditional field that the
+      // second one would silently overwrite.
+      const notes: string[] = [];
+      if (savedAs !== verdict.filename) {
+        notes.push('Saved under a different name because a file of that name already existed.');
+      }
+      if (redirected) notes.push(`Requested from ${site} and redirected to ${servedBy}.`);
 
       await audit(deps, {
         type: 'file.downloaded',
@@ -573,14 +596,10 @@ export function createDownloadTool(deps: FileToolDeps): AgentTool<typeof downloa
         tool: 'browser.download',
         outcome: 'allowed',
         fileName: savedAs,
-        origin: site,
+        origin: servedBy,
         ...(outcome.mimeType === undefined ? {} : { mimeType: outcome.mimeType }),
         ...(outcome.byteLength === undefined ? {} : { byteLength: outcome.byteLength }),
-        ...(savedAs === verdict.filename
-          ? {}
-          : {
-              detail: 'Saved under a different name because a file of that name already existed.',
-            }),
+        ...(notes.length === 0 ? {} : { detail: notes.join(' ') }),
       });
 
       return {
@@ -590,10 +609,14 @@ export function createDownloadTool(deps: FileToolDeps): AgentTool<typeof downloa
           ...(outcome.byteLength === undefined ? {} : { byteLength: outcome.byteLength }),
           ...(outcome.mimeType === undefined ? {} : { mimeType: outcome.mimeType }),
           renamed: savedAs !== verdict.filename,
+          ...(redirected ? { servedBy } : {}),
         },
         // The task has now caused content from that site to be written to
-        // disk, which is provenance the rest of the task should carry.
-        taint: [downloadTaint(site)],
+        // disk, which is provenance the rest of the task should carry. Both
+        // sites are carried when they differ: the one that served the bytes
+        // because that is where the content came from, and the one that was
+        // asked for because that is what the redirect was reached through.
+        taint: redirected ? [downloadTaint(servedBy), downloadTaint(site)] : [downloadTaint(site)],
       };
     },
   };

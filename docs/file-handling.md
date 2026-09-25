@@ -85,8 +85,16 @@ Taint is monotone, as everywhere else. Page data plus a local file plus model
 output keeps every source; nothing removes one. A file's provenance therefore
 travels with the task to any provider it later talks to.
 
-A download adds a `download` source at `internal`, attributed to the site it
-came from.
+A download adds a `download` source at `internal`, attributed to the site that
+**served** it rather than the site it was requested from. Chrome follows
+redirects itself and the tool never sees the hops, so the only place the real
+source appears is the finished download item's final URL. When the two differ,
+both are added: the serving site because that is where the bytes came from, and
+the requested site because that is what the redirect was reached through.
+
+Attributing only the requested site would have the rest of the task reason
+about an origin that never served the file — the confirmation the person
+answered would be right, and every later egress decision resting on it wrong.
 
 ## Uploads and the gate
 
@@ -148,6 +156,13 @@ rather than asserted from documentation.
 `conflictAction: 'uniquify'`. A download never replaces an existing file, and
 the name reported back is the one that actually landed — Chrome may have
 renamed it.
+
+### Redirects
+
+Chrome resolves them. The confirmation names the site that was asked for,
+because that is what a person is agreeing to; the audit record and the taint
+name the site that served the file, because that is what happened. When they
+differ the record says so in as many words, so neither fact is lost.
 
 ### Nothing is executed
 

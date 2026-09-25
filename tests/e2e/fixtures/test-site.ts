@@ -346,6 +346,21 @@ export async function startTestSite(options: TestSiteOptions = {}): Promise<Test
       return;
     }
 
+    // A download that lands on a different origin than the one asked for.
+    //
+    // Same server, different hostname, which is what makes it useful: the
+    // bytes are identical, so anything that differs between a direct download
+    // and this one is the redirect and nothing else.
+    if (path.startsWith('/redirect-file/')) {
+      const name = path.slice('/redirect-file/'.length);
+      // Derived from the request rather than from a captured port, because
+      // the handler is built before the server knows which port it got.
+      const here = (req.headers.host ?? '').replace(/^127\.0\.0\.1/, 'localhost');
+      res.writeHead(302, { Location: `http://${here}/file/${name}` });
+      res.end();
+      return;
+    }
+
     // A file to download, with a name Chrome will have to handle.
     if (path.startsWith('/file/')) {
       res.writeHead(200, {
