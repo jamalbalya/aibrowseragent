@@ -339,3 +339,28 @@ test('the granted permission and the download path both survive worker eviction'
   expect((await waitForTask(send, task.id, 60_000)).state).toBe('COMPLETED');
   expect(await newFileBody(before)).toBe(DOWNLOAD_BODY);
 });
+
+test('a redirected download records the origin that actually served it', async () => {
+  // `/redirect-file/` is a 302 to the same file on the alternate hostname, so
+  // the bytes are identical and the only difference between this and the
+  // direct case is the hop. Chrome follows it itself; the tool never sees it.
+  const before = onDisk();
+  scriptDownload(`${site.baseUrl}/redirect-file/redirected.txt`);
+
+  const { task } = await send('task.create', { objective: 'Download the redirected export.' });
+  await respond({ kind: 'approve_once' });
+  expect((await waitForTask(send, task.id, 60_000)).state).toBe('COMPLETED');
+  expect(await newFileBody(before)).toBe(DOWNLOAD_BODY);
+
+  const { events } = await send('audit.list', { taskId: task.id, limit: 100 });
+  const downloaded = events.filter((event) => event.type === 'file.downloaded');
+  expect(downloaded).toHaveLength(1);
+
+  // The site that served the file, not the one it was asked for. Recording the
+  // requested site alone would name an origin that never served these bytes.
+  const record = JSON.stringify(downloaded[0]);
+  expect(record).toContain('"origin":"localhost"');
+  // And the requested site is not lost: the redirect is stated, so the trail
+  // still lines up with the confirmation the person actually answered.
+  expect(record).toContain('Requested from 127.0.0.1 and redirected to localhost.');
+});

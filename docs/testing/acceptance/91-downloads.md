@@ -76,6 +76,10 @@ supplying the file and Chrome writing it to a real directory:
 - EVIDENCE: tests/e2e/download-granted.spec.ts :: denying the confirmation leaves nothing on disk
 - EVIDENCE: tests/e2e/download-granted.spec.ts :: a standing site grant at the highest grantable risk still does not cover a download
 - EVIDENCE: tests/e2e/download-granted.spec.ts :: the granted permission and the download path both survive worker eviction
+- EVIDENCE: tests/e2e/download-granted.spec.ts :: a redirected download records the origin that actually served it
+- EVIDENCE: tests/security/file-transfer.test.ts :: taints the task with both sites when Chrome followed a redirect
+- EVIDENCE: tests/security/file-transfer.test.ts :: records the site that served a redirected file, and says where it was asked for
+- EVIDENCE: tests/security/file-transfer.test.ts :: says nothing about a redirect when Chrome reports the URL it was given
 
 The first of those is load-bearing for all the others: it re-derives the
 difference between the two manifests inside the run and fails if anything
@@ -83,8 +87,22 @@ beyond `permissions` and `optional_permissions` differs. Without it, a fixture
 that had quietly widened `host_permissions` would make every result below it a
 statement about a bundle nobody described.
 
+The redirect cases are here because running the granted path found a defect
+that only the granted path can reach. Chrome follows redirects itself, and the
+tool never sees the hops — so a download requested from one site and served by
+another was recorded, and tainted, as having come from the requested site. The
+confirmation was right; the record of what happened was not. The audit event
+and the taint now name the site that served the file, and say where it was
+asked for.
+
 **What this does not establish.** That a person can turn the permission on.
 That is D-3, and no evidence here substitutes for it.
+
+**One assertion deliberately absent.** The name the file has on disk. Playwright
+sets Chrome's download behaviour to `allowAndName`, which renames every
+download to a GUID, so an assertion on the saved name would be measuring the
+harness rather than the product. The bytes are asserted instead, and the name
+the extension chose is covered by the unit suite.
 
 ---
 
