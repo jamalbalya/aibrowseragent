@@ -1,4 +1,9 @@
 dist
+# The E2E fixture bundles. Emitted, not authored — and `dist-downloads/` is
+# asserted byte-identical to `dist/`, so reformatting it would break the very
+# guarantee it exists to provide.
+dist-auth
+dist-downloads
 coverage
 node_modules
 package-lock.json

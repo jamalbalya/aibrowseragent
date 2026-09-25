@@ -17,11 +17,19 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-// Build output, not authored source. `dist-auth/` is the E2E auth fixture's
-// bundle and is skipped for exactly the reason `dist/` is: it contains the
-// secret-redactor's own patterns, compiled in, which are what the redactor
-// exists to match rather than anything anyone needs to rotate.
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'dist-auth', 'coverage', '.git', '.github']);
+// Build output, not authored source. `dist-auth/` and `dist-downloads/` are
+// the E2E fixture bundles and are skipped for exactly the reason `dist/` is:
+// they contain the secret-redactor's own patterns, compiled in, which are what
+// the redactor exists to match rather than anything anyone needs to rotate.
+const SKIP_DIRS = new Set([
+  'node_modules',
+  'dist',
+  'dist-auth',
+  'dist-downloads',
+  'coverage',
+  '.git',
+  '.github',
+]);
 const SCAN_EXTENSIONS = new Set([
   '.ts',
   '.tsx',

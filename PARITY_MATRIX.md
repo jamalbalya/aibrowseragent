@@ -211,14 +211,29 @@ executables and browser extensions all refused), `conflictAction: 'uniquify'`
 so nothing is ever overwritten, full lifecycle handling, and an audit record
 for each outcome.
 
-PARTIAL for one reason, and it is not a missing test: `downloads` is an
-**optional** permission that a person grants from Settings under their own
-gesture, and a headless Chromium profile cannot produce that gesture. So the
-end-to-end path that has actually run is the refusal — the tool declining
-cleanly because the permission is absent — rather than a completed download
-landing on disk. Everything up to and including the refusal is verified in a
-real browser; the granted path is verified in unit and integration tests
-against the download port.
+PARTIAL for one reason, and it is narrower than it used to be recorded as.
+
+This section previously said the granted path could not be reached because a
+headless profile cannot produce the gesture that grants the permission. That
+was tested rather than assumed, and it was wrong in both halves. A Playwright
+click does supply a real user activation and Chrome does accept the
+`chrome.permissions.request` made from it; what cannot be answered is the
+confirmation dialog Chrome raises next, which is browser chrome with no frame,
+no exposed accessibility tree and no CDP domain behind it. And the granted path
+needs no gesture at all — only a permission that is already present.
+
+So the granted path now runs end to end in real Chromium, against
+`dist-downloads/`: the shipped bundle with `downloads` declared required rather
+than optional, which is a build-time difference the spec re-derives and asserts
+before relying on it. Seven cases cover the R3 confirmation, a denial, the
+filename gate with the permission present, a real `chrome.downloads` call whose
+bytes are read back off disk, the audit record, the fact that the strongest
+standing site grant still does not cover a download, and survival of worker
+eviction. Nothing is mocked and no permission state is mutated at runtime.
+
+What is left is the grant dialog itself, written up as §91 procedure D-3-1 and
+classified `BLOCKED — HUMAN/ENVIRONMENT`. The row stays PARTIAL until somebody
+executes that procedure and records the result.
 
 ### P-033 Provider switching — what PASS means here
 

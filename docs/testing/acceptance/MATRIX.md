@@ -1,4 +1,4 @@
-# Acceptance matrix — the authoritative status of every §85–§90 procedure
+# Acceptance matrix — the authoritative status of every acceptance procedure
 
 One row per procedure. One classification per row, from exactly this set:
 
@@ -31,11 +31,11 @@ in real Chromium, 0 dependency vulnerabilities.
 
 | Classification                | Count |
 | ----------------------------- | ----- |
-| `PASS`                        | 27    |
+| `PASS`                        | 29    |
 | `FAIL`                        | 0     |
 | `BLOCKED — CREDENTIAL`        | 17    |
 | `BLOCKED — OAUTH`             | 5     |
-| `BLOCKED — HUMAN/ENVIRONMENT` | 3     |
+| `BLOCKED — HUMAN/ENVIRONMENT` | 4     |
 | `NOT IMPLEMENTED`             | 3     |
 | `NOT EXECUTED`                | 0     |
 
@@ -261,3 +261,26 @@ finding the panel reports no provider.
 90-08's connector re-authorization is the detail most likely to look like a
 bug and is correct: connector tokens live in session storage precisely so they
 do not survive a browser restart.
+
+---
+
+## §91 — Downloads (P-011)
+
+Not a specification section. See [91-downloads.md](91-downloads.md) for why it
+exists: the recorded blocker for downloads named the wrong mechanism and the
+wrong scope, and correcting it left exactly one step that needs a person.
+
+| ID     | Capability                                  | Prerequisite         | Exact action required                                                       | Automated coverage                                                                                      | Manual status                 | Evidence                                 | Owner action            |
+| ------ | ------------------------------------------- | -------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------- | ---------------------------------------- | ----------------------- |
+| 91-D-1 | Refusal while the permission is absent      | none                 | —                                                                           | `PASS` — the shipped bundle refuses and writes nothing                                                  | n/a                           | `file-transfer.spec.ts`                  | none                    |
+| 91-D-2 | The granted download path, end to end       | none                 | —                                                                           | `PASS` — 7 cases against `dist-downloads/`: R3 gate, filename gate, real bytes on disk, audit, eviction | n/a                           | `download-granted.spec.ts`               | none                    |
+| 91-D-3 | Granting the permission from the side panel | a person at a screen | Press the Settings button, answer Chrome's dialog, download, then revoke it | neither side of the dialog is the dialog                                                                | `BLOCKED — HUMAN/ENVIRONMENT` | [91-downloads.md](91-downloads.md) D-3-1 | execute procedure D-3-1 |
+
+**91-D-3 is blocked by a dialog, not by a gesture.** A Playwright click does
+supply a real user activation, and Chrome does accept the
+`chrome.permissions.request` made from it. What cannot be answered is the
+confirmation Chrome then raises, which is browser chrome with no frame, no
+exposed accessibility tree and no CDP domain behind it. Granting the
+permission any other way — mutating extension permission state directly, or
+replacing the API — would remove the only thing the item is about, so it is
+left blocked rather than made to look covered.
