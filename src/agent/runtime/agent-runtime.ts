@@ -25,6 +25,7 @@ import { fromWireName } from '@/tools/registry/tool-registry';
 import { buildRequest, type ContextBudget } from '@/agent/context/context-builder';
 import { LoopDetector, hashArguments } from '@/agent/loop-detection/loop-detector';
 import { checkBudget, DEFAULT_BUDGET, type ResourceBudget } from '@/agent/budget/budget';
+import { abortedForPause } from '@/tasks/task-control';
 import { decideRetryFor, DEFAULT_RETRY_POLICY } from '@/agent/recovery/retry-policy';
 import type { TaintSource } from '@/security/exfiltration/exfiltration-guard';
 import type { TaintState } from '@/security/taint/taint-state';
@@ -192,7 +193,7 @@ export class AgentRuntime {
 
     for (;;) {
       if (signal.aborted) {
-        return this.terminate(task, 'CANCELLED', 'The task was cancelled.', evidenceIds, usage);
+        return this.stop(task, signal, evidenceIds, usage);
       }
 
       usage = { ...usage, elapsedMs: this.now() - startedAt };
@@ -253,7 +254,7 @@ export class AgentRuntime {
       } catch (error) {
         const agentError = toProviderError(error);
         if (agentError.code === 'USER_CANCELLED') {
-          return this.terminate(task, 'CANCELLED', 'The task was cancelled.', evidenceIds, usage);
+          return this.stop(task, signal, evidenceIds, usage);
         }
 
         // A transient provider failure gets a bounded retry; anything else
@@ -273,7 +274,7 @@ export class AgentRuntime {
           try {
             await sleep(retry.delayMs, signal);
           } catch {
-            return this.terminate(task, 'CANCELLED', 'The task was cancelled.', evidenceIds, usage);
+            return this.stop(task, signal, evidenceIds, usage);
           }
           continue;
         }
@@ -344,7 +345,7 @@ export class AgentRuntime {
 
       for (const call of response.toolCalls) {
         if (signal.aborted) {
-          return this.terminate(task, 'CANCELLED', 'The task was cancelled.', evidenceIds, usage);
+          return this.stop(task, signal, evidenceIds, usage);
         }
 
         const canonicalName = fromWireName(call.name);
@@ -557,6 +558,48 @@ export class AgentRuntime {
       completionTokens: 0,
       elapsedMs: this.now() - startedAt,
     };
+  }
+
+  /**
+   * Stops because the signal was aborted, as whichever thing it was aborted
+   * for.
+   *
+   * A cancellation ends the task. A pause does not: it leaves the task alive
+   * in the state the manager already wrote, so the runtime writes **nothing**
+   * and returns. That asymmetry is the whole fix — a runtime that terminated
+   * on a pause is what overwrote `PAUSED` with `CANCELLED`.
+   *
+   * Every abort check in the loop routes through here, so the two cannot drift
+   * apart at one site out of four.
+   */
+  private async stop(
+    task: AgentTask,
+    signal: AbortSignal,
+    evidenceIds: readonly string[],
+    usage: TaskUsage,
+  ): Promise<RunOutput> {
+    if (abortedForPause(signal)) {
+      log.info('Task paused; the runtime stopped and wrote no terminal state.', {
+        taskId: task.id,
+      });
+      return {
+        // Nothing consumes this — the manager ignores `run()`'s return and the
+        // task record is written by whoever paused it. It is filled in
+        // truthfully rather than left as a lie about a cancellation.
+        result: {
+          outcome: 'PARTIAL',
+          summary: 'Paused before finishing.',
+          completedActions: [],
+          failedActions: [],
+          blockedActions: [],
+          externalWrites: [],
+          evidenceIds: [...evidenceIds],
+        },
+        messages: [],
+        usage,
+      };
+    }
+    return this.terminate(task, 'CANCELLED', 'The task was cancelled.', evidenceIds, usage);
   }
 
   private async terminate(

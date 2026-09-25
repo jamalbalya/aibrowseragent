@@ -21,6 +21,7 @@ import {
   type TaskStep,
   type TaskUsage,
 } from '@/tasks/task-model';
+import { PAUSE_ABORT_REASON } from '@/tasks/task-control';
 import type { PermissionMode } from '@/policy/policy-engine';
 import {
   amendPlan,
@@ -421,6 +422,19 @@ export class TaskManager {
         let applied = false;
         const updated = await this.options.store.updateTask(taskId, (task) => {
           if (isTerminal(task.state)) return task;
+          // A paused task is not finished, and a runtime that has been stopped
+          // does not get to decide that it is. The runtime already returns
+          // without terminating on a pause; this is the second lock on the
+          // same door, for a turn that was already inside `onComplete` when
+          // the pause landed, or an older turn finishing late. `PAUSED` is a
+          // durable state and only the user leaves it.
+          if (task.state === 'PAUSED') {
+            log.info('Ignored a terminal outcome for a paused task.', {
+              taskId,
+              outcome: outcome.state,
+            });
+            return task;
+          }
           if (!canTransition(task.state, outcome.state)) {
             log.warn('Rejected an invalid terminal transition.', {
               taskId,
@@ -666,16 +680,32 @@ export class TaskManager {
     await this.transition(taskId, 'RUNNING');
   }
 
+  /**
+   * Stops the task and keeps it alive, so it can be resumed.
+   *
+   * The abort carries a reason. Without one the runtime could not tell this
+   * from a cancellation and terminated the task as `CANCELLED` *after* the
+   * write below — so pausing reported success and then destroyed the task.
+   * See `tasks/task-control.ts`.
+   *
+   * What comes back is what the store actually holds, never the state that was
+   * asked for. A task that finished a moment before the pause landed is
+   * `COMPLETED`, and saying `PAUSED` about it would be the fake success §76
+   * forbids: the caller would offer a resume for a task that cannot have one.
+   */
   async pause(taskId: string): Promise<TaskState> {
-    // Pausing aborts the in-flight turn; the task record keeps its history so
-    // a resume starts a fresh turn rather than a half-finished one. The handle
-    // is removed only after aborting, so a task still starting up sees the
-    // abort when it picks the handle up.
+    // Aborted before the handle is dropped, so a task still starting up sees
+    // the abort when it picks the handle up.
     const controller = this.running.get(taskId);
-    controller?.abort();
+    controller?.abort(PAUSE_ABORT_REASON);
     this.running.delete(taskId);
     await this.transition(taskId, 'PAUSED', 'Paused.');
-    return (await this.options.store.getTask(taskId))?.state ?? 'PAUSED';
+
+    const actual = (await this.options.store.getTask(taskId))?.state;
+    if (actual === undefined) {
+      throw new TaskManagerError(createError('INVALID_ARGUMENT', 'That task no longer exists.'));
+    }
+    return actual;
   }
 
   async resume(taskId: string): Promise<TaskState> {

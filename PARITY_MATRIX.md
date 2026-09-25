@@ -123,6 +123,33 @@ still not PASS, because the capability is measured against specification §53
 and §53 names six things to notify for. Two were implemented. The reason is
 below.
 
+### A PASS that was not true, and now is
+
+No status moved in this revision, and one nearly did. A clause-level audit of
+the twenty-nine PASS rows found that **pause and resume did not work in the
+browser at all**: `task.pause` returned `{ state: 'PAUSED' }` and the task was
+`CANCELLED` about a second later, and a cancelled task cannot be resumed. So
+pausing destroyed the task, under two rows — P-017 and P-032 — that both read
+PASS.
+
+The cause was that one `AbortController` carried two different meanings. Pause
+and cancel both aborted it; the runtime saw an aborted signal, could not tell
+which had happened, and terminated the task as `CANCELLED` after the manager
+had written `PAUSED`. The abort now carries a reason, the runtime stops without
+writing a terminal state when it was a pause, and a terminal outcome is refused
+for a task that is paused.
+
+What allowed a PASS to be wrong is worth as much as the defect. The integration
+test asserted the stored state at the instant `pause()` returned — which was
+`PAUSED`, truthfully — and never looked again. There was no real-Chromium
+pause/resume coverage at all. Both are fixed: the integration suite now reads
+the state again once the aborted runtime has unwound, and a ten-case
+real-Chromium suite makes every assertion after a delay long enough for the old
+defect to land.
+
+The rows stay PASS because the clauses are now satisfied and evidenced, not
+because the audit was overruled. §84 condition 3 remains unmet repository-wide.
+
 ### Earlier movement, kept for the record
 
 Scheduled tasks (P-020) moved from NOT-STARTED to PARTIAL. It is **not** PASS,
