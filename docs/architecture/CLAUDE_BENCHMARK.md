@@ -95,9 +95,11 @@ URL or a custom upload; auto-updates; uninstallable except where an
 organization requires them. Trust is delegated to the user — _"Only install
 plugins from sources you trust"_ — with optional Enterprise scanning.
 
-The extension is **itself** an MCP server: `claude-in-chrome`, blockable by the
-`deniedMcpServers` managed setting, with tools viewable through `/mcp`. MCP
-tools marked `requiresUserInteraction` prompt on every call.
+The `claude-in-chrome` MCP server is blockable by the `deniedMcpServers` managed
+setting, with tools viewable through `/mcp`. MCP tools marked
+`requiresUserInteraction` prompt on every call. **Where that server actually
+runs is not the extension** — see §13, which corrects an earlier reading of this
+paragraph and decides Gap-5's server half.
 
 ## 5. Injection defence (E1/E3)
 
@@ -157,6 +159,154 @@ read-only or disabled input with a value assignment, failing to write, and
 reporting success — the same class of defect this audit found here, in a worse
 form. It is cited because it shows the failure mode is real in shipping browser
 agents, not because it says anything about the comparison product.
+
+## 9. Recording, shortcuts and scheduling (E1)
+
+Searched during the Wave 9 parity audit, because P-021 and P-022 are parity
+rows whose reach limits were stated against no benchmark at all.
+
+- **Recording.** _"In the classic side panel, you can teach Claude a workflow
+  by recording the steps yourself, and Claude learns to repeat them."_ Record
+  icon, perform the steps, stop. Unavailable in the Cowork side panel.
+- **Shortcuts are saved prompts.** _"After crafting a prompt that works well,
+  save it as a shortcut."_ Invoked by _"typing '/' in the chat"_; edited and
+  deleted in extension settings.
+- **Shortcuts are schedulable.** _"You can schedule your Claude in Chrome
+  shortcuts to run automatically by clicking the clock icon."_ Daily, weekly,
+  monthly, annually.
+
+The third is a **behaviour difference**, not an unknown. This build schedules
+skills and workflows and deliberately does not schedule shortcuts — P-021 says
+so and gives the reason (adding a target kind is a P-020 change, and P-020 is
+frozen). The benchmark schedules exactly the object this build will not. The
+shape also differs: there a shortcut _is_ a saved prompt, so scheduling one
+schedules a prompt; here a shortcut is a _name for an already-reviewed target_
+and a saved-prompt target was added later as the narrow exception.
+
+The first two match. This build accepts `/name` in the composer
+(`TaskComposer.tsx`) and supports a saved-prompt target.
+
+## 10. Multi-tab is a tab group (E1)
+
+_"Drag tabs into Claude's designated tab group to enable Claude to view and
+interact with all grouped tabs at once."_ From the Claude Code side:
+_"The extension collects the tabs Claude opens into a Chrome tab group tied to
+your session."_
+
+Same design as this build's browser workspace, arrived at independently, and
+one of the closest behavioural matches in the file. Drag-in and drag-out are
+covered here by real-Chromium tests.
+
+## 11. Notifications (E1)
+
+_"Enable notifications to receive alerts when Claude requires permission or
+completes a task, allowing you to focus on other work while Claude processes
+tasks in the background."_
+
+**Two triggers are named, and this build has one and a half.** `Notifier`
+notifies on a permission request, and on a _scheduled_ run starting, finishing,
+failing or stopping at the confirmation boundary. An ordinary interactive task
+finishing notifies nothing — which is precisely the case the benchmark sentence
+describes, because it is the case where the user has gone to do something else.
+
+Recorded here rather than acted on: P-019 is a PASS row whose only evidence is
+one unit test of the notification port, so this is both a behaviour gap and the
+thinnest evidence in the matrix.
+
+## 12. There is no action-by-action trail (E1 absence / E4)
+
+Nothing in the published documentation describes a record of what the extension
+did. The nearest thing is session history: _"Side panel sessions are saved to
+your history and can be reopened on your other devices"_ — a conversation, not
+an action log.
+
+A feature request against the vendor's own tracker asked for exactly that
+— _"There is no supported way to retrieve a log of what Claude in Chrome did in
+a session"_ — and was **closed as not planned**
+([claude-code#35110](https://github.com/anthropics/claude-code/issues/35110)).
+
+So P-038 is not a parity gap in either direction that this file can find. It is
+a **superset**: an append-only per-action trail with a digest chain, integrity
+verification and local export has no counterpart in the benchmark. Its PARTIAL
+is §84 condition 3 and the three limits P-038 already states, and nothing here
+suggests otherwise.
+
+## 13. How the MCP surface is actually carried (E1/E2)
+
+The earlier note in §4 — that the extension "is itself an MCP server" — is
+correct about the capability and misleading about the mechanism, which turns out
+to decide P-026 entirely.
+
+`claude-in-chrome` is an MCP server **inside Claude Code**, not inside the
+extension. It reaches the extension through a **native messaging host**
+(`com.anthropic.claude_code_browser_extension.json`, installed under the
+browser's `NativeMessagingHosts` directory), and the documented failure mode for
+a blocked corporate network names **`bridge.claudeusercontent.com`** — a vendor
+cloud relay.
+
+Both mechanisms are on this project's locked prohibition list: no native
+messaging, and do not make the machine a server. See Gap-5.
+
+## 14. Worker eviction is handled by asking the user (E1)
+
+_"The Chrome extension's service worker can go idle during extended sessions,
+which breaks the connection. If browser tools stop working after a period of
+inactivity, run `/chrome` and select 'Reconnect extension'."_
+
+Previously recorded as an E2 inference in Gap-6. It is E1, and it is a
+troubleshooting entry rather than a design note. This build reconciles
+automatically on worker startup and has nine real-Chromium terminations proving
+it. Divergence kept, and it is the divergence in this build's favour.
+
+## 15. Login, CAPTCHA and JavaScript dialogs (E1/E2)
+
+_"When Claude encounters a login page or CAPTCHA, it pauses and asks you to
+handle it manually."_ And: _"JavaScript dialogs block browser events and prevent
+Claude from receiving commands. Dismiss the dialog manually, then tell Claude to
+continue."_
+
+Two different things, and this build's position differs on each:
+
+- **Credentials.** Stricter here, by decision: a password or one-time-code field
+  is refused outright rather than handed over. But refusing is not the same act
+  as _parking the task and telling the person to take over_ — the benchmark's
+  behaviour is a handover, and this build has the machinery for one
+  (`WAITING_FOR_USER`, used by the file-selection broker) without wiring it to
+  this case. A **behaviour gap inside a stricter control.**
+- **CAPTCHA.** `bot_protection_bypass` is a declared prohibition here, which
+  matches the refusal half and, again, not the handover half.
+- **JavaScript dialogs.** Neither product handles them; the benchmark documents
+  the failure and the workaround. This build has **no coverage at all** for an
+  `alert`/`confirm` blocking a page — an evidence gap rather than a parity gap,
+  and one §89 never asked for.
+
+## 16. One conflict, preserved rather than resolved (E1 vs E3)
+
+The permissions guide lists purchases and financial transactions among actions
+Claude will not take. The product page says _"Purchases, financial actions…wait
+for you"_ — which is confirmation, not prohibition.
+
+Two official surfaces, two different models, and the file's own rule applies:
+the conflict is recorded, not resolved. This build treats purchase and financial
+transaction as prohibitions denied at R5 before any prompt. That is at least as
+strict as either reading, so nothing here is weakened to match — but a parity
+claim against "the benchmark's" behaviour cannot be made while the benchmark
+documents two.
+
+## 17. Capabilities outside the forty rows (E1)
+
+Named in the Claude Code integration and absent here, in neither the
+specification's forty rows nor this matrix:
+
+| Benchmark capability                                       | Here                                            |
+| ---------------------------------------------------------- | ----------------------------------------------- |
+| Record browser interactions as a GIF                       | Absent. Not a spec row                          |
+| Screenshot saved to a local file path                      | Absent — screenshots are evidence, never a file |
+| Plan-before-execution with a site allowlist in Manual mode | Absent. See Gap-3                               |
+| Password-manager credential boundary                       | Absent by decision. See Gap-4                   |
+
+Listed so that "forty rows at PASS" is not mistaken for "everything the
+benchmark does". It would not be.
 
 ## Gaps this benchmark opened
 
@@ -222,11 +372,25 @@ password-manager boundary (E1); this build has no password-manager integration
 and does not claim one. Credential entry belongs to the person until that
 changes, which is a separate design with its own trust questions.
 
-### Gap-5 — outbound MCP
+### Gap-5 — outbound MCP (server half now settled, by evidence)
 
 P-026 has been scoped as "consume external tools". The comparison product also
-**exposes** its browser capabilities as an MCP server. Both directions need a
-decision before P-026 is designed.
+**exposes** browser capability over MCP.
+
+The client half stands as it was: remote MCP over HTTPS fits this architecture,
+and what is undecided is per-tool approval granularity — a product decision, not
+a blocker.
+
+The server half is **settled against implementing it**, and §13 is why. The
+benchmark carries that direction over a native messaging host plus a vendor
+cloud relay. Both are on the locked prohibition list. So this is not "a
+transport decision nobody has taken": the only transport the benchmark is
+documented to use is one this project has already refused, twice, for reasons
+that have nothing to do with MCP. Reopening it means reopening "do not make the
+machine a server", which is a product decision and not an engineering one.
+
+`PLUGIN_TRUST_MODEL.md` §9 reached the same conclusion from the manifest alone.
+This is the external corroboration it did not have.
 
 ### Gap-6 — deliberate divergences, recorded as such
 
@@ -242,6 +406,9 @@ Not gaps to close:
 ---
 
 ## Sources
+
+Sections 1–8 and the gaps were gathered on 2026-09-24. Sections 9–17 were added
+on 2026-09-25 by the Wave 9 parity audit; the new citations are marked below.
 
 E1 — [Get started](https://support.claude.com/en/articles/12012173-get-started-with-claude-in-chrome) ·
 [Permissions guide](https://support.claude.com/en/articles/12902446-claude-in-chrome-permissions-guide) ·
@@ -261,11 +428,18 @@ E3 — [Piloting Claude for Chrome](https://claude.com/blog/claude-for-chrome) �
 [Claude in Chrome product page](https://claude.com/claude-in-chrome)
 
 E4 — third-party permission-list reports, used for the manifest permission set ·
+[`claude-code` #35110, session activity log, **closed as not planned**](https://github.com/anthropics/claude-code/issues/35110)
+— the vendor's own tracker, cited in §12 for the _absence_ of an action trail ·
 [`agent-browser` #1920, `fill` on a read-only or disabled input](https://github.com/vercel-labs/agent-browser/issues/1920)
 — a different product, cited in §8 only as evidence that the failure mode is real
 only and not for behaviour.
 
 ## What would resolve the unknowns
+
+Eight of the seventeen sections above still rest on documentation alone, and
+three questions have no published answer in any surface: what a scheduled run
+does when it needs approval, what happens to an occurrence missed while the
+browser was closed, and whether the browser must be open at all (Gap-2).
 
 Installing the extension and observing it. One session settles Gap-2 entirely,
 replaces the E4 permission list with the shipped manifest, and enumerates the
