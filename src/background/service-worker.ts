@@ -487,6 +487,25 @@ const permissionEngine = new PermissionEngine({
       .record({ type: 'plan.site_added', taskId, site, outcome: 'allowed', code: 'PLAN_AMENDED' })
       .catch(() => undefined);
   },
+  /**
+   * A standing grant, recorded where it is written.
+   *
+   * `onDecision` below says a prompt was approved; it cannot say the approval
+   * created a rule that will suppress future prompts, because its code is the
+   * decision and `approve_once` and `approve_site` share one. This is the
+   * other half, and `policy.removeSiteRule` records the matching removal — so
+   * the trail can answer when a site became trusted and when it stopped.
+   */
+  onSiteRule: async ({ site, maxRisk, tool }) => {
+    await auditLog.record({
+      type: 'policy.site_rule',
+      site,
+      tool,
+      risk: maxRisk,
+      outcome: 'allowed',
+      code: 'SITE_RULE_GRANTED',
+    });
+  },
   onDecision: async (entry) => {
     await auditLog.record({
       type: 'permission.decided',
@@ -3291,8 +3310,17 @@ router.on('health.acknowledge', async ({ domain }) => {
 router.on('policy.getSitePolicy', async () => ({ state: await loadSitePolicy() }));
 
 router.on('policy.removeSiteRule', async ({ site }) => {
-  const next = removeRule(await loadSitePolicy(), site);
+  const before = await loadSitePolicy();
+  const next = removeRule(before, site);
   await saveSitePolicy(next);
+  // Only when something was actually removed. Recording a revocation for a
+  // site that held no rule would put a decision nobody took into the trail,
+  // which is the same failure as omitting one that they did.
+  if (next.rules.length !== before.rules.length) {
+    await auditLog
+      .record({ type: 'policy.site_rule', site, outcome: 'denied', code: 'SITE_RULE_REVOKED' })
+      .catch(() => undefined);
+  }
   return { state: next };
 });
 

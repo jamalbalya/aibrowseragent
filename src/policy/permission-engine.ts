@@ -119,6 +119,22 @@ export interface PermissionEngineOptions {
    * reading of a button that could not do what it said.
    */
   readonly amendPlan?: (taskId: string, site: string) => Promise<void>;
+  /**
+   * Told that a standing site grant was written.
+   *
+   * A notification, not a decision: it runs after the rule is already in the
+   * policy, it is awaited only so a failure is visible, and nothing it does
+   * can change what was granted. It exists because a standing grant is the
+   * thing that stops the agent asking again on a site, and until this the
+   * trail had no record that one had been made — `onDecision` reports that a
+   * prompt was approved and flattens `approve_once` and `approve_site` into
+   * the same `approved` code.
+   */
+  readonly onSiteRule?: (rule: {
+    readonly site: string;
+    readonly maxRisk: GrantableRiskLevel;
+    readonly tool: string;
+  }) => Promise<void>;
   readonly now?: () => number;
 }
 
@@ -231,6 +247,20 @@ export class PermissionEngine {
             note: `Approved while running ${input.tool}.`,
           }),
         );
+        // After the write, so the trail never claims a grant that failed to
+        // persist. A failure here is reported and swallowed: the person
+        // granted the site, and refusing what they just allowed because its
+        // record could not be written would turn an observability problem
+        // into a functional one — the same reasoning as `onDecision`.
+        if (this.options.onSiteRule) {
+          try {
+            await this.options.onSiteRule({ site, maxRisk: response.maxRisk, tool: input.tool });
+          } catch (error) {
+            log.warn('A standing site grant could not be recorded.', {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
       }
     }
 

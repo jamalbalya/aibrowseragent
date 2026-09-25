@@ -231,6 +231,44 @@ mode after every deny rule has already returned. So a grant cannot reach:
 A blocked site now stops page actions too, not only navigation — the deny side
 of the same change, and a tightening with no counterpart.
 
+### A block rule is enforced, and nothing in the product creates one
+
+`SiteRule.decision` is `'allow' | 'block'`, and a `block` rule is enforced
+everywhere an `allow` rule is: it is found first when both match a site, it
+returns before the permission mode is consulted, and it stops page actions and
+navigation alike. That behaviour is covered by the security suites and by the
+replay cases in `workflow-replay-authority`.
+
+**No surface in the shipped product writes one.** The permission prompt offers
+"always allow on this site" and there is no "never allow"; Settings lists
+granted sites and can only remove them; no route accepts a rule. So today a
+block rule exists in the model, is honoured by the engine, and can only arrive
+by an import or by something editing extension storage directly.
+
+This is recorded rather than fixed, because the fix is a product decision and
+not a defect. A blocklist is a feature — it needs a place in Settings, a
+decision about whether it outranks a grant the user later gives (it does, by
+the precedence above), and a decision about what happens to a task already
+running on a site that has just been blocked. None of those is answered by the
+absence, and adding a route only so that the enforced path has a producer would
+be building a feature to satisfy a test. When a blocklist is built, the
+enforcement it needs is already here.
+
+### Revoking a grant is a decision, and it is recorded
+
+Both ends of a standing grant's life reach the audit trail as
+`policy.site_rule` — `SITE_RULE_GRANTED` where the rule is written, inside the
+permission engine, and `SITE_RULE_REVOKED` where it is removed. Until P-038's
+gap audit neither did: `permission.decided` records that a prompt was approved
+and flattens `approve_once` and `approve_site` into one `approved` code, so it
+could not say a standing grant had been made, and revocation wrote nothing at
+all. "What was this allowed to do, and when did that change" was therefore
+unanswerable from the record — the decisions were right and the trail was
+blank, which is the half of an audit trail that fails silently.
+
+A removal that removed nothing records nothing, so the trail never carries a
+decision nobody took.
+
 ### The recorded site is the deciding site
 
 Three derivations of "which site is this call about" used to exist: the one the

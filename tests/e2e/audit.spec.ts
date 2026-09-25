@@ -29,6 +29,28 @@ import {
   type SendToWorker,
 } from './fixtures/extension';
 
+/** Answers every prompt by granting the site, which is what writes a rule. */
+function grantSite(send: SendToWorker): { stop: () => void } {
+  let running = true;
+  void (async () => {
+    while (running) {
+      const listed = await send('permission.listPending', {}).catch(() => ({ requests: [] }));
+      for (const pending of (listed as { requests: { id: string }[] }).requests) {
+        await send('permission.respond', {
+          requestId: pending.id,
+          response: { kind: 'approve_site', maxRisk: 'R2' },
+        }).catch(() => undefined);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  })();
+  return {
+    stop: () => {
+      running = false;
+    },
+  };
+}
+
 /** Answers every permission prompt, as the side panel would. */
 function autoAnswer(
   send: SendToWorker,
@@ -127,6 +149,78 @@ test('a permission refusal is recorded, and nothing ran', async ({
   expect(refused?.executed).toBe(false);
   // The browser did not move.
   expect(target.url()).toBe(`${site.baseUrl}/`);
+});
+
+test('granting a site and revoking it are both in the trail', async ({
+  context,
+  send,
+  provider,
+  site,
+}) => {
+  // The authority gap this closed. A standing grant is the thing that stops
+  // the agent asking again on a site, and neither end of its life reached the
+  // trail: `permission.decided` flattens `approve_once` and `approve_site`
+  // into one `approved` code, and revoking wrote nothing at all. "What was
+  // this allowed to do, and when did that change" was unanswerable from the
+  // record.
+  const target = await context.newPage();
+  await target.goto(`${site.baseUrl}/controls`, { waitUntil: 'domcontentloaded' });
+  await target.bringToFront();
+  await connectProvider(send, provider);
+  await send('session.setPermissionMode', { mode: 'manual' });
+
+  provider.script([
+    { kind: 'tool_calls', calls: [{ name: 'browser.read_page', arguments: {} }] },
+    {
+      kind: 'tool_calls',
+      calls: [{ name: 'browser.set_checked', arguments: { elementId: 'e1-0', checked: true } }],
+    },
+    { kind: 'text', text: 'Done.' },
+  ]);
+
+  const granting = grantSite(send);
+  const { task } = await send('task.create', { objective: 'Tick the newsletter box.' });
+  await waitForTask(send, task.id, 40_000);
+  granting.stop();
+
+  // The rule really exists, so the record below describes something real.
+  const { state } = await send('policy.getSitePolicy', {});
+  expect(state.rules.map((rule) => rule.site)).toContain('127.0.0.1');
+
+  const granted = (await send('audit.list', { limit: 200 })).events.filter(
+    (event) => event.type === 'policy.site_rule',
+  );
+  expect(granted.map((event) => event.code)).toContain('SITE_RULE_GRANTED');
+  const grant = granted.find((event) => event.code === 'SITE_RULE_GRANTED');
+  expect(grant?.site).toBe('127.0.0.1');
+  expect(grant?.outcome).toBe('allowed');
+  expect(grant?.risk).toBe('R2');
+  // The rule's own note reads "Approved while running X"; the trail holds the
+  // tool as a verified name and none of the sentence around it.
+  expect(JSON.stringify(granted)).not.toContain('Approved while running');
+
+  // Revoking is its own decision, not an absence.
+  await send('policy.removeSiteRule', { site: '127.0.0.1' });
+  expect((await send('policy.getSitePolicy', {})).state.rules).toEqual([]);
+
+  const afterRevoke = (await send('audit.list', { limit: 200 })).events.filter(
+    (event) => event.type === 'policy.site_rule',
+  );
+  expect(afterRevoke.map((event) => event.code)).toContain('SITE_RULE_REVOKED');
+  const revoked = afterRevoke.find((event) => event.code === 'SITE_RULE_REVOKED');
+  expect(revoked?.site).toBe('127.0.0.1');
+  expect(revoked?.outcome).toBe('denied');
+
+  // The control: removing a site that held no rule records nothing, so the
+  // trail never carries a decision nobody took.
+  const before = afterRevoke.length;
+  await send('policy.removeSiteRule', { site: 'never-granted.test' });
+  const unchanged = (await send('audit.list', { limit: 200 })).events.filter(
+    (event) => event.type === 'policy.site_rule',
+  );
+  expect(unchanged.length).toBe(before);
+
+  await target.close();
 });
 
 test('the trail keeps its sequence across a real worker termination', async ({

@@ -363,19 +363,44 @@ and every task are different things to be handed. The audit routes, like
 every other panel route, are reachable only from the side panel — checked at
 the receiver rather than inferred from the absence of another caller.
 
-Covered by a unit suite, an integration suite, a thirty-four-case security
-suite and an eight-test real-Chromium suite, with sixteen mutations proved to
-fail; the export scope contract and the route boundary add a forty-one-case
-security suite and a fourteen-test real-Chromium suite of their own.
+A gap audit against every authority-bearing action found one that had no
+record at all: **a standing site grant**. It is the thing that stops the agent
+asking again on a site, and neither end of its life reached the trail —
+`permission.decided` reports that a prompt was approved and flattens
+`approve_once` and `approve_site` into the same `approved` code, so it could
+not say a standing grant had been made, and revoking one wrote nothing. "What
+was this allowed to do, and when did that change" was therefore unanswerable
+from the record, while the audit model's own comment already asserted that a
+grant being given or revoked was recorded. Both ends now write
+`policy.site_rule`, at the point the rule is written and at the point it is
+removed; a removal that removed nothing records nothing.
 
-Both reasons this row was PARTIAL are now closed. It **stays PARTIAL**, for
-the reason every row in this file does: §84 condition 3, the manual
-acceptance test, is unmet repository-wide. An implementation existing is not
-parity certification. Two smaller limits are also worth stating: deletion is
-deliberately not exposed, so a user cannot yet clear their own history from
-the panel, and the read surface scans the retained trail rather than a
-secondary index — bounded, but it would not stay so if the cap were raised
-much further.
+The same audit found two event types that had been **declared and never
+written** since the first audit wave — `provider.state` and `recovery` — and
+that had survived a full rewrite of the module in between. A declared type
+with no producer is a promise the trail makes and does not keep: a reader
+filtering for it cannot tell "it never happened" from "nothing writes it".
+Both are removed, since `provider.selected` and `persistence.health` already
+carry what they would have said, and a test now counts every declared type
+against the producers in `src/` so a future capability cannot declare its
+lifecycle events before it can emit them.
+
+Covered by a unit suite, an integration suite, a forty-one-case security
+suite and a nine-test real-Chromium suite, with the mutations proved to fail;
+the export scope contract and the route boundary add a forty-one-case security
+suite and a fourteen-test real-Chromium suite of their own.
+
+It **stays PARTIAL**, for the reason every row in this file does: §84
+condition 3, the manual acceptance test, is unmet repository-wide. An
+implementation existing is not parity certification. Three smaller limits are
+stated rather than implied: deletion is deliberately not exposed, so a user
+cannot yet clear their own history from the panel and no decision has been
+taken about whether such a deletion would itself be recorded; the query
+surface filters on task and site while the record supports correlation by
+workflow, shortcut, schedule, run, connector and skill, which a reader of the
+export can use and a route caller cannot; and the read surface scans the
+retained trail rather than a secondary index — bounded, but it would not stay
+so if the cap were raised much further.
 
 **P-024 Skills** — The skill system is implemented: a structured definition
 with no scripting engine, a validator that refuses anything that would
@@ -642,12 +667,36 @@ connector is actually added and not merely everywhere else.
 
 Per specification §99, capabilities unavailable for platform reasons:
 
-| Reference capability                 | This project  | Limitation                                      | Impact                                      | Workaround                                                                  | Accepted        |
-| ------------------------------------ | ------------- | ----------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------- | --------------- |
-| Continue while the browser is closed | Not available | A Chrome extension cannot run without Chrome    | Tasks stop when Chrome closes               | Would require a cloud runtime (specification §94)                           | Yes, for v1     |
-| Automate `chrome://` pages           | Refused       | Chrome forbids content scripts there            | Browser settings cannot be automated        | None; this is also a deliberate safety boundary                             | Yes             |
-| Automate the extension gallery       | Refused       | Chrome forbids it                               | Extensions cannot be installed by the agent | None; also a privilege-escalation boundary                                  | Yes             |
-| Encrypted credential storage         | Not available | `chrome.storage.local` is not encrypted at rest | A local attacker can read a stored API key  | Use a scoped key with a spend limit; a desktop bridge could use OS keychain | Yes, documented |
+| Reference capability                 | This project          | Limitation                                                                                          | Impact                                                                                          | Workaround                                                                                                                                                       | Accepted       |
+| ------------------------------------ | --------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| Continue while the browser is closed | Not available         | A Chrome extension cannot run without Chrome                                                        | Tasks stop when Chrome closes                                                                   | Would require a cloud runtime (specification §94)                                                                                                                | Yes, for v1    |
+| Automate `chrome://` pages           | Refused               | Chrome forbids content scripts there                                                                | Browser settings cannot be automated                                                            | None; this is also a deliberate safety boundary                                                                                                                  | Yes            |
+| Automate the extension gallery       | Refused               | Chrome forbids it                                                                                   | Extensions cannot be installed by the agent                                                     | None; also a privilege-escalation boundary                                                                                                                       | Yes            |
+| Encrypted credential storage         | **Available, opt-in** | `chrome.storage.local` is not encrypted at rest, so the extension encrypts what matters itself (K1) | Off by default: until the user sets a passphrase, a stored API key is readable from the profile | Turn K1 on. Provider credentials and the durable refresh token are then encrypted at rest and unreadable while locked; connector tokens are never on disk at all | Yes, see below |
+
+**On that last row, precisely.** This read "Not available" until the claim was
+checked against `src/storage/data-classification.ts`, where the answer is a
+total table rather than a sentence. What K1 encrypts is exactly the two durable
+credentials — the provider credential and the ABA refresh token. What it does
+not encrypt is not an oversight in each case but a recorded decision:
+
+- **Never on disk, so nothing to encrypt** — connector tokens, the ABA access
+  token, OAuth transients and page content are `MEMORY_ONLY`. An earlier draft
+  of that table called connector tokens encrypted, which would have claimed
+  something the implementation does not do.
+- **Plaintext by design** — the identity profile, device id and persistence
+  health must be readable _before_ a passphrase can be asked for, or the unlock
+  screen would depend on the unlock. Policy, schedules and workspaces must be
+  readable while locked or a locked profile silently stops enforcing and
+  scheduling. Tasks, workflows, shortcuts, preferences, **the audit trail** and
+  evidence are the user's own work: disclosure is bounded by the profile that
+  already holds them, and protecting them would cost a passphrase prompt before
+  the panel could list anything.
+
+So a local attacker with the Chrome profile reads the audit trail, the tasks
+and the workflows whether or not K1 is on, and reads the API key only if it is
+off. That is the honest statement, and it is narrower than either "encrypted
+credential storage is unavailable" or "the profile is encrypted".
 
 ---
 

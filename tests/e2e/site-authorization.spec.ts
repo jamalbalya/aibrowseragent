@@ -91,19 +91,28 @@ test('a page action asks about the page’s own site, not about nothing', async 
   await page.close();
 });
 
-test('granting the site stops a click and a keystroke from asking again', async ({
+test('a grant taken from a page action is written against that page’s site', async ({
   context,
   send,
   provider,
   site,
 }) => {
+  // This used to be titled "granting the site stops a click and a keystroke
+  // from asking again", which it never asserted — and which is not true in the
+  // mode it runs in. A standing grant is consulted at the *mode* stage, and
+  // only in Auto: Manual confirms every changing action whatever is granted.
+  // So what this case can settle is where the grant is written, which is the
+  // thing that was broken before page actions carried a site scope. That a
+  // grant really does stop the asking is proved where it can be — in Auto,
+  // against an R2 action — by `workflow-controls.spec.ts` and
+  // `workflow-replay-conditions.spec.ts`.
   const page = await context.newPage();
   await page.goto(`${site.baseUrl}/controls`, { waitUntil: 'domcontentloaded' });
   await page.bringToFront();
 
   await connectProvider(send, provider);
-  // Manual, because in Auto an R1 page action is already approved without a
-  // prompt — and a prompt is what a standing grant is offered from.
+  // Manual, because a standing grant is offered from a prompt and Auto does
+  // not raise one for an R1 page action.
   await send('session.setPermissionMode', { mode: 'manual' });
   provider.script([
     { kind: 'tool_calls', calls: [{ name: 'browser_read_page', arguments: {} }] },
@@ -118,7 +127,6 @@ test('granting the site stops a click and a keystroke from asking again', async 
     { kind: 'text', text: 'Done.' },
   ]);
 
-  // Grant on the first prompt; every later action on the same site is covered.
   const { task } = await send('task.create', { objective: 'Toggle the newsletter box twice.' });
   const answering = answerPrompts(send, { kind: 'approve_site', maxRisk: 'R2' });
   await waitForTask(send, task.id);
