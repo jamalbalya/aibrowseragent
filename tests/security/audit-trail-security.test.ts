@@ -22,6 +22,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { MemoryStorageArea, SerializedStorageArea } from '@/storage/storage-area';
 import {
+  AUDIT_EVENT_TYPES,
   AUDIT_EVENT_VERSION,
   AuditLog,
   AuditShapeError,
@@ -566,5 +567,117 @@ describe('the trail is not a model-writable field', () => {
   it('34. leaves the shape checks exported so the guarantee is directly testable', () => {
     expect(() => assertAuditShape({ type: 'task.state', meta: { a: 1 } })).toThrow(AuditShapeError);
     expect(() => assertAuditShape({ type: 'task.state', scopes: ['read'] })).not.toThrow();
+  });
+});
+
+// --- 27-32. every declared event type is one this build actually writes -----
+
+describe('the type list describes the trail rather than an intention', () => {
+  it('27 — has no event type nothing in the build can produce', () => {
+    // NEGATIVE CONTROL for the whole list. A declared type with no producer is
+    // a promise the trail makes about itself and does not keep: a reader
+    // filtering for it finds nothing and cannot tell "it never happened" from
+    // "nothing ever writes it". `provider.state` and `recovery` were both in
+    // this position from the first audit wave until the P-038 gap audit went
+    // looking — declared, never written, and surviving a full rewrite of this
+    // module in between.
+    //
+    // The check is deliberately crude: the literal has to appear somewhere in
+    // `src/` outside the audit module. A type whose only mention is its own
+    // declaration has no producer, whatever else is true.
+    const declaringModule = resolve(AUDIT_ROOT, 'audit-log.ts');
+    const elsewhere = sources(SRC_ROOT)
+      .filter((file) => file !== declaringModule)
+      .map((file) =>
+        readFileSync(file, 'utf8')
+          .replace(/\/\*[\s\S]*?\*\//g, '')
+          .replace(/(^|[^:])\/\/[^\n]*/g, '$1'),
+      );
+    const selfWritten = new Set(['retention.compacted']);
+
+    const orphans = AUDIT_EVENT_TYPES.filter(
+      (type) => !selfWritten.has(type) && !elsewhere.some((text) => text.includes(`'${type}'`)),
+    );
+    expect(orphans).toEqual([]);
+  });
+
+  it('28 — records a standing site grant where the rule is written', async () => {
+    // The authority gap this wave closed. A grant is what stops the agent
+    // asking again on a site, and nothing recorded that one had been made:
+    // `permission.decided` reports an approval and flattens `approve_once`
+    // and `approve_site` into the same `approved` code.
+    const log = freshLog();
+    await log.record({
+      type: 'policy.site_rule',
+      site: 'example.test',
+      tool: 'browser.click',
+      risk: 'R2',
+      outcome: 'allowed',
+      code: 'SITE_RULE_GRANTED',
+    });
+
+    const [event] = (await log.page({})).events;
+    expect(event?.type).toBe('policy.site_rule');
+    expect(event?.site).toBe('example.test');
+    expect(event?.risk).toBe('R2');
+    expect(event?.code).toBe('SITE_RULE_GRANTED');
+  });
+
+  it('29 — records the revocation as its own decision, not as an absence', async () => {
+    const log = freshLog();
+    await log.record({
+      type: 'policy.site_rule',
+      site: 'example.test',
+      outcome: 'denied',
+      code: 'SITE_RULE_REVOKED',
+    });
+
+    const [event] = (await log.page({})).events;
+    expect(event?.outcome).toBe('denied');
+    expect(event?.code).toBe('SITE_RULE_REVOKED');
+    // The two ends share a type so the lifetime of one grant reads as one
+    // sequence, and `outcome` is what separates them.
+    expect(event?.type).toBe('policy.site_rule');
+  });
+
+  it('30 — carries no rule note, because a note quotes a tool call', async () => {
+    // A `SiteRule` has a `note` that reads "Approved while running X". The
+    // tool is already a field here and goes through name verification; the
+    // sentence around it is prose the trail has no reason to hold.
+    const log = freshLog();
+    await log.record({
+      type: 'policy.site_rule',
+      site: 'example.test',
+      tool: 'browser.click',
+      outcome: 'allowed',
+      code: 'SITE_RULE_GRANTED',
+    });
+    const [event] = (await log.page({})).events;
+    expect(JSON.stringify(event)).not.toContain('Approved while running');
+  });
+
+  it('31 — the grant hook cannot change what was granted', () => {
+    // It is a notification. The engine writes the rule, then tells the
+    // listener; the listener has no return value the engine reads, and its
+    // failure is caught. Asserted from source, because "it is only a
+    // notification" is a property of the call site rather than of the name.
+    const engine = readFileSync(resolve(SRC_ROOT, 'policy/permission-engine.ts'), 'utf8');
+    const call = engine.slice(engine.indexOf('this.options.onSiteRule('));
+    expect(call.slice(0, 400)).toContain('catch');
+    // The write comes first: the trail never claims a grant that failed to
+    // persist.
+    expect(engine.indexOf('saveSitePolicy(')).toBeLessThan(
+      engine.indexOf('this.options.onSiteRule('),
+    );
+  });
+
+  it('32 — a site rule record is not task-scoped, because a grant outlives its task', () => {
+    // A standing grant is durable and applies to every later task, so pinning
+    // it to the task that happened to create it would make it invisible in a
+    // cross-task view filtered by any other task. It is deliberately absent
+    // from the task-scoped set.
+    const source = readFileSync(resolve(AUDIT_ROOT, 'audit-log.ts'), 'utf8');
+    const scoped = source.slice(source.indexOf('TASK_SCOPED'));
+    expect(scoped.slice(0, 600)).not.toContain('policy.site_rule');
   });
 });

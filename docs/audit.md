@@ -198,6 +198,43 @@ A refused message is itself recorded, as a `route.refused` record carrying the
 route name and a closed sender class. Never the sender's URL: a URL is
 page-derived, and page-derived text does not enter this trail.
 
+## Every declared type is one something writes
+
+`AUDIT_EVENT_TYPES` is a closed union, and a type in it with no producer is a
+promise the trail makes about itself and does not keep: a reader filtering for
+it finds nothing and cannot tell "it never happened" from "nothing ever writes
+it". Two types were in exactly that position from the first audit wave until
+the P-038 gap audit went looking — `provider.state` and `recovery`, declared,
+never written, and surviving a full rewrite of the module in between. Both are
+gone; `provider.selected` already covers which brain is in use, and
+`persistence.health` already covers the recovery acknowledgement.
+
+A test now counts it. Every declared type must appear somewhere in `src/`
+outside the audit module, with comments stripped so a mention in prose cannot
+satisfy it. `retention.compacted` is the one exception, written by the log
+itself, and it is named in the test rather than pattern-matched away.
+
+This matters beyond tidiness: it is what stops a future capability declaring
+its lifecycle events before it can emit them.
+
+## What is still missing for P-038
+
+Stated so the PARTIAL is a description rather than a shrug:
+
+- **The §85 A–F manual acceptance scenarios** have not been run, for this
+  capability as for every other.
+- **Query is narrower than the record.** `AuditQuery` filters on `taskId` and
+  `site`. Every other correlation the record supports — by workflow, shortcut,
+  schedule, run, connector, skill — is available to a reader of the export or
+  the page, but not as a server-side filter. That is a UI and route change, not
+  a model change, and nothing is blocked by it.
+- **Deletion is not offered at all.** The trail compacts on its own bounds and
+  the panel has no delete. Whether a user may delete their own audit records,
+  and whether such a deletion is itself recorded, is a product decision nobody
+  has taken. The current position — no deletion, bounded retention, a
+  `retention.compacted` marker where records were dropped — is defensible and
+  is what ships.
+
 ## Scope
 
 P-038 added no Chrome permission, no host permission and no execution

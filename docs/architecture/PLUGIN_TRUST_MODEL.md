@@ -418,6 +418,74 @@ designing against nothing.
 
 ---
 
+## 9a. Can the audit trail already carry all this?
+
+Asked properly during the P-038 gap audit, because "we will add audit later" is
+how a second audit system gets built. The answer is yes for the plugin
+lifecycle, yes for MCP as a client, and no for MCP as a server — and the third
+is a symptom of the transport problem rather than an audit problem.
+
+### The plugin lifecycle fits without a second system
+
+Every state transition in §2 maps onto the existing record shape. The trail
+already carries a closed `type`, a five-value `outcome`, and a `code` drawn
+from this build's own vocabulary, which is exactly a lifecycle triple:
+
+| Transition             | Record                                                            |
+| ---------------------- | ----------------------------------------------------------------- |
+| package discovered     | `{ type: 'plugin.lifecycle', outcome: 'info', code: 'DECLARED' }` |
+| package validated      | `{ outcome: 'info', code: 'VALIDATED' }`                          |
+| validation failed      | `{ outcome: 'failed', code: 'INVALID' }`                          |
+| package enabled        | `{ outcome: 'allowed', code: 'ENABLED' }`                         |
+| package disabled       | `{ outcome: 'denied', code: 'DISABLED' }`                         |
+| package revoked        | `{ outcome: 'denied', code: 'REVOKED' }`                          |
+| package updated        | `{ outcome: 'info', code: 'UPDATED' }`, new version and hash      |
+| package rolled back    | `{ outcome: 'info', code: 'ROLLED_BACK' }`                        |
+| package removed        | `{ outcome: 'info', code: 'REMOVED' }`                            |
+| trust metadata changed | there is no such event — see below                                |
+
+No new outcome is needed. What _is_ needed is an identity triple —
+`pluginId`, `pluginVersion`, `packageHash` — and the schema already has that
+shape twice over: `skillId`/`skillVersion`/`skillHash`, and
+`workflowId`/`workflowVersion`/`definitionHash`. Adding a third is mechanical.
+
+**It is deliberately not added now.** Three fields with no producer would be
+the same defect the P-038 audit just removed two of, and a record whose
+identity fields are always absent teaches a reader nothing. The fields land
+with the code that writes them, and the census test added in this wave makes
+that enforceable: a `plugin.*` type declared before it can be emitted fails.
+
+"Trust metadata changed" has no row on purpose. Under §2 there is no metadata
+whose change alters authority — every edge in the transition graph is a user
+action or a validation result computed here, and an object cannot gain
+authority by its metadata moving. An event for it would imply there is
+something to watch.
+
+### MCP as a client fits, with one addition
+
+`tool` (verified against the registry), `destination` (the server's origin,
+already the vocabulary the egress records use), `outcome`, `code`, `risk` and
+`executed` cover tool discovery, invocation, denial, confirmation and result
+without change. Resource consumption is a page-class read that taints its task,
+which `taintKind` on the subsequent records already reflects.
+
+The addition is a server identity — one opaque id, validated like every other,
+so "which server offered this tool" is answerable. A resource **URI** must not
+be a field: it is page-derived text, and putting it in a cross-task trail is
+the browsing-history problem `taintKind` exists to avoid for taint sources.
+
+### MCP as a server does not fit, and should not be made to
+
+Inbound connection, caller authentication, caller authorization and caller
+disconnect all need a **caller identity**, and this architecture has no notion
+of one. Every identity in the trail is something this extension minted for
+itself. Introducing an external principal is not an audit change; it is the
+inbound channel §9 says is prohibited, arriving through the audit schema.
+
+So the honest position is that server-side MCP audit is undesignable until the
+transport question is answered, and designing it now would put a principal in
+the record that nothing can authenticate.
+
 ## 10. Consistency with the existing invariants
 
 Checked against the security architecture as it stands, item by item, so a

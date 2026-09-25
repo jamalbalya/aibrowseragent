@@ -37,8 +37,6 @@ export const AUDIT_EVENT_TYPES = [
   'permission.decided',
   'egress.decided',
   'provider.selected',
-  'provider.state',
-  'recovery',
   'file.selected',
   'file.attached',
   'file.downloaded',
@@ -53,6 +51,20 @@ export const AUDIT_EVENT_TYPES = [
   // what the agent can reach, which is the same class of fact as a site grant
   // being given or revoked.
   'skill.enablement',
+  // A standing site grant being written or taken away.
+  //
+  // The authority surface this trail was missing. A standing grant is what
+  // stops the agent asking again on a site, so its creation and its removal
+  // are both authorization decisions — but neither reached the trail.
+  // `permission.decided` records that a prompt was approved and flattens
+  // `approve_once` and `approve_site` to the same `approved` code, so it
+  // cannot say a standing grant was made; and revoking one wrote nothing at
+  // all. "What was this task allowed to do, and when did that change" was
+  // therefore unanswerable from the record, which is the question the trail
+  // exists for. The comment on `skill.enablement` below already asserted this
+  // was recorded "the same class of fact as a site grant being given or
+  // revoked" — it was not, until now.
+  'policy.site_rule',
   // A tab joined or left a workspace. Membership is scope, never authority —
   // the record exists so a change of scope is visible after the fact.
   'workspace.membership',
