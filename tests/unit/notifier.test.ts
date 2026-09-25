@@ -137,3 +137,145 @@ describe('the default port', () => {
     vi.unstubAllGlobals();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task endings (§53 "task completed", "task failed")
+// ---------------------------------------------------------------------------
+
+describe('telling the user a task ended', () => {
+  it('announces a completed task', async () => {
+    await enabled().taskFinished('task_1', 'COMPLETED');
+
+    expect(port.shown).toHaveLength(1);
+    expect(port.shown[0]?.title).toBe('Task finished');
+  });
+
+  it('announces a failed task', async () => {
+    await enabled().taskFinished('task_1', 'FAILED');
+
+    expect(port.shown).toHaveLength(1);
+    expect(port.shown[0]?.title).toBe('Task failed');
+  });
+
+  it('announces a partly finished task, because part is not all', async () => {
+    await enabled().taskFinished('task_1', 'PARTIAL');
+
+    expect(port.shown[0]?.title).toBe('Task partly finished');
+  });
+
+  it('announces a task that stopped because something was not permitted', async () => {
+    await enabled().taskFinished('task_1', 'BLOCKED');
+
+    expect(port.shown[0]?.title).toBe('Task stopped');
+  });
+
+  it('says nothing when the user cancelled it themselves', async () => {
+    // They were present, they did it, and they know. This is a decision
+    // rather than an omission, so it is pinned.
+    await enabled().taskFinished('task_1', 'CANCELLED');
+
+    expect(port.shown).toEqual([]);
+  });
+
+  it('says nothing for a state that is not an ending', async () => {
+    await enabled().taskFinished('task_1', 'RUNNING');
+
+    expect(port.shown).toEqual([]);
+  });
+
+  it('announces one task once, however many times it is told', async () => {
+    // `TaskManager.transition` treats a move to the state a task is already
+    // in as allowed, so the lifecycle observer can fire twice for one ending.
+    const notifier = enabled();
+    await notifier.taskFinished('task_1', 'COMPLETED');
+    await notifier.taskFinished('task_1', 'COMPLETED');
+    await notifier.taskFinished('task_1', 'FAILED');
+
+    expect(port.shown).toHaveLength(1);
+    expect(port.shown[0]?.title).toBe('Task finished');
+  });
+
+  it('keeps separate tasks separate', async () => {
+    const notifier = enabled();
+    await notifier.taskFinished('task_1', 'COMPLETED');
+    await notifier.taskFinished('task_2', 'COMPLETED');
+
+    expect(port.shown).toHaveLength(2);
+  });
+
+  it('stays silent when the user turned notifications off', async () => {
+    await notifierWith(() => Promise.resolve(false)).taskFinished('task_1', 'COMPLETED');
+
+    expect(port.shown).toEqual([]);
+  });
+
+  it('does not replay a missed ending when the setting is turned back on', async () => {
+    // A task is announced at most once whatever the setting said at the time.
+    // Someone enabling notifications is asking about the next task, not
+    // asking to be told about one that already finished.
+    let on = false;
+    const notifier = notifierWith(() => Promise.resolve(on));
+    await notifier.taskFinished('task_1', 'COMPLETED');
+    on = true;
+    await notifier.taskFinished('task_1', 'COMPLETED');
+
+    expect(port.shown).toEqual([]);
+  });
+
+  it('does not throw when the browser refuses the notification', async () => {
+    // A toast is a supporting signal, never task authority. The task that
+    // finished has already finished; nothing about it may depend on this.
+    port.failWith = new Error('Notifications are blocked.');
+
+    await expect(enabled().taskFinished('task_1', 'COMPLETED')).resolves.toBeUndefined();
+  });
+});
+
+describe('what a task notification may contain', () => {
+  const STATES = ['COMPLETED', 'PARTIAL', 'BLOCKED', 'FAILED'] as const;
+
+  it('is given the task id and a state, so nothing else can reach the OS', async () => {
+    // The signature is the control. An objective is user-typed and a summary
+    // is model-authored, and both can carry whatever was read from a page; a
+    // notification outlives the task in a notification centre. A change that
+    // starts passing either has to change this test first.
+    for (const state of STATES) {
+      await enabled().taskFinished(`task_${state}`, state);
+    }
+
+    for (const shown of port.shown) {
+      expect(shown.message).not.toMatch(/https?:/);
+      expect(shown.message).not.toMatch(/sk-|Bearer|password|token/i);
+    }
+  });
+
+  it('never carries the task id itself', async () => {
+    // An identifier tells the user nothing and correlates the toast with the
+    // trail for anyone reading over their shoulder.
+    await enabled().taskFinished('task_7f3a9c', 'COMPLETED');
+
+    expect(JSON.stringify(port.shown[0])).not.toContain('task_7f3a9c');
+  });
+});
+
+describe('telling the user a connector needs reconnecting', () => {
+  it('names the connector and what has to happen', async () => {
+    await enabled().connectorAuthExpired('GitHub');
+
+    expect(port.shown).toHaveLength(1);
+    expect(port.shown[0]?.title).toBe('Reconnect needed');
+    expect(port.shown[0]?.message).toContain('GitHub');
+  });
+
+  it('stays silent when the user turned notifications off', async () => {
+    await notifierWith(() => Promise.resolve(false)).connectorAuthExpired('GitHub');
+
+    expect(port.shown).toEqual([]);
+  });
+
+  it('does not throw when the browser refuses it', async () => {
+    port.failWith = new Error('blocked');
+
+    await expect(enabled().connectorAuthExpired('GitHub')).resolves.toBeUndefined();
+  });
+});

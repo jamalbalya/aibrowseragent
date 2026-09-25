@@ -222,6 +222,23 @@ export interface PanelRequestMap {
     request: { mode: PermissionMode };
     response: { session: AgentSession };
   };
+  /**
+   * Turns task and schedule notifications on or off.
+   *
+   * The setting existed and was readable by the notifier from the start, with
+   * nothing able to write it — so it was on, permanently, for everyone. That
+   * mattered little while the only notifications were an approval the user was
+   * being asked for and a schedule they had set up themselves; it matters now
+   * that every task ending produces one.
+   */
+  'settings.setNotificationsEnabled': {
+    request: { enabled: boolean };
+    response: { enabled: boolean };
+  };
+  'settings.getNotificationsEnabled': {
+    request: Record<string, never>;
+    response: { enabled: boolean };
+  };
 
   'provider.list': {
     request: Record<string, never>;

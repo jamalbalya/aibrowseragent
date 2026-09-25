@@ -12,6 +12,7 @@
  * one and the rules below would otherwise go unverified.
  */
 import { getLogger } from '@/logging/logger';
+import type { TaskState } from '@/tasks/task-model';
 
 const log = getLogger('ui');
 
@@ -40,6 +41,24 @@ const ICON = 'icons/icon-128.png';
 
 export class Notifier {
   private readonly port: NotificationPort;
+
+  /**
+   * Tasks whose ending has already been announced.
+   *
+   * `TaskManager.transition` treats a move to the state a task is already in
+   * as allowed, so a second call with the same terminal state reaches the
+   * lifecycle observer again. That is harmless for the audit trail, which is
+   * recording that something was observed, and not harmless here: two toasts
+   * for one task is a bug the user sees.
+   *
+   * In memory, and that is sufficient rather than a compromise. A revived
+   * worker reconciles `listInterrupted()`, which filters terminal tasks out,
+   * so an already-finished task is never transitioned again by a later worker
+   * — the duplicate this guards against can only happen inside one worker's
+   * life, which is exactly as long as this set lives. The eviction test
+   * proves the claim rather than restating it.
+   */
+  private readonly announced = new Set<string>();
 
   constructor(private readonly deps: NotifierDeps) {
     this.port = deps.port ?? chromeNotificationPort;
@@ -81,6 +100,68 @@ export class Notifier {
    * by the operating system, outside every boundary this extension controls,
    * and can outlive the task in a notification centre.
    */
+  /**
+   * Tells the user their task ended, and nothing about what it did.
+   *
+   * Specification section 53 requires a notification for a completed task and
+   * for a failed one. The reason it matters is the reason the benchmark gives
+   * for its own: the user started something and went to do something else, so
+   * the toast is the only thing that brings them back.
+   *
+   * **The message carries no objective, no summary, no result, no site and no
+   * tool.** Every one of those is either page-derived or model-authored, and a
+   * notification is rendered by the operating system, outside every boundary
+   * this extension controls, where it can sit in a notification centre long
+   * after the task is gone. What ended, and how, is the whole of it — a user
+   * who wants to know more opens the panel, which is inside.
+   *
+   * `CANCELLED` deliberately says nothing: the user cancelled it themselves,
+   * so they were present and already know. A toast telling somebody what they
+   * just did is noise, not news.
+   */
+  async taskFinished(taskId: string, state: TaskState): Promise<void> {
+    if (this.announced.has(taskId)) return;
+    // Marked before the setting is read, so a task is announced at most once
+    // whatever the answer. A user who turns notifications on mid-task is
+    // asking about the next one, not owed a replay of this one.
+    this.announced.add(taskId);
+
+    const notice = TASK_NOTICES[state];
+    if (!notice) return;
+    if (!(await this.enabled())) return;
+
+    await this.show({
+      type: 'basic',
+      iconUrl: ICON,
+      title: notice.title,
+      message: notice.message,
+      priority: notice.priority,
+    });
+  }
+
+  /**
+   * Tells the user a connector needs authorizing again.
+   *
+   * Specification section 53. The grant expired while nobody was looking, and
+   * the next thing that needs it fails for a reason the user cannot guess
+   * from the failure.
+   *
+   * The display name comes from a descriptor that shipped in the build, so it
+   * is a constant this project wrote — not a service response, not a token
+   * claim and not anything the connector returned.
+   */
+  async connectorAuthExpired(displayName: string): Promise<void> {
+    if (!(await this.enabled())) return;
+
+    await this.show({
+      type: 'basic',
+      iconUrl: ICON,
+      title: 'Reconnect needed',
+      message: `"${trim(displayName)}" needs to be connected again before it can be used.`,
+      priority: 2,
+    });
+  }
+
   async scheduleStarted(name: string): Promise<void> {
     await this.scheduleNotice('Scheduled task started', `"${trim(name)}" is running.`, 0);
   }
@@ -147,6 +228,40 @@ export class Notifier {
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+/**
+ * What each ending is announced as, and which are announced at all.
+ *
+ * A total map over the terminal states rather than a chain of conditions, so
+ * adding a task state is a compile error here instead of a silent omission.
+ * `PARTIAL` and `BLOCKED` are not named by section 53 and are included for the
+ * reason `scheduleBlocked` already is: a task that stopped without finishing
+ * did not do what was asked, and a user who was not told would believe it had.
+ */
+const TASK_NOTICES: Partial<
+  Record<TaskState, { title: string; message: string; priority: number }>
+> = {
+  COMPLETED: {
+    title: 'Task finished',
+    message: 'The agent finished the task you started.',
+    priority: 0,
+  },
+  PARTIAL: {
+    title: 'Task partly finished',
+    message: 'The agent finished part of the task you started. Open the panel to see the rest.',
+    priority: 2,
+  },
+  BLOCKED: {
+    title: 'Task stopped',
+    message: 'The agent stopped because an action it needed is not permitted.',
+    priority: 2,
+  },
+  FAILED: {
+    title: 'Task failed',
+    message: 'The agent could not finish the task you started.',
+    priority: 2,
+  },
+};
 
 /** Keeps a user-chosen name inside what an operating-system toast will show. */
 function trim(name: string): string {

@@ -895,6 +895,14 @@ const githubSession = new ConnectorSession({
         scopes: status.scopes,
       })
       .catch(() => undefined);
+
+    // Specification section 53. A grant expires while nobody is looking, and
+    // the next thing that needs it fails for a reason the user cannot guess
+    // from the failure. Only this one transition is worth a toast: the others
+    // are the user's own doing and they are standing in front of the panel.
+    if (status.state === 'NEEDS_AUTH' && status.reason === 'grant_expired') {
+      void notifier.connectorAuthExpired(githubDescriptorValue.displayName);
+    }
   },
 });
 
@@ -1821,6 +1829,19 @@ const taskManager = new TaskManager({
         'The task finished before a file was chosen.',
       );
       stagedFiles.clearTask(event.taskId);
+
+      // Specification section 53, "task completed" and "task failed". Hooked
+      // to the same one fact the line above is, and for the same reason:
+      // "the task reached a terminal state" happens in one place, and
+      // reproducing it at each exit is how one of them ends up missing.
+      //
+      // This is the browser-agent's task lifecycle, not any provider's. Every
+      // provider reaches it identically because none of them knows it exists.
+      //
+      // Not awaited, and its failure is swallowed inside the notifier: a
+      // toast is a supporting signal and never task authority, so a task that
+      // finished stays finished whether or not anyone could be told.
+      if (event.state !== undefined) void notifier.taskFinished(event.taskId, event.state);
     }
 
     void auditLog
@@ -2001,6 +2022,15 @@ router.on('session.get', async () => ({ session: await getOrCreateSession() }));
 router.on('session.setPermissionMode', async ({ mode }) => {
   await settingsStore.update({ permissionMode: mode });
   return { session: await updateSession({ permissionMode: mode }) };
+});
+
+router.on('settings.getNotificationsEnabled', async () => ({
+  enabled: (await settingsStore.get()).notificationsEnabled,
+}));
+
+router.on('settings.setNotificationsEnabled', async ({ enabled }) => {
+  await settingsStore.update({ notificationsEnabled: enabled });
+  return { enabled };
 });
 
 router.on('provider.list', () =>
