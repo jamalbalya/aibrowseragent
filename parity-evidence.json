@@ -132,7 +132,7 @@
         "tests/integration/agent-runtime.test.ts",
         "tests/integration/sustained-task.test.ts"
       ],
-      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts"]
+      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts", "tests/e2e/task-pause.spec.ts"]
     },
     "P-018": {
       "integration": ["tests/integration/task-persistence.test.ts"],
@@ -225,7 +225,7 @@
         "tests/integration/task-persistence.test.ts",
         "tests/integration/task-manager.test.ts"
       ],
-      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts"]
+      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts", "tests/e2e/task-pause.spec.ts"]
     },
     "P-033": {
       "unit": [
