@@ -1,7 +1,7 @@
 import type { PermissionRequest, PermissionResponse } from '@/policy/permission-engine';
 import type { RiskLevel } from '@/policy/risk-classifier';
 import { RISK_DESCRIPTIONS } from '@/policy/risk-classifier';
-import { clampToGrantable, type GrantableRiskLevel } from '@/policy/site-policy';
+import { clampToGrantable, isGrantableRisk, type GrantableRiskLevel } from '@/policy/site-policy';
 
 interface PermissionPromptProps {
   readonly request: PermissionRequest;
@@ -69,8 +69,10 @@ export function PermissionPrompt({
 
         {/* Offered before the standing grant, because it is the narrower of
             the two and the one most answers want: this site, this task, gone
-            when the task is. */}
-        {planned && request.site && !request.elevated ? (
+            when the task is. Gated on the same risk bound: a plan stops at R2,
+            so on an R3 prompt this would widen the plan without covering the
+            action in front of the person. */}
+        {planned && request.site && !request.elevated && isGrantableRisk(request.risk) ? (
           <button
             type="button"
             className="button"
@@ -81,7 +83,13 @@ export function PermissionPrompt({
           </button>
         ) : null}
 
-        {request.site && !request.elevated ? (
+        {/* Offered only where a grant could actually cover the action being
+            asked about. A standing grant stops at R2, so on an R3 prompt the
+            button would write a rule that does not cover this download, this
+            tab close, or this cross-site write — and the same prompt would
+            appear again next time. A control that reads as "stop asking me"
+            and does not is worse than no control. */}
+        {request.site && !request.elevated && isGrantableRisk(request.risk) ? (
           <button
             type="button"
             className="button"

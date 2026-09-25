@@ -19,6 +19,7 @@ import { redactValue } from '@/security/redaction/secret-redactor';
 import { maxRisk, type RiskLevel } from '@/policy/risk-classifier';
 import { evaluatePolicy, type PolicyContext, type PolicyDecision } from '@/policy/policy-engine';
 import type { PermissionEngine } from '@/policy/permission-engine';
+import { siteForUrl } from '@/policy/site-policy';
 import type { EvidenceReference, EvidencePayload } from '@/evidence/evidence-model';
 import type { EvidenceStore } from '@/evidence/evidence-store';
 import { unknownTaint, type TaintState } from '@/security/taint/taint-state';
@@ -199,6 +200,19 @@ export interface ToolRegistryOptions {
  */
 type InternalDispatchResult = ToolDispatchResult & { readonly actedOn?: ActedOnElement };
 
+/**
+ * What `run` reports back about a call that is not part of its result.
+ *
+ * Today that is the site whose authorization governed the call. It is written
+ * where the scope is resolved and read only by the observation hook, so the
+ * trail names the same site the policy engine was given rather than deriving
+ * one of its own — two derivations would eventually disagree, and the
+ * disagreement would be a record of a decision nobody took.
+ */
+interface DispatchTrace {
+  site?: string;
+}
+
 export interface DispatchObservation {
   readonly taskId: string;
   readonly toolCallId: string;
@@ -225,6 +239,19 @@ export interface DispatchObservation {
   readonly errorCode?: string;
   /** Tab the call acted on, when one applied. */
   readonly tabId?: number;
+  /**
+   * The site whose authorization governed this call.
+   *
+   * The registrable domain of the resolved scope — the tab's live URL for a
+   * page action, the named destination for a call that has one — so the trail
+   * records the site the decision was actually taken about. Absent when the
+   * scope could not be established, which is the same "not established" the
+   * policy engine saw, never a guess.
+   *
+   * Observation only. Nothing reads it back into a decision; it exists so an
+   * executed action can be attributed to a site after the fact.
+   */
+  readonly site?: string;
 }
 
 export class ToolRegistry {
@@ -291,8 +318,14 @@ export class ToolRegistry {
     // Destructured away rather than passed through: `actedOn` is page-derived
     // text for the observation hook alone, and a caller that received it
     // could put it somewhere page text does not belong.
-    const { actedOn, ...result } = await this.run(invocation);
-    this.observe(invocation, result, actedOn);
+    // A per-call sink rather than a field on the result. The scope is
+    // resolved in one place inside `run`, and threading it back through every
+    // return point would have meant adding it to each of them — which is how
+    // one of them eventually gets missed. Per call, so two dispatches in
+    // flight cannot see each other's.
+    const trace: DispatchTrace = {};
+    const { actedOn, ...result } = await this.run(invocation, trace);
+    this.observe(invocation, result, actedOn, trace.site);
     return result;
   }
 
@@ -318,6 +351,7 @@ export class ToolRegistry {
     invocation: ToolInvocation,
     result: ToolDispatchResult,
     actedOn: ActedOnElement | undefined,
+    site: string | undefined,
   ): void {
     const configured = this.options.onDispatched;
     if (!configured) return;
@@ -339,6 +373,7 @@ export class ToolRegistry {
         status: result.envelope.status,
         ...(result.envelope.error === undefined ? {} : { errorCode: result.envelope.error.code }),
         ...(invocation.tabId === undefined ? {} : { tabId: invocation.tabId }),
+        ...(site === undefined ? {} : { site }),
         ...(actedOn === undefined ? {} : { actedOn: structuredClone(actedOn) }),
       });
     } catch (caught) {
@@ -367,7 +402,10 @@ export class ToolRegistry {
     }
   }
 
-  private async run(invocation: ToolInvocation): Promise<InternalDispatchResult> {
+  private async run(
+    invocation: ToolInvocation,
+    trace: DispatchTrace = {},
+  ): Promise<InternalDispatchResult> {
     const canonicalName = fromWireName(invocation.name);
     const tool = this.tools.get(canonicalName);
 
@@ -467,6 +505,15 @@ export class ToolRegistry {
     //     declares what *kind* of scope it has; the worker decides which URL
     //     that is, from `chrome.tabs`.
     const siteScope = resolveSiteScope(tool.siteAuthorization, currentUrl, classification);
+    // Recorded as the registrable domain, matching every other `site` in the
+    // trail — and never as the full URL, which is a page-derived path and does
+    // not belong in an audit record.
+    if (siteScope !== undefined) {
+      const resolved = siteForUrl(siteScope);
+      // An unparseable scope leaves the field absent rather than recording an
+      // empty string: "not established" and "no site" must not read alike.
+      if (resolved !== null) trace.site = resolved;
+    }
 
     // 3. Policy.
     const policyContext = await this.options.loadPolicyContext(invocation.taskId);

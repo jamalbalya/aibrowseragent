@@ -632,3 +632,140 @@ test('16 — the planning turn offers the model no tools at all', async ({
 
   await page.close();
 });
+
+test('17 — a plan does not clear an origin drift on the site it covers', async ({
+  context,
+  send,
+  provider,
+  site,
+  collector,
+}) => {
+  // The asymmetry, in a real browser. The plan names `127.0.0.1`, and the
+  // collector is a different origin on that same registrable domain — so the
+  // plan covers where the page went. Drift answers a different question from a
+  // site grant: the page moved after the model was asked, and the action would
+  // land somewhere the agent never saw.
+  const page = await context.newPage();
+  await page.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await page.bringToFront();
+  await connectProvider(send, provider);
+  await send('session.setPermissionMode', { mode: 'manual' });
+
+  provider.script([
+    planReply(['127.0.0.1']),
+    {
+      // One turn, two calls, and no page read first: a task that has read a
+      // page and then crosses origins is also a data transfer, and the egress
+      // gate's reason would replace the drift reason in the prompt.
+      kind: 'tool_calls',
+      calls: [
+        { name: 'browser_navigate', arguments: { url: `${collector.baseUrl}/landing` } },
+        { name: 'browser_click', arguments: { elementId: 'e1-0' } },
+      ],
+    },
+    { kind: 'text', text: 'Done.' },
+  ]);
+
+  const { task } = await send('task.create', {
+    objective: 'Go to the other origin and click the first thing.',
+    authorizationModel: 'classic',
+  });
+  await waitForProposal(send, task.id);
+  await send('plan.approve', { taskId: task.id });
+
+  const answering = answerPrompts(send, { kind: 'approve_once' });
+  await waitForTask(send, task.id);
+  answering.stop();
+
+  const drift = answering.prompts.find((prompt) => prompt.reason.includes('moved from'));
+  expect(drift, JSON.stringify(answering.prompts)).toBeDefined();
+  expect(drift?.reason).toContain('Confirm before continuing');
+
+  await page.close();
+});
+
+test('18 — an eviction while the plan is still a proposal does not approve it', async ({
+  context,
+  send,
+  provider,
+  site,
+  serviceWorker,
+}) => {
+  // Case 11 proves an approval survives a worker restart. This is the inverse,
+  // and the one that matters more: a task that was waiting for a person must
+  // not come back from an eviction already authorised. Only a real worker
+  // termination settles it — the parked state, the proposal and the absence of
+  // an approval all have to survive as themselves.
+  const page = await context.newPage();
+  await page.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await page.bringToFront();
+  await connectProvider(send, provider);
+  await send('session.setPermissionMode', { mode: 'manual' });
+  provider.script(CLICK_SCRIPT(['127.0.0.1']));
+
+  const { task } = await send('task.create', {
+    objective: 'Click the first thing.',
+    authorizationModel: 'classic',
+  });
+  const parked = await waitForProposal(send, task.id);
+  expect(parked.planApproval).toBeUndefined();
+
+  await killServiceWorker(context, serviceWorker);
+
+  const { task: recovered } = await send('task.get', { taskId: task.id });
+  expect(recovered?.planApproval).toBeUndefined();
+  expect(recovered?.planProposal?.proposedSites).toEqual(['127.0.0.1']);
+  // And nothing ran while nobody was watching.
+  expect(recovered?.steps.filter((step) => step.kind === 'tool_call')).toEqual([]);
+
+  await page.close();
+});
+
+test('19 — an R3 action inside a Classic run still stops and asks', async ({
+  context,
+  send,
+  provider,
+  site,
+  serviceWorker,
+}) => {
+  // Closing a tab the *user* opened is R3. What this settles in a real browser
+  // is that approving a plan does not buy silence above the floor: the run is
+  // authorised, the action is not, and the person is asked.
+  //
+  // It does not settle the narrower claim that a *covering site scope* fails
+  // to clear an R3 action — `tabs.close` is scope `none`, so no plan could
+  // cover it either way. TEST-SECURITY-068 case 10 holds that one.
+  const page = await context.newPage();
+  await page.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await page.bringToFront();
+  await connectProvider(send, provider);
+  await send('session.setPermissionMode', { mode: 'manual' });
+
+  // Chrome's own id for the tab the person opened, asked of the browser
+  // rather than guessed: the tool refuses a tab it cannot find, and a wrong id
+  // would make this case pass on the wrong refusal.
+  const tabId = await serviceWorker.evaluate(
+    `chrome.tabs.query({ url: '${site.baseUrl}/*' }).then((tabs) => tabs[0].id)`,
+  );
+  provider.script([
+    planReply(['127.0.0.1']),
+    { kind: 'tool_calls', calls: [{ name: 'tabs_close', arguments: { tabId } }] },
+    { kind: 'text', text: 'Done.' },
+  ]);
+
+  const { task } = await send('task.create', {
+    objective: 'Close that tab.',
+    authorizationModel: 'classic',
+  });
+  await waitForProposal(send, task.id);
+  await send('plan.approve', { taskId: task.id });
+
+  const answering = answerPrompts(send, { kind: 'deny' });
+  await waitForTask(send, task.id);
+  answering.stop();
+
+  const asked = answering.prompts.find((prompt) => prompt.tool === 'tabs.close');
+  expect(asked, JSON.stringify(answering.prompts)).toBeDefined();
+
+  await page.close();
+});

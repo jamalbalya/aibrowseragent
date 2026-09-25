@@ -77,6 +77,10 @@ async function writeRecord(
     executed: observation.executed,
     ...(observation.errorCode === undefined ? {} : { code: observation.errorCode }),
     ...(observation.tabId === undefined ? {} : { tabId: observation.tabId }),
+    // The site the authorization decision was taken about, as the registry
+    // resolved it. Without it the trail could say a click happened and not
+    // where, which is the question an audit is usually asked.
+    ...(observation.site === undefined ? {} : { site: observation.site }),
     ...(context.permissionMode === undefined ? {} : { permissionMode: context.permissionMode }),
     ...(context.taintKind === undefined ? {} : { taintKind: context.taintKind }),
   };

@@ -11,6 +11,8 @@
  * genuinely does not control.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   MemoryStorageArea,
   NamespacedStorageArea,
@@ -51,8 +53,15 @@ const page: SemanticPage = {
   viewportHeight: 100,
 };
 
+/** Source with comments removed, so a structural test reads code and not prose. */
+const withoutComments = (source: string): string =>
+  source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
 const planReply = (sites: string[], approach = 'Read the page and summarise it.') =>
   textResponse(JSON.stringify({ approach, sites }));
+
+/** Lets a test change the active model the way switching providers would. */
+let switchedModel = 'fake-model';
 
 function build(script = [planReply(['example.com']), textResponse('Finished.')]) {
   const backing = new SerializedStorageArea(new MemoryStorageArea());
@@ -79,7 +88,7 @@ function build(script = [planReply(['example.com']), textResponse('Finished.')])
         adapter: provider,
         capabilities: FULL_CAPABILITIES,
         providerId: 'fake',
-        modelId: 'fake-model',
+        modelId: switchedModel,
       }),
     getPermissionMode: () => Promise.resolve('manual'),
     getActiveTabId: () => Promise.resolve(1),
@@ -133,6 +142,7 @@ async function waitingWithPlan(
 let ctx: ReturnType<typeof build>;
 
 beforeEach(() => {
+  switchedModel = 'fake-model';
   ctx = build();
 });
 
@@ -311,6 +321,72 @@ describe('TEST-TASK-004: asking for changes creates nothing', () => {
     await expect(ctx.manager.revisePlan(created.id, 'change it')).rejects.toBeInstanceOf(
       TaskManagerError,
     );
+  });
+});
+
+describe('TEST-TASK-004: the planning turn is not a second execution engine', () => {
+  it('11b — the planning turn holds no reference to the tool registry', () => {
+    // Structural, and the claim it protects is the architecture lock: there is
+    // one execution path, and it is `ToolRegistry.dispatch`. A planning turn
+    // that could reach the registry would be a second dispatcher running
+    // before any plan had been approved.
+    // Comments stripped first: the file's own header explains *why* it cannot
+    // reach the registry, and matching that prose would make the test pass on
+    // the explanation rather than on the code.
+    const source = withoutComments(
+      readFileSync(resolve(import.meta.dirname, '../../src/agent/runtime/plan-turn.ts'), 'utf8'),
+    );
+    expect(source).not.toMatch(/tool-registry|ToolRegistry|dispatch\(/);
+    // And it is the only thing the task manager calls before an approval.
+    const manager = withoutComments(
+      readFileSync(resolve(import.meta.dirname, '../../src/background/task-manager.ts'), 'utf8'),
+    );
+    const planningBranch = manager.slice(
+      manager.indexOf("task.authorizationModel === 'classic'"),
+      manager.indexOf('const tabId = await this.options.getActiveTabId();'),
+    );
+    expect(planningBranch).toContain('this.proposePlan(');
+    expect(planningBranch).not.toMatch(/registry|dispatch/i);
+  });
+
+  it('11c — a cancelled task cannot then be approved', async () => {
+    // Cancellation is a decision too. An approval accepted afterwards would
+    // sit on the record reading as authority for a run the person stopped.
+    const created = await ctx.manager.create('Summarise the page', 's1', {
+      authorizationModel: 'classic',
+    });
+    await waitingWithPlan(ctx.store, created.id);
+    await ctx.manager.cancel(created.id);
+
+    await expect(ctx.manager.approvePlanFor(created.id)).rejects.toThrow(/already finished/i);
+    expect((await ctx.store.getTask(created.id))?.planApproval).toBeUndefined();
+  });
+
+  it('11d — switching the model does not touch the approval', async () => {
+    // §60 already refuses to continue a task on a different model. What is
+    // asserted here is the other half: the refusal neither consumes nor
+    // widens the authorization the person gave.
+    const created = await ctx.manager.create('Summarise the page', 's1', {
+      authorizationModel: 'classic',
+    });
+    await waitingWithPlan(ctx.store, created.id);
+    await ctx.manager.approvePlanFor(created.id);
+    const approved = await until(ctx.store, created.id, ['COMPLETED']);
+
+    // Parked rather than finished, so the resume actually reaches the
+    // provider-identity check. A completed task is refused before that branch
+    // runs, and the case would then prove nothing about it.
+    await ctx.store.updateTask(created.id, (task) => ({ ...task, state: 'PAUSED' }));
+    switchedModel = 'other-model';
+    await ctx.manager.resume(created.id).catch(() => undefined);
+    const after = await until(ctx.store, created.id, ['FAILED']);
+
+    // The branch ran: the task refused to continue on a different model.
+    expect(after.state).toBe('FAILED');
+    expect(after.error?.code).toBe('POLICY_BLOCKED');
+    // And it neither consumed nor widened what the person authorised.
+    expect(after.planApproval).toEqual(approved.planApproval);
+    expect(after.planApproval?.version).toBe(1);
   });
 });
 

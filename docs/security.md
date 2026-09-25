@@ -231,6 +231,43 @@ mode after every deny rule has already returned. So a grant cannot reach:
 A blocked site now stops page actions too, not only navigation — the deny side
 of the same change, and a tightening with no counterpart.
 
+### The recorded site is the deciding site
+
+Three derivations of "which site is this call about" used to exist: the one the
+policy engine decided by, the one the prompt showed, and the one the permission
+history stored. The first two were updated when page actions gained a scope and
+the third was not, so a click authorised against `example.com` was recorded as
+`(no site)` — a correct decision with a blank record of it. All three now come
+from one helper, and the executed action carries the same site into the audit
+trail, so "which site did this run act on" is answerable from the record rather
+than inferable from it.
+
+An unresolved scope still records nothing. "Not established" and "no site" must
+not read alike, and inventing one would be a record of a decision nobody took.
+
+### The download destination that was never supplied
+
+`browser.download` declared `siteAuthorization: 'destination'` and its
+classifier named no destination, so the scope resolved to nothing: the
+blocked-sites list could not stop a download from a blocked site, and the
+engine's own navigability check had nothing to check. The tool repeated the
+navigability test inside `execute`, one layer too late to be the gate. It now
+names the URL it is fetching, which is what its declaration always claimed.
+
+Nothing is widened by that. A download is R3, so the risk floor returns a
+confirmation before any grant or plan is consulted — which is also what the
+comparison product documents for downloads, sensitive-information entry and
+authorization grants (`architecture/CLAUDE_BENCHMARK.md` §1: approval-protected
+despite a standing site grant).
+
+One consequence needed closing. Until a download named a site, no R3 prompt
+carried one, so "Always allow on this site" could never appear on an R3 prompt;
+now it could, and a standing grant stops at R2 — the rule it wrote would not
+cover the download being asked about, and the next identical download would ask
+again. Both standing offers, the site grant and the task plan, are therefore
+offered only where the risk is one they could cover. A control that reads as
+"stop asking me" and does not is worse than no control.
+
 ### The task plan: the same authorization, with a task's lifetime
 
 A task can be started in one of two shapes, chosen before it runs and fixed for
@@ -241,7 +278,10 @@ its lifetime:
 | `cowork`  | each changing action, on its own             | as each one comes up |
 | `classic` | a set of sites, once, before the work starts | before anything runs |
 
-`cowork` is the default and is what the product did before this existed.
+`cowork` is the default and is what the product did before this existed. It is
+_not_ a second plan mechanism: a Cowork task proposes nothing, approves nothing
+and has no plan record. Whatever plan-shaped behaviour a Cowork run may
+eventually gain is a later phase and none of its machinery exists here.
 
 A Classic task **proposes and stops**. The model is asked for a plan — an
 approach in plain words, and the sites the work needs — over one provider
@@ -282,6 +322,10 @@ Three narrower properties, each with a test:
   `SiteRule`, so the authorization ends when the task does. "Always allow on
   this site" still writes one — the two answers are different authorizations
   and the panel offers both.
+- **Bound to its task.** The approval names the task it was given for, and the
+  record is re-parsed against that name every time it is read. Until it was, the
+  field was stored and never compared — the binding lived in where the record
+  happened to be kept rather than in any check.
 - **No inheritance.** The approval lives on the task record. A retry is a new
   task and starts with none; a scheduled firing creates its own task and so has
   nothing to inherit; and the engine ignores a plan on an unattended run in any
@@ -291,10 +335,12 @@ Three narrower properties, each with a test:
   approval would be a file deciding which sites this installation may act on
   without asking.
 
-The approach text is shown to the person and read by nothing. The benchmark's
-"will not deviate from the plan" has a machine-checkable half — the sites — and
-a half that is not, and a field that looked enforced and was not would be worse
-than an absent one.
+The approach text is shown to the person and read by nothing. The comparison
+product documents a plan "specifying websites and approach" and says the listed
+_websites_ bound the run (`architecture/CLAUDE_BENCHMARK.md` §1, E1 documentary
+— no direct observation of that product is held anywhere in this repository).
+The site half of that is machine-checkable and the approach half is not, and a
+field that looked enforced and was not would be worse than an absent one.
 
 Never automatable, under any setting: `chrome:`, `chrome-extension:`,
 `chrome-untrusted:`, `devtools:`, `javascript:`, `data:`, `blob:`,

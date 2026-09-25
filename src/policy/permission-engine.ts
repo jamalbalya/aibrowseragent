@@ -247,7 +247,14 @@ export class PermissionEngine {
       id: newId('ph'),
       taskId: input.taskId,
       tool: input.tool,
-      site: (input.targetUrl ? siteForUrl(input.targetUrl) : null) ?? '(no site)',
+      // The same derivation the prompt and the standing grant use, and for
+      // the same reason: the record has to name the site the decision was
+      // actually taken about. It read `targetUrl` alone, which only
+      // `browser.navigate`, `tabs.create` and `browser.download` supply — so
+      // every page action was authorised against its tab's site and then
+      // recorded as `(no site)`. The decision was right and the record of it
+      // was blank, which is the half of an audit trail that fails silently.
+      site: grantSiteFor(input) ?? '(no site)',
       risk: input.decision.effectiveRisk,
       decision,
       timestamp: this.now(),
