@@ -402,10 +402,36 @@ that read is asserted from source. Nothing here installs, obtains or changes a
 skill: the only decision is whether one the build already shipped, validated
 and hashed is available.
 
-PARTIAL for two reasons, both about reach rather than architecture. Three
-workflows ship and all three are read-only: a write workflow is a reasonable
-thing to want and a bad thing to make the easiest path through a brand-new
-feature, so writes stay individually requested for now. And specification §44
+A write workflow now ships, and it is the smallest honest one: fill a field
+and submit it, built from `browser.type` alone. It needed no new tool and no
+connector — `browser.type` escalates itself to R2 when asked to submit — which
+is the point. A skill-level approval is not an authorization for its steps:
+each child call is dispatched separately and reaches its own policy decision,
+so an R3 child still confirms in the mode that asks for nothing, an R5 child is
+denied without ever being offered, and understating a skill's declared risk
+cannot lower the ceiling its steps meet. Declining the write stops the write
+and nothing else.
+
+Five ways a skill run can begin — the model's `skills.run`, the panel's
+launcher, a shortcut, a schedule, and a step inside another skill — and all
+five obtain their definition from `SkillRegistry.get` or `latest`, which is
+where the enablement switch is enforced. That is now counted from source rather
+than asserted, together with the fact that nothing reads the unfiltered `all()`
+from outside the registry. A recorded workflow is the sixth way and the one
+exception: it carries its own definition, validated against its own hash, and
+never consults the registry — so switching every skill off does not switch a
+replay off, which is stated as a test rather than left to be inferred.
+
+When a shortcut or a launch names a skill the user switched off, it now says so
+instead of reporting the target missing. Two different facts, and only one is
+actionable; the distinct message is chosen after the enforcing read has already
+refused, so knowing why is never a way in.
+
+PARTIAL for two reasons, both about reach rather than architecture. Four
+workflows ship and only one writes, to the page's own origin at R2: a
+connector-writing workflow is a reasonable thing to want and a bad thing to
+make the easiest path through a young feature, so writes to a service stay
+individually requested. And specification §44
 names a reference QA workflow spanning Jira, Confluence, Figma and Google
 Sheets as "the primary reference integration workflow for validating the
 multi-tool architecture" — none of those connectors exists (see P-023), so
@@ -520,18 +546,44 @@ or a uniqueness check gates whether it may be stored, never where it came from
 shown in the review surface. A recording the recorder could not complete keeps
 its gaps, shows them in position, and cannot be replayed at all.
 
+Every interaction the build ships is now recorded and replayed in a real
+browser, not only the click the first E2E suite covered: a checkbox, a radio
+group, a single-select dropdown and a text field that submits. An earlier
+revision of this row said checkbox and radio bindings "ride the same path" as
+a click; that was wrong, and writing the test is what found it. One tool —
+`browser.set_checked` — did not report the element it acted on, so the
+recorder had no description to build a binding from, every checkbox or radio
+step was silently left out, and the recording then refused to replay as
+incomplete. The tool now reports it, like the five interaction tools that
+always did, and the mutant that removes the report again fails both cases.
+
+Because classification is recomputed at replay rather than read from the
+record, a step's risk is judged against the page as it is then: a field that
+has become a national-identifier field confirms at R3 even in the mode that
+asks for nothing, and one that has become a one-time-code field is denied
+outright without a prompt. A replay is judged against the site the tab is on,
+so a standing grant earned while recording does not travel to another origin —
+demonstrated on the same markup served under a second hostname, so the page
+cannot be what makes the difference.
+
 Covered by a unit suite, an integration suite, a twenty-four-case security
-suite and a twelve-test real-Chromium E2E suite, with each source-scan and
-real-browser claim proved to fail when its mechanism is removed.
+suite and two real-Chromium E2E suites totalling twenty-one tests, with each
+source-scan and real-browser claim proved to fail when its mechanism is
+removed.
 
 PARTIAL for one reason, and it is reach rather than architecture: the §85 A–F
 manual acceptance scenarios have not been run for this capability, as for
 every other row in this file (see "What the PASS column actually means"), and
-recording covers the tool surface this build ships rather than every
-interaction a reference implementation offers — checkbox and radio bindings
-ride the same path but have no dedicated recorded workflow, and the
-multi-connector reference workflow of §44 cannot be recorded because those
-connectors do not exist (see P-023).
+the multi-connector reference workflow of §44 cannot be recorded because those
+connectors do not exist (see P-023). Two smaller limits are stated rather than
+implied: a multi-select listbox and the structured inputs of P-006 are
+recordable in principle and have no dedicated recorded-and-replayed case, and
+the risk a review surface shows for a stored recording is the maximum of its
+tools' _declared_ risks — a floor, not a prediction, because an escalation
+that depends on the arguments (a form submit, a sensitive field) can only be
+computed against a live page. The prompt raised when the step actually runs
+carries the escalated risk, so the floor understates a review screen and never
+an authorization.
 
 Nothing here is blocked externally. The remaining work is building more, not
 obtaining anything.

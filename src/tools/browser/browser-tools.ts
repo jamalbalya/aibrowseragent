@@ -705,6 +705,13 @@ export function createSetCheckedTool({
         return {
           success: true,
           data: { checked: result.checked, kind: result.kind, value: result.value },
+          // Beside `data`, never inside it: this is page-derived text for the
+          // observation hook, and `data` is what the model reads. It was the
+          // one interaction tool that dropped it, which made a checkbox or a
+          // radio button unrecordable — the recorder had no description to
+          // build an element binding from, so every such step was left out
+          // and the whole recording refused to replay.
+          ...(result.actedOn === undefined ? {} : { actedOn: result.actedOn }),
         };
       } catch (error) {
         rethrowContentError(error, tab.url);

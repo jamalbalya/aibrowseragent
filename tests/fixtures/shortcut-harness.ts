@@ -56,6 +56,19 @@ export function buildShortcutHarness(options: WorkflowHarnessOptions = {}): Shor
         stepCount: entry.definition.steps.length,
       };
     },
+    // Wired exactly as the worker wires it, so the suites exercise the real
+    // "registered but switched off" answer rather than a stub of it.
+    disabledSkill: (skillId, skillVersion) => {
+      const entry = base.skills.getIncludingDisabled(skillId, skillVersion);
+      if (!entry || base.skills.get(skillId, skillVersion)) return undefined;
+      return {
+        skillId: entry.definition.id,
+        skillVersion: entry.definition.version,
+        name: entry.definition.name,
+        risk: entry.risk,
+        stepCount: entry.definition.steps.length,
+      };
+    },
   });
 
   const launcher = new SkillLauncher({

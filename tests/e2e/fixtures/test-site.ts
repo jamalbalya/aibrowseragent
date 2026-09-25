@@ -11,6 +11,17 @@ import type { AddressInfo } from 'node:net';
 
 export interface TestSite {
   readonly baseUrl: string;
+  /**
+   * The same server, reached as a different *site*.
+   *
+   * `localhost` and `127.0.0.1` resolve to the same listener but are different
+   * registrable hosts, so a page fetched through this URL is byte-for-byte the
+   * page above while every site-scoped decision about it is taken afresh.
+   * That is what a site-authorization test needs and what a second server
+   * cannot give it: a second server would serve different markup, so a refusal
+   * could always be explained by the page rather than by the site.
+   */
+  readonly altBaseUrl: string;
   /** Raw bodies of every multipart upload the site received. */
   readonly uploads: readonly string[];
   close(): Promise<void>;
@@ -368,6 +379,9 @@ export async function startTestSite(options: TestSiteOptions = {}): Promise<Test
 
   return {
     baseUrl: `http://127.0.0.1:${port}`,
+    // Bound to 127.0.0.1 and reached by name, the way the collector already
+    // is: `localhost` resolves to the same interface.
+    altBaseUrl: `http://localhost:${port}`,
     uploads,
     close: () =>
       new Promise<void>((resolve) => {

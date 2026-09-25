@@ -29,6 +29,7 @@ import {
   waitForTask,
   type SendToWorker,
 } from './fixtures/extension';
+import { BUNDLED_SKILLS } from '@/skills/bundled';
 import type { ScriptedReply } from './fixtures/mock-provider';
 
 /** Answers every permission prompt, as the side panel would. */
@@ -325,7 +326,10 @@ test('shortcuts are invisible to the model', async ({ context, send, provider, s
   // And the skill list, which is what a model is offered.
   const { skills } = await send('skill.list', {});
   expect(skills.map((skill) => skill.id)).not.toContain('qa-regression');
-  expect(skills).toHaveLength(3);
+  // Exactly what the build ships, counted from the build rather than written
+  // down here: the claim is that a shortcut added nothing, and it has to keep
+  // meaning that when a skill is added.
+  expect(skills).toHaveLength(BUNDLED_SKILLS.length);
 });
 
 test('shortcuts added no permission and no host access', async ({ serviceWorker }) => {

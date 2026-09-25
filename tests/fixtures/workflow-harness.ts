@@ -34,6 +34,8 @@ export interface WorkflowHarness extends SkillHarness {
 }
 
 export interface WorkflowHarnessOptions {
+  /** Skills the user has switched off, as `id@version`. See `HarnessOptions`. */
+  readonly disabledSkills?: ReadonlySet<string>;
   readonly tools?: readonly FakeToolSpec[];
   readonly permissionMode?: PermissionMode;
   readonly taint?: TaintState;
@@ -65,6 +67,7 @@ export function buildWorkflowHarness(options: WorkflowHarnessOptions = {}): Work
     ...(options.resolveUnattended === undefined
       ? {}
       : { resolveUnattended: options.resolveUnattended }),
+    ...(options.disabledSkills === undefined ? {} : { disabledSkills: options.disabledSkills }),
     onDispatched: (observation) => {
       observed.push(observation);
       if (observer) {

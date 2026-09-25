@@ -52,7 +52,7 @@ const log = getLogger('agent');
 export const LAUNCH_PROVIDER_ID = 'none';
 export const LAUNCH_MODEL_ID = 'none';
 
-export type LaunchRefusal = 'NOT_REGISTERED' | 'INPUTS_INVALID';
+export type LaunchRefusal = 'NOT_REGISTERED' | 'INPUTS_INVALID' | 'SKILL_DISABLED';
 
 export type LaunchOutcome =
   | { readonly ok: true; readonly taskId: string; readonly result: SkillRunResult }
@@ -108,6 +108,19 @@ export class SkillLauncher {
       request.skillVersion,
     );
     if (!skill) {
+      // `get` already refused, which is the enforcement. What follows only
+      // decides which true sentence the user is shown: a skill they switched
+      // off is not the same thing as one that does not exist, and telling
+      // them the second sends them looking for a bug.
+      if (this.options.registry.getIncludingDisabled(request.skillId, request.skillVersion)) {
+        return {
+          ok: false,
+          reason: 'SKILL_DISABLED',
+          detail:
+            `The "${request.skillId}" workflow is switched off. Turn it back on in Settings ` +
+            'to run it.',
+        };
+      }
       return {
         ok: false,
         reason: 'NOT_REGISTERED',

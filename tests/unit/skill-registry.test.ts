@@ -168,7 +168,12 @@ describe('no path in adds an untrusted skill', () => {
       /getIncludingDisabled\(|listIncludingDisabled\(/.test(readFileSync(file, 'utf8')),
     );
     expect(callers.map((file) => file.slice(root.length + 1))).toEqual([
+      // The settings listing, and the resolver's "why not" lookup.
       'background/service-worker.ts',
+      // Chooses which true sentence a refused launch shows. Consulted only
+      // after `get` has already refused; see `skill-enablement.test.ts` group
+      // B, which proves a disabled skill cannot be launched through it.
+      'background/skill-launcher.ts',
       'skills/core/skill-registry.ts',
     ]);
   });
@@ -321,6 +326,8 @@ describe('the skills this build actually ships', () => {
         [
           'browser.read_page',
           'browser.navigate',
+          'browser.type',
+          'browser.wait',
           'debugger.console',
           'debugger.network',
           'github.search_issues',

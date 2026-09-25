@@ -110,6 +110,13 @@ export function fakeTool(spec: FakeToolSpec): AgentTool<z.ZodType> {
 }
 
 export interface HarnessOptions {
+  /**
+   * Which skills the user has switched off, as `id@version` keys.
+   *
+   * Defaults to none, which is `ALL_SKILLS_ENABLED` — the behaviour every
+   * suite that does not care about enablement expects.
+   */
+  readonly disabledSkills?: ReadonlySet<string>;
   readonly tools?: readonly FakeToolSpec[];
   readonly permissionMode?: PermissionMode;
   readonly taintState?: TaintState;
@@ -160,7 +167,12 @@ export function buildSkillHarness(options: HarnessOptions = {}): SkillHarness {
 
   const skills = new SkillRegistry({
     riskOfTool: (name) => tools.get(name)?.risk,
-    isEnabled: ALL_SKILLS_ENABLED,
+    isEnabled: ((disabled) =>
+      disabled === undefined
+        ? ALL_SKILLS_ENABLED
+        : (id: string, version: string) => !disabled.has(`${id}@${version}`))(
+      options.disabledSkills,
+    ),
   });
 
   const runner = new SkillRunner({

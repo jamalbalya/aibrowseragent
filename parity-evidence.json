@@ -149,13 +149,13 @@
       "unit": ["tests/unit/shortcut-name.test.ts"],
       "integration": ["tests/integration/shortcut-invocation.test.ts"],
       "security": ["tests/security/shortcut-security.test.ts"],
-      "e2e": ["tests/e2e/shortcuts.spec.ts"]
+      "e2e": ["tests/e2e/shortcut-prompt-and-skills.spec.ts", "tests/e2e/shortcuts.spec.ts"]
     },
     "P-022": {
       "unit": ["tests/unit/workflow-recording.test.ts"],
       "integration": ["tests/integration/workflow-lifecycle.test.ts"],
       "security": ["tests/security/workflow-security.test.ts"],
-      "e2e": ["tests/e2e/workflows.spec.ts"]
+      "e2e": ["tests/e2e/workflow-controls.spec.ts", "tests/e2e/workflows.spec.ts"]
     },
     "P-023": {
       "unit": [
@@ -165,14 +165,21 @@
         "tests/unit/connector-session.test.ts"
       ],
       "integration": ["tests/integration/connector-workflow.test.ts"],
-      "security": ["tests/security/connector-security.test.ts"],
+      "security": [
+        "tests/security/connector-framework.test.ts",
+        "tests/security/connector-security.test.ts"
+      ],
       "e2e": ["tests/e2e/connector.spec.ts"]
     },
     "P-024": {
       "unit": ["tests/unit/skill-model.test.ts", "tests/unit/skill-registry.test.ts"],
       "integration": ["tests/integration/skill-execution.test.ts"],
-      "security": ["tests/security/skill-security.test.ts"],
-      "e2e": ["tests/e2e/skills.spec.ts"]
+      "security": [
+        "tests/security/skill-enablement.test.ts",
+        "tests/security/skill-security.test.ts",
+        "tests/security/write-skill-authority.test.ts"
+      ],
+      "e2e": ["tests/e2e/shortcut-prompt-and-skills.spec.ts", "tests/e2e/skills.spec.ts"]
     },
     "P-025": {},
     "P-026": {},
