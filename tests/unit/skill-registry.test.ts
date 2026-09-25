@@ -7,7 +7,10 @@
  * one naming a tool the build does not have, and a version that floats.
  */
 import { beforeEach, describe, expect, it } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import {
+  ALL_SKILLS_ENABLED,
   SkillRegistrationError,
   SkillRegistry,
   compareVersions,
@@ -15,6 +18,17 @@ import {
 import { skillHash } from '@/skills/core/skill-model';
 import { skillFixture } from '../fixtures/skill-harness';
 import { BUNDLED_SKILLS } from '@/skills/bundled';
+
+/** Every `.ts`/`.tsx` file under a directory, absolute, sorted. */
+function walkSource(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true })
+    .flatMap((entry) => {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) return walkSource(full);
+      return /\.tsx?$/.test(entry.name) ? [full] : [];
+    })
+    .sort();
+}
 
 const RISKS: Record<string, 'R0' | 'R1' | 'R3'> = {
   'fake.read': 'R0',
@@ -25,7 +39,10 @@ const RISKS: Record<string, 'R0' | 'R1' | 'R3'> = {
 let registry: SkillRegistry;
 
 beforeEach(() => {
-  registry = new SkillRegistry({ riskOfTool: (name) => RISKS[name] });
+  registry = new SkillRegistry({
+    riskOfTool: (name) => RISKS[name],
+    isEnabled: ALL_SKILLS_ENABLED,
+  });
 });
 
 describe('taking a definition', () => {
@@ -118,15 +135,41 @@ describe('no path in adds an untrusted skill', () => {
   it('exposes no method that takes anything but a definition', () => {
     // A reviewer adding `installFromUrl` or `registerFromJson` breaks this
     // test, which is exactly when someone should be asked why.
+    //
+    // The enablement methods added for P-024 are reads: they answer whether a
+    // registered skill is switched on, and none of them can bring a skill
+    // into the registry. `register` and `registerAll` remain the only way in,
+    // and they still take a definition and nothing else.
     expect(Object.getOwnPropertyNames(SkillRegistry.prototype).sort()).toEqual([
+      'all',
       'constructor',
+      'enabled',
       'get',
+      'getIncludingDisabled',
       'has',
       'latest',
       'list',
+      'listIncludingDisabled',
       'register',
       'registerAll',
       'size',
+    ]);
+  });
+
+  it('has exactly one way to reach a skill the user switched off', () => {
+    // NEGATIVE CONTROL for the enforcement point. Everything on an execution
+    // path goes through `get`, `latest` or `list`, which honour the switch;
+    // `getIncludingDisabled` and `listIncludingDisabled` deliberately do not,
+    // because a settings screen has to show a disabled skill to offer turning
+    // it on. The risk is one of them being used somewhere else, so the call
+    // sites are counted from source.
+    const root = resolve(import.meta.dirname, '../../src');
+    const callers = walkSource(root).filter((file) =>
+      /getIncludingDisabled\(|listIncludingDisabled\(/.test(readFileSync(file, 'utf8')),
+    );
+    expect(callers.map((file) => file.slice(root.length + 1))).toEqual([
+      'background/service-worker.ts',
+      'skills/core/skill-registry.ts',
     ]);
   });
 });
@@ -273,6 +316,7 @@ describe('the skills this build actually ships', () => {
     // imagination: these are the definitions the worker registers, checked
     // against every tool name the product has.
     const real = new SkillRegistry({
+      isEnabled: ALL_SKILLS_ENABLED,
       riskOfTool: (name) =>
         [
           'browser.read_page',

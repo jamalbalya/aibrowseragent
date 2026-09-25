@@ -32,7 +32,12 @@ export function ShortcutConfirm({
   onConfirm,
   onCancel,
 }: ShortcutConfirmProps): React.JSX.Element {
-  const kind = resolution.targetKind === 'workflow' ? 'recorded workflow' : 'built-in workflow';
+  const kind =
+    resolution.targetKind === 'workflow'
+      ? 'recorded workflow'
+      : resolution.targetKind === 'prompt'
+        ? 'saved prompt'
+        : 'built-in workflow';
 
   return (
     <section className="prompt" role="dialog" aria-label="Confirm shortcut">
@@ -44,17 +49,34 @@ export function ShortcutConfirm({
         <dd data-testid="shortcut-kind">{kind}</dd>
         <dt>Runs</dt>
         <dd data-testid="shortcut-target">{resolution.targetName}</dd>
-        <dt>Steps</dt>
-        <dd>
-          {resolution.stepCount}{' '}
-          <span className={`badge badge--risk-${resolution.risk.toLowerCase()}`}>
-            {resolution.risk}
-          </span>
-        </dd>
+        {/* A saved prompt has no step list and no risk until it runs, so it
+            shows the objective it would start instead of a number it does not
+            have. Printing `R0` here would read as "read-only". */}
+        {resolution.targetKind === 'prompt' ? (
+          <>
+            <dt>Objective</dt>
+            <dd data-testid="shortcut-objective">{resolution.objective}</dd>
+          </>
+        ) : (
+          <>
+            <dt>Steps</dt>
+            <dd>
+              {resolution.stepCount ?? 0}{' '}
+              {resolution.risk ? (
+                <span className={`badge badge--risk-${resolution.risk.toLowerCase()}`}>
+                  {resolution.risk}
+                </span>
+              ) : null}
+            </dd>
+          </>
+        )}
       </dl>
       <p className="field__hint">
-        Running this asks for permission step by step, exactly as it would without the shortcut.
-        Confirming here approves nothing on its own.
+        {resolution.targetKind === 'prompt'
+          ? 'This starts a new task with the saved objective. Every action it takes is approved ' +
+            'as it happens, exactly as if you had typed the objective yourself.'
+          : 'Running this asks for permission step by step, exactly as it would without the ' +
+            'shortcut. Confirming here approves nothing on its own.'}
       </p>
       <div className="prompt__actions">
         <button

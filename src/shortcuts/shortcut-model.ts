@@ -33,9 +33,49 @@ export const SHORTCUT_FORMAT_VERSION = 1;
  */
 export type ShortcutTarget =
   | { readonly kind: 'workflow'; readonly workflowId: string }
-  | { readonly kind: 'skill'; readonly skillId: string; readonly skillVersion: string };
+  | { readonly kind: 'skill'; readonly skillId: string; readonly skillVersion: string }
+  | { readonly kind: 'prompt'; readonly objective: string };
 
-export const SHORTCUT_TARGET_KINDS: readonly ShortcutTarget['kind'][] = ['workflow', 'skill'];
+export const SHORTCUT_TARGET_KINDS: readonly ShortcutTarget['kind'][] = [
+  'workflow',
+  'skill',
+  'prompt',
+];
+
+/**
+ * Longest objective a saved prompt may hold.
+ *
+ * Bounded because it is stored and re-sent, not because length is dangerous:
+ * an objective is the same text the composer already accepts.
+ */
+export const MAX_SHORTCUT_OBJECTIVE = 2_000;
+
+/**
+ * A saved objective: the third kind of target, and the one that is content
+ * rather than a reference.
+ *
+ * Worth being exact about why that is allowed here when the whole module says
+ * a shortcut holds no content. An objective is not a definition of what will
+ * run — it is the task's own top-level input, the same string the person
+ * types into the composer, and it reaches exactly one place: `task.create`.
+ * It names no tool, carries no arguments, selects no element and cannot be
+ * interpreted as anything but an objective, so a saved prompt grants precisely
+ * what typing it would grant, which is nothing. Every action the model then
+ * takes is classified, policy-checked and approved exactly as it would have
+ * been, and `PROHIBITED_FIELDS` below still refuses `prompt` and
+ * `instructions` — a shortcut may hold the objective *as its whole target*,
+ * never a second instruction channel bolted to another one.
+ *
+ * Authored only through the panel's CLASS_B route. No `shortcut.*` tool
+ * exists, so no model can write one, and nothing in this build reads a stored
+ * objective as anything other than user-authored text at the trust level the
+ * system instruction already assigns to the user's objective.
+ */
+export function isUsableObjective(value: unknown): value is string {
+  return (
+    typeof value === 'string' && value.trim().length > 0 && value.length <= MAX_SHORTCUT_OBJECTIVE
+  );
+}
 
 /**
  * A shortcut as it is stored.
@@ -179,6 +219,15 @@ export function isUsableShortcut(value: unknown): value is ShortcutRecord {
       typeof target.skillVersion === 'string' &&
       /^\d+\.\d+\.\d+$/.test(target.skillVersion)
     );
+  }
+  if (target.kind === 'prompt') {
+    // Exactly two keys. A prompt target that grew a third is a target that is
+    // carrying something beside the objective, which is the one thing this
+    // kind is allowed to hold.
+    const keys = Object.keys(target).sort();
+    return keys.length === 2 && keys[0] === 'kind' && keys[1] === 'objective'
+      ? isUsableObjective((target as { objective?: unknown }).objective)
+      : false;
   }
   return false;
 }

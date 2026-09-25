@@ -20,7 +20,7 @@
  * through the same gates. A shortcut buys nothing.
  */
 import type { RiskLevel } from '@/policy/risk-classifier';
-import type { ShortcutRecord, ShortcutTarget } from './shortcut-model';
+import { isUsableObjective, type ShortcutRecord, type ShortcutTarget } from './shortcut-model';
 import type { ShortcutStore } from './shortcut-store';
 
 export type ResolutionRefusal =
@@ -43,8 +43,22 @@ export interface ShortcutResolution {
   readonly targetName: string;
   readonly targetId: string;
   readonly targetVersion?: string;
-  readonly risk: RiskLevel;
-  readonly stepCount: number;
+  /**
+   * The risk of the reviewed thing this names, where one is known.
+   *
+   * Absent for a saved prompt, and absent rather than `R0` on purpose. A
+   * reviewed workflow has a fixed set of steps whose risk can be computed
+   * before it starts; an objective does not — what it costs depends on what
+   * the model decides to do, and every one of those actions is classified and
+   * approved when it happens. Printing a number here would be a claim about a
+   * run nobody has planned yet, and `R0` in particular would read as
+   * "read-only", which is the one thing it definitely is not.
+   */
+  readonly risk?: RiskLevel;
+  /** Absent for a saved prompt, which has no step list until it runs. */
+  readonly stepCount?: number;
+  /** The objective a saved prompt would start, shown before it is confirmed. */
+  readonly objective?: string;
 }
 
 export type ShortcutVerdict =
@@ -140,6 +154,26 @@ export class ShortcutResolver {
       };
     }
 
+    if (target.kind === 'prompt') {
+      // Nothing external to dangle. A saved objective cannot be deleted from
+      // under its shortcut the way a workflow or a skill can, because it is
+      // the whole target rather than a reference to one — so the only failure
+      // mode is a stored record that no longer parses, which the store
+      // refuses on the way out.
+      return {
+        ok: true,
+        record,
+        resolution: {
+          shortcutId: record.shortcutId,
+          name: record.name,
+          targetKind: 'prompt',
+          targetName: firstLine(target.objective),
+          targetId: '',
+          objective: target.objective,
+        },
+      };
+    }
+
     if (target.kind === 'skill') {
       // Pinned exactly. A shortcut never floats to a newer version: that
       // would be the target changing under a name the user already approved.
@@ -191,6 +225,20 @@ export class ShortcutResolver {
     if (target.kind === 'skill') {
       return this.options.skill(target.skillId, target.skillVersion) !== undefined;
     }
+    if (target.kind === 'prompt') return isUsableObjective(target.objective);
     return false;
   }
+}
+
+/**
+ * The first line of an objective, for the confirmation's one-line summary.
+ *
+ * Truncated rather than wrapped, because this sits where a workflow's name
+ * sits and a name is one line. The full objective travels separately on the
+ * resolution, so the confirmation can show all of it without this being the
+ * thing that carries it.
+ */
+function firstLine(objective: string): string {
+  const line = objective.split('\n', 1)[0]?.trim() ?? '';
+  return line.length > 80 ? `${line.slice(0, 79)}\u2026` : line;
 }

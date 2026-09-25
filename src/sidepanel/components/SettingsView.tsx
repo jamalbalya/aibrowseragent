@@ -463,6 +463,28 @@ export function SettingsView({
               ))}
               {skill.connectors.length > 0 ? `via ${skill.connectors.join(', ')}` : null}
             </p>
+            {/* Turning one off removes it everywhere at once: the agent stops
+                being offered it, cannot run it by name, and a shortcut
+                pointing at it stops resolving. */}
+            <label className="skill__toggle">
+              <input
+                type="checkbox"
+                checked={skill.enabled}
+                data-testid={`skill-enabled-${skill.id}`}
+                onChange={(event) => {
+                  const enabled = event.target.checked;
+                  void (async () => {
+                    await sendToBackground('skill.setEnabled', {
+                      skillId: skill.id,
+                      skillVersion: skill.version,
+                      enabled,
+                    });
+                    setSkills((await sendToBackground('skill.list', {})).skills);
+                  })();
+                }}
+              />
+              <span>{skill.enabled ? 'Available to the agent' : 'Turned off'}</span>
+            </label>
           </div>
         ))}
       </section>

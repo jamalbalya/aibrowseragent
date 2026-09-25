@@ -441,6 +441,9 @@ export const PANEL_ROUTE_CLASSES: Record<PanelRequestType, RouteClass> = {
   'skill.list': 'CLASS_E_PANEL_READ_ONLY',
   'skill.runs': 'CLASS_E_PANEL_READ_ONLY',
   'skill.run': 'CLASS_B_PANEL_CONTROL_PLANE',
+  // Changes what the agent can reach, so control-plane: a page, a content
+  // script or a model-originated message cannot switch a skill back on.
+  'skill.setEnabled': 'CLASS_B_PANEL_CONTROL_PLANE',
 
   'workflow.recordStart': 'CLASS_B_PANEL_CONTROL_PLANE',
   'workflow.recordStop': 'CLASS_B_PANEL_CONTROL_PLANE',
