@@ -4,6 +4,8 @@
  * TEST-BROWSER-002 — DOM interaction (REQ-BROWSER-002).
  */
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { ElementRegistry } from '@/content/semantic-tree';
 import {
   performClick,
@@ -196,6 +198,51 @@ describe('performType', () => {
   it('refuses an element that does not accept text', () => {
     const { element } = register('<button>Go</button>');
     expect(() => performType(element, 'x')).toThrow(TypeError);
+  });
+
+  it('refuses a read-only input, and leaves its value alone', () => {
+    // `readonly` constrains people, not the IDL setter: the native value
+    // setter writes straight through it, and a read-only field is still
+    // submitted with its form. Without this the agent could replace a locked
+    // reference number or a quoted price and the page would submit the
+    // replacement — something no user of that page can do.
+    const { element } = register('<input type="text" value="locked" readonly>');
+    const input = element as HTMLInputElement;
+
+    expect(() => performType(input, 'overwritten')).toThrow(/read-only/i);
+    expect(input.value).toBe('locked');
+  });
+
+  it('refuses a read-only textarea too', () => {
+    const { element } = register('<textarea readonly>locked</textarea>');
+    const area = element as HTMLTextAreaElement;
+
+    expect(() => performType(area, 'overwritten')).toThrow(/read-only/i);
+    expect(area.value).toBe('locked');
+  });
+
+  it('still types into the same control once the page makes it writable', () => {
+    // NEGATIVE CONTROL for the two above. Without it they would pass against a
+    // build that had stopped typing into anything at all.
+    const { element } = register('<input type="text" value="locked" readonly>');
+    const input = element as HTMLInputElement;
+    expect(() => performType(input, 'x')).toThrow();
+
+    input.readOnly = false;
+    performType(input, 'now editable');
+    expect(input.value).toBe('now editable');
+  });
+
+  it('is the same rule the other two write paths already had', () => {
+    // The guard was two-thirds of a rule: `performSetValue` and
+    // `performSetChecked` both refused a read-only control and this path did
+    // not. Counted from source so the three cannot drift apart again.
+    const engine = readFileSync(
+      resolve(import.meta.dirname, '../../src/content/interaction-engine.ts'),
+      'utf8',
+    );
+    const guards = engine.match(/element\.readOnly/g) ?? [];
+    expect(guards.length).toBe(3);
   });
 });
 

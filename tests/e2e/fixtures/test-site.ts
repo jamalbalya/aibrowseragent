@@ -228,6 +228,8 @@ function dynamicPages(collectorUrl: string): Record<string, string> {
     <select id="one" name="one"><option value="e">Economy</option><option value="b">Business</option></select>
     <label for="locked">Reference</label>
     <input id="locked" name="locked" type="date" value="2026-06-01" readonly>
+    <label for="quoted">Quoted price</label>
+    <input id="quoted" name="quoted" type="text" value="49.00" readonly>
     <label for="note">Note</label>
     <input id="note" name="note" type="text">
     <p id="echo"></p>

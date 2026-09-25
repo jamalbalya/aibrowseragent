@@ -356,6 +356,32 @@ describe('extractSemanticPage', () => {
   });
 });
 
+describe('a control that refuses edits says so', () => {
+  it('reports readOnly on an input and a textarea, and not on a writable one', () => {
+    // `enabled` answers a different question. A read-only field is enabled,
+    // focusable, tab-reachable and submitted with its form — what it is not is
+    // editable, and the write tools refuse it for that reason. A model that
+    // could not see this would learn it only by being refused.
+    document.body.innerHTML = `
+      <label for="quoted">Quoted price</label>
+      <input id="quoted" type="text" value="49.00" readonly>
+      <label for="notes">Notes</label>
+      <textarea id="notes" readonly>fixed</textarea>
+      <label for="open">Open</label>
+      <input id="open" type="text">
+    `;
+    const page = extractSemanticPage(document, new ElementRegistry());
+    const by = (name: string) => page.elements.find((element) => element.name === name);
+
+    expect(by('Quoted price')?.readOnly).toBe(true);
+    expect(by('Notes')?.readOnly).toBe(true);
+    // Absent rather than false, like every other optional flag here.
+    expect(by('Open')?.readOnly).toBeUndefined();
+    // And it is not the same fact as being disabled.
+    expect(by('Quoted price')?.enabled).toBe(true);
+  });
+});
+
 describe('visibleText', () => {
   it('excludes script and style content', () => {
     setBody('<script>var secret = 1;</script><style>.a{color:red}</style><p>Real content</p>');
