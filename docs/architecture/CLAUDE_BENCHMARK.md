@@ -127,6 +127,37 @@ The shape worth copying is not the vendor integration — it is the property:
 
 ---
 
+## 8. Form filling (E1 for the principle, UNKNOWN per control)
+
+Searched deliberately during the P-006 audit, because P-006 is a parity row and
+the matrix needed to know what it was being measured against.
+
+**What is documented (E1).** Claude _"fills out forms the way a person would"_,
+and the capability is described as clicking, typing, navigating and filling
+forms. Before something consequential — _"like submitting a form"_ — a separate
+check reviews the action.
+
+**What is not documented (UNKNOWN), and was checked.** Nothing published names
+which individual controls are supported, and nothing describes what happens at
+a **read-only**, disabled or invalid field. The help centre describes forms
+generically and does not go below that level. So there is no benchmark
+behaviour to match per control type, and this repository's per-control choices
+are its own.
+
+**The one sentence that does bear on a control-level decision** is _"the way a
+person would"_. A person cannot edit a read-only field: `readonly` is a
+constraint on user interaction, and the browser enforces it against typing
+while leaving the IDL value setter open. So refusing to write into one is the
+reading of that sentence, not a divergence from it — which is the reasoning
+this repository's fix rests on, stated here rather than left implicit.
+
+**A related failure in another product (E4, and not evidence about Claude).**
+A public issue against `vercel-labs/agent-browser` records `fill` clearing a
+read-only or disabled input with a value assignment, failing to write, and
+reporting success — the same class of defect this audit found here, in a worse
+form. It is cited because it shows the failure mode is real in shipping browser
+agents, not because it says anything about the comparison product.
+
 ## Gaps this benchmark opened
 
 ### Gap-1 — declared prohibitions with no producer (partially closed)
@@ -229,7 +260,9 @@ E3 — [Piloting Claude for Chrome](https://claude.com/blog/claude-for-chrome) �
 [Cowork in the Chrome side panel](https://claude.com/blog/cowork-chrome-side-panel) ·
 [Claude in Chrome product page](https://claude.com/claude-in-chrome)
 
-E4 — third-party permission-list reports, used for the manifest permission set
+E4 — third-party permission-list reports, used for the manifest permission set ·
+[`agent-browser` #1920, `fill` on a read-only or disabled input](https://github.com/vercel-labs/agent-browser/issues/1920)
+— a different product, cited in §8 only as evidence that the failure mode is real
 only and not for behaviour.
 
 ## What would resolve the unknowns

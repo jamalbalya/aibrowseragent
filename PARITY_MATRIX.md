@@ -331,6 +331,25 @@ script reports without drawing any conclusion, and the write is re-checked
 against the live element immediately before it lands — which is the only way to
 catch a page that changes a field after it was read. See `docs/security.md`.
 
+A P-006 audit found one defect, and it was in the oldest tool rather than the
+new ones. `performType` had **no read-only guard**, while `performSetValue` and
+`performSetChecked` both did — the rule was two-thirds written. `readonly`
+constrains people, not the IDL setter: the native value setter writes straight
+through it, and a read-only field is still submitted with its form. So the
+agent could replace a locked reference number, a computed total or a quoted
+price, the tool reported success, and the page would submit the replacement —
+something no user of that page can do. Confirmed in real Chromium before it was
+fixed, not reasoned about. The page model now reports `readOnly` as well, so a
+model can avoid such a field rather than learn about it by being refused;
+`enabled` does not cover it, because a read-only field is enabled, focusable
+and submitted.
+
+That fix is also the closest thing to benchmark behaviour available here. The
+comparison product documents that it fills forms _"the way a person would"_ and
+documents nothing at all about read-only, disabled or invalid fields — see
+`CLAUDE_BENCHMARK.md` §8, where the per-control evidence is recorded as UNKNOWN
+rather than guessed at. A person cannot type into a read-only field.
+
 PARTIAL still, and for three narrow reasons. The §85 A–F manual acceptance
 scenarios are unexecuted, as for every row in this file. Two controls remain
 without a dedicated tool: `<input type="file">` is handled through the separate

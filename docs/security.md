@@ -231,6 +231,24 @@ mode after every deny rule has already returned. So a grant cannot reach:
 A blocked site now stops page actions too, not only navigation — the deny side
 of the same change, and a tightening with no counterpart.
 
+### A read-only control is not writable by the agent either
+
+`readonly` is a constraint on people, not on the DOM: a read-only field's value
+is settable through the IDL setter that every write tool uses, and the field is
+still submitted with its form. So an agent that ignores it can do something no
+user of that page can — replace a locked reference number, a computed total, a
+quoted price — and the page submits the replacement.
+
+All three write paths refuse it: `performType`, `performSetValue` and
+`performSetChecked`. The first did not until the P-006 audit, which made the
+rule two-thirds written and left the most-used tool as the exception. The count
+is asserted from source so the three cannot drift apart again.
+
+This is separate from `disabled`, which `resolveActionable` already refused for
+every interaction: a disabled control is not submitted and cannot be focused,
+while a read-only one is both. It is also separate from field sensitivity,
+which asks what a field is _for_ rather than whether it accepts edits.
+
 ### A block rule is enforced, and nothing in the product creates one
 
 `SiteRule.decision` is `'allow' | 'block'`, and a `block` rule is enforced

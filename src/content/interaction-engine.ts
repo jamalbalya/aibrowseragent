@@ -254,6 +254,18 @@ export function performType(element: Element, text: string, options: TypeOptions
   scrollIntoViewAndAssertReachable(element);
 
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+    // `readonly` is a constraint on *people*, not on the IDL setter: the
+    // native value setter below writes straight through it, and a read-only
+    // field's value is still submitted with its form. So without this the
+    // agent could do something no user of the page can — replace a locked
+    // reference number, a computed total, a quoted price — and the page would
+    // submit the replacement.
+    //
+    // `performSetValue` and `performSetChecked` both already refused it. This
+    // path did not, which made the guard two-thirds of a rule.
+    if (element.readOnly) {
+      throw new TypeError('This control is read-only.');
+    }
     element.focus({ preventScroll: true });
     const next = options.clearFirst === false ? element.value + text : text;
 

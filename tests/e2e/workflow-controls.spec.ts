@@ -725,6 +725,85 @@ test('a replayed write into a field that has become a credential is denied, neve
   await target.close();
 });
 
+test('a read-only field is not writable by the agent either', async ({
+  context,
+  send,
+  provider,
+  site,
+}) => {
+  // Only a real browser settles this. `readonly` constrains people, not the
+  // IDL setter: the native value setter the type tool uses writes straight
+  // through it, and a read-only field is still submitted with its form. So
+  // until this was guarded the agent could replace a quoted price that no user
+  // of the page can edit, the tool reported success, and the page would submit
+  // the replacement. jsdom would have shown the same write and proved nothing
+  // about what Chrome does with it.
+  const target = await context.newPage();
+  await target.goto(`${site.baseUrl}/advanced-controls`, { waitUntil: 'domcontentloaded' });
+  await target.bringToFront();
+  await connectProvider(send, provider);
+
+  provider.script([
+    { kind: 'tool_calls', calls: [{ name: 'browser.read_page', arguments: {} }] },
+    {
+      kind: 'tool_calls',
+      calls: [
+        {
+          name: 'browser.type',
+          arguments: { elementId: '$element(textbox,Quoted price)', text: '1.00' },
+        },
+      ],
+    },
+    { kind: 'text', text: 'Done.' },
+  ]);
+
+  const { task } = await send('task.create', { objective: 'Change the quoted price.' });
+  await waitForTask(send, task.id, 40_000);
+
+  // Untouched, and still read-only — the guard refused rather than the page
+  // having quietly reverted it.
+  const quoted = await target.evaluate(() => {
+    const element = document.querySelector<HTMLInputElement>('#quoted')!;
+    return { value: element.value, readOnly: element.readOnly, disabled: element.disabled };
+  });
+  expect(quoted.value).toBe('49.00');
+  expect(quoted.readOnly).toBe(true);
+  // Not the same fact as disabled: the field is enabled and submitted, which
+  // is exactly why overwriting it would have mattered.
+  expect(quoted.disabled).toBe(false);
+
+  // The refusal reached the model as a failure rather than a success.
+  const { events } = await send('audit.list', { taskId: task.id, limit: 50 });
+  const write = events.find((event) => event.tool === 'browser.type');
+  expect(write, JSON.stringify(events.map((event) => event.type))).toBeDefined();
+  expect(write?.outcome).not.toBe('allowed');
+
+  // The control: the same field, once the page makes it writable, accepts the
+  // write. Without this the case would pass against a build that had stopped
+  // typing into anything.
+  await target.evaluate(() => {
+    document.querySelector<HTMLInputElement>('#quoted')!.readOnly = false;
+  });
+  provider.script([
+    { kind: 'tool_calls', calls: [{ name: 'browser.read_page', arguments: {} }] },
+    {
+      kind: 'tool_calls',
+      calls: [
+        {
+          name: 'browser.type',
+          arguments: { elementId: '$element(textbox,Quoted price)', text: '1.00' },
+        },
+      ],
+    },
+    { kind: 'text', text: 'Done.' },
+  ]);
+  const second = await send('task.create', { objective: 'Change the quoted price.' });
+  await waitForTask(send, second.task.id, 40_000);
+  expect((await controlState(target, '#quoted')).value).toBe('1.00');
+
+  await target.close();
+});
+
 // ---------------------------------------------------------------------------
 // C. Recordings and the skill registry
 // ---------------------------------------------------------------------------

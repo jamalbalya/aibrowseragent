@@ -26,6 +26,15 @@ export interface SemanticElement {
   readonly checked?: boolean;
   readonly required?: boolean;
   readonly placeholder?: string;
+  /**
+   * Whether the control refuses edits, for the controls that can say so.
+   *
+   * Separate from `enabled`, which answers a different question: a read-only
+   * field is enabled, focusable, tab-reachable and submitted with its form.
+   * What it is not is editable, and the write tools refuse it — so a model
+   * that could not see this would learn it only by failing.
+   */
+  readonly readOnly?: boolean;
   /** Best-effort CSS selectors, used only as a recovery hint. */
   readonly selectorHints: readonly string[];
   readonly frameId: string;
@@ -643,10 +652,16 @@ function describeElement(
     }
     if (element.placeholder) extras.placeholder = element.placeholder;
     if (element.required) extras.required = true;
+    // Reported so the model can avoid a control it cannot write to, rather
+    // than discovering it by being refused. `enabled` does not cover this: a
+    // read-only field is enabled, focusable and submitted — it simply cannot
+    // be edited by a person, and the write tools refuse it for that reason.
+    if (element.readOnly) extras.readOnly = true;
   } else if (element instanceof HTMLTextAreaElement) {
     extras.value = element.value.slice(0, 500);
     if (element.placeholder) extras.placeholder = element.placeholder;
     if (element.required) extras.required = true;
+    if (element.readOnly) extras.readOnly = true;
   } else if (element instanceof HTMLSelectElement) {
     extras.value = element.value;
     extras.options = [...element.options].slice(0, 100).map((o) => o.text.trim());
