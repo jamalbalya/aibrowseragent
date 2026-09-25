@@ -139,7 +139,9 @@
       "e2e": ["tests/e2e/mv3-lifecycle.spec.ts", "tests/e2e/agent-task.spec.ts"]
     },
     "P-019": {
-      "unit": ["tests/unit/notifier.test.ts"]
+      "unit": ["tests/unit/notifier.test.ts"],
+      "security": ["tests/security/notification-content.test.ts"],
+      "e2e": ["tests/e2e/notifications.spec.ts"]
     },
     "P-020": {
       "security": ["tests/security/scheduled-execution.test.ts"],

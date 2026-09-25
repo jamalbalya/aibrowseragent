@@ -456,3 +456,30 @@ test('audit added no permission and is invisible to the model', async ({ send, s
   const { tools } = await send('tools.list', {});
   expect(tools.map((tool) => tool.name).filter((name) => name.startsWith('audit.'))).toEqual([]);
 });
+
+test('a task that finishes normally is recorded as having finished', async ({
+  context,
+  send,
+  provider,
+  site,
+}) => {
+  // This is the path every model-driven task ends on, and for a long time it
+  // told the lifecycle observer nothing: the trail held `task.created` and
+  // three `task.state` records and then simply stopped, so "did this task
+  // finish, and how" was unanswerable from the record of a task that had.
+  const page = await context.newPage();
+  await page.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await page.bringToFront();
+
+  await connectProvider(send, provider);
+  provider.script([{ kind: 'text', text: 'Nothing needed doing.' }]);
+
+  const { task } = await send('task.create', { objective: 'Report on the page.' });
+  expect((await waitForTask(send, task.id, 40_000)).state).toBe('COMPLETED');
+
+  const { events } = await send('audit.list', { taskId: task.id, limit: 100 });
+  const completed = events.filter((event) => event.type === 'task.completed');
+  expect(completed).toHaveLength(1);
+  // The outcome, not merely that something ended.
+  expect(JSON.stringify(completed[0])).toContain('COMPLETED');
+});

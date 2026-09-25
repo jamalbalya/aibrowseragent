@@ -103,8 +103,8 @@ capability, not necessarily a test of the capability itself.
 
 | Status          | Count  |
 | --------------- | ------ |
-| PASS            | 30     |
-| PARTIAL         | 8      |
+| PASS            | 29     |
+| PARTIAL         | 9      |
 | INTERFACES-ONLY | 0      |
 | NOT-STARTED     | 2      |
 | **Total**       | **40** |
@@ -115,9 +115,18 @@ separate classes of error have actually occurred here: a revision that claimed
 17 PASS while its own table said 23, and a revision whose per-column coverage
 claims were not backed by any test. The check now covers both.
 
-Movement in this revision: scheduled tasks (P-020) move from NOT-STARTED to
-PARTIAL, taking PARTIAL from 7 to 8 and NOT-STARTED from 3 to 2. It is **not**
-PASS, and the reason is below rather than a missing test.
+Movement in this revision: notifications (P-019) move **from PASS to
+PARTIAL**, taking PASS from 30 to 29 and PARTIAL from 8 to 9. That direction is
+unusual enough to say plainly why: the row was never PASS on the merits. It
+gained security and real-Chromium coverage in the same revision, and it is
+still not PASS, because the capability is measured against specification §53
+and §53 names six things to notify for. Two were implemented. The reason is
+below.
+
+### Earlier movement, kept for the record
+
+Scheduled tasks (P-020) moved from NOT-STARTED to PARTIAL. It is **not** PASS,
+and the reason is below rather than a missing test.
 
 ### Earlier movement, kept for the record
 
@@ -274,7 +283,7 @@ rather than folded into the verdict.
 | P-016 | Network inspection                   | yes  | yes  | —           | yes      | yes | PASS        |
 | P-017 | Long-running task                    | yes  | —    | yes         | —        | yes | PASS        |
 | P-018 | Background task while Chrome is open | yes  | —    | yes         | —        | yes | PASS        |
-| P-019 | Notifications                        | yes  | yes  | —           | —        | —   | PASS        |
+| P-019 | Notifications                        | yes  | yes  | —           | yes      | yes | PARTIAL     |
 | P-020 | Scheduled tasks                      | yes  | —    | —           | yes      | yes | PARTIAL     |
 | P-021 | Shortcuts                            | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-022 | Workflow recording                   | yes  | yes  | yes         | yes      | yes | PARTIAL     |
@@ -374,6 +383,55 @@ works but is not a distinct capability. And field sensitivity is not detectable
 inside a shadow root or a cross-origin iframe — neither is walked by the page
 model, and neither is reachable by the agent either, so the limit bounds what
 the agent can do as well as what it can see.
+
+**P-019 Notifications** — Specification §53 lists six things to notify for:
+a completed task, a required permission, a failed task, a disconnected
+provider, an expired connector authorization, and a scheduled task starting or
+failing. This row read PASS while **two** of those existed — the permission
+prompt and the scheduled-run lifecycle. A user who started a task and went to
+do something else was never told it had finished, which is the one case the
+feature is for.
+
+Four were added. A task reaching a terminal state now notifies, and so does a
+connector authorization that expired while nobody was looking. What a
+notification may say is a security rule rather than a presentation choice,
+because it is drawn by the operating system, outside every boundary this
+extension controls, and can outlive the task in a notification centre: the
+function is handed a task id and a state and **nothing else**, so an
+objective, a summary, a model reply, a site or page text has no path to the
+screen. Not even the task id is shown. A cancelled task says nothing, because
+the person who cancelled it was standing there.
+
+Writing the notification found a defect underneath it, and a real-Chromium run
+established it rather than an argument. `TaskManager.onComplete` — the path
+**every** model-driven task actually ends on — wrote the terminal state
+straight to the store and never told the lifecycle observer, while
+`transition()` did. So "the task reached a terminal state" was observable only
+when a task was cancelled or failed around the runtime rather than by it. Two
+things depended on that observation: a finished task's staged files are
+released there, and the audit trail's `task.completed` record is written
+there. An ordinary completing task produced **no** `task.completed` record at
+all, and the user's file stayed in memory until the worker happened to be
+evicted — which is precisely what the comment at that hook says it exists to
+prevent. Both now happen, and the mutant that restores the gap fails the audit
+test and the notification test together.
+
+The setting that gates every notification was readable by the notifier from
+the first wave and writable by nothing, so notifications were on for everyone,
+permanently. That was tolerable while the only one was an approval the user
+was being asked for. It is not now, so the panel has a switch, and turning it
+off is proved to silence the worker rather than only the checkbox.
+
+PARTIAL, and not for the reason every other row here is. **One of §53's six
+has no producer at all**: nothing in this build ever reports that a provider
+became disconnected. The only place an account's status becomes `disconnected`
+is cloud-metadata restore, which is a backend path, and a provider failing
+mid-task surfaces as a task error rather than a status change. Adding a
+notification for an event nothing emits would be the orphan-audit-type defect
+this project already fixed once — a promise the product makes and does not
+keep. The row stays PARTIAL until a runtime provider-disconnection event
+exists to hang it on. Integration coverage is also absent, and §84 condition 3
+is unmet repository-wide as everywhere else.
 
 **P-038 Audit trail** — One append-only stream across every task, recording
 what was proposed and what was decided. Tool executions now reach it through

@@ -209,9 +209,18 @@ failing or stopping at the confirmation boundary. An ordinary interactive task
 finishing notifies nothing — which is precisely the case the benchmark sentence
 describes, because it is the case where the user has gone to do something else.
 
-Recorded here rather than acted on: P-019 is a PASS row whose only evidence is
-one unit test of the notification port, so this is both a behaviour gap and the
-thinnest evidence in the matrix.
+**Closed, and bounded to what the sentence actually says.** A task reaching a
+terminal state now notifies. The evidence establishes _that_ the comparison
+product notifies on completion and nothing whatever about what its notification
+contains, how it behaves when several tasks finish at once, or whether it
+suppresses one while the panel is in front of the user. None of that was
+invented here: the message says what ended and nothing else, which is the
+narrowest thing that satisfies the sentence, and it is a security position in
+its own right rather than a guess at the benchmark.
+
+Still UNKNOWN, and not assumed either way: notification content, batching,
+suppression while visible, and whether the benchmark notifies for a cancelled
+task. This build says nothing for a cancelled one, by decision.
 
 ## 12. There is no action-by-action trail (E1 absence / E4)
 

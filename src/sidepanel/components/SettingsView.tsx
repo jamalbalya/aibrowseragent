@@ -60,6 +60,7 @@ export function SettingsView({
   const [sitePolicy, setSitePolicy] = useState<SitePolicyState | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [downloadsGranted, setDownloadsGranted] = useState(false);
+  const [notifications, setNotifications] = useState(true);
   const [connectors, setConnectors] = useState<PanelResponse<'connector.list'>['connectors']>([]);
   const [skills, setSkills] = useState<PanelResponse<'skill.list'>['skills']>([]);
   const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
@@ -80,6 +81,7 @@ export function SettingsView({
         setDownloadsGranted((await sendToBackground('file.downloadsPermission', {})).granted);
         setConnectors((await sendToBackground('connector.list', {})).connectors);
         setSkills((await sendToBackground('skill.list', {})).skills);
+        setNotifications((await sendToBackground('settings.getNotificationsEnabled', {})).enabled);
         setProviderId((current) => current || (list.providers[0]?.id ?? ''));
       } catch (error) {
         setMessage({ tone: 'error', text: describe(error) });
@@ -522,6 +524,38 @@ export function SettingsView({
             </button>
           )}
         </div>
+      </section>
+
+      <section className="settings__section">
+        <h3>Notifications</h3>
+        <p className="settings__hint">
+          The agent tells you when it needs your approval, when a task ends, and what one of your
+          scheduled tasks did. A notification says what happened and nothing about what the task
+          read, typed or was told — it is drawn by your operating system, where this extension can
+          no longer protect it.
+        </p>
+        <label className="skill__toggle">
+          <input
+            type="checkbox"
+            checked={notifications}
+            data-testid="notifications-enabled"
+            onChange={(event) => {
+              const next = event.target.checked;
+              // Optimistic, then corrected from what the worker actually
+              // stored: the checkbox must never claim a setting that failed
+              // to save.
+              setNotifications(next);
+              sendToBackground('settings.setNotificationsEnabled', { enabled: next }).then(
+                (result) => setNotifications(result.enabled),
+                (error: unknown) => {
+                  setNotifications(!next);
+                  setMessage({ tone: 'error', text: describe(error) });
+                },
+              );
+            }}
+          />
+          Show notifications
+        </label>
       </section>
 
       <section className="settings__section">

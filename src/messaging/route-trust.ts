@@ -312,6 +312,11 @@ export const PANEL_ROUTE_CLASSES: Record<PanelRequestType, RouteClass> = {
   // `session.get` creates a session when none exists, so it is not a read.
   'session.get': 'CLASS_B_PANEL_CONTROL_PLANE',
   'session.setPermissionMode': 'CLASS_B_PANEL_CONTROL_PLANE',
+  // Changes a stored preference, so it is control plane like every other
+  // setting write. A page must never be able to silence the agent's own
+  // notifications.
+  'settings.setNotificationsEnabled': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'settings.getNotificationsEnabled': 'CLASS_E_PANEL_READ_ONLY',
 
   // Providers. `listModels` and `runDoctor` mutate nothing but reach the
   // network through the guarded transport, which is not a read either.

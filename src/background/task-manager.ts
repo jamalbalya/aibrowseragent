@@ -418,6 +418,7 @@ export class TaskManager {
       onComplete: async (taskId, outcome) => {
         // One atomic write: state, result, usage and error together. An
         // observer can never see a terminal task whose outcome is missing.
+        let applied = false;
         const updated = await this.options.store.updateTask(taskId, (task) => {
           if (isTerminal(task.state)) return task;
           if (!canTransition(task.state, outcome.state)) {
@@ -428,6 +429,7 @@ export class TaskManager {
             });
             return task;
           }
+          applied = true;
           return {
             ...task,
             state: outcome.state,
@@ -440,6 +442,30 @@ export class TaskManager {
           };
         });
         if (updated) this.emit(updated);
+
+        // This is the path every model-driven task actually ends on, and it
+        // told the lifecycle observer nothing. `transition()` reports a
+        // terminal state and this did not, so "the task reached a terminal
+        // state" was observable only when a task was cancelled or failed
+        // *around* the runtime rather than by it.
+        //
+        // What that cost was not theoretical. The observer is where a
+        // finished task's staged files are released and where the audit
+        // trail's `task.completed` record is written; a real-Chromium run of
+        // an ordinary completing task produced no such record, and the user's
+        // file stayed in memory until the worker happened to be evicted.
+        //
+        // Reported after the write, and only when the write moved the task,
+        // so an observer can never see a terminal state the store does not
+        // hold, and a second terminal write reports nothing.
+        if (applied) {
+          this.observeLifecycle({
+            kind: 'completed',
+            taskId,
+            state: outcome.state,
+            outcome: outcome.state,
+          });
+        }
       },
       onStep: async (taskId, step: TaskStep) => {
         const updated = await this.options.store.updateTask(taskId, (task) => ({
