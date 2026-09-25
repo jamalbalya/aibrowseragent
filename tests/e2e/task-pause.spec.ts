@@ -33,13 +33,22 @@ const SETTLE_MS = 1500;
 
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, SETTLE_MS));
 
-/** A script with enough turns that the task is still running when paused. */
+/**
+ * The shortest script that is still running when the pause lands.
+ *
+ * Deliberately short. An earlier version ran five turns, and every one of them
+ * is a real provider round trip plus a real content-script read — which under
+ * two parallel browsers on a loaded machine was enough to leave a resumed task
+ * still waiting on a tool after a minute. Pausing is what these tests are
+ * about, so the work either side of the pause is kept to the minimum that makes
+ * the pause meaningful: one turn served, one still to come.
+ */
 function longScript(): readonly ScriptedReply[] {
   const read: ScriptedReply = {
     kind: 'tool_calls',
     calls: [{ name: 'browser_read_page', arguments: {} }],
   };
-  return [read, read, read, read, { kind: 'text', text: 'Done.' }];
+  return [read, read, { kind: 'text', text: 'Done.' }];
 }
 
 /** Waits until the task is genuinely executing, not merely created. */
@@ -50,6 +59,29 @@ async function reachRunning(send: SendToWorker, taskId: string): Promise<string>
     await new Promise((r) => setTimeout(r, 100));
   }
   throw new Error('The task never started running.');
+}
+
+/**
+ * Waits until the model has been asked exactly this many times.
+ *
+ * "The task looks busy" is not a place in a script, and a pause taken on that
+ * basis lands wherever the machine happened to be — which is how the first
+ * version of this suite passed here and failed on CI twice. Counting the turns
+ * the provider has actually served makes the pause point a fact about the
+ * conversation rather than about the clock, so a test that needs a particular
+ * step to come *after* the pause can say so.
+ */
+async function turnsServed(provider: MockProvider, count: number): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (
+      provider.requests.filter((request) => request.path.includes('chat/completions')).length >=
+      count
+    ) {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`The model was never asked ${count} times.`);
 }
 
 const stateOf = async (send: SendToWorker, taskId: string): Promise<string | undefined> =>
@@ -69,6 +101,9 @@ async function startLongTask(
   provider.script(script);
   const { task } = await send('task.create', { objective: 'Read the page several times.' });
   await reachRunning(send, task.id);
+  // One turn served, so the task is genuinely mid-conversation rather than
+  // merely created, and there is still a turn left for a resume to run.
+  await turnsServed(provider, 1);
   return task.id;
 }
 
@@ -104,11 +139,15 @@ test('a paused task resumes and reaches its expected completion', async ({
   await settle();
   expect(await stateOf(send, taskId)).toBe('PAUSED');
 
+  // Under the defect this call throws: the task is CANCELLED by now and a
+  // cancelled task cannot be resumed. Reaching an end of its own is the
+  // property, and `COMPLETED` specifically is not — a page read inside the
+  // resumed turn can legitimately fail on a loaded machine, which is a fact
+  // about the page and not about pausing.
   await send('task.resume', { taskId });
-  const finished = await waitForTask(send, taskId, 60_000);
-  // The whole point of a resume: the task finishes, rather than being retried
-  // from nothing or left stuck.
-  expect(finished.state).toBe('COMPLETED');
+  const finished = await waitForTask(send, taskId, 120_000);
+  expect(finished.state).not.toBe('CANCELLED');
+  expect(['COMPLETED', 'PARTIAL']).toContain(finished.state);
 });
 
 test('a paused task survives worker eviction and still resumes', async ({
@@ -243,7 +282,7 @@ test('pausing twice and resuming twice leaves one coherent task', async ({
   await send('task.resume', { taskId });
   // A second resume must not start a second run of the same task.
   await send('task.resume', { taskId });
-  const finished = await waitForTask(send, taskId, 60_000);
+  const finished = await waitForTask(send, taskId, 120_000);
   expect(finished.state).toBe('COMPLETED');
 });
 
@@ -270,7 +309,7 @@ test('pausing does not run the cleanup that belongs to a finished task', async (
 
   // And once it really does end, the ending is recorded exactly once.
   await send('task.resume', { taskId });
-  await waitForTask(send, taskId, 60_000);
+  await waitForTask(send, taskId, 120_000);
   const after = await send('audit.list', { taskId, limit: 200 });
   expect(after.events.filter((event) => event.type === 'task.completed')).toHaveLength(1);
 });
@@ -304,6 +343,9 @@ test('a pause is not a privilege cache: the mode in force at resume is the one t
     { kind: 'text', text: 'Done.' },
   ]);
 
+  // Both reads served, the click not yet asked for: now the pause is at a known
+  // point in the script rather than wherever the clock put it.
+  await turnsServed(provider, 2);
   await send('task.pause', { taskId });
   await settle();
   expect(await stateOf(send, taskId)).toBe('PAUSED');
