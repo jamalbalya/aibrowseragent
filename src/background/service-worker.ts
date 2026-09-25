@@ -340,7 +340,7 @@ const loadPolicyContext = async (taskId: string): Promise<PolicyContext> => {
   // stored approval that does not parse is no approval at all — never a weaker
   // one. `parsePlanApproval` is the boundary where that is decided, so the
   // engine only ever sees an approval this build would have produced.
-  const planApproval = parsePlanApproval(task?.planApproval);
+  const planApproval = parsePlanApproval(task?.planApproval, taskId);
   return {
     mode: settings.permissionMode,
     sitePolicy: await loadSitePolicy(),

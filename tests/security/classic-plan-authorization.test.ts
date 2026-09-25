@@ -54,7 +54,14 @@ import {
   NEVER_CROSSES_INSTALLATION_BOUNDARY,
   TASK_FIELD_PORTABILITY,
 } from '@/storage/record-portability';
-import { EXPORT_PORTABILITY } from '@/storage/data-classification';
+import {
+  DATA_CLASSIFICATION,
+  EXPORT_PORTABILITY,
+  K1_PROTECTION,
+  PORTABLE_DATA_KINDS,
+} from '@/storage/data-classification';
+import { buildRequest } from '@/agent/context/context-builder';
+import { createTask } from '@/tasks/task-model';
 import { ScriptedPrompter } from '../fixtures/policy-harness';
 import { MemoryStorageArea, SerializedStorageArea } from '@/storage/storage-area';
 import type { SitePolicyState } from '@/policy/site-policy';
@@ -101,6 +108,17 @@ const context = (overrides: Partial<PolicyContext> = {}): PolicyContext => ({
 const noPlan = (overrides: Partial<PolicyContext> = {}): PolicyContext => {
   const { planApproval: _absent, ...rest } = context(overrides);
   return rest;
+};
+
+/**
+ * The policy context a worker would build for a task, given a stored record.
+ *
+ * Mirrors `loadPolicyContext`: the record is re-parsed against the task it was
+ * found on, and an approval that does not belong to it arrives absent.
+ */
+const planContextFor = (stored: unknown, taskId: string): Pick<PolicyContext, 'planApproval'> => {
+  const parsed = parsePlanApproval(stored, taskId);
+  return parsed === undefined ? {} : { planApproval: parsed };
 };
 
 /** The same request with no authorization scope established. */
@@ -172,6 +190,47 @@ describe('TEST-SECURITY-068 group A: only a person, through one route, can appro
       .filter((file) => /^(tools|skills|connectors|content|workflows|schedules)\//.test(file))
       .filter((file) => /plan-model/.test(read(file)));
     expect(reachable).toEqual([]);
+  });
+
+  it('05b — no dynamic import reaches the plan model either', () => {
+    // NEGATIVE CONTROL for case 05. A static-import census proves nothing if a
+    // module can pull the producer in at call time, and `import('...')` is
+    // invisible to it.
+    const dynamic = sourceFiles().filter((file) =>
+      /import\s*\(\s*['"`][^'"`]*plan-model/.test(read(file)),
+    );
+    expect(dynamic).toEqual([]);
+
+    // And the surfaces that carry model-, page- or third-party-controlled
+    // input hold no reference to the plan model at all, by any spelling.
+    const surfaces = sourceFiles().filter((file) =>
+      /^(tools|skills|connectors|content|workflows|schedules|providers)\//.test(file),
+    );
+    expect(
+      surfaces.filter((file) => /plan-model|PlanApproval|approvePlan/.test(read(file))),
+    ).toEqual([]);
+    // The census is only worth something if it looked at something.
+    expect(surfaces.length).toBeGreaterThan(20);
+  });
+
+  it('05c — an approval is bound to the task it was given for', () => {
+    // NEGATIVE CONTROL. `PlanApproval.taskId` was written, stored and never
+    // compared: an approval found on a task authorised that task whatever it
+    // said it was for. The binding lived in where the record was kept rather
+    // than in any check, so a path that copied one would have been authorised
+    // by it.
+    const approval = approvalFor('example.com');
+    expect(parsePlanApproval(approval, 'task_1')).toEqual(approval);
+    expect(parsePlanApproval(approval, 'task_2')).toBeUndefined();
+    expect(parsePlanApproval({ ...approval, taskId: 'task_other' }, 'task_1')).toBeUndefined();
+
+    // And an approval refused for the wrong task is no authorization at all,
+    // not a narrower one.
+    const decision = evaluatePolicy(request({ taskId: 'task_2' }), {
+      ...noPlan(),
+      ...planContextFor(approval, 'task_2'),
+    });
+    expect(decision.verdict).toBe('ALLOW_WITH_CONFIRMATION');
   });
 
   it('06 — an approval claiming any other provenance is refused, not downgraded', () => {
@@ -520,6 +579,64 @@ describe('TEST-SECURITY-068 group E: a plan lives and dies with its task', () =>
     expect(EXPORT_PORTABILITY.task).toBe('REQUIRES_FURTHER_SECURITY_DESIGN');
   });
 
+  it('33b — the approval is never carried to a provider, a connector or a sync', () => {
+    // Three surfaces, each checked where it is actually decided rather than by
+    // reading a policy statement about it.
+    //
+    // Provider: the request built for a turn is constructed from the task, so
+    // the only real check is what comes out of the builder.
+    const task = {
+      ...createTask({
+        id: 'task_1',
+        sessionId: 's1',
+        objective: 'Do the thing',
+        providerId: 'p',
+        modelId: 'm',
+        permissionMode: 'manual' as const,
+        now: 1,
+        taintSalt: 'ab'.repeat(32),
+      }),
+      planApproval: approvalFor('example.com'),
+    };
+    const built = buildRequest({
+      task,
+      messages: [{ role: 'user', content: [{ type: 'text', text: task.objective }] }],
+      tools: [],
+      hasVision: false,
+    });
+    const wire = JSON.stringify(built);
+    expect(wire).not.toContain(APPROVAL_PROVENANCE);
+    expect(wire).not.toContain('plan_1');
+    expect(wire).not.toContain('approvedSites');
+    // The control: the request is not empty, so the absence above means
+    // something.
+    expect(wire).toContain('Do the thing');
+
+    // Connector: what a connector tool is handed is a closed struct of four
+    // taint fields. A record that is not in the type cannot be read from it.
+    const registry = read('tools/registry/tool-registry.ts');
+    const published = registry.slice(
+      registry.indexOf('readonly publishSecurityContext?:'),
+      registry.indexOf('readonly publishSecurityContext?:') + 400,
+    );
+    expect(published).toContain('taintState');
+    expect(published).not.toMatch(/plan|task:/i);
+
+    // Sync and export: the task kind does not cross the boundary at all, so
+    // there is no stripping step that could be skipped.
+    expect(EXPORT_PORTABILITY.task).toBe('REQUIRES_FURTHER_SECURITY_DESIGN');
+    expect(PORTABLE_DATA_KINDS).not.toContain('task');
+  });
+
+  it('33c — the approval is local state, held where the task is held', () => {
+    // K1 covers credentials; a task record — objective, steps, and now the
+    // plan — is the user's own work and is readable while locked so the panel
+    // can list it. Stated here because "never encrypted" and "never leaves the
+    // device" are different claims, and only the second one is made.
+    expect(K1_PROTECTION.task).toBe('PLAINTEXT_BY_DESIGN');
+    expect(DATA_CLASSIFICATION.task).toBe('USER_SELECTABLE');
+  });
+
   it('34 — the approval is stored on the task, which is what scopes it', () => {
     // Said structurally because it is the whole lifetime argument: a plan in
     // the site policy would outlive its task; a plan on the task cannot.
@@ -548,6 +665,42 @@ describe('TEST-SECURITY-068 group E: a plan lives and dies with its task', () =>
     // There is no approach on the approval at all, so no decision can read one.
     expect(Object.keys(approval)).not.toContain('approachText');
     expect(read('policy/policy-engine.ts')).not.toMatch(/approachText/);
+  });
+
+  it('36b — an earlier version cannot authorise what a later one narrowed', () => {
+    // Replay. Versions are separate immutable objects, so holding version 1
+    // after version 2 exists authorises version 1's sites and no others — it
+    // cannot reach forward, and it cannot be used to widen version 2.
+    const first = approvalFor('example.com');
+    const second = amendPlan(first, 'https://other.test/', 3_000);
+
+    expect(planCoversSite(first, 'https://other.test/')).toBe(false);
+    expect(planCoversSite(second, 'https://other.test/')).toBe(true);
+    // And version 1 is unchanged by the existence of version 2.
+    expect(first.approvedSites).toEqual(['example.com']);
+    expect(second.version).toBeGreaterThan(first.version);
+  });
+
+  it('36c — an amendment adds and never removes or replaces', () => {
+    // NEGATIVE CONTROL. A "narrowing" amendment would be a silent revocation
+    // that the version trail would report as an ordinary widening.
+    let approval = approvalFor('a.test', 'b.test');
+    for (const site of ['c.test', 'a.test', 'd.test']) {
+      approval = amendPlan(approval, `https://${site}/`, 4_000);
+    }
+    expect(approval.approvedSites).toEqual(['a.test', 'b.test', 'c.test', 'd.test']);
+    // Three requests, one of them already covered: two real changes.
+    expect(approval.version).toBe(3);
+  });
+
+  it('36d — reading a stored approval back never mints a new one', () => {
+    // A worker restart re-reads the record; it must not produce a different
+    // approval, a later version, or a fresh timestamp.
+    const approval = amendPlan(approvalFor('example.com'), 'https://other.test/', 3_000);
+    const reread = parsePlanApproval(approval, 'task_1');
+    expect(reread).toEqual(approval);
+    expect(reread?.version).toBe(2);
+    expect(reread?.supersedes).toBe('plan_1@1');
   });
 
   it('37 — a proposal is normalised and bounded before anyone is asked to approve it', () => {

@@ -436,6 +436,18 @@ export function createDownloadTool(deps: FileToolDeps): AgentTool<typeof downloa
       const requested = input.filename ?? filenameFromUrl(input.url);
       return {
         summary: `Download ${safeDisplayName(requested)} from ${siteOfUrl(input.url)}.`,
+        // The destination this tool's `siteAuthorization: 'destination'`
+        // declaration names. It was absent, which meant the declaration
+        // described a scope the call never supplied: the policy engine saw no
+        // site at all, so a blocked site did not stop a download from it and
+        // the prompt named nothing. The engine's own navigability check could
+        // not run either — `execute` repeated it, one layer too late to be the
+        // gate.
+        //
+        // This widens nothing. A download is R3, so the risk floor returns a
+        // confirmation before any grant or plan is consulted; what changes is
+        // that the deny stages now see the URL.
+        targetUrl: input.url,
         // A download is an egress in the outbound direction too: the browser
         // fetches a URL the model chose, and a URL carries whatever the model
         // put in its query string.

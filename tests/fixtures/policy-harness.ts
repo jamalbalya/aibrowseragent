@@ -35,6 +35,8 @@ export interface Harness {
   readonly prompter: ScriptedPrompter;
   readonly permissionEngine: PermissionEngine;
   loadSitePolicy(): Promise<SitePolicyState>;
+  /** Seeds a rule the way the product would have written one. */
+  saveSitePolicy(state: SitePolicyState): Promise<void>;
   setMode(mode: PermissionMode): void;
 }
 
@@ -119,6 +121,7 @@ export function createHarness(
     prompter,
     permissionEngine,
     loadSitePolicy,
+    saveSitePolicy,
     setMode: (next) => {
       mode = next;
     },

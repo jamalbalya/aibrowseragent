@@ -18,10 +18,13 @@
  * floor, the unattended boundary or origin drift.
  *
  * Deliberately *not* here: the approach text as an enforced constraint. The
- * benchmark says Claude will not deviate from the stated plan, and the site
- * half of that is machine-checkable while the approach half is not. A field
- * that looked enforced and was not would be worse than an absent one, so the
- * approach is carried for the person to read and for nothing else.
+ * comparison product's own documentation describes a plan "specifying websites
+ * and approach" and says only that the listed *websites* bound the run — see
+ * `docs/architecture/CLAUDE_BENCHMARK.md` §1, which records that as E1
+ * documentary evidence and holds no direct observation of the shipping
+ * product. The site half of that is machine-checkable and the approach half is
+ * not. A field that looked enforced and was not would be worse than an absent
+ * one, so the approach is carried for the person to read and for nothing else.
  */
 import { siteOf, parseOrigin } from '@/security/origin/origin-validator';
 
@@ -212,18 +215,34 @@ export function planCoversSite(approval: PlanApproval | undefined, url: string):
 }
 
 /**
- * Normalises a record read back from storage.
+ * Normalises a record read back from storage, for one named task.
  *
  * Anything that is not a well-formed approval becomes `undefined`, which
  * downstream is "no plan authorization" rather than "no restriction". A
  * malformed approval is not a weaker approval; it is none.
+ *
+ * `expectedTaskId` is what makes `PlanApproval.taskId` mean something. Until
+ * it was passed, the field was written, stored and never compared: an
+ * approval found on a task was used to authorise that task whatever it said
+ * it was for, so the binding existed in the record and not in the code. A
+ * person approved a plan for one objective, and only where the record
+ * happened to be kept stopped it authorising another.
+ *
+ * Omitting it parses without the binding check, which is for callers that are
+ * reading a record rather than authorising with one.
  */
-export function parsePlanApproval(value: unknown): PlanApproval | undefined {
+export function parsePlanApproval(
+  value: unknown,
+  expectedTaskId?: string,
+): PlanApproval | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
 
   if (typeof record['planId'] !== 'string' || record['planId'].length === 0) return undefined;
   if (typeof record['taskId'] !== 'string' || record['taskId'].length === 0) return undefined;
+  // An approval for another task is refused outright rather than stripped of
+  // its sites: it is not a weaker authorization for this task, it is none.
+  if (expectedTaskId !== undefined && record['taskId'] !== expectedTaskId) return undefined;
   if (typeof record['version'] !== 'number' || !Number.isSafeInteger(record['version'])) {
     return undefined;
   }

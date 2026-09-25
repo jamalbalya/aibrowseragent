@@ -83,6 +83,35 @@ Case 09 asserts the step status is **`denied`** specifically rather than merely
 be `error`, and would pass a looser assertion while proving nothing about the
 refusal.
 
+## Re-run at the Phase C closure audit
+
+Every mutant above was run again against the tree as it stands after the closure
+audit's remediation. Results unchanged: NC-1 through NC-6 discriminate, and the
+`PLAN_MAX_RISK` ceiling is still redundant for the reason recorded above — the
+R3 floor returns before the plan clause is reached, so removing the ceiling
+changes no answer. It is kept, and case 20 asserts the adjacency that makes the
+redundancy safe rather than claiming the line is what enforces the bound.
+
+The closure audit added four mutants of its own, against
+`tests/security/authorization-site-record.test.ts` (15 cases):
+
+| #     | Protection removed                                             | Result                                                  |
+| ----- | -------------------------------------------------------------- | ------------------------------------------------------- |
+| NC-7  | The permission history derives its site from `targetUrl` alone | **4 failed** — cases 01, 04, 07, 12 — discriminates     |
+| NC-8  | The dispatch observation carries no site                       | **5 failed** — cases 02, 03, 04, 12, 13 — discriminates |
+| NC-9  | `browser.download` names no destination                        | **3 failed** — cases 08, 09, 10 — discriminates         |
+| NC-10 | The standing-grant offer is not gated on grantable risk        | **1 failed** — case 14 — discriminates                  |
+
+NC-7 and NC-9 are the two defects the closure audit found; each mutant is the
+code as it stood in `88e9b81`, so the failures above are the defects reproducing.
+
+### What NC-10 does and does not prove
+
+Case 14 reads the component's source instead of rendering it, because this
+repository has no React test harness and adding one is not a closure-audit
+change. It catches the guard being deleted. It does not prove what a rendered
+panel shows, and it is labelled that way in the test.
+
 ## How to re-run
 
 Each unit mutant is a one-line edit to `src/policy/policy-engine.ts`. The driver
