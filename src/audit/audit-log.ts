@@ -49,6 +49,10 @@ export const AUDIT_EVENT_TYPES = [
   'skill.step',
   'skill.finished',
   'workflow.recorded',
+  // A user switching a skill on or off (P-024). Recorded because it changes
+  // what the agent can reach, which is the same class of fact as a site grant
+  // being given or revoked.
+  'skill.enablement',
   // A tab joined or left a workspace. Membership is scope, never authority —
   // the record exists so a change of scope is visible after the fact.
   'workspace.membership',

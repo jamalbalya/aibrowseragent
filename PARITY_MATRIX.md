@@ -388,6 +388,20 @@ step data. Covered by two unit suites, an integration suite, a security suite
 covering the wave's twenty threat cases, and a real-Chromium E2E suite that
 measures the per-step approval property rather than asserting it.
 
+Skills can now be **switched off**, which is the half of the benchmark's
+enabled-by-default behaviour that was missing. The switch is the user's, it is
+durable, and it survives a worker eviction. What makes it a control rather
+than a filter is where it is enforced: `SkillRegistry.get`, `latest` and
+`list` all answer as though a disabled skill were not registered, so it is
+gone from the model's listing, from `skills.run`, from the panel's launcher
+and from a shortcut resolving its target at once — a build that filtered only
+the listing would leave a model able to run a skill it was never shown. The
+settings surface has its own read that does include disabled skills, because
+offering to turn one back on requires showing it, and the number of callers of
+that read is asserted from source. Nothing here installs, obtains or changes a
+skill: the only decision is whether one the build already shipped, validated
+and hashed is available.
+
 PARTIAL for two reasons, both about reach rather than architecture. Three
 workflows ship and all three are read-only: a write workflow is a reasonable
 thing to want and a bad thing to make the easiest path through a brand-new
@@ -397,6 +411,11 @@ Sheets as "the primary reference integration workflow for validating the
 multi-tool architecture" — none of those connectors exists (see P-023), so
 that workflow cannot be built and the multi-connector case is untested against
 anything real.
+
+Installing a skill stays **deferred**, and deliberately: an install surface is
+a trust decision about code that did not ship in the build, which is the
+plugin trust model (P-025) and is not being invented here. The lifecycle
+implemented is the part that needs no such decision.
 
 Nothing here is blocked externally. Both reasons resolve by building more, not
 by obtaining anything.
@@ -461,12 +480,26 @@ Covered by a unit suite, an integration suite, a twenty-seven-case security
 suite and an eight-test real-Chromium suite, with twelve mutations proved to
 fail. No new permission and no new host access.
 
+A shortcut may now also name a **saved prompt**: an objective the user stored,
+which starts an ordinary task through the ordinary route. That is content
+rather than a reference, and it is allowed for one reason — an objective is
+the same string the composer already accepts, it reaches only `task.create`,
+and it names no tool, argument, element or step. Typing it and recalling it
+are the same act, so it grants what typing would grant, which is a task that
+must still ask for everything it does. The fields that would make a shortcut
+executable — steps, arguments, selectors, code, `prompt`, `instructions` —
+stay refused at any depth, a prompt target is refused unless it carries the
+objective and nothing else, and the confirmation shows the objective rather
+than a risk level it cannot know before the run exists.
+
 PARTIAL because the §85 A–F manual acceptance scenarios have not been
-executed — as for every row in this file — and for one reach limit: a shortcut
-names a whole target and takes no per-run inputs, so a workflow with runtime
-slots is reached through the review surface rather than by name. Extending
-shortcuts to carry input values would mean storing values, which is a
-different security question and deliberately out of P-021's scope.
+executed — as for every row in this file — and for two reach limits. A
+shortcut names a whole target and takes no per-run inputs, so a workflow with
+runtime slots is reached through the review surface rather than by name;
+extending shortcuts to carry input values would mean storing values, which is
+a different security question and deliberately out of P-021's scope. And a
+shortcut cannot be scheduled: schedules target skills and workflows, and
+adding a target kind to them is a P-020 change, which is frozen.
 
 **P-022 Workflow recording** — Recording and replay are implemented, on top
 of the skill definition, validator, runner and dispatch path rather than
@@ -522,6 +555,16 @@ authorization server and API over real HTTP.
 PARTIAL also because one connector is not a connector ecosystem. The Jira,
 Confluence, Figma and Google Sheets connectors named in the specification are
 not implemented, and nothing returns a fake response for them.
+
+What _was_ closed is narrower and worth naming precisely: the framework is now
+shown to hold more than one connector rather than assumed to. A second,
+test-only descriptor registers alongside the shipped one, and the suite proves
+what keeps them apart — per-connector scopes, a vault keyed by connector, no
+pooling of API origins, per-descriptor validation, and a duplicate id refused
+rather than silently replacing an authorised one. The worker's registration
+helper was typed to the single shipped adapter class and is now typed to the
+`Connector` interface, so the framework is extensible at the point where a
+connector is actually added and not merely everywhere else.
 
 ---
 

@@ -20,7 +20,7 @@ import type {
   ToolExecutionResult,
 } from '@/tools/core/tool-types';
 import type { TaintSource } from '@/security/exfiltration/exfiltration-guard';
-import { SkillRegistry } from '@/skills/core/skill-registry';
+import { ALL_SKILLS_ENABLED, SkillRegistry } from '@/skills/core/skill-registry';
 import { SkillRunner, type SkillRunContext } from '@/skills/runtime/skill-runner';
 import type { SkillDefinition } from '@/skills/core/skill-model';
 import { createHarness, ScriptedPrompter } from './policy-harness';
@@ -158,7 +158,10 @@ export function buildSkillHarness(options: HarnessOptions = {}): SkillHarness {
   });
   const tools: ToolRegistry = harness.registry;
 
-  const skills = new SkillRegistry({ riskOfTool: (name) => tools.get(name)?.risk });
+  const skills = new SkillRegistry({
+    riskOfTool: (name) => tools.get(name)?.risk,
+    isEnabled: ALL_SKILLS_ENABLED,
+  });
 
   const runner = new SkillRunner({
     tools,

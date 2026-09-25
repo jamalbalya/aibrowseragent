@@ -164,7 +164,21 @@ export interface ShortcutSummary {
 /** Request/response pairs handled by the service worker. */
 export interface PanelRequestMap {
   'task.create': {
-    request: { objective: string; authorizationModel?: AuthorizationModel };
+    request: {
+      objective: string;
+      authorizationModel?: AuthorizationModel;
+      /**
+       * The shortcut this task was started from, when it was started from one.
+       *
+       * Recorded and nothing else: it authorises nothing, changes nothing
+       * about how the task runs, and is ignored when it names no stored
+       * shortcut. It exists so the trail can answer "what started this task",
+       * which is otherwise unanswerable for a saved prompt — the objective
+       * that reaches `task.create` is identical whether it was typed or
+       * recalled. CLASS_B, so only the panel can supply one.
+       */
+      shortcutId?: string;
+    };
     response: { task: AgentTask };
   };
   /**
@@ -763,6 +777,15 @@ export interface PanelRequestMap {
         tools: string[];
         connectors: string[];
         inputs: { name: string; type: string; required: boolean; description: string }[];
+        /**
+         * Whether the user has this skill switched on (P-024).
+         *
+         * This listing is the settings surface, so it deliberately includes
+         * skills that are switched off — there is no other way to offer
+         * turning one back on. The model's own `skills.list` tool sees only
+         * the enabled ones.
+         */
+        enabled: boolean;
       }[];
     };
   };
@@ -791,6 +814,7 @@ export interface PanelRequestMap {
     request: {
       name: string;
       target:
+        | { kind: 'prompt'; objective: string }
         | { kind: 'workflow'; workflowId: string }
         | { kind: 'skill'; skillId: string; skillVersion: string };
     };
@@ -801,6 +825,7 @@ export interface PanelRequestMap {
     request: {
       shortcutId: string;
       target:
+        | { kind: 'prompt'; objective: string }
         | { kind: 'workflow'; workflowId: string }
         | { kind: 'skill'; skillId: string; skillVersion: string };
     };
@@ -828,8 +853,11 @@ export interface PanelRequestMap {
         targetName: string;
         targetId: string;
         targetVersion?: string;
-        risk: string;
-        stepCount: number;
+        /** Absent for a saved prompt, whose risk is not knowable before it runs. */
+        risk?: string;
+        stepCount?: number;
+        /** The objective a saved prompt would start. */
+        objective?: string;
       };
     };
   };
@@ -912,6 +940,17 @@ export interface PanelRequestMap {
    * skill into existence. Being a panel route rather than a tool is what
    * keeps it out of a model's reach.
    */
+  /**
+   * Switching a skill on or off.
+   *
+   * CLASS_B, because it changes what the agent can reach. It cannot install,
+   * obtain or alter a skill: the only values it takes are an identity that is
+   * already registered and a boolean.
+   */
+  'skill.setEnabled': {
+    request: { skillId: string; skillVersion: string; enabled: boolean };
+    response: { ok: boolean; reason?: string };
+  };
   'skill.run': {
     request: {
       skillId: string;

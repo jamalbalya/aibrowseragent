@@ -185,11 +185,12 @@ export function useAgentState() {
   }, []);
 
   const startTask = useCallback(
-    async (objective: string, authorizationModel?: AuthorizationModel) => {
+    async (objective: string, authorizationModel?: AuthorizationModel, shortcutId?: string) => {
       const result = await run(() =>
         sendToBackground('task.create', {
           objective,
           ...(authorizationModel === undefined ? {} : { authorizationModel }),
+          ...(shortcutId === undefined ? {} : { shortcutId }),
         }),
       );
       if (result) {
@@ -249,11 +250,21 @@ export function useAgentState() {
    */
   const runShortcutTarget = useCallback(
     async (resolution: {
+      shortcutId?: string;
       targetKind: string;
       targetId: string;
       targetVersion?: string;
+      objective?: string;
     }): Promise<void> => {
-      if (resolution.targetKind === 'workflow') {
+      if (resolution.targetKind === 'prompt') {
+        // The ordinary task route, with the saved objective as the objective.
+        // There is deliberately no shortcut-specific start: a saved prompt is
+        // the text a person would have typed, and it takes the path that text
+        // would have taken.
+        if (resolution.objective !== undefined) {
+          await startTask(resolution.objective, undefined, resolution.shortcutId);
+        }
+      } else if (resolution.targetKind === 'workflow') {
         await run(() =>
           sendToBackground('workflow.replay', { workflowId: resolution.targetId, inputs: {} }),
         );
@@ -267,7 +278,7 @@ export function useAgentState() {
       }
       await refresh();
     },
-    [run, refresh],
+    [run, refresh, startTask],
   );
 
   const pauseTask = useCallback(

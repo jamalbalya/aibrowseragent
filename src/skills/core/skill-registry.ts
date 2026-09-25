@@ -55,8 +55,41 @@ export class SkillRegistrationError extends Error {
 export interface SkillRegistryOptions {
   /** Whether a tool of this name is registered, and at what risk. */
   readonly riskOfTool: (name: string) => RiskLevel | undefined;
+  /**
+   * Whether the user has this skill switched on (P-024).
+   *
+   * Consulted by every read below, which is the whole enforcement: a disabled
+   * skill is absent from `list`, absent from `get` and absent from `latest`,
+   * so nothing downstream — the model's `skills.list`, `skills.run`, the
+   * panel's launcher, a shortcut resolving its target — needs to remember to
+   * check. Filtering the listing alone would leave a model able to run a
+   * skill it was never shown.
+   *
+   * Synchronous by design. The durable state lives in
+   * `SkillEnablementStore`; the worker holds the current snapshot and hands
+   * it in, because a registry read happens on the dispatch path where there
+   * is nothing to await into.
+   *
+   * **Required, with no default.** An optional predicate would mean a
+   * construction site that forgot it got "everything is enabled" silently,
+   * which is a permissive answer to a security question arrived at by
+   * omission — the same failure `siteAuthorization` was made required to
+   * avoid. A caller that genuinely has no enablement state passes
+   * `ALL_SKILLS_ENABLED`, which says so at the call site where a reviewer can
+   * see it.
+   */
+  readonly isEnabled: (id: string, version: string) => boolean;
   readonly now?: () => number;
 }
+
+/**
+ * The predicate for a registry with no enablement state behind it.
+ *
+ * Named rather than defaulted so that "every skill is available here" is a
+ * visible choice at each construction site instead of the consequence of
+ * leaving a field out.
+ */
+export const ALL_SKILLS_ENABLED = (): boolean => true;
 
 export class SkillRegistry {
   private readonly skills = new Map<string, RegisteredSkill>();
@@ -110,9 +143,35 @@ export class SkillRegistry {
     for (const definition of definitions) await this.register(definition);
   }
 
-  /** The skill at exactly this version, or `undefined`. */
+  /** The skill at exactly this version, or `undefined` — including when it is off. */
   get(id: string, version: string): RegisteredSkill | undefined {
+    const entry = this.skills.get(skillKey(id, version));
+    if (entry === undefined) return undefined;
+    return this.enabled(id, version) ? entry : undefined;
+  }
+
+  /**
+   * The registered entry whether or not the user has it switched on.
+   *
+   * For the settings surface, which has to show a disabled skill in order to
+   * offer turning it back on. Named so that reaching for it on an execution
+   * path reads as the mistake it would be: there is exactly one caller, and a
+   * test asserts it.
+   */
+  getIncludingDisabled(id: string, version: string): RegisteredSkill | undefined {
     return this.skills.get(skillKey(id, version));
+  }
+
+  /** Every registered skill with its on/off state, for the settings surface. */
+  listIncludingDisabled(): { entry: RegisteredSkill; enabled: boolean }[] {
+    return this.all().map((entry) => ({
+      entry,
+      enabled: this.enabled(entry.definition.id, entry.definition.version),
+    }));
+  }
+
+  private enabled(id: string, version: string): boolean {
+    return this.options.isEnabled(id, version);
   }
 
   /**
@@ -126,18 +185,26 @@ export class SkillRegistry {
   latest(id: string): RegisteredSkill | undefined {
     const candidates = [...this.skills.values()]
       .filter((entry) => entry.definition.id === id)
+      .filter((entry) => this.enabled(entry.definition.id, entry.definition.version))
       .sort((a, b) => compareVersions(b.definition.version, a.definition.version));
     return candidates[0];
   }
 
+  /** The enabled skills, which is what "the skills there are" means everywhere but settings. */
   list(): RegisteredSkill[] {
+    return this.all().filter((entry) =>
+      this.enabled(entry.definition.id, entry.definition.version),
+    );
+  }
+
+  private all(): RegisteredSkill[] {
     return [...this.skills.values()].sort((a, b) =>
       a.definition.id < b.definition.id ? -1 : a.definition.id > b.definition.id ? 1 : 0,
     );
   }
 
   has(id: string, version: string): boolean {
-    return this.skills.has(skillKey(id, version));
+    return this.get(id, version) !== undefined;
   }
 
   get size(): number {

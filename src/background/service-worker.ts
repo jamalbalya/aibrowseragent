@@ -56,7 +56,7 @@ import { StagedFileStore } from '@/files/file-store';
 import { ChromeDownloadPort } from '@/files/download-port';
 import { FileSelectionBroker } from './file-broker';
 import { safeDisplayName } from '@/files/file-model';
-import { ConnectorRegistry, scopesFor } from '@/connectors/core/types';
+import { ConnectorRegistry, scopesFor, type Connector } from '@/connectors/core/types';
 import { ConnectorSession } from '@/connectors/core/connector-session';
 import { TokenVault } from '@/connectors/oauth/token-vault';
 import { WriteGuard } from '@/connectors/core/write-guard';
@@ -66,6 +66,7 @@ import { DEFAULT_BUDGET } from '@/agent/budget/budget';
 import { SkillRegistry } from '@/skills/core/skill-registry';
 import { SkillRunner } from '@/skills/runtime/skill-runner';
 import { SkillRunStore } from '@/skills/runtime/skill-run-store';
+import { SkillEnablementStore, skillEnablementKey } from '@/skills/core/skill-enablement';
 import { BUNDLED_SKILLS } from '@/skills/bundled';
 import { createSkillTools } from '@/tools/skills/skill-tools';
 import { WorkflowStore, WorkflowValidationError } from '@/workflows/workflow-store';
@@ -943,7 +944,7 @@ const githubConnector = new GitHubConnector({
  * logged. A missing connector is a missing feature; a worker that never
  * finishes loading is a dead extension.
  */
-function registerConnector(connector: GitHubConnector): void {
+function registerConnector(connector: Connector): void {
   try {
     connectorRegistry.register(connector);
   } catch (error) {
@@ -1027,8 +1028,31 @@ toolRegistry.registerAll(
  * first would reject all of them. The dependency runs one way — skills know
  * about tools, tools know nothing about skills.
  */
+/**
+ * Which skills the user has switched off (P-024).
+ *
+ * Durable in storage; mirrored here because the registry is read on the
+ * dispatch path, where there is nothing to await into. The mirror is refreshed
+ * at startup and after every change, and it starts **empty** — every shipped
+ * skill enabled — so a storage read that has not happened yet, or that failed,
+ * leaves the build's own defaults in force rather than silently disabling
+ * working skills.
+ */
+let disabledSkills: ReadonlySet<string> = new Set();
+
+const skillEnablement = new SkillEnablementStore(new NamespacedStorageArea(local, 'skills'));
+
+const refreshSkillEnablement = async (): Promise<void> => {
+  disabledSkills = await skillEnablement.disabledKeys();
+};
+
 const skillRegistry = new SkillRegistry({
   riskOfTool: (name) => toolRegistry.get(name)?.risk,
+  // The one enforcement point. Every read of the registry honours it, so a
+  // disabled skill is absent from the model's listing, from `skills.run`,
+  // from the panel's launcher and from a shortcut resolving its target,
+  // without any of them having to remember to check.
+  isEnabled: (id, version) => !disabledSkills.has(skillEnablementKey(id, version)),
 });
 
 const skillRuns = new SkillRunStore(new NamespacedStorageArea(local, 'skill-runs'));
@@ -1302,6 +1326,18 @@ const skillLauncher = new SkillLauncher({
   },
 });
 
+/** The id a shortcut's target is looked up by, or an empty string when it has none. */
+function targetIdOf(target: ShortcutRecord['target']): string {
+  switch (target.kind) {
+    case 'workflow':
+      return target.workflowId;
+    case 'skill':
+      return target.skillId;
+    case 'prompt':
+      return '';
+  }
+}
+
 /** A shortcut as the panel sees it, with its target looked up now. */
 async function summariseShortcut(record: ShortcutRecord): Promise<ShortcutSummary> {
   const verdict = await shortcutResolver.resolveRecord(record);
@@ -1310,7 +1346,9 @@ async function summariseShortcut(record: ShortcutRecord): Promise<ShortcutSummar
     displayName: record.displayName,
     name: record.name,
     targetKind: record.target.kind,
-    targetId: record.target.kind === 'workflow' ? record.target.workflowId : record.target.skillId,
+    // A saved prompt has no external id to name: its target *is* its
+    // objective, and the objective is not an identifier.
+    targetId: targetIdOf(record.target),
     ...(record.target.kind === 'skill' ? { targetVersion: record.target.skillVersion } : {}),
     targetName: verdict.ok ? verdict.resolution.targetName : verdict.detail,
     usable: verdict.ok,
@@ -1841,13 +1879,32 @@ const router = new MessageRouter({
   },
 });
 
-router.on('task.create', async ({ objective, authorizationModel }) => {
+router.on('task.create', async ({ objective, authorizationModel, shortcutId }) => {
   const session = await getOrCreateSession();
-  return {
-    task: await taskManager.create(objective, session.id, {
-      ...(authorizationModel === undefined ? {} : { authorizationModel }),
-    }),
-  };
+  const task = await taskManager.create(objective, session.id, {
+    ...(authorizationModel === undefined ? {} : { authorizationModel }),
+  });
+
+  // Written after the task exists, and only for a shortcut that really is
+  // stored: a record naming a shortcut nobody created would be a trail
+  // asserting a provenance it cannot support. A failure to record it never
+  // fails the task — the task already started.
+  if (shortcutId !== undefined) {
+    const record = await shortcutStore.get(shortcutId).catch(() => undefined);
+    if (record) {
+      await auditLog
+        .record({
+          type: 'shortcut.launched',
+          taskId: task.id,
+          shortcutId: record.shortcutId,
+          code: record.target.kind,
+          outcome: 'info',
+        })
+        .catch(() => undefined);
+    }
+  }
+
+  return { task };
 });
 
 /**
@@ -3312,7 +3369,10 @@ router.on('debug.setLogLevel', async ({ level }) => {
 
 router.on('skill.list', () =>
   Promise.resolve({
-    skills: skillRegistry.list().map((entry) => ({
+    // The settings surface, so it shows switched-off skills too — there is no
+    // other way to offer turning one back on. `skills.list`, the tool the
+    // model sees, goes through `skillRegistry.list()` and shows only enabled.
+    skills: skillRegistry.listIncludingDisabled().map(({ entry, enabled }) => ({
       id: entry.definition.id,
       version: entry.definition.version,
       name: entry.definition.name,
@@ -3328,6 +3388,7 @@ router.on('skill.list', () =>
         required: input.required,
         description: input.description,
       })),
+      enabled,
     })),
   }),
 );
@@ -3525,7 +3586,9 @@ router.on('shortcut.resolve', async ({ typed }) => {
       outcome: 'info',
       shortcutId: verdict.record.shortcutId,
       code: verdict.resolution.targetKind,
-      risk: verdict.resolution.risk,
+      // Absent for a saved prompt: there is no risk to record before the run
+      // that would incur it exists.
+      ...(verdict.resolution.risk === undefined ? {} : { risk: verdict.resolution.risk }),
     });
   }
   return verdict.ok
@@ -3667,6 +3730,36 @@ router.on('schedule.cancelRun', async ({ runId }) => ({
  * destination the `skills.run` tool reaches — approached from the side panel
  * rather than from a model.
  */
+/**
+ * Switching a skill on or off (P-024).
+ *
+ * Identity only: a registered id and version, and a boolean. There is no way
+ * to reach a definition through here, so this cannot install, change or
+ * obtain a skill — it decides whether one the build already ships is
+ * available. An unknown identity is refused rather than stored, so the
+ * disabled set can never accumulate names of things that do not exist.
+ */
+router.on('skill.setEnabled', async ({ skillId, skillVersion, enabled }) => {
+  if (!skillRegistry.getIncludingDisabled(skillId, skillVersion)) {
+    return { ok: false, reason: 'There is no skill by that id and version.' };
+  }
+
+  await skillEnablement.setEnabled(skillEnablementKey(skillId, skillVersion), enabled);
+  await refreshSkillEnablement();
+
+  await auditLog
+    .record({
+      type: 'skill.enablement',
+      skillId,
+      skillVersion,
+      outcome: enabled ? 'allowed' : 'denied',
+      code: enabled ? 'ENABLED' : 'DISABLED',
+    })
+    .catch(() => undefined);
+
+  return { ok: true };
+});
+
 router.on('skill.run', async ({ skillId, skillVersion, inputs }) => {
   const session = await getOrCreateSession();
   const outcome = await skillLauncher.launch({
@@ -3825,6 +3918,11 @@ async function startup(): Promise<void> {
     providerRegistry.setActive(settings.activeProviderId);
   }
 
+  // Before the skills are registered, so the first read of the registry in
+  // this worker generation already honours the user's choices. A worker that
+  // served one dispatch with every skill enabled and then refreshed would be
+  // a switch that does not hold across an eviction.
+  await refreshSkillEnablement();
   await registerBundledSkills();
 
   // A run still marked `running` in a fresh worker generation is one whose

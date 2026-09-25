@@ -125,6 +125,27 @@ everything it does not deny it hands to the interactive prompter unchanged.
 
 ---
 
+## 3b. Three positions this project chose, against behaviour nobody has observed
+
+Recorded here so they are not mistaken for parity. The comparison product's
+Chrome scheduling behaviour is **unresolved** on each of these — no
+documentation covers it and no direct observation of that product is held
+anywhere in this repository (`CLAUDE_BENCHMARK.md` §Evidence classes). What
+follows is what this build does and why, not what anything else does:
+
+| Question                                           | This project                                | Comparison product |
+| -------------------------------------------------- | ------------------------------------------- | ------------------ |
+| A scheduled run reaches an action needing approval | **Park** at the boundary, do not stall open | Unknown            |
+| An occurrence passed while the browser was closed  | **Never replayed**, recorded as missed      | Unknown            |
+| Authorising a scheduled run in advance             | **No persistent task grant** exists         | Unknown            |
+
+None of the three is settled by evidence, and none should be changed to match
+a guess about the other product. Desktop scheduling behaviour from a different
+surface is explicitly not imported: it runs somewhere a browser extension does
+not, and the reasoning does not transfer.
+
+---
+
 ## 4. Missed runs
 
 > **A missed occurrence is recorded and is NOT automatically replayed.**

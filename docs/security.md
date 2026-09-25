@@ -268,6 +268,40 @@ again. Both standing offers, the site grant and the task plan, are therefore
 offered only where the risk is one they could cover. A control that reads as
 "stop asking me" and does not is worse than no control.
 
+### A saved prompt is a target, not an instruction channel
+
+A shortcut names something already reviewed — a stored workflow or a bundled
+skill. It may now also hold a **saved objective**, which is content rather than
+a reference, so the reason that is allowed is worth stating: an objective is
+the same string the composer accepts, it reaches only `task.create`, and it
+names no tool, argument, element or step. Recalling it and typing it are the
+same act.
+
+The fields that would make a shortcut executable stay refused at any depth —
+`steps`, `arguments`, `selector`, `code`, and `prompt` and `instructions` in
+particular, so nothing can bolt a second instruction channel onto a workflow
+or skill target. A prompt target is refused unless it carries the objective
+and nothing else. No `shortcut.*` tool exists, so no model can author one, and
+the confirmation shows the objective rather than a risk level nobody can know
+before the run exists.
+
+### Turning a skill off has to mean it is gone
+
+A disabled skill is absent from `SkillRegistry.get`, `latest` and `list`
+alike, so it disappears from the model's listing, from `skills.run`, from the
+panel's launcher and from any shortcut pointing at it, all at once. Filtering
+only the listing would leave a model able to run a skill it was never shown —
+the same control in appearance and not a control at all. The settings surface
+reads through a separate, explicitly named accessor because offering to turn
+something back on requires showing it; the number of callers of that accessor
+is asserted from source.
+
+The predicate the registry consults is **required**, with no default. An
+optional one would mean a construction site that forgot it got "everything is
+enabled" by omission, which is a permissive answer to a security question
+arrived at by accident; a caller with no enablement state passes
+`ALL_SKILLS_ENABLED`, which says so where a reviewer can see it.
+
 ### The task plan: the same authorization, with a task's lifetime
 
 A task can be started in one of two shapes, chosen before it runs and fixed for
