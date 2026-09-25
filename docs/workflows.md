@@ -96,6 +96,16 @@ Chromium, not assumed. The handle is therefore **never stored**. What is
 stored is a description of the element, built from what the tool reported
 about the node it had already resolved in order to act on it.
 
+That report is the whole mechanism, and it is a property of each interaction
+tool rather than of the recorder. A tool that does not report the node it acted
+on cannot be recorded: the recorder has nothing to build a binding from, so the
+step is left out and the recording is then incomplete and refuses to replay
+entirely. All six interaction tools report it — `browser.click`, `browser.type`,
+`browser.select`, `browser.select_many`, `browser.set_value` and
+`browser.set_checked`. `set_checked` was the one that did not, which meant
+checkboxes and radio buttons were silently unrecordable until an E2E case went
+looking; the test that found it fails again if the report is removed.
+
 ### Provenance is a separate property from validity
 
 The description came out of a page, so it is tagged as having come out of a
@@ -240,6 +250,26 @@ audit trail like any other work. Two things about that task are worth knowing:
   it means no model output chose any of its arguments.
 - It starts **clean**. It is a new task that has read nothing; inheriting the
   recording task's taint would be inheriting a fact about a different run.
+
+Three consequences of re-adjudicating per step, each of which is a real-browser
+test rather than a claim:
+
+- **The site is the one the tab is on now.** A standing grant earned while
+  recording does not travel: replaying the same recording on a second origin is
+  judged against that origin and prompts where the granted one does not. Shown
+  on the _same_ markup served under a second hostname, so the page cannot be
+  what makes the difference.
+- **The risk is what the step reaches now.** A field that has become a
+  national-identifier or API-secret field confirms at R3 even in the permission
+  mode that asks for nothing, and one that has become a password or
+  one-time-code field is denied without a prompt. Neither is written anywhere in
+  the record; both are computed from the page read the replay itself performed.
+- **The stored risk is a floor, not a prediction.** What the review surface
+  shows for a recording is the maximum of its tools' _declared_ risks. An
+  escalation that depends on the arguments — `browser.type` with `submit`, or a
+  sensitive field — can only be computed against a live page, so a recording
+  that will submit a form is listed at R1 and prompts at R2 when it runs. The
+  floor therefore understates a review screen and never an authorization.
 
 ## The observation hook
 

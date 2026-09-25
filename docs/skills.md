@@ -287,22 +287,76 @@ this document claimed it did.
 
 ## What ships
 
-| Skill                | Risk | Steps | Reaches                                                     |
-| -------------------- | ---- | ----- | ----------------------------------------------------------- |
-| `page.inspect`       | R0   | 3     | `browser.read_page`, `debugger.console`, `debugger.network` |
-| `page.open_and_read` | R1   | 2     | `browser.navigate`, `browser.read_page`                     |
-| `github.find_issue`  | R1   | 2     | `github.search_issues`, `github.read_issue`                 |
+| Skill                  | Risk | Steps | Reaches                                                     |
+| ---------------------- | ---- | ----- | ----------------------------------------------------------- |
+| `page.inspect`         | R0   | 3     | `browser.read_page`, `debugger.console`, `debugger.network` |
+| `page.open_and_read`   | R1   | 2     | `browser.navigate`, `browser.read_page`                     |
+| `form.fill_and_submit` | R2   | 3     | `browser.type`, `browser.wait`, `browser.read_page`         |
+| `github.find_issue`    | R1   | 2     | `github.search_issues`, `github.read_issue`                 |
 
-All three are read-only. A "file a bug" workflow is a reasonable thing to want
-and a bad thing to ship first: it would make an irreversible, publicly visible
-write the easiest path through a brand-new feature. Writes stay individually
-requested until the read path has been used in anger.
+Three of the four are read-only. `form.fill_and_submit` is the exception and it
+is deliberately the smallest write there is: it types into a field the caller
+already has a handle for and submits the form around it, using
+`browser.type` — which escalates itself from R1 to R2 when asked to submit —
+and nothing else. No new tool, no new permission, no connector.
+
+What it is not is an easier path to a write. The skill's declared R2 is the
+risk of _starting_ it; each step is dispatched on its own and meets its own
+policy decision, so approving the skill does not approve the write inside it,
+and declining the write stops the write without stopping the steps that already
+ran. What the field turns out to be is decided when the write runs, not when the
+skill was written: a password or one-time-code field refuses outright, and a
+national-identifier or API-secret field confirms at R3 whatever the permission
+mode says.
+
+A workflow that writes to an external _service_ — "file a bug" — is still a
+reasonable thing to want and a bad thing to make the easiest path through a
+young feature. It would be irreversible and publicly visible, so writes to a
+service stay individually requested.
+
+## Switching a skill off
+
+Every shipped skill is enabled, and the user can switch any of them off in
+Settings. The choice is durable and survives a worker eviction.
+
+What makes it a control rather than a filter is where it is enforced.
+`SkillRegistry.get`, `latest` and `list` all answer as though a disabled skill
+were not registered, so it is gone from the model's listing, from `skills.run`,
+from the panel's launcher, from a shortcut resolving its target and from a
+schedule checking one — at once. A build that filtered only the listing would
+leave a model able to run a skill it was never shown, which is the version of
+this feature that looks identical in the settings screen and is not a control
+at all.
+
+Five things can start a skill run, and all five read through that one seam: the
+model's `skills.run`, the panel's launcher, a shortcut, a schedule, and a step
+inside another skill. The last one means switching a skill off also stops
+anything that composes it, including partway through a run that had already
+started. A recorded workflow is the sixth and the exception: it carries its own
+definition, validated against its own hash, and never consults the registry, so
+switching every skill off does not switch a replay off.
+
+The settings surface has a read of its own — `getIncludingDisabled` — because
+offering to turn something back on requires showing it. It is consulted in
+exactly three places, and how many is asserted from source, because "one
+enforcement point" is a claim about today unless something counts it.
+
+When a shortcut or a launch names a skill that is switched off, it says so
+rather than reporting the target missing. Those are two different facts and only
+one of them is actionable — the earlier message sent people looking for
+something that was sitting in Settings with its toggle off. The distinct message
+is chosen only after the enforcing read has already refused, so knowing why is
+never a way in.
+
+Nothing here installs, obtains or changes a skill. The only decision is whether
+one the build already shipped, already validated and already hashed is
+available.
 
 ## Workflow recording (P-022) — the contract it must obey
 
-Not implemented, and not designed here. What is fixed in advance is the
-security shape any implementation has to take, because the tempting design is
-the one this wave spent its effort avoiding:
+Implemented, in `docs/workflows.md`. The contract below was fixed before it was
+built and still holds; it is kept here because it is the shape a _change_ to
+recording has to keep, not a description of unwritten work:
 
 ```
 recorded workflow
@@ -322,9 +376,9 @@ It must **not** introduce a second execution engine. A recording is a
 - it carries no code, and a recorded value is a literal or a binding, never an
   expression;
 - it earns no trust from having been performed. A user doing something by hand
-  once is not a grant to do it unattended later, so a recording is a proposal
-  until it is registered by whatever mechanism a future wave designs — and
-  today the only registering provenance is `bundled`;
+  once is not a grant to do it unattended later, so a recording is never
+  registered at all: the only registering provenance is `bundled`, and a
+  recording lives in its own store and runs only through an explicit replay;
 - replay is a fresh run: it re-enters every gate, carries no approval forward,
   and is subject to the same per-step permission and egress evaluation.
 

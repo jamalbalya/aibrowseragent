@@ -1328,6 +1328,8 @@ describe('the bundled skills reach nothing they should not', () => {
     const known = new Set([
       'browser.read_page',
       'browser.navigate',
+      'browser.type',
+      'browser.wait',
       'debugger.console',
       'debugger.network',
       'github.search_issues',
@@ -1339,8 +1341,12 @@ describe('the bundled skills reach nothing they should not', () => {
   });
 
   it('include no write to an external service', () => {
-    // Read paths first. A workflow that files an issue is a reasonable thing
-    // to want and a bad thing to make the easiest path through a new feature.
+    // Still true, and now worth stating precisely rather than loosely: one
+    // bundled skill writes — `form.fill_and_submit` types into a field and
+    // submits it — and that write goes to the page's own origin, under the
+    // egress gate, at R2. What none of them does is write to a *service*
+    // through a connector. Filing an issue is a reasonable thing to want and
+    // a bad thing to make the easiest path through a new feature.
     for (const definition of BUNDLED_SKILLS) {
       for (const name of definition.requiredTools) {
         expect(name).not.toMatch(/create|comment|delete|upload|send/);

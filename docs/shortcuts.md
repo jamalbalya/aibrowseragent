@@ -116,8 +116,19 @@ Resolution fails closed on all of:
 - the workflow was deleted
 - the workflow is missing steps it watched, so P-022 will not replay it
 - the skill is not registered, or not at the pinned version
+- the skill is registered but the user switched it off
 - the stored record is malformed, or from a format this build cannot read
 - the target kind is one this build does not understand
+
+The fourth of those is refused with a reason of its own. A skill that was
+switched off and one that was never there are the same answer to the enforcing
+read — both resolve to nothing, and that is deliberate, so the two cannot be
+told apart by probing. What differs is only the sentence the user is shown:
+"switched off, turn it back on in Settings" rather than "no longer available",
+because one of those is actionable and the other sends people looking for
+something that is sitting in Settings with its toggle off. The distinguishing
+lookup runs **after** the enforcing read has already refused and can only choose
+a message; it cannot produce a resolution.
 
 A shortcut whose target is gone stays listed and marked unusable, so you can
 see it and remove it — silently deleting the name would hide that it ever

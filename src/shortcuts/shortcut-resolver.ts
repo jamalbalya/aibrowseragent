@@ -24,7 +24,24 @@ import { isUsableObjective, type ShortcutRecord, type ShortcutTarget } from './s
 import type { ShortcutStore } from './shortcut-store';
 
 export type ResolutionRefusal =
-  'NO_SUCH_SHORTCUT' | 'TARGET_MISSING' | 'TARGET_UNUSABLE' | 'TARGET_KIND_UNKNOWN';
+  | 'NO_SUCH_SHORTCUT'
+  | 'TARGET_MISSING'
+  | 'TARGET_UNUSABLE'
+  | 'TARGET_KIND_UNKNOWN'
+  /**
+   * The target is a skill the user switched off (P-024).
+   *
+   * Distinct from `TARGET_MISSING` because the two are different facts and
+   * only one of them is actionable: a missing target is gone and the shortcut
+   * is dead, while a disabled one is a switch the person themselves set and
+   * can set back. Reporting "no longer available" for a skill sitting in
+   * Settings with its toggle off sends someone looking for a bug.
+   *
+   * It leaks nothing. A shortcut the user created, pointing at a build-shipped
+   * skill the user disabled, tells them what they already know — and it
+   * re-enables nothing, authorises nothing and reaches nothing.
+   */
+  | 'SKILL_DISABLED';
 
 /**
  * What the user is shown before they commit.
@@ -96,6 +113,17 @@ export interface ShortcutResolverOptions {
    * at a skill nobody reviewed.
    */
   readonly skill: (skillId: string, skillVersion: string) => SkillTargetView | undefined;
+  /**
+   * The same skill when it is registered but switched off, or `undefined`.
+   *
+   * A second, deliberately narrow lookup rather than a flag on the first.
+   * `skill` is the enforcement read — it answers "may this run", and a
+   * disabled skill is absent from it, which is the property that keeps a
+   * shortcut from being a way around the switch. This one answers only "why
+   * not", is consulted only after `skill` has already refused, and its result
+   * is never used to build a resolution.
+   */
+  readonly disabledSkill?: (skillId: string, skillVersion: string) => SkillTargetView | undefined;
 }
 
 export class ShortcutResolver {
@@ -179,6 +207,18 @@ export class ShortcutResolver {
       // would be the target changing under a name the user already approved.
       const skill = this.options.skill(target.skillId, target.skillVersion);
       if (!skill) {
+        // Registered but switched off is a different answer from gone, and
+        // the user can act on it. Asked only once the enforcing read has
+        // already refused, so this branch cannot be a way past it.
+        if (this.options.disabledSkill?.(target.skillId, target.skillVersion)) {
+          return {
+            ok: false,
+            reason: 'SKILL_DISABLED',
+            detail:
+              `/${record.name} points at a workflow that is switched off. ` +
+              'Turn it back on in Settings to use this shortcut.',
+          };
+        }
         return {
           ok: false,
           reason: 'TARGET_MISSING',
@@ -223,6 +263,9 @@ export class ShortcutResolver {
       return workflow !== undefined && !workflow.incomplete;
     }
     if (target.kind === 'skill') {
+      // Creation-time check, and deliberately the *enforcing* read: a
+      // shortcut is not created for a skill that is switched off, because it
+      // could not run.
       return this.options.skill(target.skillId, target.skillVersion) !== undefined;
     }
     if (target.kind === 'prompt') return isUsableObjective(target.objective);

@@ -85,6 +85,48 @@ function lastFileId(request: WireRequest): string | null {
   return ids.at(-1) ?? null;
 }
 
+/**
+ * The same, for an element chosen by what it is rather than by where it sits.
+ *
+ * `$element(<role>,<name>)` is replaced with the handle of the element whose
+ * role and accessible name match exactly, taken from the most recent page
+ * model in the conversation. A fixed handle like `e1-3` names a position in a
+ * snapshot, which moves whenever the page does; role and name are what a real
+ * model reads off the page model and what a recorded binding later matches
+ * on, so a script written this way says which control it means.
+ *
+ * Unresolved on purpose when nothing matches: the placeholder is left in
+ * place, the tool refuses the handle, and the test fails saying so — which is
+ * a better failure than silently acting on whatever happened to be first.
+ */
+const ELEMENT_BY_DESCRIPTION = /\$element\(([a-zA-Z]+),([^)]*)\)/g;
+
+/** Escapes a literal for use inside a regular expression. */
+function escapeForRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * The handle the newest page model gave the element with this role and name.
+ *
+ * The *newest*, because a handle is snapshot-scoped: an earlier read's handle
+ * is stale and would be refused, so the only useful answer is the last one.
+ */
+function elementByDescription(request: WireRequest, role: string, name: string): string | null {
+  const pattern = new RegExp(
+    `\\{"elementId":"(e[0-9]+-[0-9]+)","role":"${escapeForRegExp(role)}","name":"${escapeForRegExp(name)}"`,
+    'g',
+  );
+  const ids: string[] = [];
+  for (const message of request.messages ?? []) {
+    if (typeof message.content !== 'string') continue;
+    for (const match of message.content.matchAll(pattern)) {
+      if (match[1]) ids.push(match[1]);
+    }
+  }
+  return ids.at(-1) ?? null;
+}
+
 /** The handle of the first clickable element the page model carried back. */
 function lastElementId(request: WireRequest, role: string): string | null {
   const ids: string[] = [];
@@ -107,18 +149,20 @@ function resolvePlaceholders(reply: ScriptedReply, request: WireRequest): Script
   if (fileId !== null) substitutions.push([FILE_ID_PLACEHOLDER, fileId]);
   const elementId = lastElementId(request, 'button');
   if (elementId !== null) substitutions.push([ELEMENT_ID_PLACEHOLDER, elementId]);
-  if (substitutions.length === 0) return reply;
+
+  const resolve = (text: string): string =>
+    substitutions
+      .reduce((carried, [placeholder, value]) => carried.replaceAll(placeholder, value), text)
+      .replace(ELEMENT_BY_DESCRIPTION, (whole, role: string, name: string) => {
+        const handle = elementByDescription(request, role.trim(), name.trim());
+        return handle ?? whole;
+      });
 
   return {
     ...reply,
     calls: reply.calls.map((call) => ({
       ...call,
-      arguments: JSON.parse(
-        substitutions.reduce(
-          (text, [placeholder, value]) => text.replaceAll(placeholder, value),
-          JSON.stringify(call.arguments),
-        ),
-      ) as Record<string, unknown>,
+      arguments: JSON.parse(resolve(JSON.stringify(call.arguments))) as Record<string, unknown>,
     })),
   };
 }

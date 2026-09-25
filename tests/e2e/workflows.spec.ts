@@ -30,6 +30,7 @@ import {
 } from './fixtures/extension';
 import type { ScriptedReply } from './fixtures/mock-provider';
 import type { PanelResponse } from '@/messaging/protocol';
+import { BUNDLED_SKILLS } from '@/skills/bundled';
 
 /** Answers every permission prompt, as the side panel would. */
 function autoAnswer(
@@ -135,7 +136,9 @@ test('a recorded workflow never reaches the skill list or the model’s tools', 
   // registered would be a model-invokable tool combination nobody reviewed.
   const { skills } = await send('skill.list', {});
   expect(skills.map((skill) => skill.id)).not.toContain('recorded.workflow');
-  expect(skills).toHaveLength(3);
+  // Exactly what the build ships, counted from the build: a recording must not
+  // appear here however many skills there come to be.
+  expect(skills).toHaveLength(BUNDLED_SKILLS.length);
 
   // And no `workflow.*` tool exists for a model to call.
   const { tools } = await send('tools.list', {});

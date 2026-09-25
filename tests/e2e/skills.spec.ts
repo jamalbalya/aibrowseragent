@@ -32,6 +32,7 @@ import {
   type SendToWorker,
 } from './fixtures/extension';
 
+import { BUNDLED_SKILLS } from '@/skills/bundled';
 /** What the model was told, with one level of JSON escaping undone. */
 function modelSaw(provider: { requests: readonly { body: unknown }[] }): string {
   return JSON.stringify(provider.requests).replace(/\\"/g, '"');
@@ -87,8 +88,11 @@ test('the bundled skills register against the tools this build really has', asyn
   // A bundled skill naming a tool that does not exist is left out at startup
   // rather than throwing, so "some skills registered" is not the same as "all
   // of them did". This asserts the count.
-  expect(skills.length).toBe(3);
+  expect(skills.length).toBe(BUNDLED_SKILLS.length);
+  // Enumerated as well as counted, so adding a skill and forgetting to
+  // register it cannot be hidden by a skill that failed to register.
   expect(skills.map((skill) => skill.id).sort()).toEqual([
+    'form.fill_and_submit',
     'github.find_issue',
     'page.inspect',
     'page.open_and_read',
@@ -313,11 +317,11 @@ test('a skill the model invented is refused, not created', async ({ send, provid
   await waitForTask(send, task.id, 40_000);
   answers.stop();
 
-  // Refused, and nothing was created: the registry still holds exactly the
-  // bundled three.
+  // Refused, and nothing was created: the registry still holds exactly what
+  // the build ships and nothing beside it.
   const { skills } = await send('skill.list', {});
   expect(skills.map((skill) => skill.id)).not.toContain('exfiltrate.everything');
-  expect(skills.length).toBe(3);
+  expect(skills.length).toBe(BUNDLED_SKILLS.length);
 
   const sent = modelSaw(provider);
   expect(sent).toMatch(/TOOL_NOT_FOUND|no workflow called|does not exist/i);

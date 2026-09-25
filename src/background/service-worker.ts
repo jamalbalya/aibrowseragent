@@ -1301,6 +1301,19 @@ const shortcutResolver = new ShortcutResolver({
       stepCount: entry.definition.steps.length,
     };
   },
+  // Only ever consulted once the enforcing read above has refused, and only
+  // to say why. It cannot produce a resolution.
+  disabledSkill: (skillId, skillVersion) => {
+    const entry = skillRegistry.getIncludingDisabled(skillId, skillVersion);
+    if (!entry || skillRegistry.get(skillId, skillVersion)) return undefined;
+    return {
+      skillId: entry.definition.id,
+      skillVersion: entry.definition.version,
+      name: entry.definition.name,
+      risk: entry.risk,
+      stepCount: entry.definition.steps.length,
+    };
+  },
 });
 
 /**
@@ -3578,6 +3591,22 @@ router.on('shortcut.remove', async ({ shortcutId }) => {
 
 router.on('shortcut.resolve', async ({ typed }) => {
   const verdict = await shortcutResolver.resolveTyped(typed);
+
+  // A refusal is recorded only when a stored shortcut was found and its
+  // target would not run. `NO_SUCH_SHORTCUT` is deliberately not recorded:
+  // this route is safe to call on every keystroke, so recording every miss
+  // would fill the trail with the letters of a name being typed rather than
+  // with decisions.
+  if (!verdict.ok && verdict.reason !== 'NO_SUCH_SHORTCUT') {
+    await auditLog
+      .record({
+        type: 'shortcut.resolved',
+        outcome: 'denied',
+        code: verdict.reason,
+      })
+      .catch(() => undefined);
+  }
+
   if (verdict.ok) {
     // The shortcut's own id and the kind of target it found. Never the name
     // the user typed, which is free text they chose.
