@@ -1,9 +1,14 @@
-# Acceptance packages for specification §85–§90
+# Acceptance packages
 
-The specification names six sets of acceptance tests. This directory holds one
-package per set. Each package states, item by item, what the specification
-asks for, what this repository can actually show for it, and — where a person
-has to do the showing — the exact steps.
+The specification names six sets of acceptance tests, §85–§90, and this
+directory holds one package per set. Each package states, item by item, what
+the specification asks for, what this repository can actually show for it,
+and — where a person has to do the showing — the exact steps.
+
+One package is not a specification section. A capability audit can find that
+the only thing standing between a capability and its evidence is a step a
+person has to take, and such a step needs a written procedure like any other.
+`91-downloads.md` is the first of those, and it says at the top that it is one.
 
 ## Three verdicts, and no fourth
 
@@ -71,6 +76,7 @@ in this package to make an item look executable.
 | [88-connectors.md](88-connectors.md)             | §88 Connector acceptance tests       |
 | [89-browser-failures.md](89-browser-failures.md) | §89 Browser failure acceptance tests |
 | [90-mv3-failures.md](90-mv3-failures.md)         | §90 MV3 failure acceptance tests     |
+| [91-downloads.md](91-downloads.md)               | P-011 downloads — capability audit   |
 | [RESULTS.md](RESULTS.md)                         | What has actually been executed      |
 
 ## Preparing to execute a manual item

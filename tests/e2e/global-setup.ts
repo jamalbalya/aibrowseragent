@@ -3,11 +3,16 @@
  * fixtures expect is missing. Both produce confusing mid-test failures
  * otherwise.
  *
- * It also produces `dist-auth/`, a second bundle configured against the auth
- * fixture's HTTPS origin. The shipped bundle deliberately has no backend
- * origin — that is what makes sign-in absent by default — so the one spec
- * that exercises the sign-in protocol needs a build that has one. `dist/` is
- * never touched by it.
+ * It also produces two fixture bundles, neither of which touches `dist/`:
+ *
+ * - `dist-auth/`, configured against the auth fixture's HTTPS origin. The
+ *   shipped bundle deliberately has no backend origin — that is what makes
+ *   sign-in absent by default — so the specs that exercise the sign-in
+ *   protocol need a build that has one.
+ * - `dist-downloads/`, the shipped bundle with `downloads` required rather
+ *   than optional, so the granted download path can be driven without a
+ *   permission dialog no test harness can answer. See the build script for
+ *   why that is the honest way to reach it.
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
@@ -28,13 +33,12 @@ export default function globalSetup(): void {
     }
   }
 
-  // Built here rather than by a separate npm script, so a contributor running
-  // `npx playwright test` gets it without knowing it exists.
+  // Built here rather than by separate npm scripts, so a contributor running
+  // `npx playwright test` gets them without knowing they exist.
   const root = resolve(import.meta.dirname, '../..');
-  execFileSync('node', [resolve(root, 'scripts/build-auth-fixture.mjs')], {
-    cwd: root,
-    stdio: 'inherit',
-  });
+  for (const script of ['build-auth-fixture.mjs', 'build-downloads-fixture.mjs']) {
+    execFileSync('node', [resolve(root, `scripts/${script}`)], { cwd: root, stdio: 'inherit' });
+  }
 
   // An empty E2E_CHROMIUM_PATH means "let Playwright resolve its own browser",
   // which is what CI does after `playwright install`.

@@ -5,9 +5,11 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import prettier from 'eslint-config-prettier';
 
 export default tseslint.config(
-  // `dist-auth/` is the E2E auth fixture's build output, ignored for the
-  // same reason `dist/` is: it is emitted, not authored.
-  { ignores: ['dist/**', 'dist-auth/**', 'coverage/**', 'node_modules/**'] },
+  // `dist-auth/` and `dist-downloads/` are the E2E fixtures' build output,
+  // ignored for the same reason `dist/` is: they are emitted, not authored.
+  {
+    ignores: ['dist/**', 'dist-auth/**', 'dist-downloads/**', 'coverage/**', 'node_modules/**'],
+  },
 
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,

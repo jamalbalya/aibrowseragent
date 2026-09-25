@@ -1483,11 +1483,30 @@ Out of reach, because the content script runs only in the top frame. Widening
 surface than this feature justifies, and the same reasoning that removed
 `<all_urls>` in Stage 2.
 
-**BLOCKED — BROWSER/PLATFORM LIMITATION: a granted-permission download E2E.**
-`downloads` is granted by a human gesture in Settings, which a headless
-profile cannot produce. The refusal path runs end to end in a real browser;
-the granted path is covered by unit and integration tests against the download
-port. P-011 is recorded as PARTIAL for this reason and no other.
+**BLOCKED — TEST-HARNESS LIMITATION: Chrome's permission-grant dialog.**
+This entry previously read "a granted-permission download E2E ... a headless
+profile cannot produce [the gesture]". The P-011 capability audit tested that
+claim instead of assuming it, and it was wrong twice over.
+
+It is not the gesture: a Playwright `page.click()` on the Settings button
+supplies a real user activation, and Chrome accepts the
+`chrome.permissions.request` made from that handler rather than rejecting it.
+What cannot be answered is the confirmation dialog Chrome then raises — browser
+chrome with no frame, no exposed accessibility tree and no CDP domain behind
+it, so the promise never settles.
+
+And it is not the granted path: nothing downstream of the grant needs a gesture
+at all, only a permission that is already present. The granted path now runs
+end to end in real Chromium against `dist-downloads/` — the shipped bundle with
+`downloads` declared required rather than optional, a build-time difference the
+spec re-derives and asserts — exercising the real policy engine, the real R3
+confirmation, the real filename gate, a real `chrome.downloads` call, real
+bytes on disk and the real audit write. Nothing is mocked and no permission
+state is mutated at runtime.
+
+What remains manual is the dialog alone, written up as §91 procedure D-3-1.
+P-011 stays PARTIAL until that procedure is executed and recorded, and for no
+other reason.
 
 ### Web provider boundary
 
@@ -2578,7 +2597,7 @@ bug rather than a difference of opinion.
 | P-006 | Forms                       | PARTIAL        | §83                                     | `<datalist>` combobox; file input via the P-010 path; shadow/cross-origin sensitivity  | none                     | none                                   | low                             | unit, integration, security, E2E      |
 | P-009 | Image upload                | PASS           | §83                                     | none                                                                                   | P-010                    | none                                   | file-origin, redaction          | unit, integration, security, E2E      |
 | P-010 | File upload                 | PASS           | §83                                     | none                                                                                   | permission review        | none                                   | file-origin, redaction, consent | unit, integration, security, E2E      |
-| P-011 | Download                    | PARTIAL        | §83                                     | granted-path E2E needs a real user gesture                                             | `downloads` permission   | none                                   | side-effect consent             | unit, integration, security, E2E      |
+| P-011 | Download                    | PARTIAL        | §83                                     | grant dialog is manual (§91 D-3); granted path now covered in real Chromium            | `downloads` permission   | none                                   | side-effect consent             | unit, integration, security, E2E      |
 | P-020 | Scheduled tasks             | PARTIAL        | §83, Phase 8                            | §84 condition 3 repository-wide; parity with the benchmark undemonstrated              | P-022, background exec   | `alarms`                               | unattended autonomy             | unit, security, E2E                   |
 | P-021 | Shortcuts                   | PARTIAL        | §50, §83, Phase 8                       | implementation                                                                         | P-022                    | none                                   | consent, name confusability     | unit, integration, security, E2E      |
 | P-022 | Workflow recording          | PARTIAL        | §49, §83, Phase 8                       | §44 multi-connector workflow only                                                      | P-024                    | P-023 connectors                       | replay safety, evidence         | unit, integration, security, E2E      |
