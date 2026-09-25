@@ -566,27 +566,45 @@ so a standing grant earned while recording does not travel to another origin —
 demonstrated on the same markup served under a second hostname, so the page
 cannot be what makes the difference.
 
-Covered by a unit suite, an integration suite, a twenty-four-case security
-suite and two real-Chromium E2E suites totalling twenty-one tests, with each
-source-scan and real-browser claim proved to fail when its mechanism is
-removed.
+A second recorder defect closed the same way, and it was larger: a recorded
+**list** argument could never be replayed. Under a tainted task — which is
+every recording, because recording reads the page first — a list became a
+runtime slot, and `SkillInputType` is `string | number | boolean` with nothing
+that coerces a scalar into a list, so the replayed call failed the tool's own
+schema every time. A multi-select or tab-group recording looked complete in the
+review surface, reported no gaps, and could not run. A list of short structural
+values is stored as written now, and a list that cannot be stored drops its
+step rather than becoming a slot nothing can fill — because that third outcome
+is the one that produced a silently unreplayable recording.
 
-PARTIAL for one reason, and it is reach rather than architecture: the §85 A–F
-manual acceptance scenarios have not been run for this capability, as for
-every other row in this file (see "What the PASS column actually means"), and
-the multi-connector reference workflow of §44 cannot be recorded because those
-connectors do not exist (see P-023). Two smaller limits are stated rather than
-implied: a multi-select listbox and the structured inputs of P-006 are
-recordable in principle and have no dedicated recorded-and-replayed case, and
-the risk a review surface shows for a stored recording is the maximum of its
-tools' _declared_ risks — a floor, not a prediction, because an escalation
-that depends on the arguments (a form submit, a sensitive field) can only be
-computed against a live page. The prompt raised when the step actually runs
-carries the escalated risk, so the floor understates a review screen and never
-an authorization.
+Every interaction tool this build ships is now recorded and replayed against a
+real browser, and what a replay has to earn again is settled case by case
+against the world as it is then: a site grant revoked after the recording
+brings the confirmation back, a site blocked afterwards refuses the replay
+without asking, a workflow recorded in the mode that asks for nothing still
+confirms when replayed in the mode that asks for everything, and a refusal at
+one step leaves the page as it was with nothing after it run. There is no
+resume — a failed replay leaves no run record, and replaying again starts from
+the first step and re-asks, because carrying an earlier attempt's decisions
+into a later moment is exactly what a resume would do.
 
-Nothing here is blocked externally. The remaining work is building more, not
-obtaining anything.
+Covered by a unit suite, an integration suite, two security suites totalling
+thirty-six cases and three real-Chromium E2E suites totalling twenty-nine
+tests, with each source-scan and real-browser claim proved to fail when its
+mechanism is removed.
+
+PARTIAL for two reasons. The §85 A–F manual acceptance scenarios have not been
+run for this capability, as for every other row in this file (see "What the
+PASS column actually means"). And the multi-connector reference workflow of §44
+cannot be recorded, because none of the connectors it names exists — which is
+blocked externally, in P-023, rather than by effort here.
+
+One limit is a stated position rather than a gap: the risk a review surface
+shows for a stored recording is the maximum of its tools' _declared_ risks — a
+floor, not a prediction, because an escalation that depends on the arguments (a
+form submit, a sensitive field) can only be computed against a live page. The
+prompt raised when the step actually runs carries the escalated risk, so the
+floor understates a review screen and never an authorization.
 
 **P-023 Connector framework** — The framework is implemented and one adapter
 exists, for GitHub: OAuth (authorization code + PKCE, no client secret), a
@@ -641,7 +659,15 @@ minimum:
 1. Playwright E2E coverage, so no row reads `E2E: no`.
 2. The remaining NOT-STARTED capabilities implemented and tested — **two**
    today, P-025 Plugins and P-026 MCP. This line read "nine" until the count
-   was checked against the table beneath it.
+   was checked against the table beneath it. Both now have a design gate rather
+   than a blank: [`PLUGIN_TRUST_MODEL.md`](./docs/architecture/PLUGIN_TRUST_MODEL.md)
+   records what a plugin can safely be under this architecture, and what each
+   capability is actually waiting on. Neither is implemented, and the gate is
+   deliberately not permission to start: P-025 is waiting on a package format
+   and the fact that a package's _authenticity_ cannot be established here at
+   all, and P-026 is waiting on a transport decision — exposing an MCP server
+   needs an inbound channel and every inbound channel this manifest could offer
+   is prohibited.
 3. ~~At least three provider adapters passing the same suite, proving P-033
    rather than asserting it.~~ **Done.** Three adapters —
    `openai-compatible`, `anthropic`, `gemini` — pass one 21-case conformance

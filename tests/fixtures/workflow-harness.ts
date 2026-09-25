@@ -50,6 +50,10 @@ export interface WorkflowHarnessOptions {
   readonly onTaskChanged?: (task: AgentTask) => void;
   /** Whether a task runs unattended. See `createHarness`. */
   readonly resolveUnattended?: (taskId: string) => Promise<boolean>;
+  /** The URL a tab is showing, so a page-scoped step resolves a real site. */
+  readonly resolveTabUrl?: (tabId: number) => Promise<string | undefined>;
+  /** The tab a replay acts in, as the worker supplies it from Chrome. */
+  readonly activeTabId?: number;
 }
 
 export function buildWorkflowHarness(options: WorkflowHarnessOptions = {}): WorkflowHarness {
@@ -68,6 +72,7 @@ export function buildWorkflowHarness(options: WorkflowHarnessOptions = {}): Work
       ? {}
       : { resolveUnattended: options.resolveUnattended }),
     ...(options.disabledSkills === undefined ? {} : { disabledSkills: options.disabledSkills }),
+    ...(options.resolveTabUrl === undefined ? {} : { resolveTabUrl: options.resolveTabUrl }),
     onDispatched: (observation) => {
       observed.push(observation);
       if (observer) {
@@ -90,8 +95,11 @@ export function buildWorkflowHarness(options: WorkflowHarnessOptions = {}): Work
     runner: skills.runner,
     tools: skills.tools,
     tasks,
-    getPermissionMode: () => Promise.resolve(options.permissionMode ?? 'auto'),
-    getActiveTabId: () => Promise.resolve(undefined),
+    // Read at replay, not captured at construction. The worker reads the mode
+    // from settings every time, so a fixture holding the mode a recording was
+    // made under would be testing something the product does not do.
+    getPermissionMode: () => Promise.resolve(skills.getMode()),
+    getActiveTabId: () => Promise.resolve(options.activeTabId),
     publishSecurityContext: () => undefined,
     audit: (event) => {
       audited.push(event);

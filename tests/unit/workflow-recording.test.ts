@@ -15,6 +15,7 @@ import type { TaintState } from '@/security/taint/taint-state';
 import type { ActedOnElement } from '@/content/semantic-tree';
 
 const UNTAINTED: TaintState = { kind: 'KNOWN_UNTAINTED' };
+const TAINTED: TaintState = { kind: 'TAINTED', sources: [] };
 
 function observation(overrides: Partial<DispatchObservation> = {}): DispatchObservation {
   return {
@@ -211,6 +212,83 @@ describe('the parameteriser decides literal, slot or refusal', () => {
     });
     expect(decision.kind).toBe('slot');
     expect(decision.kind === 'slot' && decision.input.description).not.toContain('somewhere');
+  });
+
+  it('keeps a tainted task’s short structural list as written', () => {
+    // The list case of the rule above it. A multi-select's chosen options are
+    // exactly the short, structural values a scalar is kept for, and until this
+    // existed every such recording became a slot — which a list cannot fill,
+    // because `SkillInputType` has no list member. The recording looked
+    // complete in the review surface and failed its schema on every replay.
+    const decision = parameteriseArgument({
+      tool: 'browser.select_many',
+      stepId: 's2',
+      argument: 'values',
+      value: ['bags', 'meal'],
+      taint: TAINTED,
+    });
+    expect(decision).toMatchObject({
+      kind: 'literal',
+      binding: { kind: 'literal', value: ['bags', 'meal'] },
+    });
+  });
+
+  it('keeps a list of numbers too, matching how a lone number is treated', () => {
+    expect(
+      parameteriseArgument({
+        tool: 'tabs.group',
+        stepId: 's2',
+        argument: 'tabIds',
+        value: [12, 34],
+        taint: TAINTED,
+      }),
+    ).toMatchObject({ kind: 'literal', binding: { kind: 'literal', value: [12, 34] } });
+  });
+
+  it('refuses a list it cannot store rather than asking for one at replay', () => {
+    // NEGATIVE CONTROL for the case above, and the reason it is a refusal and
+    // not a slot: a slot supplies one scalar, so a step whose list argument
+    // became a slot can never run. Refusing drops the step, marks the
+    // recording incomplete and says why — which is visible, where the slot was
+    // not.
+    for (const value of [
+      // An element too long to read as structure.
+      ['bags', 'x'.repeat(40)],
+      // An element carrying content: whitespace, a scheme, an address.
+      ['bags', 'two words'],
+      ['bags', 'https://example.test/'],
+      ['bags', 'someone@example.test'],
+      // Nested, so no element-wise judgement applies.
+      ['bags', ['meal']],
+      // Longer than anything that is still structure.
+      Array.from({ length: 33 }, (_, index) => `o${index}`),
+      // Empty, which is a list nothing chose.
+      [],
+    ]) {
+      const decision = parameteriseArgument({
+        tool: 'browser.select_many',
+        stepId: 's2',
+        argument: 'values',
+        value,
+        taint: TAINTED,
+      });
+      expect(decision.kind, JSON.stringify(value)).toBe('refused');
+      if (decision.kind !== 'refused') continue;
+      expect(decision.reason).toMatch(/list cannot be asked for/);
+    }
+  });
+
+  it('refuses a credential-shaped list instead of slotting it', () => {
+    // Secret detection runs before taint and reached `slot` on the way out.
+    // A list that cannot be stored also cannot be asked for, so the step goes.
+    const decision = parameteriseArgument({
+      tool: 'browser.select_many',
+      stepId: 's2',
+      argument: 'values',
+      value: ['ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8'],
+      taint: UNTAINTED,
+    });
+    expect(decision.kind).toBe('refused');
   });
 
   it('agrees with the redactor about what a secret looks like', () => {

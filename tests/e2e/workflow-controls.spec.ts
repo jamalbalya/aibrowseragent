@@ -150,6 +150,15 @@ function controlState(
   }, selector);
 }
 
+/** Every selected option of a multi-select, in document order. */
+function selectedValues(target: Page, selector: string): Promise<string[]> {
+  return target.evaluate((css: string) => {
+    const element = document.querySelector<HTMLSelectElement>(css);
+    if (!element) throw new Error(`No element matched ${css}.`);
+    return [...element.selectedOptions].map((option) => option.value);
+  }, selector);
+}
+
 // ---------------------------------------------------------------------------
 // A. The controls a click test never reached
 // ---------------------------------------------------------------------------
@@ -302,6 +311,137 @@ test('a recorded dropdown choice replays as the same option', async ({
   const replayed = await send('workflow.replay', { workflowId: workflow.workflowId, inputs: {} });
   expect(replayed.ok, replayed.detail ?? replayed.reason ?? '').toBe(true);
   expect((await controlState(target, '#one')).value).toBe('b');
+
+  await target.close();
+});
+
+test('a recorded multi-select replays the whole set it was given', async ({
+  context,
+  send,
+  provider,
+  site,
+}) => {
+  const target = await context.newPage();
+  await target.goto(`${site.baseUrl}/advanced-controls`, { waitUntil: 'domcontentloaded' });
+  await target.bringToFront();
+  await connectProvider(send, provider);
+
+  const saved = await record(send, provider, {
+    objective: 'Add bags and a meal to the booking.',
+    calls: [
+      {
+        name: 'browser.select_many',
+        arguments: { elementId: '$element(listbox,Extras)', values: ['bags', 'meal'] },
+      },
+    ],
+    name: 'Add bags and a meal',
+  });
+
+  expect(saved.workflow, JSON.stringify(saved.skipped)).not.toBeNull();
+  const workflow = saved.workflow!;
+  // Recorded at all, which is the half that was broken: a list argument under
+  // a tainted task became a runtime slot, and a slot supplies one scalar, so
+  // the replayed call failed the tool's own schema every time. It is stored as
+  // written now, and a list that cannot be stored drops the step instead.
+  expect(workflow.steps.map((step) => step.tool)).toEqual([
+    'browser.read_page',
+    'browser.select_many',
+  ]);
+  expect(workflow.incomplete).toBe(false);
+  expect(workflow.inputs).toEqual([]);
+  // A `<select multiple>` reports as a listbox, which is the role the binding
+  // matches on.
+  expect(workflow.steps[1]?.arguments['elementId']?.detail).toContain('listbox');
+  expect(workflow.steps[1]?.arguments['elementId']?.detail).toContain('Extras');
+  expect(workflow.steps[1]?.arguments['values']).toEqual({
+    kind: 'literal',
+    detail: '["bags","meal"]',
+  });
+
+  await target.evaluate(() => {
+    for (const option of document.querySelectorAll<HTMLOptionElement>('#extras option')) {
+      option.selected = false;
+    }
+  });
+  expect(await selectedValues(target, '#extras')).toEqual([]);
+
+  const replayed = await send('workflow.replay', { workflowId: workflow.workflowId, inputs: {} });
+  expect(replayed.ok, replayed.detail ?? replayed.reason ?? '').toBe(true);
+
+  // The complete set, which is what this tool means: anything not listed is
+  // deselected, so a replay that only added would look the same here and be a
+  // different action.
+  expect(await selectedValues(target, '#extras')).toEqual(['bags', 'meal']);
+
+  await target.close();
+});
+
+test('a recorded structured input replays as a value the browser really parsed', async ({
+  context,
+  send,
+  provider,
+  site,
+}) => {
+  // P-006 controls, through the recorder. A real browser parses these and
+  // jsdom does not: it silently clears a date it cannot read and snaps a range
+  // to its nearest step, so "the value came back" is only worth asserting
+  // here.
+  const target = await context.newPage();
+  await target.goto(`${site.baseUrl}/advanced-controls`, { waitUntil: 'domcontentloaded' });
+  await target.bringToFront();
+  await connectProvider(send, provider);
+
+  const saved = await record(send, provider, {
+    objective: 'Set a travel date and the number of seats.',
+    calls: [
+      {
+        name: 'browser.set_value',
+        arguments: { elementId: '$element(textbox,Travel date)', value: '2026-06-15' },
+      },
+      {
+        name: 'browser.set_value',
+        arguments: { elementId: '$element(slider,Seats)', value: '5' },
+      },
+    ],
+    name: 'Set the date and the seats',
+  });
+
+  expect(saved.workflow, JSON.stringify(saved.skipped)).not.toBeNull();
+  const workflow = saved.workflow!;
+  expect(workflow.steps.map((step) => step.tool)).toEqual([
+    'browser.read_page',
+    'browser.set_value',
+    'browser.set_value',
+  ]);
+  // The values are short and structural, so they are kept rather than asked
+  // for — a recording that prompted for a date the user already chose would
+  // not be the same workflow.
+  expect(workflow.inputs).toEqual([]);
+  expect(workflow.steps[1]?.arguments['value']).toEqual({
+    kind: 'literal',
+    detail: '"2026-06-15"',
+  });
+
+  await target.evaluate(() => {
+    document.querySelector<HTMLInputElement>('#when')!.value = '';
+    document.querySelector<HTMLInputElement>('#seats')!.value = '1';
+    document.querySelector<HTMLElement>('#echo')!.textContent = '';
+  });
+
+  const replayed = await send('workflow.replay', { workflowId: workflow.workflowId, inputs: {} });
+  expect(replayed.ok, replayed.detail ?? replayed.reason ?? '').toBe(true);
+
+  // Accepted by the control rather than merely assigned: a date the browser
+  // refused would come back as the empty string.
+  expect((await controlState(target, '#when')).value).toBe('2026-06-15');
+  expect((await controlState(target, '#seats')).value).toBe('5');
+  // And the page's own listeners fired, so the replay drove the control the
+  // way a person would rather than writing to `.value` behind its back.
+  const echo = await target.evaluate(
+    () => document.querySelector<HTMLElement>('#echo')?.textContent ?? '',
+  );
+  expect(echo).toContain('when:change');
+  expect(echo).toContain('seats:change');
 
   await target.close();
 });
