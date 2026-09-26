@@ -82,6 +82,68 @@ manual acceptance tests and is Phase 10 work.
 the capability was exercised against the built extension running in a real
 Chromium — not simulated.
 
+### Clause-level evidence, and how to add it
+
+The yes/— columns say a test exists in a category. They cannot say whether the
+capability does what its specification section asks, and twice that difference
+has hidden a real defect. So `parity-evidence.json` also carries a **clause
+inventory** for a growing subset of capabilities, and `scripts/check-parity.mjs`
+refuses a PASS whose mandatory clauses are not evidenced.
+
+A clause looks like this:
+
+```json
+{
+  "id": "P-019-C1",
+  "specRef": "§53",
+  "requirement": "Notify when a task completes.",
+  "mandatory": true,
+  "status": "VERIFIED",
+  "evidence": ["tests/e2e/notifications.spec.ts :: a task that finishes tells the user, once"]
+}
+```
+
+**Evidence names a test, not a file.** That is the whole mechanism. Citing
+`notifications.spec.ts` would let any test in it stand for any clause, which is
+exactly how a capability came to read PASS while two thirds of its specification
+section was unimplemented. The title must appear in that file as a complete
+string literal, so renaming the test breaks the citation rather than silently
+detaching it.
+
+A clause carries one of six states:
+
+| Status              | Means                                                 | Blocks PASS |
+| ------------------- | ----------------------------------------------------- | ----------- |
+| `VERIFIED`          | A named test establishes it                           | no          |
+| `PARTIAL`           | Some of the clause is covered, some is not            | **yes**     |
+| `EVIDENCE_MISSING`  | Nothing establishes it. The honest default            | **yes**     |
+| `MANUAL_REQUIRED`   | Only a person can establish it — §84 condition 3      | no          |
+| `EXTERNAL_REQUIRED` | Needs a credential or service nobody here holds       | no          |
+| `AMBIGUOUS`         | The specification does not say plainly enough to test | no          |
+
+Anything other than `VERIFIED` needs a `note` saying why; `MANUAL_REQUIRED` also
+needs an `acceptance` reference and `EXTERNAL_REQUIRED` a named `blocker`.
+
+**The three non-blocking states are not leniency.** They are the other gates.
+§84 condition 3 is unmet repository-wide and is tracked in
+`docs/testing/acceptance/`; a missing credential is tracked there too. Folding
+either into this check would make them indistinguishable from an automated
+gap, and the distinction is the reason the matrix can say what it does. An
+`AMBIGUOUS` clause is a specification question to escalate: resolving it against
+the implementation would be as much a guess as resolving it in the
+implementation's favour, and this file's rule is not to guess either way.
+
+To add a clause: read the specification section, write the requirement in one
+faithful line, keep the real `§` reference, find the test that actually
+establishes it, and cite it by title. If no such test exists, say
+`EVIDENCE_MISSING` and let the build tell you. Do not widen an existing citation
+to cover a clause it does not test — the gate is built to catch that, and
+`tests/unit/clause-gate.test.ts` proves it does.
+
+Six of the forty capabilities have an inventory today. `check-parity.mjs` prints
+that count on every run, because a gate covering a sixth of the matrix and
+saying nothing about the rest reads as a gate covering the matrix.
+
 ### Every claim in this table is checked
 
 The yes/— columns are **not** assertions. Each one is derived from
@@ -103,8 +165,8 @@ capability, not necessarily a test of the capability itself.
 
 | Status          | Count  |
 | --------------- | ------ |
-| PASS            | 29     |
-| PARTIAL         | 9      |
+| PASS            | 27     |
+| PARTIAL         | 11     |
 | INTERFACES-ONLY | 0      |
 | NOT-STARTED     | 2      |
 | **Total**       | **40** |
@@ -122,6 +184,36 @@ gained security and real-Chromium coverage in the same revision, and it is
 still not PASS, because the capability is measured against specification §53
 and §53 names six things to notify for. Two were implemented. The reason is
 below.
+
+### The clause gate, and the two rows it moved
+
+`parity-evidence.json` now carries a **clause inventory** for six capabilities,
+and `scripts/check-parity.mjs` refuses a PASS whose mandatory clauses are not
+evidenced. Clause evidence names a _test_, not a file — `file :: exact title` —
+because citing a whole file is exactly the move that let P-019 read PASS while
+implementing two of §53's six notifications, and let P-017 and P-032 read PASS
+while pausing a task destroyed it.
+
+Running it for the first time moved two rows, both for reasons the Wave 11 audit
+had already established and neither of which was fixed in this wave:
+
+- **P-012 Multi-tab** → PARTIAL. §10 lists `tabs.move`, and no tool exposes it;
+  `BrowserAdapter.moveTab` is implemented and called by nothing. §10's `tabs.get`
+  has no get-by-id either.
+- **P-035 Capability doctor** → PARTIAL. §14 lists context capacity among the
+  minimum checks and requires that every connected model be tested; the context
+  window is copied from an advertised table and never measured.
+
+Nothing was cited to make those rows keep their PASS, which was the point. Eight
+of §14's nine checks and ten of §10's eleven tools are evidenced clause by
+clause; the two that are not now say so in the matrix rather than only in an
+audit report.
+
+Three further clauses are declared and do **not** block a PASS, because they
+belong to other gates: a clause needing a person (§84 condition 3), a clause
+needing a credential nobody here holds, and a clause whose specification wording
+cannot be tested against. §59's "stop and recover/ask" is the third kind and is
+recorded `AMBIGUOUS` rather than resolved in favour of the implementation.
 
 ### A PASS that was not true, and now is
 
@@ -303,7 +395,7 @@ rather than folded into the verdict.
 | P-009 | Image upload                         | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-010 | File upload                          | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-011 | Download                             | yes  | yes  | yes         | yes      | yes | PARTIAL     |
-| P-012 | Multi-tab                            | yes  | yes  | —           | yes      | yes | PASS        |
+| P-012 | Multi-tab                            | yes  | yes  | —           | yes      | yes | PARTIAL     |
 | P-013 | Tab grouping                         | yes  | yes  | —           | —        | yes | PASS        |
 | P-014 | DOM inspection                       | yes  | yes  | —           | yes      | yes | PASS        |
 | P-015 | Console inspection                   | yes  | yes  | —           | yes      | yes | PASS        |
@@ -326,7 +418,7 @@ rather than folded into the verdict.
 | P-032 | Task resume                          | yes  | yes  | yes         | —        | yes | PASS        |
 | P-033 | Provider switching                   | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-034 | Tool calling                         | yes  | yes  | yes         | yes      | yes | PASS        |
-| P-035 | Capability doctor                    | yes  | yes  | —           | —        | yes | PASS        |
+| P-035 | Capability doctor                    | yes  | yes  | —           | —        | yes | PARTIAL     |
 | P-036 | Error recovery                       | yes  | yes  | yes         | —        | yes | PASS        |
 | P-037 | Loop detection                       | yes  | yes  | yes         | —        | —   | PASS        |
 | P-038 | Audit trail                          | yes  | yes  | yes         | yes      | yes | PARTIAL     |
@@ -459,6 +551,38 @@ this project already fixed once — a promise the product makes and does not
 keep. The row stays PARTIAL until a runtime provider-disconnection event
 exists to hang it on. Integration coverage is also absent, and §84 condition 3
 is unmet repository-wide as everywhere else.
+
+**P-012 Multi-tab** — Tab discovery, creation, closing, activation, reload,
+grouping, ungrouping, navigation waiting and per-task ownership all work and are
+tested, and the workspace model that binds tabs to a task is the closest
+behavioural match in this project to the benchmark's own tab group.
+
+PARTIAL for two §10 clauses, both surfaced by the clause gate rather than by a
+reading of the code. `tabs.move` has no tool at all: `BrowserAdapter.moveTab` is
+declared on the interface, implemented in the Chrome adapter, stubbed in the test
+fake, and called by nothing in production — an implementation with no caller,
+which is the mirror image of the orphan audit types this project removed in an
+earlier wave. And `tabs.get` has no get-by-id; `tabs.get_active` returns the
+focused tab and `tabs.list` enumerates them, which covers most of what the
+capability is for and is not what §10 asks for.
+
+Neither is blocked externally. Both resolve by building, and neither was built
+in the wave that exposed them, because a wave that fixes what its own new gate
+reports is a wave whose gate nobody can check.
+
+**P-035 Capability doctor** — Eight of §14's nine minimum checks are real probes
+against the connected model: authentication, reachability, model availability,
+text, streaming, tool calling, structured output and vision. The verdict logic
+honours the clause that matters most — a model that did not call the probe
+function is `CHAT_ONLY`, never `AGENT_READY` — and no report carries credential
+material.
+
+PARTIAL for the ninth. Context capacity is reported from the advertised model
+table and never measured, and §14 opens with "Every connected model must be
+tested". Whether a context window can be _probed_ rather than read is a real
+question — it costs a large request to answer and the answer is approximate —
+and this row does not pretend the question has been settled. It is a PARTIAL
+with a stated reason, not a missing test.
 
 **P-038 Audit trail** — One append-only stream across every task, recording
 what was proposed and what was decided. Tool executions now reach it through

@@ -5,7 +5,15 @@
     "matrix's yes/\u2014 columns match these citations exactly. An earlier revision of",
     "the matrix claimed integration coverage for three capabilities that had none;",
     "this file makes that class of claim checkable rather than a matter of trust.",
-    "Cite a file only when it genuinely exercises the capability."
+    "Cite a file only when it genuinely exercises the capability.",
+    "",
+    "A capability may also carry a `clauses` inventory: one entry per specification",
+    "clause, each with the real section reference and evidence naming a *test*",
+    "rather than a file. scripts/lib/clause-gate.mjs refuses a PASS whose mandatory",
+    "clauses are not evidenced. PARITY_MATRIX.md, under 'Clause-level evidence',",
+    "explains the six statuses and which of them block a PASS. Do not widen an",
+    "existing citation to cover a clause it does not test: that is the exact move",
+    "the gate exists to catch, and tests/unit/clause-gate.test.ts proves it does."
   ],
   "capabilities": {
     "P-001": {
@@ -106,6 +114,102 @@
         "tests/e2e/security.spec.ts",
         "tests/e2e/file-access.spec.ts",
         "tests/e2e/extension-load.spec.ts"
+      ],
+      "clauses": [
+        {
+          "id": "P-012-C1",
+          "specRef": "\u00a710",
+          "requirement": "tabs.list",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/tab-tools.test.ts :: lists open tabs and flags which are automatable"
+          ]
+        },
+        {
+          "id": "P-012-C2",
+          "specRef": "\u00a710",
+          "requirement": "tabs.get",
+          "mandatory": true,
+          "status": "PARTIAL",
+          "note": "`tabs.get_active` returns the focused tab and `tabs.list` enumerates them, but there is no get-by-id. Wave 11 finding, untouched."
+        },
+        {
+          "id": "P-012-C3",
+          "specRef": "\u00a710",
+          "requirement": "tabs.create",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": ["tests/unit/tab-tools.test.ts :: opens a tab and claims ownership of it"]
+        },
+        {
+          "id": "P-012-C4",
+          "specRef": "\u00a710",
+          "requirement": "tabs.close",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/tab-tools.test.ts :: treats closing a tab the agent opened as low risk and does not prompt"
+          ]
+        },
+        {
+          "id": "P-012-C5",
+          "specRef": "\u00a710",
+          "requirement": "tabs.activate",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": ["tests/unit/tab-tools.test.ts :: focuses the tab"]
+        },
+        {
+          "id": "P-012-C6",
+          "specRef": "\u00a710",
+          "requirement": "tabs.reload",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": ["tests/unit/tab-tools.test.ts :: reports a tab that no longer exists"]
+        },
+        {
+          "id": "P-012-C7",
+          "specRef": "\u00a710",
+          "requirement": "tabs.group and tabs.ungroup",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": ["tests/unit/tab-tools.test.ts :: groups tabs and returns the group id"]
+        },
+        {
+          "id": "P-012-C8",
+          "specRef": "\u00a710",
+          "requirement": "tabs.move",
+          "mandatory": true,
+          "status": "EVIDENCE_MISSING",
+          "note": "No tool exposes it. `BrowserAdapter.moveTab` is declared, implemented in the Chrome adapter and called by nothing in production. Wave 11 finding, untouched in Wave 13."
+        },
+        {
+          "id": "P-012-C9",
+          "specRef": "\u00a710",
+          "requirement": "tabs.wait_for_navigation",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": ["tests/unit/tab-tools.test.ts :: resolves when the tab finishes loading"]
+        },
+        {
+          "id": "P-012-C10",
+          "specRef": "\u00a710",
+          "requirement": "tabs.get_active",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": ["tests/unit/tab-tools.test.ts :: returns the focused tab"]
+        },
+        {
+          "id": "P-012-C11",
+          "specRef": "\u00a710",
+          "requirement": "Every tool call must include task/session context.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/tab-tools.test.ts :: tracks tabs per task and does not leak between tasks"
+          ]
+        }
       ]
     },
     "P-013": {
@@ -132,7 +236,81 @@
         "tests/integration/agent-runtime.test.ts",
         "tests/integration/sustained-task.test.ts"
       ],
-      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts", "tests/e2e/task-pause.spec.ts"]
+      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts", "tests/e2e/task-pause.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-017-C1",
+          "specRef": "\u00a757",
+          "requirement": "Support Stop.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/task-pause.spec.ts :: cancelling a running task cancels it, and it stays cancelled"
+          ]
+        },
+        {
+          "id": "P-017-C2",
+          "specRef": "\u00a757",
+          "requirement": "Support Pause.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/task-pause.spec.ts :: a paused task is still paused a second later, and stays paused",
+            "tests/integration/task-manager.test.ts :: leaves the task paused once the aborted runtime has unwound"
+          ]
+        },
+        {
+          "id": "P-017-C3",
+          "specRef": "\u00a757",
+          "requirement": "Support Resume.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/task-pause.spec.ts :: a paused task resumes and reaches its expected completion"
+          ]
+        },
+        {
+          "id": "P-017-C4",
+          "specRef": "\u00a757",
+          "requirement": "Support Retry.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/integration/task-manager.test.ts :: cancels a still-running task before retrying it"
+          ]
+        },
+        {
+          "id": "P-017-C5",
+          "specRef": "\u00a757",
+          "requirement": "After cancellation is acknowledged, no new tool call starts.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/integration/agent-runtime.test.ts :: stops between tool calls once cancelled",
+            "tests/integration/agent-runtime.test.ts :: stops immediately when cancelled before the first turn"
+          ]
+        },
+        {
+          "id": "P-017-C6",
+          "specRef": "\u00a757",
+          "requirement": "After cancellation is acknowledged, state is persisted.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/task-pause.spec.ts :: a paused task can still be cancelled, and cancellation is terminal"
+          ]
+        },
+        {
+          "id": "P-017-C7",
+          "specRef": "\u00a756",
+          "requirement": "A long task keeps running while the browser stays open.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/mv3-lifecycle.spec.ts :: a task can still run after the worker has restarted"
+          ]
+        }
+      ]
     },
     "P-018": {
       "integration": ["tests/integration/task-persistence.test.ts"],
@@ -141,7 +319,77 @@
     "P-019": {
       "unit": ["tests/unit/notifier.test.ts"],
       "security": ["tests/security/notification-content.test.ts"],
-      "e2e": ["tests/e2e/notifications.spec.ts"]
+      "e2e": ["tests/e2e/notifications.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-019-C1",
+          "specRef": "\u00a753",
+          "requirement": "Notify when a task completes.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/notifications.spec.ts :: a task that finishes tells the user, once",
+            "tests/unit/notifier.test.ts :: announces a completed task"
+          ]
+        },
+        {
+          "id": "P-019-C2",
+          "specRef": "\u00a753",
+          "requirement": "Notify when a permission is required.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": ["tests/unit/notifier.test.ts :: tells the user which tool is waiting"]
+        },
+        {
+          "id": "P-019-C3",
+          "specRef": "\u00a753",
+          "requirement": "Notify when a task fails.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/notifier.test.ts :: announces a failed task",
+            "tests/security/notification-content.test.ts :: is announced from exactly one place in the worker"
+          ]
+        },
+        {
+          "id": "P-019-C4",
+          "specRef": "\u00a753",
+          "requirement": "Notify when a provider disconnects.",
+          "mandatory": true,
+          "status": "EVIDENCE_MISSING",
+          "note": "No producer exists. The only place an account becomes `disconnected` is cloud-metadata restore, a backend path; a provider failing mid-task surfaces as a task error rather than a status change. A notification for an event nothing emits would be the orphan-audit-type defect this repository already fixed once."
+        },
+        {
+          "id": "P-019-C5",
+          "specRef": "\u00a753",
+          "requirement": "Notify when a connector authorization expires.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": ["tests/unit/notifier.test.ts :: names the connector and what has to happen"]
+        },
+        {
+          "id": "P-019-C6",
+          "specRef": "\u00a753",
+          "requirement": "Notify when a scheduled task starts or fails.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/notifier.test.ts :: reads the setting on every call, so turning it off takes effect at once"
+          ]
+        },
+        {
+          "id": "P-019-C7",
+          "specRef": "\u00a753",
+          "requirement": "Do not place secrets in notifications.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/notification-content.test.ts :: takes a task id and a state, and nothing that could carry content",
+            "tests/e2e/notifications.spec.ts :: the notification carries nothing the task read, typed or was told",
+            "tests/unit/notifier.test.ts :: never carries the task id itself"
+          ]
+        }
+      ]
     },
     "P-020": {
       "security": ["tests/security/scheduled-execution.test.ts"],
@@ -225,7 +473,69 @@
         "tests/integration/task-persistence.test.ts",
         "tests/integration/task-manager.test.ts"
       ],
-      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts", "tests/e2e/task-pause.spec.ts"]
+      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts", "tests/e2e/task-pause.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-032-C1",
+          "specRef": "\u00a758",
+          "requirement": "Retry limits are mandatory.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/budget-retry.test.ts :: stops at the attempt limit",
+            "tests/unit/budget-retry.test.ts :: never retries a decision, an auth failure, or an invalid input"
+          ]
+        },
+        {
+          "id": "P-032-C2",
+          "specRef": "\u00a757",
+          "requirement": "A paused task can be resumed and reaches a terminal state.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/task-pause.spec.ts :: a paused task resumes and reaches its expected completion",
+            "tests/e2e/task-pause.spec.ts :: pausing twice and resuming twice leaves one coherent task"
+          ]
+        },
+        {
+          "id": "P-032-C3",
+          "specRef": "\u00a755",
+          "requirement": "A paused task survives service-worker eviction and is still resumable.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/task-pause.spec.ts :: a paused task survives worker eviction and still resumes"
+          ]
+        },
+        {
+          "id": "P-032-C4",
+          "specRef": "\u00a758",
+          "requirement": "A task interrupted by an eviction is parked for the user, not resumed blind.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/mv3-lifecycle.spec.ts :: a task interrupted by a real worker restart is parked, not resumed blind"
+          ]
+        },
+        {
+          "id": "P-032-C5",
+          "specRef": "\u00a776",
+          "requirement": "Resuming must not report a state the task is not in.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/task-pause.spec.ts :: pausing a task that already ended reports what it really is"
+          ]
+        },
+        {
+          "id": "P-032-C6",
+          "specRef": "\u00a758",
+          "requirement": "The worked recovery ladder: refresh the page model, find the target, retry, screenshot fallback, alternate locator, model recovery.",
+          "mandatory": false,
+          "status": "PARTIAL",
+          "note": "The specification gives this as an \"Example:\" rather than a requirement, so it is recorded as non-mandatory. Retry and the page-model refresh exist; a screenshot fallback and an alternate-locator strategy do not. Stated rather than claimed."
+        }
+      ]
     },
     "P-033": {
       "unit": [
@@ -249,7 +559,118 @@
     },
     "P-035": {
       "unit": ["tests/unit/capability-doctor.test.ts"],
-      "e2e": ["tests/e2e/provider-integration.spec.ts", "tests/e2e/provider-switching.spec.ts"]
+      "e2e": ["tests/e2e/provider-integration.spec.ts", "tests/e2e/provider-switching.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-035-C1",
+          "specRef": "\u00a714",
+          "requirement": "Check authentication.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/capability-doctor.test.ts :: separates \"could not reach\" from \"key rejected\" from \"not authorized\""
+          ]
+        },
+        {
+          "id": "P-035-C2",
+          "specRef": "\u00a714",
+          "requirement": "Check provider reachability.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/capability-doctor.test.ts :: stops at FAILED when the provider is unreachable"
+          ]
+        },
+        {
+          "id": "P-035-C3",
+          "specRef": "\u00a714",
+          "requirement": "Check model availability.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/capability-doctor.test.ts :: fails the model check when the id is not in the reported list"
+          ]
+        },
+        {
+          "id": "P-035-C4",
+          "specRef": "\u00a714",
+          "requirement": "Check text generation.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/capability-doctor.test.ts :: reports FAILED when the model produces no text at all"
+          ]
+        },
+        {
+          "id": "P-035-C5",
+          "specRef": "\u00a714",
+          "requirement": "Check streaming.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/capability-doctor.test.ts :: marks streaming failed when the stream errors"
+          ]
+        },
+        {
+          "id": "P-035-C6",
+          "specRef": "\u00a714",
+          "requirement": "Check tool calling.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/capability-doctor.test.ts :: reports AGENT_READY only when tool calling actually worked"
+          ]
+        },
+        {
+          "id": "P-035-C7",
+          "specRef": "\u00a714",
+          "requirement": "Check structured output.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/capability-doctor.test.ts :: fails structured output when the reply is not valid JSON"
+          ]
+        },
+        {
+          "id": "P-035-C8",
+          "specRef": "\u00a714",
+          "requirement": "Check vision.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/capability-doctor.test.ts :: does not claim vision when the model does not advertise it"
+          ]
+        },
+        {
+          "id": "P-035-C9",
+          "specRef": "\u00a714",
+          "requirement": "Check context capacity.",
+          "mandatory": true,
+          "status": "PARTIAL",
+          "note": "The reported context window is copied from the advertised model table and never measured, against \u00a714\u2019s \"Every connected model must be tested\". Wave 11 finding, untouched."
+        },
+        {
+          "id": "P-035-C10",
+          "specRef": "\u00a714",
+          "requirement": "Never claim Agent Ready if tool calling is unavailable.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/capability-doctor.test.ts :: reports CHAT_ONLY when the model answers with text instead of calling the probe",
+            "tests/unit/capability-doctor.test.ts :: refuses to claim AGENT_READY on unverified capabilities"
+          ]
+        },
+        {
+          "id": "P-035-C11",
+          "specRef": "\u00a714",
+          "requirement": "No credential material in a report.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/capability-doctor.test.ts :: never puts credential material in a report"
+          ]
+        }
+      ]
     },
     "P-036": {
       "unit": ["tests/unit/budget-retry.test.ts"],
@@ -258,7 +679,38 @@
     },
     "P-037": {
       "unit": ["tests/unit/loop-detection.test.ts"],
-      "integration": ["tests/integration/agent-runtime.test.ts"]
+      "integration": ["tests/integration/agent-runtime.test.ts"],
+      "clauses": [
+        {
+          "id": "P-037-C1",
+          "specRef": "\u00a759",
+          "requirement": "Detect the same action on the same target with the same result.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/integration/agent-runtime.test.ts :: stops a task that repeats the same failing call"
+          ]
+        },
+        {
+          "id": "P-037-C2",
+          "specRef": "\u00a759",
+          "requirement": "Detect repeated action cycles.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/loop-detection.test.ts :: detects an A/B alternation that never converges",
+            "tests/unit/loop-detection.test.ts :: does not classify a single repeated call as a cycle"
+          ]
+        },
+        {
+          "id": "P-037-C3",
+          "specRef": "\u00a759",
+          "requirement": "On detection, stop and recover or ask.",
+          "mandatory": true,
+          "status": "AMBIGUOUS",
+          "note": "The runtime stops with a distinguishable LOOP_DETECTED error. What \"recover/ask\" obliges beyond stopping is not defined in \u00a759, and it is not resolved in favour of the implementation here. A specification question, not an implementation gap."
+        }
+      ]
     },
     "P-038": {
       "unit": ["tests/unit/dispatch-observers.test.ts"],
