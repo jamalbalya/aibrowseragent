@@ -15,10 +15,19 @@
  * backed by a file listed in parity-evidence.json, that file must exist, and
  * it must live in the category it is cited under. A capability with no cited
  * evidence for a column must show "—".
+ *
+ * A third class has since occurred, and the checks above cannot see it: a
+ * capability whose cited tests all exist and pass while the *specification
+ * clause* they were taken to cover is not the clause they test. P-019 read PASS
+ * implementing two of §53's six notifications; P-017 and P-032 read PASS while
+ * pausing a task destroyed it. `lib/clause-gate.mjs` handles that, and the
+ * comment at the top of it explains why clause evidence has to name a test
+ * rather than a file.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkClauses } from './lib/clause-gate.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const text = readFileSync(resolve(root, 'PARITY_MATRIX.md'), 'utf8');
@@ -172,6 +181,16 @@ for (const row of rows.filter((r) => r.cells[7] === 'PARTIAL')) {
   }
 }
 
+// --- clause-level evidence, where an inventory exists ----------------------
+const statusById = Object.fromEntries(rows.map((row) => [row.id, row.cells[7]]));
+const clauseCheck = checkClauses({
+  capabilities: evidence,
+  statusById,
+  fileExists: (file) => existsSync(resolve(root, file)),
+  readFile: (file) => readFileSync(resolve(root, file), 'utf8'),
+});
+errors.push(...clauseCheck.errors);
+
 if (errors.length > 0) {
   console.error('✗ PARITY_MATRIX.md does not match its evidence:\n');
   for (const error of errors) console.error(`  - ${error}`);
@@ -186,3 +205,18 @@ const summary = Object.entries(actual)
 console.log(
   `✓ Parity matrix verified against evidence: ${summary} across ${rows.length} capabilities.`,
 );
+
+// The count is printed whether or not it is flattering. A gate that covers a
+// third of the matrix and says nothing about the rest reads as a gate that
+// covers the matrix.
+const clauseTotal = clauseCheck.inventoried.reduce(
+  (total, id) => total + evidence[id].clauses.length,
+  0,
+);
+console.log(
+  `  clause inventory: ${clauseCheck.inventoried.length} of ${rows.length} capabilities, ` +
+    `${clauseTotal} clauses. The remainder are not yet clause-checked.`,
+);
+for (const note of clauseCheck.notes) {
+  console.log(`  · ${note}`);
+}
