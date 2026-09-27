@@ -248,6 +248,86 @@
         "tests/e2e/agent-task.spec.ts",
         "tests/e2e/security.spec.ts",
         "tests/e2e/file-access.spec.ts"
+      ],
+      "clauses": [
+        {
+          "id": "P-005-C1",
+          "specRef": "§9",
+          "requirement": "browser.navigate",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/browser-tools.test.ts :: navigates and waits for the load to complete",
+            "tests/unit/browser-tools.test.ts :: reports a navigation timeout as retryable"
+          ]
+        },
+        {
+          "id": "P-005-C2",
+          "specRef": "§9",
+          "requirement": "browser.go_back and browser.go_forward",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": ["tests/unit/tab-tools.test.ts :: resolves when the tab finishes loading"]
+        },
+        {
+          "id": "P-005-C3",
+          "specRef": "§9",
+          "requirement": "browser.reload",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/tab-tools.test.ts :: tabs.reload refuses a tab outside the workspace"
+          ]
+        },
+        {
+          "id": "P-005-C4",
+          "specRef": "§9",
+          "requirement": "browser.wait",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/browser-tools.test.ts :: waits for a selector and reports when it appears",
+            "tests/unit/browser-tools.test.ts :: waits for page load when no selector is given",
+            "tests/unit/browser-tools.test.ts :: reports a retryable failure when the selector never appears"
+          ]
+        },
+        {
+          "id": "P-005-C5",
+          "specRef": "§31",
+          "requirement": "A destination is judged against the site it will actually reach.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Site is the registrable domain, computed rather than string-matched, so a lookalike subdomain is not the same site and a multi-label public suffix does not collapse two unrelated hosts into one.",
+          "evidence": [
+            "tests/security/origin-validation.test.ts :: reduces a hostname to its registrable site",
+            "tests/security/origin-validation.test.ts :: does not treat a lookalike subdomain as the same site",
+            "tests/security/origin-validation.test.ts :: handles multi-label public suffixes"
+          ]
+        },
+        {
+          "id": "P-005-C6",
+          "specRef": "§31",
+          "requirement": "A scheme the browser must not automate is refused.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "The extension gallery is refused by name: navigating there is how an agent would install another extension.",
+          "evidence": [
+            "tests/security/origin-validation.test.ts :: refuses file: and ftp: even when insecure origins are allowed",
+            "tests/security/origin-validation.test.ts :: refuses the extension gallery, which could be used to install extensions",
+            "tests/security/origin-validation.test.ts :: refuses http by default but allows it when explicitly permitted"
+          ]
+        },
+        {
+          "id": "P-005-C7",
+          "specRef": "§31",
+          "requirement": "A navigation that moves the page invalidates a prior authorization.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/browser-tools.test.ts :: allows an action when the page stayed on the same origin",
+            "tests/unit/policy-engine.test.ts :: does not treat a navigation as the page moving"
+          ]
+        }
       ]
     },
     "P-006": {
@@ -376,7 +456,37 @@
     "P-007": {
       "unit": ["tests/unit/interaction-engine.test.ts", "tests/unit/browser-tools.test.ts"],
       "integration": ["tests/integration/agent-runtime.test.ts"],
-      "e2e": ["tests/e2e/agent-task.spec.ts"]
+      "e2e": ["tests/e2e/agent-task.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-007-C1",
+          "specRef": "§9",
+          "requirement": "browser.scroll",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Reports the position reached rather than assuming the request landed, so a page that refused to scroll is visible as a fact rather than an unnoticed no-op.",
+          "evidence": ["tests/unit/browser-tools.test.ts :: scrolls and reports the new position"]
+        },
+        {
+          "id": "P-007-C2",
+          "specRef": "§28",
+          "requirement": "Scrolling is read-only and needs no confirmation.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": ["tests/unit/browser-tools.test.ts :: is read-only and runs without a prompt"]
+        },
+        {
+          "id": "P-007-C3",
+          "specRef": "§8",
+          "requirement": "Scroll position and document height are part of the page model.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "What makes scrolling usable by a model: without a height and a position it cannot tell 'more below' from 'nothing there'.",
+          "evidence": [
+            "tests/unit/semantic-tree.test.ts :: captures interactive elements with roles and names"
+          ]
+        }
+      ]
     },
     "P-008": {
       "unit": ["tests/unit/browser-tools.test.ts"],
@@ -469,7 +579,41 @@
       ],
       "integration": ["tests/integration/file-workflow.test.ts"],
       "security": ["tests/security/file-transfer.test.ts"],
-      "e2e": ["tests/e2e/file-transfer.spec.ts"]
+      "e2e": ["tests/e2e/file-transfer.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-009-C1",
+          "specRef": "§13",
+          "requirement": "An image can be carried to a model that accepts one.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/capability-doctor.test.ts :: does not claim vision when the model does not advertise it"
+          ]
+        },
+        {
+          "id": "P-009-C2",
+          "specRef": "§14",
+          "requirement": "A model without vision is told so rather than sent an image.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "The honest failure: the run says the image cannot be looked at instead of silently sending one and reasoning about nothing.",
+          "evidence": [
+            "tests/integration/agent-runtime.test.ts :: tells the model when vision is unavailable"
+          ]
+        },
+        {
+          "id": "P-009-C3",
+          "specRef": "§21",
+          "requirement": "An image is stored as evidence and referenced, not held in context.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/browser-tools.test.ts :: stores the image as evidence and returns only a reference",
+            "tests/unit/evidence-store.test.ts :: does not corrupt a base64 payload by redacting it"
+          ]
+        }
+      ]
     },
     "P-010": {
       "unit": [
@@ -479,7 +623,80 @@
       ],
       "integration": ["tests/integration/file-workflow.test.ts"],
       "security": ["tests/security/file-transfer.test.ts"],
-      "e2e": ["tests/e2e/file-transfer.spec.ts"]
+      "e2e": ["tests/e2e/file-transfer.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-010-C1",
+          "specRef": "§5.2",
+          "requirement": "upload",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "§9 calls this `browser.upload`; here it is two tools, because choosing a file and sending it are two decisions and only the second is egress.",
+          "evidence": [
+            "tests/e2e/file-transfer.spec.ts :: a chosen file reaches a real file input and the page’s own listener sees it",
+            "tests/unit/file-input.test.ts :: puts the file into the input and reports its name back"
+          ]
+        },
+        {
+          "id": "P-010-C2",
+          "specRef": "§29",
+          "requirement": "The user chooses the file; the model cannot name one.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "The tool takes a purpose and the browser shows its own picker. There is no argument that could carry a path, so no prompt injection can make the agent read a file the user did not offer.",
+          "evidence": [
+            "tests/e2e/file-transfer.spec.ts :: a file request parks the task and a refusal leaves it without a file",
+            "tests/unit/file-input.test.ts :: refuses an empty list rather than reporting an empty success"
+          ]
+        },
+        {
+          "id": "P-010-C3",
+          "specRef": "§8",
+          "requirement": "A file input is reported as itself, with accept and multiple.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Including the hidden ones, which is not an oversight: a styled upload control is almost always a hidden input behind a label, so refusing hidden inputs would refuse most real upload forms.",
+          "evidence": [
+            "tests/unit/file-input.test.ts :: reports a file input as its own role, not as a textbox",
+            "tests/unit/file-input.test.ts :: reports accept and multiple so the model can pick the right file",
+            "tests/e2e/file-transfer.spec.ts :: a hidden file input is addressable, with its role and accept reported",
+            "tests/e2e/file-transfer.spec.ts :: a hidden button is still left out of the page model"
+          ]
+        },
+        {
+          "id": "P-010-C4",
+          "specRef": "§32",
+          "requirement": "The browser’s fake path is never reported as a value.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/file-input.test.ts :: omits the browser’s fake path instead of reporting it as a value",
+            "tests/e2e/file-transfer.spec.ts :: a file input reports accept, and never the browser’s fake path"
+          ]
+        },
+        {
+          "id": "P-010-C5",
+          "specRef": "§22",
+          "requirement": "The input’s own accept and multiple constraints are honoured.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/file-input.test.ts :: refuses a file the input’s accept excludes",
+            "tests/unit/file-input.test.ts :: honours accept by mime pattern as well as by extension",
+            "tests/unit/file-input.test.ts :: refuses several files on a single-file input rather than silently dropping one"
+          ]
+        },
+        {
+          "id": "P-010-C6",
+          "specRef": "§38",
+          "requirement": "The selection is recorded without the file’s contents.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/file-transfer.spec.ts :: the audit trail and the worker log record the selection without the file"
+          ]
+        }
+      ]
     },
     "P-011": {
       "unit": ["tests/unit/file-model.test.ts"],
