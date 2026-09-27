@@ -483,6 +483,11 @@ describe('TEST-SECURITY-071 group F: one boundary, and every path through it', (
       // The panel's launcher: the enforcing read, then the message choice.
       'background/skill-launcher.ts': ['get', 'getIncludingDisabled'],
       'logging/logger.ts': ['get'],
+      // The MCP registrar walks the *tool* registry to take a removed server's
+      // tools back down. A different registry answering to the same receiver
+      // name, listed for the same reason `logging/logger.ts` is: narrowing the
+      // pattern to exclude it would be narrowing the pattern.
+      'mcp/core/mcp-registrar.ts': ['list'],
       // The seam itself.
       'skills/core/skill-registry.ts': ['get', 'has'],
       // Composition. A skill step that names another skill resolves it through

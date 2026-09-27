@@ -64,6 +64,14 @@ export const PERSISTED_DATA_KINDS = [
   'schedule',
   /** One firing of a schedule: when, how it ended, and which task it made. */
   'schedule-run',
+  /**
+   * An external MCP server the user added (P-026): an id, a display name and an
+   * https address. No credential — the descriptor has nowhere to put one, and
+   * `validateServerDescriptor` refuses a record that grew a field. If server
+   * authentication is ever added it is a different kind, classified separately,
+   * rather than a field on this one.
+   */
+  'mcp-server',
 ] as const;
 export type PersistedDataKind = (typeof PERSISTED_DATA_KINDS)[number];
 
@@ -105,6 +113,20 @@ export const DATA_CLASSIFICATION: Readonly<Record<PersistedDataKind, DataClass>>
   // Tab origins and titles the user put in a workspace: their data, and the
   // same class as `task`, which already carries tab context.
   workspace: 'USER_SELECTABLE',
+
+  /*
+   * An MCP server is authority this browser was given to reach a third party
+   * and run its tools, and it stays on the browser where somebody granted it.
+   *
+   * Not `USER_SELECTABLE` alongside `workflow` and `shortcut`, and the
+   * difference is worth stating because the three look alike. An imported or
+   * synced workflow sits there until a person runs it. A synced MCP server
+   * changes the **tool surface the model is offered** on a machine where nobody
+   * added it — every call still confirms, but the person confirming is being
+   * asked about a third party they never chose, which is the confused-deputy
+   * setup rather than a convenience.
+   */
+  'mcp-server': 'LOCAL_ONLY',
 
   // Device-scoped and meaningless elsewhere. A run names a task id and a
   // schedule id that exist on this installation and nowhere else.
@@ -170,6 +192,15 @@ export const EXPORT_PORTABILITY: Readonly<Record<PersistedDataKind, PortabilityC
   // archive granting itself permission to automate a site — policy injection
   // in the most literal sense.
   policy: 'NOT_PORTABLE_BY_DESIGN',
+
+  /*
+   * An MCP server in a file would add a third-party endpoint to the tool
+   * surface because of a decision made in a file somebody may have been mailed.
+   * Softer than `policy`, because every MCP call is still confirmed at R3 —
+   * and softer is not the same as safe, since what the person then confirms is
+   * a tool from a server they never added.
+   */
+  'mcp-server': 'NOT_PORTABLE_BY_DESIGN',
 
   /*
    * A schedule is a standing instruction to act **with nobody watching**, and
@@ -362,6 +393,11 @@ export const K1_PROTECTION: Readonly<Record<PersistedDataKind, K1Protection>> = 
   audit: 'PLAINTEXT_BY_DESIGN',
   evidence: 'PLAINTEXT_BY_DESIGN',
   'skill-run': 'PLAINTEXT_BY_DESIGN',
+  // An id, a name and an https address, and the panel has to list them before
+  // anything is unlocked. There is no credential here for encryption to
+  // protect; if server authentication is ever added it arrives as its own kind
+  // with its own classification, not as a field on this one.
+  'mcp-server': 'PLAINTEXT_BY_DESIGN',
 };
 
 /** The kinds K1 encrypts. Derived, so a reclassification moves the code. */

@@ -108,6 +108,18 @@ describe('there is one way to execute, and its callers are counted', () => {
     ]);
   });
 
+  it('has exactly one caller of ToolRegistry.unregister', () => {
+    // `unregister` names a tool, so a caller that wanted to remove
+    // `browser.click` could. What stops that is that there is one caller and it
+    // matches on the `mcp__<server>__` prefix — which is a property of the
+    // caller set, not of the method, so it is asserted here rather than trusted
+    // to the method's doc comment.
+    const callers = filesWith(/\.unregister\(/).filter(
+      (path) => path !== 'src/tools/registry/tool-registry.ts',
+    );
+    expect(callers.sort()).toEqual(['src/mcp/core/mcp-registrar.ts']);
+  });
+
   it('has exactly two callers of the egress gate', () => {
     const callers = filesWith(/authorizeEgress\(/).filter(
       (path) => path !== 'src/security/egress/egress-gate.ts',

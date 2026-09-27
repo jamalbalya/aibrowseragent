@@ -270,6 +270,24 @@ export class ToolRegistry {
     for (const tool of tools) this.register(tool);
   }
 
+  /**
+   * Removes a tool.
+   *
+   * Exists for P-026, where the tool set is a function of what a server just
+   * said rather than of what this build ships: removing a server has to remove
+   * its tools, and a re-registration has to be able to drop a tool the server
+   * has stopped offering.
+   *
+   * Deliberately narrow. It is not a way to disable a built-in — the caller
+   * names a tool, so a caller that wanted to remove `browser.click` could, and
+   * the thing that stops that is that no such caller exists: the only caller is
+   * `unregisterServer`, which matches on the `mcp__<server>__` prefix. A test
+   * counts the callers, the way the dispatch and egress call sites are counted.
+   */
+  unregister(name: string): boolean {
+    return this.tools.delete(name);
+  }
+
   has(name: string): boolean {
     return this.tools.has(name);
   }

@@ -366,24 +366,42 @@ recording:
   shadowing, not about the wire round trip. The dispatch suite found it because
   its cases drive a real `ToolRegistry` rather than calling `execute` directly.
 
-Thirty-four mutants across the six clauses, each killed.
+And one more by building the layer that calls all of them:
+
+- **P-026-C13** — a server store and a registrar. A duplicate server id is
+  refused rather than renamed, because an id is part of every tool name it
+  contributes. A record has nowhere to put a credential, which is what makes
+  `mcp-server` honestly `PLAINTEXT_BY_DESIGN`; it is `LOCAL_ONLY` and
+  `NOT_PORTABLE_BY_DESIGN` because a synced or imported server changes the tool
+  surface the model is offered on a machine where nobody added it. One failing
+  server costs the user nothing from the ones that answered. A server's tools are
+  replaced rather than merged, so a tool it has stopped offering stops existing.
+  And revocation is **free rather than implemented**: a tool exists only as a
+  function of the record and the answer the server just gave, so there is no
+  residual grant to invalidate.
+
+Forty-one mutants across the seven clauses, each killed.
 
 **And the row is still NOT-STARTED**, which is the part worth being exact about.
-Nothing imports any of the three MCP files, so none of their code ships — the
-built service worker contains no `mcp__`, no `jsonrpc` and no `tools/list` — and
-no task can make an MCP call. The artifact's checksum did move, by thirteen
-bytes, and that is recorded rather than glossed: three strings landed in files
-that already ship — `'mcp'` in `EGRESS_CHANNELS`, `'MCP_ERROR'` in the error
-taxonomy, and `'mcp__'` in the registry's wire-name guard. No MCP behaviour, and
-a channel and an error code nothing yet produces. "The checksum is unchanged, so
-nothing shipped" would have been the convenient sentence and it would have been
-wrong. P-026-C1
+The client is complete inside the MCP layer and **no person can reach it**: the
+service worker does not call the registrar and no route lets a user add a server.
+Nothing imports the MCP layer, so none of its code ships — the built service
+worker contains no `jsonrpc`, no `tools/list` and no `MCP_PROTOCOL`.
+
+The artifact did grow, by forty-two bytes, and that is recorded rather than
+glossed: four strings, a prefix test and a `Map.delete` landed in files that
+already ship — `'mcp'` in `EGRESS_CHANNELS`, `'MCP_ERROR'` in the error taxonomy,
+`'mcp__'` in the registry's wire-name guard, `'mcp-server'` in the three
+classification tables, and `ToolRegistry.unregister`. No MCP behaviour, and a
+channel, an error code and a data kind that nothing yet produces. "The checksum
+is unchanged, so nothing shipped" would have been the convenient sentence and it
+would have been wrong. P-026-C1
 and P-026-C4 stay unmet for that reason even though the mechanisms beneath them
 are evidenced: a mechanism with no caller is not a capability, and this project
-has found that defect eight times now. What remains is a server registry that holds a
-descriptor, worker wiring that discovers and registers at startup, a settings
-surface and audit emission, plus validation against a real remote server, which
-needs a credential this project does not hold.
+has found that defect eight times now. What remains is worker startup wiring, the
+two control-plane routes that let a person add and remove a server, a settings
+surface, audit emission and real-Chromium coverage — plus validation against a
+real remote server, which needs a credential this project does not hold.
 
 ### What is waiting on somebody else, and where to see it
 

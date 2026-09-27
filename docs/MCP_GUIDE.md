@@ -10,9 +10,10 @@ a user had least reason to choose. Both are corrected below, and both
 corrections are recorded rather than quietly applied.
 
 **Status: P-026 is NOT-STARTED.** Nothing in this document is an implementation
-claim. What is built is the trust core, the guarded transport, discovery, the
-schema compiler and the tool factory — and nothing starts any of it: there is no
-stored server, no worker wiring and no settings surface. A client nothing can
+claim. The client is built end to end _inside the MCP layer_ — trust core,
+guarded transport, discovery, schema compiler, tool factory, server store and
+registrar — and **no person can reach any of it**: the service worker does not
+call the registrar and no route lets a user add a server. A client nobody can
 start is not a client. See §8.
 
 ---
@@ -420,12 +421,53 @@ test in the registry, which a server cannot reach because
 suite caught it because its cases drive a real `ToolRegistry` rather than calling
 `execute` directly.
 
-**Not built.** A server registry that holds a descriptor, worker wiring that
-discovers and registers at startup, a settings surface, audit emission. Until
-those exist nothing starts any of the above, which is why P-026-C1 and P-026-C4
-stay unmet even though the mechanisms beneath them are evidenced. A mechanism
-with no caller is not a capability, and recording it otherwise would be the
-defect this project has now found eight times.
+**`src/mcp/core/mcp-server-store.ts` — where a named server lives.** It owns two
+properties. Identity is unique: a duplicate id is **refused** rather than renamed
+or merged, because an id is part of every tool name the server contributes and
+resolving a collision silently would point a task's existing tool at a different
+endpoint. And a record has nowhere to put a credential — `validateServerDescriptor`
+produces exactly three fields and `isStorableServer` drops a record that grew a
+fourth, which is what makes `mcp-server` honestly `PLAINTEXT_BY_DESIGN` rather
+than a claim the implementation fails to make.
+
+Its three classifications, with the reasoning:
+
+| Table                 | Value                    | Why                                                                                                                                                                                                                                                                          |
+| --------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATA_CLASSIFICATION` | `LOCAL_ONLY`             | Unlike a workflow, which sits there until somebody runs it, a **synced** server changes the tool surface the model is offered on a machine where nobody added it. Every call still confirms — and the person confirming is being asked about a third party they never chose. |
+| `EXPORT_PORTABILITY`  | `NOT_PORTABLE_BY_DESIGN` | Same shape in a file somebody may have been mailed. Softer than `policy`, and softer is not safe.                                                                                                                                                                            |
+| `K1_PROTECTION`       | `PLAINTEXT_BY_DESIGN`    | No credential to protect, and the panel has to list servers before anything is unlocked. Server authentication, if ever added, arrives as its own kind rather than a field on this one.                                                                                      |
+
+Adding a server contacts nothing. A stored server has been **named**, not trusted.
+
+**`src/mcp/core/mcp-registrar.ts` — the caller the layers beneath were missing.**
+It reads the store, discovers per server, builds a tool per admitted entry and
+registers it. Three properties belong here rather than further down:
+
+- **A failing server does not take the others with it.** One unreachable endpoint
+  must not cost the user the tools from the servers that answered, and must not
+  stop the extension starting.
+- **Registration is a fresh reading every time.** Nothing caches a tool list
+  across a worker generation, which is what makes revocation _free_ rather than
+  implemented: a tool exists only as a function of the record and the answer the
+  server just gave, and nothing could have pre-approved one, so there is no
+  residual grant to invalidate.
+- **A server's tools are replaced, not merged.** A server that used to offer
+  `delete_everything` and no longer does must not keep it.
+
+`ToolRegistry.unregister` was added for this and is deliberately narrow. It names
+a tool, so a caller that wanted to remove `browser.click` could; what stops that
+is that there is **one** caller and it matches the `mcp__<server>__` prefix. That
+is a property of the caller set rather than of the method, so an invariant test
+counts it, the way the dispatch and egress call sites are counted.
+
+**Not built.** Worker startup wiring, the two control-plane routes that let a
+person add and remove a server, a settings surface, audit emission, and
+real-Chromium coverage. Until those exist nothing a user does reaches any of the
+above, which is why P-026-C1 and P-026-C4 stay unmet even though every mechanism
+beneath them is evidenced. A mechanism no person can reach is not a capability,
+and recording it otherwise would be the defect this project has now found eight
+times.
 
 **Nothing imports the MCP layer**, so none of its code ships: the built service
 worker contains no `jsonrpc`, no `tools/list` and no `MCP_PROTOCOL`.
@@ -435,14 +477,17 @@ rather than glossing, because the easy sentence here — "the checksum is
 unchanged, so nothing shipped" — would have been false. Thirteen bytes, in three
 files that already shipped:
 
-| What                          | Where                                 |
-| ----------------------------- | ------------------------------------- |
-| `'mcp'` as an egress channel  | `src/security/egress/destination.ts`  |
-| `'MCP_ERROR'` in the taxonomy | `src/types/result.ts`                 |
-| `'mcp__'` in the wire guard   | `src/tools/registry/tool-registry.ts` |
+| What                            | Where                                 |
+| ------------------------------- | ------------------------------------- |
+| `'mcp'` as an egress channel    | `src/security/egress/destination.ts`  |
+| `'MCP_ERROR'` in the taxonomy   | `src/types/result.ts`                 |
+| `'mcp__'` in the wire guard     | `src/tools/registry/tool-registry.ts` |
+| `'mcp-server'` in three tables  | `src/storage/data-classification.ts`  |
+| `unregister`, a two-line method | `src/tools/registry/tool-registry.ts` |
 
-Three strings and one prefix test. No MCP behaviour, and a channel and an error
-code that nothing yet produces.
+Forty-two bytes in total. Four strings, a prefix test and a `Map.delete`. No MCP
+behaviour, and a channel, an error code and a data kind that nothing yet
+produces.
 
 ### The test suites
 
@@ -461,9 +506,11 @@ code that nothing yet produces.
 - `tests/security/mcp-tool-dispatch.test.ts` (TEST-MCP-005). Drives a real
   `ToolRegistry` with the real policy engine and prompter, which is how the
   wire-name collision was found.
+- `tests/security/mcp-registration.test.ts` (TEST-MCP-006). The properties that
+  only exist once something calls the layers below.
 
-**Thirty-four mutants** have been run against these invariants and all
-thirty-four were caught.
+**Forty-one mutants** have been run against these invariants and all forty-one
+were caught.
 
 - _The risk model (5)._ `MCP_TOOL_RISK` lowered to R2; `mcpToolRisk` given a
   parameter; `ALWAYS_CONFIRM_AT` raised; `MAX_GRANTABLE_RISK` raised; a
@@ -486,9 +533,10 @@ thirty-four were caught.
 
 ## 9. What is still open, and who owns it
 
-- **Build.** Transport, registry, discovery, settings, audit emission. Engineering,
-  no unresolved design question. P-026 stays NOT-STARTED until it exists and is
-  evidenced.
+- **Build.** Worker startup wiring, the two control-plane routes, a settings
+  surface, audit emission, real-Chromium coverage. Engineering, with no
+  unresolved design question. P-026 stays NOT-STARTED until a person can add a
+  server and use its tools, and that is evidenced.
 - **Validation against a real server.** Needs a real remote MCP endpoint and its
   credentials, which this project does not hold. An owner or external
   prerequisite, recorded the way every other external blocker is.
