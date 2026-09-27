@@ -1234,26 +1234,371 @@
     "P-025": {},
     "P-026": {},
     "P-027": {
-      "unit": ["tests/unit/policy-engine.test.ts", "tests/unit/permission-engine.test.ts"],
+      "unit": [
+        "tests/unit/policy-engine.test.ts",
+        "tests/unit/permission-engine.test.ts",
+        "tests/unit/settings-defaults.test.ts"
+      ],
       "integration": ["tests/integration/agent-runtime.test.ts"],
-      "security": ["tests/security/origin-validation.test.ts"],
-      "e2e": ["tests/e2e/security.spec.ts"]
+      "security": [
+        "tests/security/origin-validation.test.ts",
+        "tests/security/prohibition-enforcement.test.ts"
+      ],
+      "e2e": ["tests/e2e/security.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-027-C1",
+          "specRef": "§25",
+          "requirement": "Manual: ask before every action.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Read-only R0 actions run without a prompt, deliberately. Prompting for a page read makes the prompts noise, and noise is what trains people to approve without looking; what manual mode guarantees is that nothing which *changes* state happens unasked.",
+          "evidence": [
+            "tests/unit/policy-engine.test.ts :: manual prompts for anything that changes state"
+          ]
+        },
+        {
+          "id": "P-027-C2",
+          "specRef": "§25",
+          "requirement": "Auto: review for safety, block unsafe actions, ask when necessary.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/policy-engine.test.ts :: auto-approves up to the risk a site rule covers",
+            "tests/unit/policy-engine.test.ts :: still prompts above the risk a site rule covers"
+          ]
+        },
+        {
+          "id": "P-027-C3",
+          "specRef": "§25",
+          "requirement": "Skip: no prompt and no safety review, but hard prohibitions are retained.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/policy-engine.test.ts :: denies a prohibited category in every permission mode",
+            "tests/unit/policy-engine.test.ts :: denies R5 outright even in skip mode"
+          ]
+        },
+        {
+          "id": "P-027-C4",
+          "specRef": "§29",
+          "requirement": "A hard prohibition cannot be unlocked by any grant or mode.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/policy-engine.test.ts :: cannot be unlocked by a site allowlist entry",
+            "tests/security/prohibition-enforcement.test.ts :: 07 the engine would still refuse one if it arrived"
+          ]
+        },
+        {
+          "id": "P-027-C5",
+          "specRef": "§29",
+          "requirement": "A declared prohibition either has a producer or is stated to have none.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "The honest half of the prohibition story, and it is checked rather than asserted: most declared categories are raised by nothing in this build, and the suite derives that set instead of listing it, so a new producer cannot appear unnoticed.",
+          "evidence": [
+            "tests/security/prohibition-enforcement.test.ts :: 02 derives the undetected set rather than listing it",
+            "tests/security/prohibition-enforcement.test.ts :: 06b every category still marked undetected is raised by nothing",
+            "tests/security/prohibition-enforcement.test.ts :: 10 no longer claims all of them are refused in every mode"
+          ]
+        },
+        {
+          "id": "P-027-C6",
+          "specRef": "§25",
+          "requirement": "Auto is the default mode.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": ["tests/unit/settings-defaults.test.ts :: defaults to auto permission mode"],
+          "note": "The default had no test until this inventory asked for one and found nothing to cite. It is a security posture rather than a preference: `skip` would mean no prompt and no safety review at all."
+        }
+      ]
     },
     "P-028": {
       "unit": ["tests/unit/policy-engine.test.ts"],
-      "security": ["tests/security/origin-validation.test.ts"],
-      "e2e": ["tests/e2e/security.spec.ts"]
+      "security": [
+        "tests/security/origin-validation.test.ts",
+        "tests/security/authorization-site-record.test.ts"
+      ],
+      "e2e": ["tests/e2e/security.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-028-C1",
+          "specRef": "§26",
+          "requirement": "Allow this action",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/site-authorization.spec.ts :: a site the user has not granted still asks"
+          ]
+        },
+        {
+          "id": "P-028-C2",
+          "specRef": "§26",
+          "requirement": "Always allow actions on this site",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/site-authorization.spec.ts :: a grant taken from a page action is written against that page’s site",
+            "tests/unit/policy-engine.test.ts :: auto-approves up to the risk a site rule covers"
+          ]
+        },
+        {
+          "id": "P-028-C3",
+          "specRef": "§26",
+          "requirement": "Decline",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/policy-engine.test.ts :: denies an action on a blocked site",
+            "tests/unit/policy-engine.test.ts :: a block on a site also covers its subdomains"
+          ]
+        },
+        {
+          "id": "P-028-C4",
+          "specRef": "§26",
+          "requirement": "approvedSites",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/site-authorization.spec.ts :: revoking a granted site brings the prompts back"
+          ]
+        },
+        {
+          "id": "P-028-C5",
+          "specRef": "§26",
+          "requirement": "blockedSites",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": ["tests/unit/policy-engine.test.ts :: denies an action on a blocked site"]
+        },
+        {
+          "id": "P-028-C6",
+          "specRef": "§26",
+          "requirement": "Protected actions still require approval on a trusted site.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "The clause this capability turns on. A standing grant is clamped to a maximum risk, and the clamp and the offer are gated on the same predicate — so a grant cannot be offered on an action it could not have covered.",
+          "evidence": [
+            "tests/security/authorization-site-record.test.ts :: 14 — a standing grant cannot cover an R3 action, so it is not offered on one",
+            "tests/security/authorization-site-record.test.ts :: 15 — and the predicate it is gated on is the same one the grant is clamped to",
+            "tests/security/authorization-site-record.test.ts :: 11 — the destination does not lower what a download costs"
+          ]
+        },
+        {
+          "id": "P-028-C7",
+          "specRef": "§31",
+          "requirement": "A grant does not follow the page to another origin.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/site-authorization.spec.ts :: a grant does not survive the page moving to another origin",
+            "tests/unit/policy-engine.test.ts :: requires confirmation when the page moved after planning"
+          ]
+        }
+      ]
     },
     "P-029": {
       "unit": ["tests/unit/permission-engine.test.ts"],
-      "security": ["tests/security/origin-validation.test.ts"],
-      "e2e": ["tests/e2e/security.spec.ts"]
+      "security": [
+        "tests/security/origin-validation.test.ts",
+        "tests/security/authorization-site-record.test.ts"
+      ],
+      "e2e": ["tests/e2e/security.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-029-C1",
+          "specRef": "§26",
+          "requirement": "permissionHistory",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/authorization-site-record.test.ts :: 04 — the prompt, the history and the trail never disagree"
+          ]
+        },
+        {
+          "id": "P-029-C2",
+          "specRef": "§26",
+          "requirement": "A decision is recorded against the site it was made on.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "This was a real defect once: the decision was correct and the record of which site it was made on was blank.",
+          "evidence": [
+            "tests/security/authorization-site-record.test.ts :: 01 — a page action records the tab’s site, not a blank",
+            "tests/security/authorization-site-record.test.ts :: 02 — and the executed action is attributed to the same site in the trail",
+            "tests/security/authorization-site-record.test.ts :: 07 — a refusal is recorded against the site it was refused on"
+          ]
+        },
+        {
+          "id": "P-029-C3",
+          "specRef": "§26",
+          "requirement": "A navigation is recorded against the destination it was judged on.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/authorization-site-record.test.ts :: 03 — a navigation records the destination it was judged against"
+          ]
+        },
+        {
+          "id": "P-029-C4",
+          "specRef": "§76",
+          "requirement": "An unknown site is recorded as unknown rather than guessed.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/authorization-site-record.test.ts :: 05 — a call with no page and no destination records no site",
+            "tests/security/authorization-site-record.test.ts :: 06 — a page action whose tab URL cannot be read records no site"
+          ]
+        }
+      ]
     },
     "P-030": {
       "unit": ["tests/unit/context-builder.test.ts"],
       "integration": ["tests/integration/agent-runtime.test.ts"],
       "security": ["tests/security/prompt-injection.test.ts"],
-      "e2e": ["tests/e2e/security.spec.ts"]
+      "e2e": ["tests/e2e/security.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-030-C1",
+          "specRef": "§30",
+          "requirement": "External content is tagged and carried as data.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/prompt-injection.test.ts :: labels wrapped content as data with its provenance"
+          ]
+        },
+        {
+          "id": "P-030-C2",
+          "specRef": "§30",
+          "requirement": "Content cannot escape its envelope into the instruction channel.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/prompt-injection.test.ts :: a page cannot close the envelope early to escape into the instruction channel",
+            "tests/security/prompt-injection.test.ts :: neutralises an injected opening marker too",
+            "tests/security/prompt-injection.test.ts :: is case-insensitive when neutralising markers",
+            "tests/security/prompt-injection.test.ts :: escapes attribute-breaking characters in provenance"
+          ]
+        },
+        {
+          "id": "P-030-C3",
+          "specRef": "§30",
+          "requirement": "External content cannot override system policy, security policy, user authorization or permission state.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/prompt-injection.test.ts :: ranks system policy above user intent above external content",
+            "tests/security/prompt-injection.test.ts :: never lets external content issue instructions",
+            "tests/security/prompt-injection.test.ts :: neutralises forged SYSTEM_POLICY and USER_INTENT tags",
+            "tests/security/prompt-injection.test.ts :: flags a forged permission grant"
+          ]
+        },
+        {
+          "id": "P-030-C4",
+          "specRef": "§30",
+          "requirement": "origin tagging",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/prompt-injection.test.ts :: labels wrapped content as data with its provenance"
+          ]
+        },
+        {
+          "id": "P-030-C5",
+          "specRef": "§30",
+          "requirement": "trust classification",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Detection is advisory and deliberately cannot raise trust: a clean scan does not make content trusted, so a scanner that can be fooled cannot be used to launder an instruction.",
+          "evidence": [
+            "tests/security/prompt-injection.test.ts :: is advisory only: a clean scan does not change the envelope trust level",
+            "tests/security/prompt-injection.test.ts :: does not flag ordinary page copy"
+          ]
+        },
+        {
+          "id": "P-030-C6",
+          "specRef": "§30",
+          "requirement": "instruction/data separation",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/prompt-injection.test.ts :: never lets external content issue instructions"
+          ]
+        },
+        {
+          "id": "P-030-C7",
+          "specRef": "§30",
+          "requirement": "action policy",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/policy-engine.test.ts :: denies a prohibited category in every permission mode"
+          ]
+        },
+        {
+          "id": "P-030-C8",
+          "specRef": "§30",
+          "requirement": "tool argument validation",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/prohibition-enforcement.test.ts :: 05 no tool accepts a CDP method name as an argument",
+            "tests/security/prohibition-enforcement.test.ts :: 04b script injection names a shipped file and never a function or a string"
+          ]
+        },
+        {
+          "id": "P-030-C9",
+          "specRef": "§30",
+          "requirement": "destination checks",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/policy-engine.test.ts :: denies an action targeting a non-automatable scheme",
+            "tests/unit/policy-engine.test.ts :: requires confirmation for private data crossing to a new site"
+          ]
+        },
+        {
+          "id": "P-030-C10",
+          "specRef": "§30",
+          "requirement": "secret redaction",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": ["tests/unit/policy-engine.test.ts :: denies a write carrying a credential"]
+        },
+        {
+          "id": "P-030-C11",
+          "specRef": "§30",
+          "requirement": "exfiltration detection",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/policy-engine.test.ts :: requires confirmation for private data crossing to a new site"
+          ]
+        },
+        {
+          "id": "P-030-C12",
+          "specRef": "§30",
+          "requirement": "redirect re-evaluation",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/policy-engine.test.ts :: requires confirmation when the page moved after planning",
+            "tests/unit/policy-engine.test.ts :: ignores movement within the same origin",
+            "tests/unit/policy-engine.test.ts :: tolerates the page moving under a read-only action"
+          ]
+        },
+        {
+          "id": "P-030-C13",
+          "specRef": "§30",
+          "requirement": "Oversized external content is truncated rather than passed through.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/prompt-injection.test.ts :: truncates oversized content rather than passing it through"
+          ]
+        }
+      ]
     },
     "P-031": {
       "unit": ["tests/unit/storage.test.ts"],
