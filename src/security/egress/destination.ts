@@ -32,6 +32,24 @@ export const EGRESS_CHANNELS = [
   'download',
   'connector',
   /**
+   * An external MCP server this build calls out to (P-026).
+   *
+   * A channel of its own rather than a reuse of `connector`, for the reason
+   * `identity` is one: the rules differ. A connector is a descriptor this
+   * project wrote, reaching origins that descriptor declares, with operations
+   * this project named. An MCP server is chosen by the user at run time and
+   * offers tools this project has never seen, so the origin is the *only*
+   * thing known about it in advance and every tool name came from the far
+   * side. Folding the two together would let a connector's declared-origin
+   * reasoning read as though it applied here, where there is no descriptor to
+   * declare anything.
+   *
+   * It never carries a credential of this build's own: `SECRET_LOCAL_ONLY`
+   * data reaches no server, and the only authorization an MCP request carries
+   * is one the user attached to that server.
+   */
+  'mcp',
+  /**
    * The AI Browser Agent authentication backend, and nothing else.
    *
    * A channel of its own rather than a reuse of `connector`, because the two
@@ -61,6 +79,7 @@ const EXTERNAL: ReadonlySet<EgressChannel> = new Set<EgressChannel>([
   'clipboard',
   'download',
   'connector',
+  'mcp',
 ]);
 
 export function isExternalChannel(channel: EgressChannel): boolean {
@@ -221,6 +240,46 @@ export function connectorDestination(
     identity: canonicalConnectorIdentity(connectorId, url),
     ...(info ? { origin: info.origin } : {}),
     ...(extra.purpose === undefined ? {} : { purpose: extra.purpose }),
+    ...(extra.sensitivity === undefined ? {} : { sensitivity: extra.sensitivity }),
+  };
+}
+
+/**
+ * Canonical identity for an MCP server endpoint.
+ *
+ * `mcp:<serverId>@<origin>`, so two servers at one origin are two identities
+ * and one server moved to a new origin is a new identity. The prefix is there
+ * so an MCP identity can never be mistaken for a connector's in a stored
+ * consent record, which would otherwise be possible the moment a connector id
+ * and a server id coincided — and server ids are user-chosen.
+ */
+export function canonicalMcpIdentity(serverId: string, url: string): string | null {
+  const origin = canonicalUrlIdentity(url);
+  if (!origin) return null;
+  const id = serverId.trim().toLowerCase();
+  if (id.length === 0) return null;
+  return `mcp:${id}@${origin}`;
+}
+
+/**
+ * The destination for one MCP request.
+ *
+ * `purpose` carries the JSON-RPC method rather than a tool name. A tool name
+ * came from the server, and a server-authored string in a consent key or an
+ * evidence record is a string the server chose — the method is this build's own
+ * vocabulary and says as much about the call.
+ */
+export function mcpDestination(
+  serverId: string,
+  url: string,
+  extra: { method?: string; sensitivity?: DataSensitivity } = {},
+): EgressDestination {
+  const info = parseOrigin(url);
+  return {
+    channel: 'mcp',
+    identity: canonicalMcpIdentity(serverId, url),
+    ...(info ? { origin: info.origin } : {}),
+    ...(extra.method === undefined ? {} : { purpose: extra.method }),
     ...(extra.sensitivity === undefined ? {} : { sensitivity: extra.sensitivity }),
   };
 }

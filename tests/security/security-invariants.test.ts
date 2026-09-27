@@ -141,24 +141,52 @@ describe('there is one way to execute, and its callers are counted', () => {
     expect(text).not.toMatch(/executeScript\([^)]*\bcode\b/);
   });
 
-  it('reaches the network from exactly two guarded transports', () => {
-    // Matched on the *reference*, not on a call. Neither transport writes
-    // `fetch(` — both take an injected implementation and fall back to
-    // `globalThis.fetch.bind(globalThis)` — so a pattern looking for a call
-    // found neither, and said so by passing with one file instead of three.
+  it('reaches the network from exactly three guarded transports', () => {
+    // Matched on the *reference*, not on a call. No transport writes `fetch(`
+    // — each takes an injected implementation and the one primitive falls back
+    // to `globalThis.fetch.bind(globalThis)` — so a pattern looking for a call
+    // found none, and said so by passing with one file instead of several.
     // A structural test that can be satisfied by matching nothing is worse
     // than no test.
     //
-    // The interceptor is the third file, and it names these primitives in
+    // This list is the point of the case, so growing it is a decision rather
+    // than a fix. `mcp-transport.ts` joined it when P-026's client was built:
+    // it is a *façade* over `guardedSend` in the same way the connector
+    // transport is, adding MCP's own rules — no redirect is ever followed,
+    // because nothing declared an origin to re-check a hop against — and
+    // holding no HTTP client of its own. A fourth entry that did not reduce to
+    // `guardedSend` would be a second authorization model, which is what this
+    // case exists to catch.
+    //
+    // The interceptor is the last file, and it names these primitives in
     // order to replace them with refusals.
     const reachers = filesWith(
       /globalThis\.fetch|typeof fetch|fetchImpl|new WebSocket|XMLHttpRequest|sendBeacon|EventSource/,
     );
     expect(reachers.sort()).toEqual([
       'src/connectors/transport/connector-transport.ts',
+      'src/mcp/transport/mcp-transport.ts',
       'src/security/egress/network-interceptor.ts',
       'src/security/egress/provider-transport.ts',
     ]);
+  });
+
+  it('routes every one of them through the single egress gate', () => {
+    // The census above counts files that can touch a network primitive; this
+    // says what each of them then does with it. A transport that reached the
+    // network without `guardedSend` would pass the count and defeat its
+    // purpose, so the two cases are deliberately separate.
+    for (const path of [
+      'src/connectors/transport/connector-transport.ts',
+      'src/mcp/transport/mcp-transport.ts',
+    ]) {
+      const text = ALL.find((file) => file.path === path)?.text ?? '';
+      expect(text, path).toContain('guardedSend');
+      // `evaluateEgress` is the gate's own entry point. A transport calling it
+      // directly would be deciding for itself what `guardedSend` decides for
+      // everyone.
+      expect(text, path).not.toContain('evaluateEgress');
+    }
   });
 });
 

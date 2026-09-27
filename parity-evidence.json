@@ -2056,7 +2056,7 @@
           "requirement": "MCP client",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "Scope re-audited from the specification in Wave 29, and the answer narrowed rather than widened. §5.11 names `MCP client` first and no server component; §35's diagram runs `Agent Runtime → MCP Client → Remote/Local MCP → Tools/Resources`, all downstream. So P-026 is a client capability only — this build is never an MCP server, which the specification never asks for and every available inbound channel forbids. The transport is remote MCP over HTTPS. The approval-granularity question is gone rather than answered: the earlier per-server risk ceiling was withdrawn because a user who sets it low, reasonably, for a server they think only reads, auto-approves that server's whole present and future tool set. An MCP tool is R3 instead, classified from what the call is, which puts it above `MAX_GRANTABLE_RISK` so no grant can reach it. Unbuilt: transport, registry, discovery, settings and audit emission are the work. See docs/MCP_GUIDE.md."
+          "note": "Scope re-audited from the specification in Wave 29, and the answer narrowed rather than widened. §5.11 names `MCP client` first and no server component; §35's diagram runs `Agent Runtime → MCP Client → Remote/Local MCP → Tools/Resources`, all downstream. So P-026 is a client capability only — this build is never an MCP server, which the specification never asks for and every available inbound channel forbids. The transport is remote MCP over HTTPS. The approval-granularity question is gone rather than answered: the earlier per-server risk ceiling was withdrawn because a user who sets it low, reasonably, for a server they think only reads, auto-approves that server's whole present and future tool set. An MCP tool is R3 instead, classified from what the call is, which puts it above `MAX_GRANTABLE_RISK` so no grant can reach it. Two of the five pieces now exist and are evidenced — the guarded transport (P-026-C10) and discovery (P-026-C11) — and neither is invoked by anything yet, so the clause stays unmet: a client nothing can start is not a client. What remains is a server registry, tool registration through the one dispatch path, a settings surface and audit emission. See docs/MCP_GUIDE.md."
         },
         {
           "id": "P-026-C2",
@@ -2064,7 +2064,7 @@
           "requirement": "remote MCP",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "Unbuilt. HTTPS is the settled transport, and loopback is permitted only for a test double. A real remote server also needs credentials this project does not hold, so even a finished client could not be validated against one here."
+          "note": "The transport is built and speaks JSON-RPC 2.0 over HTTPS to one address, refusing every redirect and bounding every response — see P-026-C10. It is not reachable from the product yet, and a real remote server also needs credentials this project does not hold, so even a finished client could not be validated against one here. Loopback is permitted for a test double only."
         },
         {
           "id": "P-026-C3",
@@ -2080,7 +2080,7 @@
           "requirement": "tool discovery",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "Nothing discovers from a server yet. What does exist and is evidenced is the half that had to be right first: the admission rules a discovered listing must pass — see P-026-C9."
+          "note": "Discovery is implemented and evidenced against a hostile server — handshake, bounded pagination, and admission of every tool name, description and schema (P-026-C11). The clause stays unmet because nothing invokes it: no registry holds a server to discover from, and no discovered tool becomes a registry entry. Recording it this way rather than as VERIFIED is deliberate — a mechanism with no caller is not a capability, which is a defect pattern this project has now found eight times."
         },
         {
           "id": "P-026-C5",
@@ -2138,10 +2138,51 @@
             "tests/security/mcp-trust-core.test.ts :: bounds the listing, because the count comes from the server too",
             "tests/security/mcp-trust-core.test.ts :: keeps the first of a repeated name and says the second was refused"
           ]
+        },
+        {
+          "id": "P-026-C10",
+          "specRef": "§35",
+          "requirement": "An MCP request passes through the one egress gate, cannot be redirected to an address the user did not name, and cannot return an unbounded body.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "The transport adds no HTTP client of its own: it builds an `mcp` destination and calls `guardedSend`, the same function the provider and connector transports call, so there are three façades and one authorization model. `mcp` is its own channel rather than a reuse of `connector`, because a connector reaches origins a descriptor declared and runs operations this project named, and neither is true of a server the user added at run time. Redirects are refused outright rather than re-checked — the connector rule does not transfer, because there is no declared origin set to re-check a hop against, so every hop is an address the user did not name. The response is bounded twice, by the header and by the decoded text, because the header comes from the server too. An HTTP failure body is never surfaced: it would reach a message and from there the model's context. It carries no credential of this build's own, which is asserted rather than assumed. Six mutants killed: redirects followed, the use-time address re-check removed, the decoded-length check removed, the failure body surfaced, the `mcp:` identity prefix dropped, and the channel treated as internal. This bounds a path nothing yet invokes; see P-026-C1.",
+          "evidence": [
+            "tests/security/mcp-transport-security.test.ts :: carries no credential of this build’s own",
+            "tests/security/mcp-transport-security.test.ts :: re-checks the stored address on the way out, not only when it was added",
+            "tests/security/mcp-transport-security.test.ts :: refuses a redirect rather than re-checking it, because nothing declared an origin",
+            "tests/security/mcp-transport-security.test.ts :: refuses an opaque redirect, which is what a browser actually returns",
+            "tests/security/mcp-transport-security.test.ts :: refuses a body larger than is read, however the size arrives",
+            "tests/security/mcp-transport-security.test.ts :: does not surface an HTTP failure body, which the server wrote",
+            "tests/security/mcp-transport-security.test.ts :: is its own channel, reaching outside the extension",
+            "tests/security/mcp-transport-security.test.ts :: cannot collide with a connector identity, though server ids are user-chosen"
+          ]
+        },
+        {
+          "id": "P-026-C11",
+          "specRef": "§5.11",
+          "requirement": "A server's self-description is checked before it is used: the protocol revision, the shape of a listing, and pagination are each bounded.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Discovery is where a server gets to describe itself, so every field arriving here was authored by the far side. The revision is declined rather than negotiated, because guessing compatibility from a string the server chose is how a client parses a shape it does not understand. A refusal to list is kept distinct from an empty listing, since collapsing them would present a failing server as one offering nothing. Pagination is bounded three ways — a page cap, an end on a repeated cursor, and admission applied to the accumulated set rather than per page, so splitting a listing does not evade the tool cap. No risk is assigned here, and the case that proves it uses a tool whose own description claims to be read-only. Three mutants killed: any revision accepted, the repeated-cursor guard removed, and admission applied per page. This bounds a path nothing yet invokes; see P-026-C4.",
+          "evidence": [
+            "tests/security/mcp-discovery.test.ts :: declines a server on another revision rather than guessing at compatibility",
+            "tests/security/mcp-discovery.test.ts :: bounds the version string it quotes back, which the server chose",
+            "tests/security/mcp-discovery.test.ts :: treats a refusal to list as a refusal, not as an empty server",
+            "tests/security/mcp-discovery.test.ts :: bounds an endless chain of pages",
+            "tests/security/mcp-discovery.test.ts :: ends the walk when a cursor repeats, rather than looping to the bound",
+            "tests/security/mcp-discovery.test.ts :: bounds the total rather than each page, so splitting a listing does not evade the cap",
+            "tests/security/mcp-discovery.test.ts :: names every refusal, so a tool never disappears silently",
+            "tests/security/mcp-discovery.test.ts :: assigns no risk, because risk is not the server’s to influence",
+            "tests/security/mcp-discovery.test.ts :: registers nothing, so a listing alone cannot reach the model"
+          ]
         }
       ],
       "unit": [],
-      "security": ["tests/security/mcp-trust-core.test.ts"]
+      "security": [
+        "tests/security/mcp-trust-core.test.ts",
+        "tests/security/mcp-transport-security.test.ts",
+        "tests/security/mcp-discovery.test.ts"
+      ]
     },
     "P-027": {
       "unit": [

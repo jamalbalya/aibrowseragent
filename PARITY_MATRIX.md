@@ -325,14 +325,38 @@ socket happened to do:
   server's namespace, cannot arrive without an input schema, and cannot arrive
   ten thousand at a time.
 
-Thirteen mutants across both, each killed — the five newest being lowering the
-MCP risk to R2, giving `mcpToolRisk` a parameter, raising `ALWAYS_CONFIRM_AT`,
-raising `MAX_GRANTABLE_RISK`, and restoring the withdrawn ceiling field.
+Two further clauses were then verified by building the layers beneath the
+capability rather than the capability:
 
-What remains for this row is transport, discovery over the wire, registry
-wiring, a settings surface and audit emission — build and evidence, with no
-unresolved design question left, and validation against a real remote server
-needing a credential this project does not hold.
+- **P-026-C10** — the guarded transport. No HTTP client of its own: an `mcp`
+  destination and `guardedSend`, the same function the provider and connector
+  transports call. `mcp` is its own channel rather than a reuse of `connector`,
+  because a connector reaches origins a descriptor declared and a user-added
+  server has no descriptor. Redirects are refused outright for the same reason,
+  the body is bounded by both the header and the decoded text, and an HTTP
+  failure body is never surfaced into a message the model would see.
+- **P-026-C11** — discovery. The protocol revision is declined rather than
+  negotiated, a refusal to list stays distinct from an empty listing, and
+  pagination is bounded three ways: a page cap, an end on a repeated cursor, and
+  admission applied to the accumulated set rather than per page, so splitting a
+  listing does not evade the tool cap.
+
+Fourteen mutants across the four clauses, each killed.
+
+**And the row is still NOT-STARTED**, which is the part worth being exact about.
+Nothing imports any of the three MCP files, so none of their code ships — the
+built service worker contains no `mcp__`, no `jsonrpc` and no `tools/list` — and
+no task can make an MCP call. The artifact's checksum did move by two bytes, and
+that is recorded rather than glossed: `'mcp'` was added to `EGRESS_CHANNELS` in a
+file that does ship, which is one string and a channel nothing yet produces a
+destination on. "The checksum is unchanged, so nothing shipped" would have been
+the convenient sentence and it would have been wrong. P-026-C1
+and P-026-C4 stay unmet for that reason even though the mechanisms beneath them
+are evidenced: a mechanism with no caller is not a capability, and this project
+has found that defect eight times now. What remains is a server registry, tool
+registration through the one dispatch path, a settings surface and audit
+emission, plus validation against a real remote server, which needs a credential
+this project does not hold.
 
 ### What is waiting on somebody else, and where to see it
 

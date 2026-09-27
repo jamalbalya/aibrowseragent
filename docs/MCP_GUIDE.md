@@ -10,9 +10,9 @@ a user had least reason to choose. Both are corrected below, and both
 corrections are recorded rather than quietly applied.
 
 **Status: P-026 is NOT-STARTED.** Nothing in this document is an implementation
-claim. What is built is the trust core in `src/mcp/core/mcp-model.ts`, which is
-pure data and is not imported by anything, so it is tree-shaken out of the
-shipped extension. See §8.
+claim. What is built is the trust core, the guarded transport and discovery —
+none of which is invoked by anything, so all of it is tree-shaken out of the
+shipped extension. A client nothing can start is not a client. See §8.
 
 ---
 
@@ -319,11 +319,12 @@ what its own tools do on its own side of the wire, which is what it is for.
 
 ## 8. What exists in code, and what does not
 
-`src/mcp/core/mcp-model.ts` — the trust core. Pure functions over data: name
-construction, server-descriptor validation (https or loopback, id charset),
-tool admission, bounded listing admission, and `MCP_TOOL_RISK`. It is **not
-imported anywhere**, so it is tree-shaken out and the release artifact's
-checksum is unaffected by it.
+Three files, in the order they were written, which is also the order the
+questions had to be answered in.
+
+**`src/mcp/core/mcp-model.ts` — the trust core.** Pure functions over data: name
+construction, server-descriptor validation (https or loopback, id charset), tool
+admission, bounded listing admission, and `MCP_TOOL_RISK`.
 
 Reassessed against §2 rather than assumed final. The result:
 
@@ -333,22 +334,83 @@ Reassessed against §2 rather than assumed final. The result:
 - **Removed** — `ceiling` from `McpServerDescriptor` and from
   `validateServerDescriptor`, and the server argument to `mcpToolRisk`. §5.1 is
   why.
-- **Not built, and deliberately not designed here** — transport, a server
-  registry, discovery over the wire, a settings surface, audit emission. Those
-  are the next wave's work and they are what P-026 needs to stop being
-  NOT-STARTED.
 
-`tests/security/mcp-trust-core.test.ts` (TEST-MCP-001) holds all of the above.
-Its group 02 runs the real `evaluatePolicy` rather than the MCP model, because
-the claim is about what the shipped engine does with an R3 tool and asserting
-that against a fixture would prove the fixture.
+**`src/mcp/transport/mcp-transport.ts` — the guarded transport.** It adds no HTTP
+client of its own: it builds an `mcp` destination and calls `guardedSend`, the
+same function the provider and connector transports call, so there are three
+façades and one authorization model. Four rules are specific to talking to an
+endpoint nobody vetted:
 
-Five mutants were run against the new invariants and all five were caught:
-lowering `MCP_TOOL_RISK` to R2; giving `mcpToolRisk` a parameter; raising
-`ALWAYS_CONFIRM_AT` to R4; raising `MAX_GRANTABLE_RISK` to R3; and restoring a
-`ceiling` field on the descriptor.
+- `mcp` is **its own egress channel**, not a reuse of `connector`. A connector
+  reaches origins a descriptor declared and runs operations this project named,
+  and neither is true of a server the user added at run time. Folding them would
+  let the connector's declared-origin reasoning read as though it applied where
+  there is no descriptor to declare anything. The identity is
+  `mcp:<serverId>@<origin>`, prefixed so it cannot collide with a connector's in
+  a consent record — server ids are user-chosen, and somebody will name one
+  `github`.
+- **Redirects are refused, never re-checked.** The connector transport follows a
+  hop that stays inside its declared origins; there is no such set here, so
+  every hop is an address the user did not name. Both shapes are handled,
+  because both occur: a browser returns an opaque redirect with status 0 and no
+  headers, and outside one the 3xx arrives with its `Location`.
+- **The body is bounded twice** — by `Content-Length` and by the decoded text —
+  because the header comes from the server too, and a check that trusted it
+  would hand an understating server an unbounded read.
+- **An HTTP failure body is never surfaced.** It would reach a message and from
+  there the model's context.
 
----
+It carries no credential of this build's own, which is asserted rather than left
+implicit.
+
+**`src/mcp/core/mcp-discovery.ts` — the handshake and the listing.** It owns no
+policy: risk comes from `MCP_TOOL_RISK` and admission from `admitListing`. What
+it adds is a revision check and pagination that terminates. The revision is
+**declined rather than negotiated**, because guessing compatibility from a string
+the server chose is how a client parses a shape it does not understand.
+Pagination is bounded three ways — a page cap, an end on a repeated cursor, and
+admission applied to the **accumulated** set rather than per page, so a server
+that splits a listing does not evade the tool cap.
+
+**Not built.** A server registry, tool registration through the one dispatch
+path, a settings surface, audit emission. Until tool registration exists, no MCP
+tool reaches the model and no MCP call can be made by a task — which is why
+P-026-C1 and P-026-C4 stay unmet even though the mechanisms beneath them are
+evidenced. A mechanism with no caller is not a capability, and recording it
+otherwise would be the defect this project has now found eight times.
+
+**Nothing imports any of the three**, so none of their code ships: the built
+service worker contains no `mcp__`, no `jsonrpc`, no `tools/list` and no
+`MCP_PROTOCOL`.
+
+The release artifact's checksum **did** change, and the reason is worth stating
+rather than glossing, because the easy sentence here — "the checksum is
+unchanged, so nothing shipped" — would have been false. Two bytes: the string
+`'mcp'` was added to `EGRESS_CHANNELS` in `src/security/egress/destination.ts`,
+which is a file that does ship. One occurrence, verified in the bundle. That is
+the whole of what this work put into the extension, and it is a channel name
+that nothing yet produces a destination on.
+
+### The test suites
+
+- `tests/security/mcp-trust-core.test.ts` (TEST-MCP-001). Its group 02 runs the
+  real `evaluatePolicy` rather than the MCP model, because the claim is about
+  what the shipped engine does with an R3 tool and asserting that against a
+  fixture would prove the fixture.
+- `tests/security/mcp-transport-security.test.ts` (TEST-MCP-002). The seam is
+  `fetchImpl` and nothing above it: the real egress gate, destination model and
+  consent store are in the path.
+- `tests/security/mcp-discovery.test.ts` (TEST-MCP-003). Written as "what would
+  a server that wants more than it should send here", not as a parser test.
+
+Fourteen mutants have been run against these invariants and all fourteen were
+caught. The five on the risk model: lowering `MCP_TOOL_RISK` to R2, giving
+`mcpToolRisk` a parameter, raising `ALWAYS_CONFIRM_AT`, raising
+`MAX_GRANTABLE_RISK`, and restoring a `ceiling` field. The nine on the transport
+and discovery: redirects followed, the use-time address re-check removed, the
+decoded-length check removed, the failure body surfaced, any protocol revision
+accepted, the repeated-cursor guard removed, admission applied per page, the
+`mcp:` identity prefix dropped, and the `mcp` channel treated as internal.
 
 ## 9. What is still open, and who owns it
 
