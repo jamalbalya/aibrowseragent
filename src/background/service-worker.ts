@@ -22,6 +22,14 @@ import { connectionAfterSwitch, isProviderSwitch } from './provider-switch';
 import { SettingsStore, CredentialStore } from '@/config/settings';
 import { TaskStore } from '@/tasks/task-store';
 import { generateTaintSalt } from '@/tasks/task-model';
+import { McpServerStore, McpServerError } from '@/mcp/core/mcp-server-store';
+import {
+  registerMcpServers,
+  unregisterServer,
+  type McpServerOutcome,
+} from '@/mcp/core/mcp-registrar';
+import { createMcpTransport } from '@/mcp/transport/mcp-transport';
+import { mcpDestination } from '@/security/egress/destination';
 import { EvidenceStore } from '@/evidence/evidence-store';
 import { ProviderRegistry, type ProviderConnection } from '@/providers/registry/provider-registry';
 import { ConsentStore } from '@/security/egress/consent';
@@ -1042,6 +1050,117 @@ toolRegistry.registerAll(createTabTools({ adapter: browserAdapter, ownership: ta
 toolRegistry.registerAll(
   createDebuggerTools({ adapter: browserAdapter, manager: debuggerManager }),
 );
+
+// ---------------------------------------------------------------------------
+// MCP (P-026)
+// ---------------------------------------------------------------------------
+
+/**
+ * Servers the user added, and what each one last contributed.
+ *
+ * The outcomes are held in memory rather than stored, which is not an
+ * oversight: a server's tools exist only as a function of the answer it last
+ * gave, so there is no durable "connected" state to keep. A worker generation
+ * that has not registered yet reports nothing rather than a remembered success.
+ */
+const mcpServers = new McpServerStore({ area: local, health: persistenceHealth });
+const mcpOutcomes = new Map<string, McpServerOutcome>();
+
+/**
+ * The salt for the registration pass itself.
+ *
+ * Discovery is not a task: nothing a person asked for is behind it, and
+ * attributing it to one would put a registration's egress evidence under a task
+ * that never made the request. The taint state is explicitly clean for the same
+ * reason the connector token exchange's is — it says there is no task, not that
+ * one was inspected.
+ */
+const mcpRegistrationSalt = generateTaintSalt();
+
+/**
+ * The per-call security context an MCP tool needs.
+ *
+ * Reads the same per-task map the connector tools read, so an MCP call inherits
+ * the task's taint rather than starting from a clean one: a task that has read
+ * a page and then calls an MCP tool is sending page-derived arguments to a third
+ * party, and the exfiltration gate has to see that.
+ */
+const mcpSecurityContextFor = (taskId: string) => {
+  const held = connectorEgressContexts.get(taskId);
+  if (held !== undefined) {
+    return Promise.resolve({
+      taskId,
+      taintState: held.taintState,
+      taintSalt: held.taintSalt,
+      saltEpoch: held.saltEpoch,
+      taintSignature: held.taintSignature,
+    });
+  }
+  // The registration pass, and only the registration pass: a task always has a
+  // context by the time one of its tools runs.
+  return Promise.resolve({
+    taskId,
+    taintState: { kind: 'KNOWN_UNTAINTED' } as const,
+    taintSalt: mcpRegistrationSalt,
+    saltEpoch: 1,
+    taintSignature: 'mcp-registration',
+  });
+};
+
+const mcpTransportFor = (server: { id: string; displayName: string; url: string }) =>
+  createMcpTransport({
+    server,
+    consent: consentStore,
+    onDecision: async (decision, context, url, payload) => {
+      const built = await buildEgressEvidence({
+        taskId: context.taskId,
+        sourceTool: `mcp.${server.id}.${context.method}`,
+        destination: mcpDestination(server.id, url, { method: context.method }),
+        decision,
+        ...(payload === undefined ? {} : { payload }),
+        taintSalt: context.taintSalt,
+        saltEpoch: context.saltEpoch,
+        now: Date.now(),
+      });
+      const stored = await evidenceStore.put(built.reference, {
+        content: JSON.stringify(built.detail),
+        encoding: 'utf8',
+        mimeType: 'application/json',
+      });
+      await auditLog.record({
+        type: 'egress.decided',
+        taskId: context.taskId,
+        // This build's own vocabulary throughout. `method` is a JSON-RPC method
+        // name and the destination is an origin; neither is a tool name, which
+        // the server authored and which must not become a field in a trail.
+        tool: `mcp.${server.id}.${context.method}`,
+        ...(decision.destinationIdentity === null
+          ? {}
+          : { destination: decision.destinationIdentity }),
+        outcome:
+          decision.verdict === 'allow'
+            ? 'allowed'
+            : decision.verdict === 'deny'
+              ? 'denied'
+              : 'confirmed',
+        code: decision.code,
+        evidenceIds: [stored.id],
+      });
+    },
+  });
+
+/** Re-discovers every stored server and replaces its tools. */
+async function refreshMcpServers(): Promise<readonly McpServerOutcome[]> {
+  const outcomes = await registerMcpServers({
+    store: mcpServers,
+    registry: toolRegistry,
+    transportFor: mcpTransportFor,
+    securityContextFor: mcpSecurityContextFor,
+  });
+  mcpOutcomes.clear();
+  for (const outcome of outcomes) mcpOutcomes.set(outcome.serverId, outcome);
+  return outcomes;
+}
 
 // ---------------------------------------------------------------------------
 // Skills
@@ -2241,6 +2360,93 @@ router.on('provider.setActive', async ({ providerId, modelId }) => {
  * sizes only, put through the same redaction as every other audit field so a
  * secret pasted into a filename does not survive in the trail.
  */
+router.on('mcp.list', async () => {
+  const servers = await mcpServers.list();
+  return {
+    servers: servers.map((server) => {
+      const outcome = mcpOutcomes.get(server.id);
+      return {
+        id: server.id,
+        displayName: server.displayName,
+        url: server.url,
+        ...(outcome === undefined
+          ? {}
+          : {
+              outcome: {
+                registered: outcome.registered,
+                refused: outcome.refused.map((entry) => ({
+                  name: entry.name,
+                  reason: entry.reason,
+                })),
+                ...(outcome.failure === undefined ? {} : { failure: outcome.failure }),
+              },
+            }),
+      };
+    }),
+  };
+});
+
+router.on('mcp.add', async (request) => {
+  try {
+    const added = await mcpServers.add(request);
+    // Registered immediately, so the user sees what the server actually offered
+    // rather than a row that claims nothing until the next worker start. The
+    // whole set is re-read rather than only the new server, because that is the
+    // one code path and a second "just this one" path would drift from it.
+    const outcomes = await refreshMcpServers();
+    const mine = outcomes.find((outcome) => outcome.serverId === added.id);
+    await auditLog.record({
+      type: 'mcp.server.added',
+      outcome: 'allowed',
+      code: 'ADDED',
+      destination: added.url,
+    });
+    return {
+      added: true as const,
+      registered: mine?.registered ?? [],
+      refused: mine?.refused.map((entry) => ({ name: entry.name, reason: entry.reason })) ?? [],
+    };
+  } catch (caught) {
+    // The validator's own sentences, so the panel can say which part was wrong.
+    // Nothing from a server reaches here: adding one contacts nothing.
+    if (caught instanceof McpServerError) {
+      return { added: false as const, reason: caught.reason, problems: caught.problems };
+    }
+    throw caught;
+  }
+});
+
+router.on('mcp.remove', async (request) => {
+  try {
+    await mcpServers.remove(request.id);
+  } catch (caught) {
+    if (caught instanceof McpServerError) return { removed: false, unregistered: [] };
+    throw caught;
+  }
+  // Its tools go with it. There is no grant to revoke, because nothing could
+  // have pre-approved an R3 tool — see docs/MCP_GUIDE.md §5.3.
+  const unregistered = unregisterServer(toolRegistry, request.id);
+  mcpOutcomes.delete(request.id);
+  await auditLog.record({
+    type: 'mcp.server.removed',
+    outcome: 'denied',
+    code: 'REMOVED',
+  });
+  return { removed: true, unregistered };
+});
+
+router.on('mcp.refresh', async () => {
+  const outcomes = await refreshMcpServers();
+  return {
+    servers: outcomes.map((outcome) => ({
+      id: outcome.serverId,
+      registered: outcome.registered,
+      refused: outcome.refused.map((entry) => ({ name: entry.name, reason: entry.reason })),
+      ...(outcome.failure === undefined ? {} : { failure: outcome.failure }),
+    })),
+  };
+});
+
 router.on('connector.list', async () => {
   const connectors = [];
   for (const connector of connectorRegistry.list()) {
@@ -3947,6 +4153,24 @@ router.on('tools.list', () =>
 );
 
 router.attach();
+
+/**
+ * Registering stored MCP servers, once per worker generation.
+ *
+ * Not awaited, and failing loudly is not an option here: a worker that would
+ * not start because somebody's MCP server is down is a worker that has made an
+ * optional capability load-bearing. `registerMcpServers` already reports each
+ * server independently, so what is left to handle is the whole pass failing,
+ * which means storage rather than a server.
+ *
+ * It runs on every worker start because a tool set is a fresh reading rather
+ * than stored state — which is the same property that makes revocation free.
+ */
+void refreshMcpServers().catch((error: unknown) => {
+  log.warn('MCP servers could not be registered for this worker generation.', {
+    error: error instanceof Error ? error.message : String(error),
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Chrome event wiring

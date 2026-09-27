@@ -2055,32 +2055,47 @@
           "specRef": "§5.11",
           "requirement": "MCP client",
           "mandatory": true,
-          "status": "EVIDENCE_MISSING",
-          "note": "Scope re-audited from the specification in Wave 29, and the answer narrowed rather than widened. §5.11 names `MCP client` first and no server component; §35's diagram runs `Agent Runtime → MCP Client → Remote/Local MCP → Tools/Resources`, all downstream. So P-026 is a client capability only — this build is never an MCP server, which the specification never asks for and every available inbound channel forbids. The client itself is now built end to end inside the MCP layer: trust core (C8, C9), guarded transport (C10), discovery (C11), tool construction (C12), and a server store plus a registrar that discovers and registers (C13). The clause stays unmet because the **service worker does not call the registrar and no route lets the user add a server**, so nothing a person can do reaches any of it. What remains is worker startup wiring, the two control-plane routes, a settings surface, audit emission, and real-Chromium coverage. See docs/MCP_GUIDE.md."
+          "status": "VERIFIED",
+          "note": "An MCP client, reaching out to servers other people run, never a server itself — §5.11 names `MCP client` first and no server component, and §35's diagram is strictly downstream of the agent. Reachable end to end from the side panel and verified in real Chromium: a person adds a server, the worker discovers it, and its tools appear in the set the model is offered at the risk this build classified. The layers are evidenced separately — trust core (C8, C9), transport (C10), discovery (C11), tool construction (C12), store and registrar (C13) — and this clause is the one that says they are wired together and a user can reach them.",
+          "evidence": [
+            "tests/e2e/mcp.spec.ts :: a server added from the panel has its tools registered",
+            "tests/e2e/mcp.spec.ts :: the panel lists what a server contributed, and what it would not",
+            "tests/e2e/mcp.spec.ts :: removing a server removes its tools",
+            "tests/e2e/mcp.spec.ts :: asking again picks up a tool the server has stopped offering"
+          ]
         },
         {
           "id": "P-026-C2",
           "specRef": "§5.11",
           "requirement": "remote MCP",
           "mandatory": true,
-          "status": "EVIDENCE_MISSING",
-          "note": "The transport is built and speaks JSON-RPC 2.0 over HTTPS to one address, refusing every redirect and bounding every response — see P-026-C10. It is not reachable from the product yet, and a real remote server also needs credentials this project does not hold, so even a finished client could not be validated against one here. Loopback is permitted for a test double only."
+          "status": "EXTERNAL_REQUIRED",
+          "note": "Remote MCP over HTTPS is the settled and only transport, and the whole path is exercised against a local server over real sockets — real JSON-RPC, the real egress gate, a real browser. What has never happened is a connection to a server somebody else operates, and it cannot happen from here. Loopback is permitted for that test double only, and a plain-http server is refused by the policy engine's origin check at call time, which the real-Chromium suite observes rather than asserts.",
+          "blocker": "A real remote MCP server, and any credential it requires. This repository holds neither."
         },
         {
           "id": "P-026-C3",
           "specRef": "§5.11",
           "requirement": "local MCP where supported",
           "mandatory": true,
-          "status": "EVIDENCE_MISSING",
-          "note": "Not supported, and the specification is what says so rather than a preference. §5.11 hedges it \"where supported\"; §66 places local MCP behind the native-messaging desktop bridge and instructs that the bridge not be an MVP dependency. An MV3 extension cannot spawn a process, so stdio is unreachable."
+          "status": "EXTERNAL_REQUIRED",
+          "note": "Not supported, and the specification is what says so rather than a preference. §5.11 hedges the clause \"where supported\"; §66 places local MCP behind the native-messaging desktop bridge and instructs that the bridge not be an MVP dependency. An MV3 extension cannot spawn a process, so stdio is unreachable. Loopback HTTP is reachable and is not what §66 describes; it is used for a test double and refused in production by the origin check.",
+          "blocker": "The §66 desktop-agent bridge, which the specification itself defers and which needs native messaging — prohibited here."
         },
         {
           "id": "P-026-C4",
           "specRef": "§5.11",
           "requirement": "tool discovery",
           "mandatory": true,
-          "status": "EVIDENCE_MISSING",
-          "note": "Discovery is implemented, evidenced against a hostile server, and now driven by a real caller: the registrar reads the store, discovers, and registers what it admits (P-026-C13). The clause stays unmet at the product level because nothing in the worker starts the registrar and no route stores a server, so a user cannot cause discovery to happen. Recording it this way rather than as VERIFIED is deliberate — a mechanism no person can reach is not a capability, which is a defect pattern this project has now found eight times."
+          "status": "VERIFIED",
+          "note": "Tool discovery, driven from the panel and verified in a real browser: `initialize` then `tools/list`, in that order, against a real socket. Everything a server sends is treated as adversarial input — the revision is declined rather than negotiated, pagination is bounded three ways, and every name, description and schema goes through admission (C11). A tool whose schema this build will not compile is named with the reason rather than dropped, because the user's own client may show that tool working.",
+          "evidence": [
+            "tests/e2e/mcp.spec.ts :: a server added from the panel has its tools registered",
+            "tests/e2e/mcp.spec.ts :: a server on another protocol revision is declined",
+            "tests/e2e/mcp.spec.ts :: a server that refuses the handshake is named, and costs the others nothing",
+            "tests/security/mcp-discovery.test.ts :: bounds an endless chain of pages",
+            "tests/security/mcp-discovery.test.ts :: bounds the total rather than each page, so splitting a listing does not evade the cap"
+          ]
         },
         {
           "id": "P-026-C5",
@@ -2088,23 +2103,37 @@
           "requirement": "resource discovery where applicable",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "Unbuilt, and the specification hedges it with \"where applicable\" — a resource is data a server offers rather than an action, so it would arrive as untrusted content and be subject to the same envelope as a page."
+          "note": "Unbuilt, and this is the clause that keeps the row short of PASS rather than an external blocker. The specification hedges it \"where applicable\", and the honest reading is that it does apply: `resources/list` and `resources/read` are part of what an MCP client is, and a resource is data a server offers rather than an action. The trust model for it is already settled — a resource is page-class content, `NEVER_PERSISTED`, tainting its task, and a resource **URI** must never become an audit field because it is page-derived text — so what is missing is implementation rather than design."
         },
         {
           "id": "P-026-C6",
           "specRef": "§35",
           "requirement": "Every MCP capability passes schema, policy, permission and audit.",
           "mandatory": true,
-          "status": "EVIDENCE_MISSING",
-          "note": "The schema, policy, permission and audit stages are all reached, and by the existing path rather than a parallel one: `createMcpTool` produces an ordinary `AgentTool`, so dispatch runs through the single `evaluatePolicy` call site and the single `tool.execute` path — see P-026-C12, whose cases drive a real `ToolRegistry`. What is not yet wired is the worker registering such a tool at startup, so no task can reach one."
+          "status": "VERIFIED",
+          "note": "All four stages, and by the existing path rather than a parallel one. Schema: an MCP tool's arguments are validated by a Zod schema compiled from the server's own JSON Schema, with everything outside a safe subset refused by name (C12). Policy: `createMcpTool` produces an ordinary `AgentTool`, so dispatch runs through the single `evaluatePolicy` call site — at R3, which confirms in every mode and which no grant can reach. Permission: the existing prompt, per call. Audit: an `egress.decided` record per request carrying the server's origin and the JSON-RPC method, plus `mcp.server.added` and `mcp.server.removed` for the lifecycle; no server-authored string becomes a field. The single-call-site invariants are counted by the census suite, which is what stops a second path appearing later.",
+          "evidence": [
+            "tests/security/mcp-tool-dispatch.test.ts :: is confirmed on every call, in manual, auto and skip alike",
+            "tests/security/mcp-tool-dispatch.test.ts :: refuses an argument the schema never declared, before any request",
+            "tests/security/security-invariants.test.ts :: has exactly two callers of ToolRegistry.dispatch",
+            "tests/security/security-invariants.test.ts :: routes every one of them through the single egress gate",
+            "tests/e2e/mcp.spec.ts :: a server added from the panel has its tools registered"
+          ]
         },
         {
           "id": "P-026-C7",
           "specRef": "§35",
           "requirement": "MCP must never become a security bypass.",
           "mandatory": true,
-          "status": "EVIDENCE_MISSING",
-          "note": "There is still no MCP surface, so the clause is not yet met by a working path — but it is no longer met only vacuously: the two ways MCP would become a bypass are now closed in code and under mutation, per C8 and C9."
+          "status": "VERIFIED",
+          "note": "§35's one normative sentence, and it now has a working surface behind it rather than holding vacuously. Every way an MCP server could become a bypass is closed and held under mutation: it cannot set its own risk (C8), cannot shadow or impersonate a tool (C9), cannot reach the network outside the one egress gate or redirect the request elsewhere (C10), cannot make discovery unbounded (C11), cannot get an argument through unvalidated (C12), and cannot leave a grant behind when it is removed (C13). Forty-one mutants across those clauses, each killed. What is *not* claimed: §84 condition 3 manual acceptance has not been executed for this or any capability, and no real third-party server has been used.",
+          "evidence": [
+            "tests/security/mcp-trust-core.test.ts :: sits above everything a grant can express, so approval is per call by construction",
+            "tests/security/mcp-transport-security.test.ts :: refuses a redirect rather than re-checking it, because nothing declared an origin",
+            "tests/security/mcp-tool-dispatch.test.ts :: takes its destination from the descriptor, so the model cannot name one",
+            "tests/e2e/mcp.spec.ts :: a refused address never reaches the network",
+            "tests/e2e/mcp.spec.ts :: a duplicate id is refused rather than replacing the first server"
+          ]
         },
         {
           "id": "P-026-C8",
@@ -2220,7 +2249,8 @@
             "tests/security/mcp-registration.test.ts :: names a tool whose schema this build will not compile, rather than dropping it",
             "tests/security/mcp-registration.test.ts :: removes its tools, and there is no residual grant to revoke",
             "tests/security/mcp-registration.test.ts :: cannot be used to remove a built-in, because it matches on the namespace",
-            "tests/security/security-invariants.test.ts :: has exactly one caller of ToolRegistry.unregister"
+            "tests/security/security-invariants.test.ts :: has exactly one caller of ToolRegistry.unregister",
+            "tests/e2e/mcp.spec.ts :: removing a server removes its tools"
           ]
         }
       ],
@@ -2232,7 +2262,8 @@
         "tests/security/mcp-schema.test.ts",
         "tests/security/mcp-tool-dispatch.test.ts",
         "tests/security/mcp-registration.test.ts"
-      ]
+      ],
+      "e2e": ["tests/e2e/mcp.spec.ts"]
     },
     "P-027": {
       "unit": [

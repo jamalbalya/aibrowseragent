@@ -4,6 +4,7 @@ import { AccountPanel } from './AccountPanel';
 import { TechnicalDetails } from './TechnicalDetails';
 import { DataPanel } from './DataPanel';
 import { ConnectedAccounts } from './ConnectedAccounts';
+import { McpServers } from './McpServers';
 import { SignInMethods } from './SignInMethods';
 import { ProtectionPanel } from './ProtectionPanel';
 import { WorkspaceView } from './WorkspaceView';
@@ -365,6 +366,8 @@ export function SettingsView({
         {message ? <p className={`message message--${message.tone}`}>{message.text}</p> : null}
         {report ? <DoctorReport report={report} /> : null}
       </section>
+
+      <McpServers onMessage={(tone, text) => setMessage({ tone, text })} />
 
       <section className="settings__section">
         <h3>Connectors</h3>

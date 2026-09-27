@@ -461,21 +461,51 @@ is that there is **one** caller and it matches the `mcp__<server>__` prefix. Tha
 is a property of the caller set rather than of the method, so an invariant test
 counts it, the way the dispatch and egress call sites are counted.
 
-**Not built.** Worker startup wiring, the two control-plane routes that let a
-person add and remove a server, a settings surface, audit emission, and
-real-Chromium coverage. Until those exist nothing a user does reaches any of the
-above, which is why P-026-C1 and P-026-C4 stay unmet even though every mechanism
-beneath them is evidenced. A mechanism no person can reach is not a capability,
-and recording it otherwise would be the defect this project has now found eight
-times.
+**The wiring, which is what made it a capability.** The worker holds the store,
+builds a transport per server, and registers on every worker start — on every
+start, because a tool set is a fresh reading rather than stored state, which is
+the same property that makes revocation free. It is deliberately not awaited and
+not fatal: a worker that would not start because somebody's MCP server is down
+would have made an optional capability load-bearing.
 
-**Nothing imports the MCP layer**, so none of its code ships: the built service
-worker contains no `jsonrpc`, no `tools/list` and no `MCP_PROTOCOL`.
+Four panel routes, classified in `route-trust.ts` like every other:
 
-The release artifact's checksum **did** change, and the reason is worth stating
-rather than glossing, because the easy sentence here — "the checksum is
-unchanged, so nothing shipped" — would have been false. Thirteen bytes, in three
-files that already shipped:
+| Route         | Class     | Why                                                                                                                                                                                                                                                                                  |
+| ------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `mcp.list`    | `CLASS_E` | Discloses which servers the user added. Theirs and nobody else's, so panel-only like every other read.                                                                                                                                                                               |
+| `mcp.add`     | `CLASS_B` | Control plane **twice**: it writes a durable record, and it puts a third party's tools in front of the model. A page that could reach it would extend the agent's tool surface with an endpoint it chose, and every later confirmation would be about a server the user never added. |
+| `mcp.remove`  | `CLASS_B` | Mutates.                                                                                                                                                                                                                                                                             |
+| `mcp.refresh` | `CLASS_B` | Makes outbound requests to every stored server.                                                                                                                                                                                                                                      |
+
+Two audit events, and only two: `mcp.server.added` and `mcp.server.removed`.
+There is deliberately no "discovered" or "connected" event — a tool set is a
+fresh reading on every registration rather than a state that changes, so such a
+record would fire on every worker start and say nothing about a decision anybody
+made. `added` carries the server's URL as its `destination`, the vocabulary the
+egress records already use, and never a tool name: those come from the server.
+Each request also writes the ordinary `egress.decided` record with its evidence.
+
+The panel surface shows what a server contributed **and what it did not** — a
+tool whose schema this build will not compile is named with the reason, because
+the user's own MCP client may show that tool working. It says, next to the button,
+that adding a server is not a grant and that every call is confirmed: a person who
+thinks they have authorised something is a person who stops reading prompts. There
+is no "connected" indicator, because a green dot would be describing the last time
+somebody looked.
+
+**Not built.** Resource discovery — `resources/list` and `resources/read`. That is
+the one unmet clause holding the row below PASS, and it is implementation rather
+than design: the trust model for a resource is already settled (page-class,
+`NEVER_PERSISTED`, tainting its task, and a resource URI never becoming an audit
+field because it is page-derived text).
+
+**The MCP layer now ships**, which is the point of the wiring: the built service
+worker contains `jsonrpc`, `tools/list` and the `mcp-servers` namespace. The
+release artifact grew from 257,021 bytes to 263,178 — about 6.2 KB, which is what
+P-026 costs.
+
+For the record of how it got there, the three waves before the wiring added only
+this much, in files that already shipped:
 
 | What                            | Where                                 |
 | ------------------------------- | ------------------------------------- |
@@ -508,6 +538,12 @@ produces.
   wire-name collision was found.
 - `tests/security/mcp-registration.test.ts` (TEST-MCP-006). The properties that
   only exist once something calls the layers below.
+- `tests/e2e/mcp.spec.ts` (TEST-E2E-048). **Real Chromium**, against a local
+  server speaking real JSON-RPC over real sockets. What only a real browser
+  settles: that the worker calls the registrar at all, that the routes are
+  reachable from the panel, that a registered tool appears in the set the model
+  is offered, and that a plain-http server is refused at call time by the policy
+  engine's origin check — the https rule observed rather than asserted.
 
 **Forty-one mutants** have been run against these invariants and all forty-one
 were caught.
@@ -533,10 +569,8 @@ were caught.
 
 ## 9. What is still open, and who owns it
 
-- **Build.** Worker startup wiring, the two control-plane routes, a settings
-  surface, audit emission, real-Chromium coverage. Engineering, with no
-  unresolved design question. P-026 stays NOT-STARTED until a person can add a
-  server and use its tools, and that is evidenced.
+- **Resource discovery.** `resources/list` and `resources/read`, the one unmet
+  clause. Engineering, with the trust model already settled.
 - **Validation against a real server.** Needs a real remote MCP endpoint and its
   credentials, which this project does not hold. An owner or external
   prerequisite, recorded the way every other external blocker is.

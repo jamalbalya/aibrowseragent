@@ -146,13 +146,25 @@ would have to cross.
 An external MCP server this build connects to declares a harmless-looking tool,
 names it to impersonate a built-in, or floods the tool list.
 
-Held, but read the scope carefully: **there is no MCP transport**, so the threat
-is not currently reachable at all. What is built and evidenced is the part that
-had to be right before a socket exists — risk is fixed at R3 and takes no input a
-server could supply, so no server can declare itself cheap; R3 sits above
-`MAX_GRANTABLE_RISK`, so no grant can pre-approve one of its tools; names are
-namespaced per server and cannot shadow a built-in or forge another server's
-namespace; and a listing is bounded. `docs/MCP_GUIDE.md` is the full record.
+This item said "there is no MCP transport, so the threat is not currently
+reachable" and that is no longer true: a person can add a server and the agent can
+call its tools, so the threat is live and this is now a claim about a working
+surface rather than about a boundary waiting for one.
+
+Held in six places, each of which closes one way a server could get more than it
+should. Risk is fixed at R3 and `mcpToolRisk` takes no argument, so nothing a
+server sends can declare it cheap — and R3 sits above `MAX_GRANTABLE_RISK`, so no
+site rule and no plan can pre-approve one of its tools. Names are namespaced per
+server, so a discovered name cannot shadow a built-in or forge another server's
+namespace. The transport reaches the network only through the one egress gate,
+refuses every redirect (there is no declared origin set to re-check a hop
+against), and bounds the response twice. Discovery declines an unknown protocol
+revision and bounds pagination three ways. Arguments are validated against a
+schema compiled from a **subset** of the server's own JSON Schema, with `$ref`,
+combinators and open `additionalProperties` refused by name. And removing a server
+removes its tools with no residual grant, because nothing could have pre-approved
+one. `docs/MCP_GUIDE.md` is the full record; forty-one mutants across those
+clauses were each killed.
 
 **Verdict: `AUTOMATED`**
 
@@ -161,6 +173,19 @@ namespace; and a listing is bounded. `docs/MCP_GUIDE.md` is the full record.
 - EVIDENCE: tests/security/mcp-trust-core.test.ts :: cannot produce the name of a tool this project ships
 - EVIDENCE: tests/security/mcp-trust-core.test.ts :: refuses a name carrying the separator, which could forge a namespace
 - EVIDENCE: tests/security/mcp-trust-core.test.ts :: bounds the listing, because the count comes from the server too
+- EVIDENCE: tests/security/mcp-transport-security.test.ts :: refuses a redirect rather than re-checking it, because nothing declared an origin
+- EVIDENCE: tests/security/mcp-transport-security.test.ts :: does not surface an HTTP failure body, which the server wrote
+- EVIDENCE: tests/security/mcp-discovery.test.ts :: bounds the total rather than each page, so splitting a listing does not evade the cap
+- EVIDENCE: tests/security/mcp-schema.test.ts :: refuses every reference and combinator by name
+- EVIDENCE: tests/security/mcp-tool-dispatch.test.ts :: is confirmed on every call, in manual, auto and skip alike
+- EVIDENCE: tests/security/mcp-registration.test.ts :: removes its tools, and there is no residual grant to revoke
+- EVIDENCE: tests/e2e/mcp.spec.ts :: a refused address never reaches the network
+
+**Not covered.** No real third-party server has been used — remote MCP is
+evidenced against a local server over real sockets, which is a different fact.
+And resource discovery is unbuilt, so the injection channel an MCP _resource_
+would open does not exist yet; when it is built it is T-1's problem as much as
+this one.
 
 The inverse threat — something outside driving this extension over MCP — is not
 in this list because it is not possible: this build is not an MCP server and
@@ -466,9 +491,11 @@ Four things, named so their absence is not read as coverage:
    surface have their own suites and their own documents; §82's list is about the
    browser agent, and a build with the backend switched off — the default — does
    not carry them.
-3. **The two unbuilt capabilities.** T-5 and T-6 both name a surface that does not
-   exist. Their verdicts are about the boundary that will meet the threat, not
-   about the threat having been met.
+3. **One unbuilt capability.** T-6 names a surface that does not exist, so its
+   verdict is about the boundary that will meet the threat rather than about the
+   threat having been met. T-5 was in this list and no longer is: MCP became
+   reachable, so that item is now a claim about a working surface. Its own
+   residuals are stated with it.
 4. **Execution.** Every `AUTOMATED` verdict means a test exists and runs in CI.
    It does not mean a person has sat down with the product and tried to break it.
    §85 is where that lives and it has not been executed.

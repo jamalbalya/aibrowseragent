@@ -109,9 +109,15 @@ What works today:
   model cannot read, write or export it ([docs/audit.md](docs/audit.md)).
 
 Not yet implemented: further connectors (Jira, Confluence, Figma, Sheets),
-MCP, plugins, scheduling, and OpenAI's Responses API. Their interfaces exist;
-their implementations do not, and the code raises `NOT_IMPLEMENTED` rather than
-faking a result.
+plugins, and OpenAI's Responses API. Their interfaces exist; their
+implementations do not, and the code raises `NOT_IMPLEMENTED` rather than faking
+a result.
+
+MCP is partly implemented. You can add a remote MCP server in Settings and the
+agent can use its tools, each confirmed on every call — including a read, because
+the arguments leave your browser either way. Its resources are not implemented,
+and no third-party server has been used: the whole path is exercised against a
+local one.
 
 The three adapters have been exercised against local servers implementing each
 provider's documented wire format, including over real sockets in real

@@ -104,6 +104,24 @@ export const AUDIT_EVENT_TYPES = [
   'plan.approved',
   'plan.site_added',
   'plan.revised',
+  /*
+   * MCP server lifecycle (P-026).
+   *
+   * Two events, and only two, because only two things happen that a later
+   * reader needs: the user added a third party whose tools the model may then
+   * be offered, and the user took it away. There is deliberately no
+   * "discovered" or "connected" event — a tool set is a fresh reading on every
+   * registration rather than a state that changes, so such a record would fire
+   * on every worker start and say nothing about a decision anybody made.
+   *
+   * `mcp.server.added` carries the server's URL as its `destination`, which is
+   * the vocabulary the egress records already use. It never carries a tool
+   * name: those come from the server, and a server-authored string in a
+   * cross-task trail is the problem `taintKind` exists to avoid for taint
+   * sources.
+   */
+  'mcp.server.added',
+  'mcp.server.removed',
   // Written only by the log itself, when eviction removes records. It exists
   // so a reader can tell a quiet period from a truncated one.
   'retention.compacted',

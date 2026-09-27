@@ -166,9 +166,9 @@ capability, not necessarily a test of the capability itself.
 | Status          | Count  |
 | --------------- | ------ |
 | PASS            | 34     |
-| PARTIAL         | 4      |
+| PARTIAL         | 5      |
 | INTERFACES-ONLY | 0      |
-| NOT-STARTED     | 2      |
+| NOT-STARTED     | 1      |
 | **Total**       | **40** |
 
 These counts are checked against the table below, and the table against
@@ -258,9 +258,10 @@ most of them because writing the clauses out showed the row was PARTIAL for §84
 condition 3, which is unmet repository-wide and which every PASS row already
 carries, rather than for an unmet mandatory clause. Two rows moved because
 something was actually built. Nothing moved because a standard was relaxed, and
-the two NOT-STARTED rows stayed exactly where they were: P-025 and P-026 now
-carry fifteen `EVIDENCE_MISSING` clauses between them, which is the honest
-reading of "not started" rather than a blank.
+the two NOT-STARTED rows stayed exactly where they were at the time: P-025 and
+P-026 carried fifteen `EVIDENCE_MISSING` clauses between them, which is the
+honest reading of "not started" rather than a blank. P-026 has since been built
+and moved to PARTIAL; P-025 has not moved.
 
 It also caught five citations of mine that named a test which does not exist.
 Every one was a title I half-remembered rather than a real gap in coverage —
@@ -271,29 +272,30 @@ What it is **not** is parity certification. §84 condition 3 requires manual
 acceptance, none of which has been executed, and the six clauses below are
 waiting on a person, a credential or a service.
 
-### P-026 MCP — NOT-STARTED, with two clauses verified
+### P-026 MCP — why PARTIAL
 
-An unusual row, so it is worth saying what it means. The status column is
-`NOT-STARTED` and that is accurate: nothing connects to an MCP server, no tool
-from one is registered, and nothing fakes either. Two of its clauses are
-nevertheless VERIFIED, and they are the two that decide whether §35's "MCP must
-never become a security bypass" can hold at all.
+**P-026 MCP** — An MCP _client_ is built and reachable: a person adds a server in
+Settings, the worker discovers it, and its tools appear in the set the model is
+offered, each confirmed on every call. It is PARTIAL because **resource
+discovery is unbuilt** (`P-026-C5`), and because remote MCP has never been
+exercised against a server somebody else operates and local MCP needs a bridge
+the specification defers — both recorded as external rather than unimplemented.
 
-The scope was re-audited from the specification in Wave 29, because two answers
-had accumulated that nobody had re-derived. Both are corrected, and
-`docs/MCP_GUIDE.md` — which specification §81 requires and which did not exist —
-is now the authoritative record.
+The scope was re-audited from the specification, the design question it had been
+stuck on turned out not to exist, and the capability was then built. Three
+things happened in that order and each is worth separating.
 
 **The direction narrowed.** §5.11 names `MCP client` first and lists no server
 component; §35's diagram runs `Agent Runtime → MCP Client → Remote/Local MCP →
 Tools/Resources`, all downstream. So P-026 is a client capability only: this
-build calls out to servers other people run, and is never itself an MCP server.
-That was previously treated as a deferred transport question. It is not deferred
-— it is not asked for. A related finding from the same audit: the comparison
-**extension** is not an MCP client either. Its connectors are remote MCP reached
-from the vendor's cloud, and its side panel is a cloud session displayed in a
-browser. So there is no benchmark behaviour to copy here, and §5.11 rather than
-parity is the authority for building a client at all.
+build calls out to servers other people run and is never itself an MCP server.
+That had been carried as a deferred transport question; it is not deferred, it is
+not asked for. A related finding from the same audit: the comparison **extension**
+is not an MCP client either — its connectors are remote MCP reached from the
+vendor's cloud, and its side panel is a cloud session displayed in a browser. So
+there is no benchmark behaviour to copy here, and §5.11 rather than parity is the
+authority for building a client at all. `docs/MCP_GUIDE.md` is the full record,
+and specification §81 required that file, which did not exist.
 
 **The approval-granularity question turned out not to exist.** It had been
 answered with a user-set per-server risk _ceiling_, every tool from the server
@@ -303,57 +305,25 @@ put that server's entire present _and future_ tool set below
 `AUTO_APPROVE_BELOW`. A safeguard whose safe setting is the counter-intuitive one
 is not a safeguard.
 
-An MCP tool is **R3** instead, classified here from what the call is:
+An MCP tool is **R3** instead, classified from what the call is:
 `RISK_DESCRIPTIONS.R3` is "Sensitive external side effect. Writes data outside
 the browser", which is an MCP call exactly, including one that only reads on the
 far side. Everything else then follows from thresholds that already ship —
 `evaluatePolicy` stage 5 confirms at R3 before the mode switch, so `manual`,
 `auto` and `skip` all confirm, and `MAX_GRANTABLE_RISK` is R2, so no site rule
 and no plan approval can reach it. Approval is per call as arithmetic rather than
-as a policy choice, no new authorization surface was added, and a tool a server
-adds later cannot be covered by a grant that was never able to exist.
+as a policy choice, no new authorization surface was added, a tool a server adds
+later cannot be covered by a grant that was never able to exist, and an
+unattended run fails closed — so a scheduled task cannot use an MCP tool at all.
 
-Both bypasses are closed in code, ahead of any transport, because a risk
-model written after the socket works is a risk model written around whatever the
-socket happened to do:
+**Then it was built, and it is reachable.** A person adds a server in Settings,
+the worker discovers it, and its tools appear in the set the model is offered.
+Verified in real Chromium against a local server speaking real JSON-RPC over real
+sockets. Six clauses carry it: the trust core, the guarded transport, discovery,
+tool construction, the store and registrar, and the wiring itself.
 
-- **P-026-C8** — risk is assigned locally and is ungrantable. `mcpToolRisk` takes
-  no argument at all, and a test pins its arity at zero, because a parameter is
-  the shape every "let the server hint at it" change would arrive in. The cases
-  behind it run the real `evaluatePolicy` rather than a fixture.
-- **P-026-C9** — a discovered tool cannot shadow a built-in, cannot forge another
-  server's namespace, cannot arrive without an input schema, and cannot arrive
-  ten thousand at a time.
-
-Two further clauses were then verified by building the layers beneath the
-capability rather than the capability:
-
-- **P-026-C10** — the guarded transport. No HTTP client of its own: an `mcp`
-  destination and `guardedSend`, the same function the provider and connector
-  transports call. `mcp` is its own channel rather than a reuse of `connector`,
-  because a connector reaches origins a descriptor declared and a user-added
-  server has no descriptor. Redirects are refused outright for the same reason,
-  the body is bounded by both the header and the decoded text, and an HTTP
-  failure body is never surfaced into a message the model would see.
-- **P-026-C11** — discovery. The protocol revision is declined rather than
-  negotiated, a refusal to list stays distinct from an empty listing, and
-  pagination is bounded three ways: a page cap, an end on a repeated cursor, and
-  admission applied to the accumulated set rather than per page, so splitting a
-  listing does not evade the tool cap.
-
-And two more by building the layers above them:
-
-- **P-026-C12** — an MCP tool is an ordinary registry entry. Its schema is
-  compiled from the server's JSON Schema as a **subset**, with `$ref`, the
-  combinators, tuple items, unions of types and open `additionalProperties`
-  refused by name: `z.record(z.unknown())` would have put an unvalidated
-  argument set on the wire, and a full JSON Schema implementation would have put
-  a large parser over attacker input inside the worker. Its risk, its
-  destination and its payload declaration are all fixed by this build, not read
-  from the model's arguments. Its result is bounded and taints the task.
-
-Two defects were found by tests rather than by reading, which is the part worth
-recording:
+Two defects along the way were found by tests rather than by reading, which is
+the part worth recording:
 
 - `shape['__proto__'] = x` **sets the prototype** rather than adding a key, so a
   server declaring a `__proto__` argument had it silently vanish from the
@@ -366,42 +336,26 @@ recording:
   shadowing, not about the wire round trip. The dispatch suite found it because
   its cases drive a real `ToolRegistry` rather than calling `execute` directly.
 
-And one more by building the layer that calls all of them:
-
-- **P-026-C13** — a server store and a registrar. A duplicate server id is
-  refused rather than renamed, because an id is part of every tool name it
-  contributes. A record has nowhere to put a credential, which is what makes
-  `mcp-server` honestly `PLAINTEXT_BY_DESIGN`; it is `LOCAL_ONLY` and
-  `NOT_PORTABLE_BY_DESIGN` because a synced or imported server changes the tool
-  surface the model is offered on a machine where nobody added it. One failing
-  server costs the user nothing from the ones that answered. A server's tools are
-  replaced rather than merged, so a tool it has stopped offering stops existing.
-  And revocation is **free rather than implemented**: a tool exists only as a
-  function of the record and the answer the server just gave, so there is no
-  residual grant to invalidate.
-
 Forty-one mutants across the seven clauses, each killed.
 
-**And the row is still NOT-STARTED**, which is the part worth being exact about.
-The client is complete inside the MCP layer and **no person can reach it**: the
-service worker does not call the registrar and no route lets a user add a server.
-Nothing imports the MCP layer, so none of its code ships — the built service
-worker contains no `jsonrpc`, no `tools/list` and no `MCP_PROTOCOL`.
+**And it is PARTIAL rather than PASS, for one unmet clause and two blockers.**
 
-The artifact did grow, by forty-two bytes, and that is recorded rather than
-glossed: four strings, a prefix test and a `Map.delete` landed in files that
-already ship — `'mcp'` in `EGRESS_CHANNELS`, `'MCP_ERROR'` in the error taxonomy,
-`'mcp__'` in the registry's wire-name guard, `'mcp-server'` in the three
-classification tables, and `ToolRegistry.unregister`. No MCP behaviour, and a
-channel, an error code and a data kind that nothing yet produces. "The checksum
-is unchanged, so nothing shipped" would have been the convenient sentence and it
-would have been wrong. P-026-C1
-and P-026-C4 stay unmet for that reason even though the mechanisms beneath them
-are evidenced: a mechanism with no caller is not a capability, and this project
-has found that defect eight times now. What remains is worker startup wiring, the
-two control-plane routes that let a person add and remove a server, a settings
-surface, audit emission and real-Chromium coverage — plus validation against a
-real remote server, which needs a credential this project does not hold.
+`P-026-C5` — **resource discovery** — is `EVIDENCE_MISSING`, and it is what holds
+the row. The specification hedges it "where applicable" and the honest reading is
+that it does apply: `resources/list` and `resources/read` are part of what an MCP
+client is. Its trust model is already settled — a resource is page-class content,
+`NEVER_PERSISTED`, tainting its task, and a resource **URI** must never become an
+audit field because it is page-derived text — so what is missing is
+implementation, not design.
+
+`P-026-C2` and `P-026-C3` are `EXTERNAL_REQUIRED` and do not block. Remote MCP
+has never been exercised against a server somebody else operates, because this
+repository holds no such server and no credential for one; local MCP needs §66's
+desktop bridge, which the specification itself defers and which would need native
+messaging.
+
+And §84 condition 3 — manual acceptance — is unmet repository-wide, which every
+PASS row already carries.
 
 ### What is waiting on somebody else, and where to see it
 
@@ -645,7 +599,7 @@ rather than folded into the verdict.
 | P-023 | Connector framework                  | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-024 | Skills                               | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-025 | Plugins                              | no   | —    | —           | —        | —   | NOT-STARTED |
-| P-026 | MCP                                  | no   | —    | —           | yes      | —   | NOT-STARTED |
+| P-026 | MCP                                  | yes  | —    | —           | yes      | yes | PARTIAL     |
 | P-027 | Permission modes                     | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-028 | Site permissions                     | yes  | yes  | —           | yes      | yes | PASS        |
 | P-029 | Permission history                   | yes  | yes  | —           | yes      | yes | PASS        |

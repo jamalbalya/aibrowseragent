@@ -318,6 +318,27 @@ export const PANEL_ROUTE_CLASSES: Record<PanelRequestType, RouteClass> = {
   'settings.setNotificationsEnabled': 'CLASS_B_PANEL_CONTROL_PLANE',
   'settings.getNotificationsEnabled': 'CLASS_E_PANEL_READ_ONLY',
 
+  /*
+   * MCP (P-026).
+   *
+   * `mcp.add` is control plane twice over, and it is worth saying both parts:
+   * it writes a durable record, and it puts a third party's tools in front of
+   * the model. The second is the one that matters here — a page or a content
+   * script that could reach this route could extend the agent's tool surface
+   * with an endpoint it chose, and every later confirmation the user answered
+   * would be about a server they never added. `remove` and `refresh` are
+   * control plane for the ordinary reasons: one mutates, and one makes
+   * outbound requests to every stored server.
+   *
+   * `mcp.list` discloses which servers the user added and what they offered,
+   * which is theirs and nobody else's, so it is panel-only like every other
+   * read rather than open.
+   */
+  'mcp.list': 'CLASS_E_PANEL_READ_ONLY',
+  'mcp.add': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'mcp.remove': 'CLASS_B_PANEL_CONTROL_PLANE',
+  'mcp.refresh': 'CLASS_B_PANEL_CONTROL_PLANE',
+
   // Providers. `listModels` and `runDoctor` mutate nothing but reach the
   // network through the guarded transport, which is not a read either.
   'provider.list': 'CLASS_E_PANEL_READ_ONLY',

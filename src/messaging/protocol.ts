@@ -633,6 +633,70 @@ export interface PanelRequestMap {
     request: Record<string, never>;
     response: { granted: boolean };
   };
+  /**
+   * MCP servers the user has added, and what each contributed (P-026).
+   *
+   * `outcome` is the result of the last registration attempt, not a stored
+   * status: a server's tools exist only as a function of the answer it last
+   * gave, so there is no durable "connected" state to report. A server that
+   * failed is named with its reason, and a tool this build will not expose is
+   * named too — the user's own client may show that tool working.
+   */
+  'mcp.list': {
+    request: Record<string, never>;
+    response: {
+      servers: {
+        id: string;
+        displayName: string;
+        url: string;
+        outcome?: {
+          registered: readonly string[];
+          refused: readonly { name: string; reason: string }[];
+          failure?: string;
+        };
+      }[];
+    };
+  };
+  /**
+   * Adds a server and registers whatever it offers.
+   *
+   * Control plane twice over: it stores a record, and it puts a third party's
+   * tools in front of the model. `problems` carries the validator's own
+   * sentences so the panel can say which part was wrong.
+   */
+  'mcp.add': {
+    request: { id: string; displayName: string; url: string };
+    response:
+      | {
+          added: true;
+          registered: readonly string[];
+          refused: readonly { name: string; reason: string }[];
+        }
+      | { added: false; reason: string; problems: readonly string[] };
+  };
+  /** Removes a server. Its tools go with it; there is no grant left over. */
+  'mcp.remove': {
+    request: { id: string };
+    response: { removed: boolean; unregistered: readonly string[] };
+  };
+  /**
+   * Re-discovers every stored server.
+   *
+   * Needed because a tool set is a fresh reading rather than stored state: a
+   * server that was unreachable at startup, or that has changed what it
+   * offers, is picked up by asking again.
+   */
+  'mcp.refresh': {
+    request: Record<string, never>;
+    response: {
+      servers: {
+        id: string;
+        registered: readonly string[];
+        refused: readonly { name: string; reason: string }[];
+        failure?: string;
+      }[];
+    };
+  };
   /** Connectors the product ships, and where each one currently stands. */
   'connector.list': {
     request: Record<string, never>;
