@@ -261,9 +261,16 @@ const clauseTotal = clauseCheck.inventoried.reduce(
   (total, id) => total + evidence[id].clauses.length,
   0,
 );
+const uninventoried = rows.length - clauseCheck.inventoried.length;
 console.log(
   `  clause inventory: ${clauseCheck.inventoried.length} of ${rows.length} capabilities, ` +
-    `${clauseTotal} clauses. The remainder are not yet clause-checked.`,
+    `${clauseTotal} clauses.` +
+    // Said only while it is true. A line reading "the remainder are not yet
+    // clause-checked" under a count of 40 of 40 is the kind of stale sentence
+    // this whole check exists to catch elsewhere.
+    (uninventoried > 0
+      ? ` ${uninventoried} not yet clause-checked.`
+      : ' Every capability is covered.'),
 );
 for (const note of clauseCheck.notes) {
   console.log(`  · ${note}`);

@@ -17,7 +17,55 @@
   ],
   "capabilities": {
     "P-001": {
-      "e2e": ["tests/e2e/extension-load.spec.ts"]
+      "e2e": ["tests/e2e/extension-load.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-001-C1",
+          "specRef": "§6",
+          "requirement": "A persistent side panel is the interface.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/extension-load.spec.ts :: the side panel mounts and reports no provider before one is configured",
+            "tests/e2e/extension-load.spec.ts :: the service worker registers and completes startup"
+          ]
+        },
+        {
+          "id": "P-001-C2",
+          "specRef": "§2",
+          "requirement": "Nothing on the normal path requires an account or a server.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Local-first, checked as a property of the shipped UI rather than as an intention: the first launch offers work, the settings screen offers no login or server field, and the local identity is never rendered.",
+          "evidence": [
+            "tests/e2e/standalone-ux.spec.ts :: first launch offers work, not a sign-up",
+            "tests/e2e/standalone-ux.spec.ts :: nothing on the normal path asks the user to sign in",
+            "tests/e2e/standalone-ux.spec.ts :: the settings screen never offers a login or a server to configure",
+            "tests/e2e/standalone-ux.spec.ts :: local features work with no AI account connected"
+          ]
+        },
+        {
+          "id": "P-001-C3",
+          "specRef": "§32",
+          "requirement": "The panel does not render an internal identity.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/standalone-ux.spec.ts :: the local identity is never rendered anywhere in the UI"
+          ]
+        },
+        {
+          "id": "P-001-C4",
+          "specRef": "§5.1",
+          "requirement": "The panel says where AI requests go.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/standalone-ux.spec.ts :: the data explanation is precise about where AI requests go",
+            "tests/e2e/standalone-ux.spec.ts :: connecting an AI account needs no extension identity and changes none"
+          ]
+        }
+      ]
     },
     "P-002": {
       "unit": [
@@ -1254,7 +1302,51 @@
     },
     "P-018": {
       "integration": ["tests/integration/task-persistence.test.ts"],
-      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts", "tests/e2e/agent-task.spec.ts"]
+      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts", "tests/e2e/agent-task.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-018-C1",
+          "specRef": "§52",
+          "requirement": "A task keeps running while Chrome is open and the panel is closed.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/agent-task.spec.ts :: tasks survive the side panel closing and reopening"
+          ]
+        },
+        {
+          "id": "P-018-C2",
+          "specRef": "§55",
+          "requirement": "Work survives a real service-worker restart.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/mv3-lifecycle.spec.ts :: a task can still run after the worker has restarted",
+            "tests/e2e/mv3-lifecycle.spec.ts :: settings and provider configuration survive a real restart"
+          ]
+        },
+        {
+          "id": "P-018-C3",
+          "specRef": "§55",
+          "requirement": "A task interrupted by eviction is parked rather than resumed blind.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "The safe direction: an interrupted run cannot know what its last tool call did, so continuing would be guessing about a page it can no longer see.",
+          "evidence": [
+            "tests/e2e/mv3-lifecycle.spec.ts :: a task interrupted by a real worker restart is parked, not resumed blind"
+          ]
+        },
+        {
+          "id": "P-018-C4",
+          "specRef": "§51",
+          "requirement": "Background work does not claim to run while the browser is closed.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/schedules.spec.ts :: the schedules screen is in the shipped panel and says what a run will not do"
+          ]
+        }
+      ]
     },
     "P-019": {
       "unit": ["tests/unit/notifier.test.ts"],
@@ -1887,8 +1979,136 @@
         }
       ]
     },
-    "P-025": {},
-    "P-026": {},
+    "P-025": {
+      "clauses": [
+        {
+          "id": "P-025-C1",
+          "specRef": "§5.10",
+          "requirement": "plugin registry",
+          "mandatory": true,
+          "status": "EVIDENCE_MISSING",
+          "note": "Nothing is implemented, and the trust model records why this is not simply unstarted work: a package's **authenticity** cannot be established from inside an extension. There is no publisher identity to verify against, no revocation channel, and no signature this build could check that a package author could not also produce. `PLUGIN_TRUST_MODEL.md` settles what a plugin may safely be here — declarative, referencing only already-registered tools, creating no tool, permission, egress, credential or policy of its own, with executable content forbidden — and that gate is deliberately not permission to start."
+        },
+        {
+          "id": "P-025-C2",
+          "specRef": "§5.10",
+          "requirement": "plugin manifest",
+          "mandatory": true,
+          "status": "EVIDENCE_MISSING",
+          "note": "No package format is defined. The trust model names what a manifest may contain; nothing parses one, and nothing fakes one."
+        },
+        {
+          "id": "P-025-C3",
+          "specRef": "§5.10",
+          "requirement": "bundled skills",
+          "mandatory": true,
+          "status": "EVIDENCE_MISSING",
+          "note": "Skills themselves ship and are evidenced under P-024. What does not exist is a *plugin* that carries one."
+        },
+        {
+          "id": "P-025-C4",
+          "specRef": "§5.10",
+          "requirement": "bundled connectors",
+          "mandatory": true,
+          "status": "EVIDENCE_MISSING",
+          "note": "Blocked twice over: no plugin format, and no connector can be connected at all (P-023-C8)."
+        },
+        {
+          "id": "P-025-C5",
+          "specRef": "§5.10",
+          "requirement": "bundled MCP servers where supported",
+          "mandatory": true,
+          "status": "EVIDENCE_MISSING",
+          "note": "Depends on P-026, which is itself unimplemented."
+        },
+        {
+          "id": "P-025-C6",
+          "specRef": "§5.10",
+          "requirement": "permissions",
+          "mandatory": true,
+          "status": "EVIDENCE_MISSING",
+          "note": "The trust model's hardest line: a plugin may not create a permission. Enforcing that needs the package layer that does not exist."
+        },
+        {
+          "id": "P-025-C7",
+          "specRef": "§5.10",
+          "requirement": "trust metadata",
+          "mandatory": true,
+          "status": "EVIDENCE_MISSING",
+          "note": "Nothing is implemented, and the trust model records why this is not simply unstarted work: a package's **authenticity** cannot be established from inside an extension. There is no publisher identity to verify against, no revocation channel, and no signature this build could check that a package author could not also produce. `PLUGIN_TRUST_MODEL.md` settles what a plugin may safely be here — declarative, referencing only already-registered tools, creating no tool, permission, egress, credential or policy of its own, with executable content forbidden — and that gate is deliberately not permission to start."
+        },
+        {
+          "id": "P-025-C8",
+          "specRef": "§5.10",
+          "requirement": "lifecycle and versioning",
+          "mandatory": true,
+          "status": "EVIDENCE_MISSING",
+          "note": "Install, review, enable, disable, revoke and update are designed and unbuilt. Revocation is the part that depends on the authenticity problem above: there is no channel to learn that a package should stop being trusted."
+        }
+      ],
+      "unit": []
+    },
+    "P-026": {
+      "clauses": [
+        {
+          "id": "P-026-C1",
+          "specRef": "§5.11",
+          "requirement": "MCP client",
+          "mandatory": true,
+          "status": "EVIDENCE_MISSING",
+          "note": "The **client** direction is permitted and unbuilt; the server direction is closed and stays closed. §35 puts the MCP client below the agent runtime reaching out to a remote or local MCP, which is outbound and compatible with this architecture. Exposing this extension *as* an MCP server would need an inbound channel, and every inbound channel this manifest could offer — native messaging, externally_connectable, arbitrary inbound control — is prohibited. That decision is locked and is not reopened to imitate a transport."
+        },
+        {
+          "id": "P-026-C2",
+          "specRef": "§5.11",
+          "requirement": "remote MCP",
+          "mandatory": true,
+          "status": "EVIDENCE_MISSING",
+          "note": "Unbuilt. A remote server also needs credentials this project does not hold, so even a finished client could not be validated against a real one here."
+        },
+        {
+          "id": "P-026-C3",
+          "specRef": "§5.11",
+          "requirement": "local MCP where supported",
+          "mandatory": true,
+          "status": "EVIDENCE_MISSING",
+          "note": "Reaching a local MCP process from an extension needs native messaging, which is prohibited. 'Where supported' is the specification's own hedge, and here it is not supported."
+        },
+        {
+          "id": "P-026-C4",
+          "specRef": "§5.11",
+          "requirement": "tool discovery",
+          "mandatory": true,
+          "status": "EVIDENCE_MISSING",
+          "note": "The design question that has to be answered before code: a discovered tool arrives from outside with a name, a schema and a description, all of which are untrusted input to the model's context. None of it may set its own risk."
+        },
+        {
+          "id": "P-026-C5",
+          "specRef": "§5.11",
+          "requirement": "resource discovery where applicable",
+          "mandatory": true,
+          "status": "EVIDENCE_MISSING",
+          "note": "Unbuilt, and the specification hedges it with \"where applicable\" — a resource is data a server offers rather than an action, so it would arrive as untrusted content and be subject to the same envelope as a page."
+        },
+        {
+          "id": "P-026-C6",
+          "specRef": "§35",
+          "requirement": "Every MCP capability passes schema, policy, permission and audit.",
+          "mandatory": true,
+          "status": "EVIDENCE_MISSING",
+          "note": "The clause that decides the shape of the work. The existing registry already enforces all four at one choke point, so an MCP tool would have to be a registry entry like any other rather than a parallel path — and its risk would have to be assigned here, never declared by the server."
+        },
+        {
+          "id": "P-026-C7",
+          "specRef": "§35",
+          "requirement": "MCP must never become a security bypass.",
+          "mandatory": true,
+          "status": "EVIDENCE_MISSING",
+          "note": "Currently satisfied vacuously, which is worth saying plainly rather than counting as a pass: there is no MCP surface, so there is nothing to bypass through."
+        }
+      ],
+      "unit": []
+    },
     "P-027": {
       "unit": [
         "tests/unit/policy-engine.test.ts",
@@ -2259,7 +2479,45 @@
     "P-031": {
       "unit": ["tests/unit/storage.test.ts"],
       "integration": ["tests/integration/task-persistence.test.ts"],
-      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts"]
+      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-031-C1",
+          "specRef": "§54",
+          "requirement": "Tasks, settings and history persist across sessions.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/mv3-lifecycle.spec.ts :: settings and provider configuration survive a real restart",
+            "tests/integration/task-persistence.test.ts :: recovers a stored task in a new worker generation",
+            "tests/integration/task-persistence.test.ts :: is idempotent across repeated restarts"
+          ]
+        },
+        {
+          "id": "P-031-C2",
+          "specRef": "§76",
+          "requirement": "Corrupt stored state fails closed rather than reading as healthy.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "The clause this row turns on, and every case here is an adversarial one: a corrupt index must not read back as an empty, healthy profile, because 'no tasks' and 'unreadable tasks' mean opposite things.",
+          "evidence": [
+            "tests/e2e/persisted-state.spec.ts :: a corrupt task index does not read back as an empty, healthy profile",
+            "tests/e2e/persisted-state.spec.ts :: a corrupt task record is never resumed as a task with no security state",
+            "tests/e2e/persisted-state.spec.ts :: a corrupt health record does not read as healthy"
+          ]
+        },
+        {
+          "id": "P-031-C3",
+          "specRef": "§38",
+          "requirement": "An edited audit record is detected.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Detection, explicitly not tamper protection: anyone who can rewrite extension storage can rewrite the chain with it.",
+          "evidence": [
+            "tests/e2e/persisted-state.spec.ts :: an audit record edited in storage is reported by the integrity check"
+          ]
+        }
+      ]
     },
     "P-032": {
       "unit": ["tests/unit/task-model.test.ts"],
@@ -2343,13 +2601,143 @@
         "tests/security/provider-conformance.test.ts",
         "tests/security/provider-transport.test.ts"
       ],
-      "e2e": ["tests/e2e/provider-switching.spec.ts"]
+      "e2e": ["tests/e2e/provider-switching.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-033-C1",
+          "specRef": "§17",
+          "requirement": "More than one provider can be configured and selected.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/provider-switching.spec.ts :: the registry offers all three API providers and no web provider",
+            "tests/e2e/provider-switching.spec.ts :: a tool call from each provider drives the same browser action"
+          ]
+        },
+        {
+          "id": "P-033-C2",
+          "specRef": "§17",
+          "requirement": "A switch carries no measurement from the previous provider or model.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "The same model id on a different account can differ in tier, rate limit and enabled features, so a measurement is scoped to the pair it was taken on and dropped when either half changes.",
+          "evidence": [
+            "tests/security/provider-switching-state.test.ts :: drops capabilities measured for the previous model",
+            "tests/security/provider-switching-state.test.ts :: drops capabilities measured for the previous provider",
+            "tests/security/provider-switching-state.test.ts :: does not carry a readiness decided from the previous measurement",
+            "tests/security/provider-switching-state.test.ts :: keeps everything when nothing actually changed"
+          ]
+        },
+        {
+          "id": "P-033-C3",
+          "specRef": "§60",
+          "requirement": "A task is never silently continued on a different provider or model.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/provider-switching-state.test.ts :: fails a resume onto a different model rather than continuing quietly",
+            "tests/security/provider-switching-state.test.ts :: fails a resume onto a different provider",
+            "tests/security/provider-switching-state.test.ts :: names both models, so the person can tell what happened",
+            "tests/e2e/provider-switching.spec.ts :: switching provider mid-session does not carry the previous authorization"
+          ]
+        },
+        {
+          "id": "P-033-C4",
+          "specRef": "§14",
+          "requirement": "With nothing measured, the conservative capability set applies.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/provider-switching-state.test.ts :: falls back to the conservative set when nothing was measured"
+          ]
+        },
+        {
+          "id": "P-033-C5",
+          "specRef": "§87",
+          "requirement": "Validation against live commercial provider endpoints.",
+          "mandatory": true,
+          "status": "EXTERNAL_REQUIRED",
+          "note": "All three adapters pass one shared conformance suite and switch cleanly in real Chromium against local servers speaking each provider's real wire protocol. What has not happened is a request to a commercial endpoint.",
+          "blocker": "No project-owned provider credentials are configured in this environment, and none can be issued from this repository. A user's own key works; validating against the vendor's live endpoint needs a key this project does not have."
+        }
+      ]
     },
     "P-034": {
       "unit": ["tests/unit/tool-registry.test.ts"],
       "integration": ["tests/integration/agent-runtime.test.ts"],
       "security": ["tests/security/debugger-allowlist.test.ts"],
-      "e2e": ["tests/e2e/provider-integration.spec.ts", "tests/e2e/security.spec.ts"]
+      "e2e": ["tests/e2e/provider-integration.spec.ts", "tests/e2e/security.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-034-C1",
+          "specRef": "§22",
+          "requirement": "A tool declares a schema, and arguments are validated against it.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/tool-registry.test.ts :: exposes JSON Schema derived from the Zod schema",
+            "tests/unit/tool-registry.test.ts :: rejects arguments that fail schema validation",
+            "tests/unit/tool-registry.test.ts :: names the offending field in the validation message"
+          ]
+        },
+        {
+          "id": "P-034-C2",
+          "specRef": "§22",
+          "requirement": "An unknown tool is refused without executing anything.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/tool-registry.test.ts :: refuses an unknown tool without executing anything",
+            "tests/unit/tool-registry.test.ts :: rejects a duplicate tool name"
+          ]
+        },
+        {
+          "id": "P-034-C3",
+          "specRef": "§23",
+          "requirement": "A name survives the round trip through the provider wire format.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Dots are not legal in a function name for some providers, so a canonical name is translated and restored — restoring only the first separator, or a tool called `a.b.c` comes back wrong.",
+          "evidence": [
+            "tests/unit/tool-registry.test.ts :: round-trips a canonical name through the provider wire format",
+            "tests/unit/tool-registry.test.ts :: restores only the first separator, leaving the rest of the name intact"
+          ]
+        },
+        {
+          "id": "P-034-C4",
+          "specRef": "§28",
+          "requirement": "A call classification may raise the declared risk but never lower it.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "A tool argues for more caution, never less: otherwise a tool could classify its way out of the confirmation its own floor demands.",
+          "evidence": [
+            "tests/unit/tool-registry.test.ts :: applies the higher of the declared floor and the call classification",
+            "tests/unit/tool-registry.test.ts :: never lets a classification lower the declared risk floor"
+          ]
+        },
+        {
+          "id": "P-034-C5",
+          "specRef": "§24",
+          "requirement": "Nothing executes when policy denies or the user declines.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/tool-registry.test.ts :: does not execute when policy denies the call",
+            "tests/unit/tool-registry.test.ts :: does not execute when the user declines",
+            "tests/unit/tool-registry.test.ts :: executes once the user approves"
+          ]
+        },
+        {
+          "id": "P-034-C6",
+          "specRef": "§22",
+          "requirement": "The exposed surface can be narrowed.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/tool-registry.test.ts :: narrows the exposed surface when an allowlist is supplied"
+          ]
+        }
+      ]
     },
     "P-035": {
       "unit": ["tests/unit/capability-doctor.test.ts"],
@@ -2477,7 +2865,54 @@
     "P-036": {
       "unit": ["tests/unit/budget-retry.test.ts"],
       "integration": ["tests/integration/agent-runtime.test.ts"],
-      "e2e": ["tests/e2e/provider-integration.spec.ts"]
+      "e2e": ["tests/e2e/provider-integration.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-036-C1",
+          "specRef": "§58",
+          "requirement": "Retry limits are mandatory.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/budget-retry.test.ts :: stops at the attempt limit",
+            "tests/unit/budget-retry.test.ts :: never retries a decision, an auth failure, or an invalid input"
+          ]
+        },
+        {
+          "id": "P-036-C2",
+          "specRef": "§60",
+          "requirement": "A failure is reported with a canonical code rather than flattened.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Fixed in this run: the manager's catch reported every thrown error as an internal error, including a provider that could not be resolved — sending a user with a rejected API key to look for a bug in the extension.",
+          "evidence": [
+            "tests/integration/task-manager.test.ts :: keeps a reason the thrown error already carried",
+            "tests/unit/budget-retry.test.ts :: never retries a decision, an auth failure, or an invalid input"
+          ]
+        },
+        {
+          "id": "P-036-C3",
+          "specRef": "§76",
+          "requirement": "A failed step is never reported as done.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/integration/tab-management.test.ts :: reports a tab that is gone as a failed call, not a silent no-op",
+            "tests/integration/task-manager.test.ts :: tells the lifecycle observer that the task ended"
+          ]
+        },
+        {
+          "id": "P-036-C4",
+          "specRef": "§59",
+          "requirement": "A loop is detected and the task stops and asks.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/integration/agent-runtime.test.ts :: stops a task that repeats the same failing call",
+            "tests/integration/agent-runtime.test.ts :: puts the next step to the user rather than dead-ending"
+          ]
+        }
+      ]
     },
     "P-037": {
       "unit": ["tests/unit/loop-detection.test.ts"],
@@ -2635,11 +3070,124 @@
       "unit": ["tests/unit/evidence-store.test.ts"],
       "integration": ["tests/integration/evidence-pipeline.test.ts"],
       "security": ["tests/security/secret-redaction.test.ts"],
-      "e2e": ["tests/e2e/agent-task.spec.ts", "tests/e2e/security.spec.ts"]
+      "e2e": ["tests/e2e/agent-task.spec.ts", "tests/e2e/security.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-039-C1",
+          "specRef": "§21",
+          "requirement": "Evidence is stored by reference, separately from its payload.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "What keeps page content out of the model context while staying auditable: the run carries an id, not the bytes.",
+          "evidence": [
+            "tests/unit/evidence-store.test.ts :: stores a reference and its payload separately"
+          ]
+        },
+        {
+          "id": "P-039-C2",
+          "specRef": "§33",
+          "requirement": "A payload is redacted before it is stored.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/evidence-store.test.ts :: redacts secrets from a text payload before storing it",
+            "tests/unit/evidence-store.test.ts :: does not corrupt a base64 payload by redacting it"
+          ]
+        },
+        {
+          "id": "P-039-C3",
+          "specRef": "§21",
+          "requirement": "A payload is truncated to a cap rather than stored unbounded.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/evidence-store.test.ts :: truncates an oversized payload to the configured cap",
+            "tests/unit/evidence-store.test.ts :: evicts the oldest evidence past the retention cap"
+          ]
+        },
+        {
+          "id": "P-039-C4",
+          "specRef": "§21",
+          "requirement": "Evidence is scoped to its task and traceable to the call that produced it.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/evidence-store.test.ts :: lists evidence for a task without returning other tasks evidence",
+            "tests/unit/evidence-store.test.ts :: records provenance so evidence is traceable to its tool call"
+          ]
+        },
+        {
+          "id": "P-039-C5",
+          "specRef": "§38",
+          "requirement": "A payload has a stable content digest.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/evidence-store.test.ts :: produces a stable SHA-256 hex digest",
+            "tests/unit/evidence-store.test.ts :: differs for different content"
+          ]
+        }
+      ]
     },
     "P-040": {
       "unit": ["tests/unit/capability-doctor.test.ts", "tests/unit/openai-compatible.test.ts"],
-      "e2e": ["tests/e2e/provider-integration.spec.ts"]
+      "e2e": ["tests/e2e/provider-integration.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-040-C1",
+          "specRef": "§14",
+          "requirement": "Capability detection is measured per provider and model, not assumed.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/capability-doctor.test.ts :: reports every check the specification lists as a minimum",
+            "tests/unit/capability-doctor.test.ts :: refuses to claim AGENT_READY on unverified capabilities"
+          ]
+        },
+        {
+          "id": "P-040-C2",
+          "specRef": "§14",
+          "requirement": "Never claim Agent Ready if tool calling is unavailable.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/capability-doctor.test.ts :: reports AGENT_READY only when tool calling actually worked",
+            "tests/unit/capability-doctor.test.ts :: reports CHAT_ONLY when the model answers with text instead of calling the probe"
+          ]
+        },
+        {
+          "id": "P-040-C3",
+          "specRef": "§14",
+          "requirement": "A measurement is scoped to the account and model it was taken on.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/provider-switching-state.test.ts :: drops the timestamp that said when the measurement was made",
+            "tests/security/provider-switching-state.test.ts :: recognises a switch, and recognises a re-selection as not one"
+          ]
+        },
+        {
+          "id": "P-040-C4",
+          "specRef": "§14",
+          "requirement": "No credential material appears in a report.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/capability-doctor.test.ts :: never puts credential material in a report"
+          ]
+        },
+        {
+          "id": "P-040-C5",
+          "specRef": "§14",
+          "requirement": "An invalidation is recorded.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/provider-switching-state.test.ts :: records the invalidation in the trail",
+            "tests/security/provider-switching-state.test.ts :: is the function the route actually calls"
+          ]
+        }
+      ]
     }
   }
 }

@@ -222,7 +222,7 @@ stricter standard.
 
 ### The clause gate, and the two rows it moved
 
-`parity-evidence.json` carries a **clause inventory** for fifteen of the forty capabilities — 120 clauses at the time of writing — and
+`parity-evidence.json` carries a **clause inventory for all forty capabilities** — 256 clauses — and
 and `scripts/check-parity.mjs` refuses a PASS whose mandatory clauses are not
 evidenced. Clause evidence names a _test_, not a file — `file :: exact title` —
 because citing a whole file is exactly the move that let P-019 read PASS while
@@ -245,6 +245,31 @@ Nothing was cited to make those rows keep their PASS, which was the point. Eight
 of §14's nine checks and ten of §10's eleven tools are evidenced clause by
 clause; the two that are not now say so in the matrix rather than only in an
 audit report.
+
+### The inventory is complete, and what that does and does not mean
+
+Every one of the forty capabilities now has a clause inventory: 256 clauses,
+each naming the specification section it comes from and, where it is VERIFIED, a
+specific test by title. The check refuses a PASS whose mandatory clauses are not
+evidenced, so from here a row cannot quietly drift into claiming more than it has.
+
+What it changed, and what it did not. Thirteen rows moved as a direct result —
+most of them because writing the clauses out showed the row was PARTIAL for §84
+condition 3, which is unmet repository-wide and which every PASS row already
+carries, rather than for an unmet mandatory clause. Two rows moved because
+something was actually built. Nothing moved because a standard was relaxed, and
+the two NOT-STARTED rows stayed exactly where they were: P-025 and P-026 now
+carry fifteen `EVIDENCE_MISSING` clauses between them, which is the honest
+reading of "not started" rather than a blank.
+
+It also caught five citations of mine that named a test which does not exist.
+Every one was a title I half-remembered rather than a real gap in coverage —
+which is the finding: the evidence was there and my recall of its wording was
+not, and a broad file citation would have hidden that completely.
+
+What it is **not** is parity certification. §84 condition 3 requires manual
+acceptance, none of which has been executed, and the six clauses below are
+waiting on a person, a credential or a service.
 
 ### What is waiting on somebody else, and where to see it
 
