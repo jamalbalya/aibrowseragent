@@ -59,9 +59,120 @@
       "integration": ["tests/integration/agent-runtime.test.ts"],
       "security": [
         "tests/security/secret-redaction.test.ts",
-        "tests/security/advanced-forms-security.test.ts"
+        "tests/security/advanced-forms-security.test.ts",
+        "tests/security/field-sensitivity.test.ts"
       ],
-      "e2e": ["tests/e2e/agent-task.spec.ts", "tests/e2e/advanced-forms.spec.ts"]
+      "e2e": ["tests/e2e/agent-task.spec.ts", "tests/e2e/advanced-forms.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-006-C1",
+          "specRef": "§5.2",
+          "requirement": "type",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/browser-tools.test.ts :: reports only the character count, never the typed text",
+            "tests/unit/semantic-tree.test.ts :: uses an associated label for a form control"
+          ]
+        },
+        {
+          "id": "P-006-C2",
+          "specRef": "§5.2",
+          "requirement": "select",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/advanced-form-controls.test.ts :: matches by visible label, and case-insensitively",
+            "tests/unit/advanced-form-controls.test.ts :: refuses an option that does not exist, listing what does"
+          ]
+        },
+        {
+          "id": "P-006-C3",
+          "specRef": "§5.2",
+          "requirement": "checkbox",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": ["tests/e2e/agent-task.spec.ts :: sets checkboxes and radios on a real form"]
+        },
+        {
+          "id": "P-006-C4",
+          "specRef": "§5.2",
+          "requirement": "radio",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Settable but not clearable: a radio group changes by selecting a different option, which is what the control does.",
+          "evidence": ["tests/e2e/agent-task.spec.ts :: sets checkboxes and radios on a real form"]
+        },
+        {
+          "id": "P-006-C5",
+          "specRef": "§5.2",
+          "requirement": "forms",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Submission is a page action, and submitting raises the risk of the write that causes it.",
+          "evidence": [
+            "tests/unit/browser-tools.test.ts :: escalates risk when it also submits a form"
+          ]
+        },
+        {
+          "id": "P-006-C6",
+          "specRef": "§5.2",
+          "requirement": "Structured input types beyond plain text.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Date, time, datetime-local, month, week, colour, range and number have their own tool because they are not typed into; a multi-select has its own because it carries a set. A value is validated against its type and the bounds the page declared, assigned, then read back — a browser rejects a value it cannot parse by silently clearing the field, and 2026-02-30 is well-formed and is not a date.",
+          "evidence": [
+            "tests/unit/advanced-form-controls.test.ts :: covers every type the page model advertises",
+            "tests/unit/advanced-form-controls.test.ts :: accepts the boundary values themselves",
+            "tests/unit/advanced-form-controls.test.ts :: leaves the control untouched when it refuses",
+            "tests/unit/advanced-form-controls.test.ts :: selects several options by value"
+          ]
+        },
+        {
+          "id": "P-006-C7",
+          "specRef": "§5.2",
+          "requirement": "A control the page marked read-only or disabled is not written to.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/advanced-form-controls.test.ts :: refuses a read-only control",
+            "tests/unit/advanced-form-controls.test.ts :: refuses a disabled control"
+          ]
+        },
+        {
+          "id": "P-006-C8",
+          "specRef": "§29",
+          "requirement": "A sensitive field is not filled in by the agent.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/advanced-form-controls.test.ts :: refuses a password field even though it holds text",
+            "tests/unit/semantic-tree.test.ts :: never includes a password field value in the page model",
+            "tests/security/field-sensitivity.test.ts :: 04 a password is a password by type, by token and by name",
+            "tests/security/field-sensitivity.test.ts :: 06 payment fields are recognised by their standard tokens and by name"
+          ]
+        },
+        {
+          "id": "P-006-C9",
+          "specRef": "§5.2",
+          "requirement": "File inputs.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Met outside the form tools on purpose, through files.select and browser.attach_file — choosing a file and sending it are two separate decisions, and only the second is egress. See P-010.",
+          "evidence": [
+            "tests/unit/file-input.test.ts :: reports a file input as its own role, not as a textbox",
+            "tests/e2e/file-transfer.spec.ts :: a chosen file reaches a real file input and the page’s own listener sees it"
+          ]
+        },
+        {
+          "id": "P-006-C10",
+          "specRef": "§5.2",
+          "requirement": "Field classification inside a shadow root or a cross-origin subframe.",
+          "mandatory": false,
+          "status": "PARTIAL",
+          "note": "Recorded as non-mandatory because §5.2 does not name it, and stated rather than hidden: neither is walked by the page model. It bounds what the agent can do as much as what it can see — an element it cannot find is an element it cannot write to — and the classifier fails closed by reporting UNKNOWN, which costs a confirmation rather than running silently."
+        }
+      ]
     },
     "P-007": {
       "unit": ["tests/unit/interaction-engine.test.ts", "tests/unit/browser-tools.test.ts"],
@@ -105,7 +216,82 @@
       "unit": ["tests/unit/file-model.test.ts"],
       "integration": ["tests/integration/file-workflow.test.ts"],
       "security": ["tests/security/file-transfer.test.ts"],
-      "e2e": ["tests/e2e/file-transfer.spec.ts"]
+      "e2e": ["tests/e2e/file-transfer.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-011-C1",
+          "specRef": "§5.2",
+          "requirement": "download",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/download-granted.spec.ts :: an approved download writes the real bytes to disk and records one allowed event"
+          ]
+        },
+        {
+          "id": "P-011-C2",
+          "specRef": "§7",
+          "requirement": "The downloads permission is optional and is not used before it is granted.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/file-transfer.spec.ts :: downloading is refused until the optional permission is granted",
+            "tests/e2e/download-granted.spec.ts :: the downloads permission reads as granted through the extension’s own port"
+          ]
+        },
+        {
+          "id": "P-011-C3",
+          "specRef": "§28",
+          "requirement": "A download always confirms, and a standing site grant cannot cover it.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/download-granted.spec.ts :: denying the confirmation leaves nothing on disk",
+            "tests/e2e/download-granted.spec.ts :: a standing site grant at the highest grantable risk still does not cover a download"
+          ]
+        },
+        {
+          "id": "P-011-C4",
+          "specRef": "§29",
+          "requirement": "A dangerous filename or file kind is refused.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/download-granted.spec.ts :: a refused filename is still refused once the permission is granted",
+            "tests/e2e/file-transfer.spec.ts :: Chrome itself refuses a traversal filename, and the extension never sends one"
+          ]
+        },
+        {
+          "id": "P-011-C5",
+          "specRef": "§31",
+          "requirement": "The origin that actually served the file is what gets recorded.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "A redirect means the requested origin and the serving origin differ, and the one that matters is the one that answered.",
+          "evidence": [
+            "tests/e2e/download-granted.spec.ts :: a redirected download records the origin that actually served it"
+          ]
+        },
+        {
+          "id": "P-011-C6",
+          "specRef": "§55",
+          "requirement": "A download survives service-worker eviction.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/download-granted.spec.ts :: the granted permission and the download path both survive worker eviction"
+          ]
+        },
+        {
+          "id": "P-011-C7",
+          "specRef": "§91",
+          "requirement": "Granting the optional permission through Chrome’s own dialog.",
+          "mandatory": true,
+          "status": "MANUAL_REQUIRED",
+          "note": "Chrome raises the grant dialog itself: browser chrome with no frame, no exposed accessibility tree and no CDP domain behind it. A Playwright click does supply a real user activation and Chrome does accept the permissions.request made from it — measured, not assumed — so what is unreachable is the dialog and nothing else. Written up as §91 procedure D-3-1 and classified BLOCKED — HUMAN/ENVIRONMENT. Everything downstream of the grant runs end to end against dist-downloads/, the shipped bundle with downloads declared required rather than optional.",
+          "acceptance": "§91 procedure D-3-1 — grant the optional downloads permission through Chrome’s own dialog, on a real profile, and record the result."
+        }
+      ]
     },
     "P-012": {
       "unit": ["tests/unit/tab-tools.test.ts"],

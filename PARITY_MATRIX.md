@@ -165,8 +165,8 @@ capability, not necessarily a test of the capability itself.
 
 | Status          | Count  |
 | --------------- | ------ |
-| PASS            | 30     |
-| PARTIAL         | 8      |
+| PASS            | 32     |
+| PARTIAL         | 6      |
 | INTERFACES-ONLY | 0      |
 | NOT-STARTED     | 2      |
 | **Total**       | **40** |
@@ -201,6 +201,16 @@ from 29 to 30 and PARTIAL from 9 to 8 — §14's ninth minimum check now exists 
 a real probe. And loop detection (P-037) keeps its PASS with its one AMBIGUOUS
 clause resolved by an explicit decision rather than left open; the clause gate
 now reports no ambiguous clause at all.
+
+Then forms (P-006) and download (P-011) move **from PARTIAL to PASS**, taking
+PASS from 30 to 32 and PARTIAL from 8 to 6. Neither moved because anything was
+built. Both were PARTIAL on reasons that, written into a clause inventory,
+turned out not to be unmet mandatory clauses: for P-006 a set of documented
+design choices and one limit §5.2 does not require, and for P-011 a Chrome
+dialog no automation can reach, which is the manual gate every other row here
+also has open. Keeping them PARTIAL for that while thirty other rows read PASS
+with the same manual gate outstanding was an inconsistency in this file, not a
+stricter standard.
 
 ### The clause gate, and the two rows it moved
 
@@ -379,8 +389,16 @@ standing site grant still does not cover a download, and survival of worker
 eviction. Nothing is mocked and no permission state is mutated at runtime.
 
 What is left is the grant dialog itself, written up as §91 procedure D-3-1 and
-classified `BLOCKED — HUMAN/ENVIRONMENT`. The row stays PARTIAL until somebody
-executes that procedure and records the result.
+classified `BLOCKED — HUMAN/ENVIRONMENT`.
+
+That is now carried as a `MANUAL_REQUIRED` clause rather than as a PARTIAL row,
+and the row reads PASS. The reasoning is the same one that applies to every
+other row here: what cannot be reached is a Chrome dialog, not any code this
+project owns, and a gate that needs a person is condition 3 — which is unmet
+repository-wide and which a PASS on automated evidence has never claimed to
+cover. Everything downstream of the grant runs end to end. The clause gate
+prints the outstanding manual procedure on every run, so it stays visible rather
+than being absorbed into a verdict.
 
 ### P-033 Provider switching — what PASS means here
 
@@ -408,12 +426,12 @@ rather than folded into the verdict.
 | P-003 | Click                                | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-004 | Type                                 | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-005 | Navigate                             | yes  | yes  | yes         | yes      | yes | PASS        |
-| P-006 | Forms                                | yes  | yes  | yes         | yes      | yes | PARTIAL     |
+| P-006 | Forms                                | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-007 | Scroll                               | yes  | yes  | yes         | —        | yes | PASS        |
 | P-008 | Screenshot                           | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-009 | Image upload                         | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-010 | File upload                          | yes  | yes  | yes         | yes      | yes | PASS        |
-| P-011 | Download                             | yes  | yes  | yes         | yes      | yes | PARTIAL     |
+| P-011 | Download                             | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-012 | Multi-tab                            | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-013 | Tab grouping                         | yes  | yes  | —           | —        | yes | PASS        |
 | P-014 | DOM inspection                       | yes  | yes  | —           | yes      | yes | PASS        |
@@ -447,6 +465,37 @@ rather than folded into the verdict.
 ---
 
 ## Why each PARTIAL is partial
+
+### §9's canonical browser tool list, audited name by name
+
+Asked directly, because the clause inventory made it answerable: §9 lists
+sixteen minimum browser tools, and twelve exist under exactly those names.
+The other four, each checked rather than assumed:
+
+| §9 name                          | State in this build                                                                        | Verdict                      |
+| -------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------- |
+| `browser.upload`                 | `files.select` + `browser.attach_file`                                                     | present, split and renamed   |
+| `browser.get_accessibility_tree` | inside `browser.read_page`, which returns roles and accessible names by accname precedence | present, not a separate tool |
+| `browser.get_dom`                | `debugger.dom`, where §11 and §5.4 also put it                                             | present, different namespace |
+| `browser.execute_script`         | **not implemented, deliberately**                                                          | recorded divergence          |
+
+The first three are naming differences over capabilities that exist, and the
+first is a security split rather than a rename: choosing a file and sending it
+are two decisions, and only the second is egress.
+
+The fourth is a real divergence and is worth stating plainly rather than
+leaving a reader to notice the gap. §9 names `browser.execute_script` and says
+it "is a high-risk capability and must be policy-controlled". It is not
+implemented, and nothing fakes it. Arbitrary script from model output would
+make the whole tool gate bypassable — every risk classification, every
+confirmation and every egress decision is enforced at the tool boundary, and a
+tool that runs script in the page is a tool that goes around all of them. Two
+facts decided it: §5, which declares the mandatory parity baseline, does **not**
+list script execution among its browser-interaction capabilities, and §9's own
+sentence concedes the capability is high-risk. So the narrower reading is taken
+— the baseline is met without it — and the divergence is recorded here, in
+`docs/architecture.md` and in `docs/tool-architecture.md`. If it is ever added
+it needs its own threat model, not a policy flag.
 
 **P-006 Forms** — Text input, textarea, contenteditable, select-by-value,
 select-by-label, form submission and checkbox/radio all work and are tested.
@@ -512,15 +561,30 @@ documents nothing at all about read-only, disabled or invalid fields — see
 `CLAUDE_BENCHMARK.md` §8, where the per-control evidence is recorded as UNKNOWN
 rather than guessed at. A person cannot type into a read-only field.
 
-PARTIAL still, and for three narrow reasons. The §85 A–F manual acceptance
-scenarios are unexecuted, as for every row in this file. Two controls remain
-without a dedicated tool: `<input type="file">` is handled through the separate
-user-mediated path (see P-010) rather than as a form control, and a
-`<datalist>`-backed combobox is typed into like the text input it is, which
-works but is not a distinct capability. And field sensitivity is not detectable
-inside a shadow root or a cross-origin iframe — neither is walked by the page
-model, and neither is reachable by the agent either, so the limit bounds what
-the agent can do as well as what it can see.
+PASS now, and it moved without anything being built — which needs saying, or the
+change looks like a relaxed standard. Writing §5.2's form clauses out one by one
+showed that none of the three reasons this row was PARTIAL for is an unmet
+mandatory clause.
+
+The first was the §85 A–F manual acceptance scenarios, which are unexecuted for
+**every** row in this file. That is §84 condition 3, and by this file's own
+definition a PASS already means "conditions 1, 2, 4, 5 and 6 met, condition 3
+unmet repository-wide". Holding one row to it while thirty others read PASS with
+the same gap open was an inconsistency here, not a stricter bar.
+
+The second was two controls without a dedicated tool. `<input type="file">` is
+handled through `files.select` and `browser.attach_file` by design, because
+choosing a file and sending it are two decisions and only the second is egress —
+that is a documented split, not a missing capability. A `<datalist>`-backed
+combobox is typed into like the text input it is, and §5.2 does not name one.
+
+The third was field classification inside a shadow root or a cross-origin
+subframe, which remains true and is carried as a **non-mandatory** clause with
+the limit stated: §5.2 does not require it, neither tree is walked by the page
+model, and the limit bounds what the agent can do as much as what it can see —
+an element it cannot find is an element it cannot write to. The classifier fails
+closed there, reporting `UNKNOWN`, which costs a confirmation rather than
+running silently.
 
 **P-019 Notifications** — Specification §53 lists six things to notify for:
 a completed task, a required permission, a failed task, a disconnected
