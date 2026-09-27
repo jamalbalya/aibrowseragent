@@ -105,7 +105,31 @@ export class FakeBrowserAdapter implements BrowserAdapter {
     return Promise.resolve();
   }
 
-  moveTab(): Promise<void> {
+  /**
+   * Reorders within the window, and clamps like Chrome does.
+   *
+   * This was a no-op that ignored both arguments, which is fine for a fixture
+   * nothing tested and useless for one that does: a tool that never moved
+   * anything would have passed. `chrome.tabs.move` does not reject an index
+   * past the end — it puts the tab last — so that is modelled here too, because
+   * reporting the requested index instead of the real one is the failure the
+   * tool is written to avoid.
+   */
+  moveTab(tabId: number, index: number): Promise<void> {
+    const moving = this.tabs.get(tabId);
+    if (!moving) return Promise.resolve();
+
+    const window = [...this.tabs.values()]
+      .filter((tab) => tab.windowId === moving.windowId)
+      .sort((a, b) => a.index - b.index);
+
+    const without = window.filter((tab) => tab.id !== tabId);
+    const target = Math.max(0, Math.min(index, without.length));
+    without.splice(target, 0, moving);
+
+    for (const [position, tab] of without.entries()) {
+      this.tabs.set(tab.id, { ...tab, index: position });
+    }
     return Promise.resolve();
   }
 

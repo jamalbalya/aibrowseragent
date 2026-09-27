@@ -62,6 +62,25 @@ async function reachRunning(send: SendToWorker, taskId: string): Promise<string>
 }
 
 /**
+ * How long each agent turn is held open, so a pause lands mid-conversation.
+ *
+ * Counting served turns fixed *where* in the script the pause lands. It did not
+ * fix whether the task is still running when the pause arrives: with a
+ * three-turn script the remaining turns can finish inside the round trip of the
+ * `task.pause` message itself, and the pause then reports the state of a task
+ * that has already completed. That is what it did — one flake in a full
+ * two-worker run, on the cleanup test, with `COMPLETED` where `PAUSED` was
+ * expected. Holding the next turn open removes the race instead of widening a
+ * timeout: the task provably cannot reach a terminal state while a reply is
+ * outstanding. The hold expires on its own, so a resume needs no release.
+ *
+ * It also exercises the half of the pause fix that is hardest to reach
+ * otherwise — a model reply that arrives *after* the pause must not overwrite
+ * `PAUSED` — because now one always does.
+ */
+const TURN_HOLD_MS = 2500;
+
+/**
  * Waits until the model has been asked exactly this many times.
  *
  * "The task looks busy" is not a place in a script, and a pause taken on that
@@ -70,6 +89,9 @@ async function reachRunning(send: SendToWorker, taskId: string): Promise<string>
  * the provider has actually served makes the pause point a fact about the
  * conversation rather than about the clock, so a test that needs a particular
  * step to come *after* the pause can say so.
+ *
+ * Counts requests as they arrive, so a turn being *held* still counts: that is
+ * exactly the state the callers want to be in.
  */
 async function turnsServed(provider: MockProvider, count: number): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt += 1) {
@@ -98,12 +120,16 @@ async function startLongTask(
   await page.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
   await page.bringToFront();
   await connectProvider(send, provider);
+  // Set after connecting, so the doctor's probes are not slowed; they are
+  // exempt anyway, but the connection is done with before any hold applies.
+  provider.setReplyDelay(TURN_HOLD_MS);
   provider.script(script);
   const { task } = await send('task.create', { objective: 'Read the page several times.' });
   await reachRunning(send, task.id);
-  // One turn served, so the task is genuinely mid-conversation rather than
-  // merely created, and there is still a turn left for a resume to run.
-  await turnsServed(provider, 1);
+  // Two turns asked for, the second still outstanding: the task is genuinely
+  // mid-conversation, cannot finish while the caller acts on it, and still has
+  // a turn left for a resume to run.
+  await turnsServed(provider, 2);
   return task.id;
 }
 

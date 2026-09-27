@@ -71,6 +71,14 @@ export function createHarness(
     /** Supplying this exercises the real egress gate inside the registry. */
     egress?: ToolRegistryOptions['egress'];
     resolveTabUrl?: ToolRegistryOptions['resolveTabUrl'];
+    /**
+     * Which tabs the task's workspace holds.
+     *
+     * Supplied by the tab suites so a tool that takes an explicit tab id is
+     * refused one outside the workspace by the real dispatch path, rather than
+     * by a test calling `execute` directly with a hand-built context.
+     */
+    resolveWorkspaceTabs?: ToolRegistryOptions['resolveWorkspaceTabs'];
     /** The observation hook, for the workflow recorder's tests. */
     onDispatched?: ToolRegistryOptions['onDispatched'];
     /**
@@ -135,6 +143,9 @@ export function createHarness(
     loadPolicyContext,
     ...(options.egress === undefined ? {} : { egress: options.egress }),
     ...(options.resolveTabUrl === undefined ? {} : { resolveTabUrl: options.resolveTabUrl }),
+    ...(options.resolveWorkspaceTabs === undefined
+      ? {}
+      : { resolveWorkspaceTabs: options.resolveWorkspaceTabs }),
     ...(options.onDispatched === undefined ? {} : { onDispatched: options.onDispatched }),
   });
   registry.registerAll(tools);

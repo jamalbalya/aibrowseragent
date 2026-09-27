@@ -109,11 +109,16 @@
     },
     "P-012": {
       "unit": ["tests/unit/tab-tools.test.ts"],
-      "security": ["tests/security/origin-validation.test.ts"],
+      "integration": ["tests/integration/tab-management.test.ts"],
+      "security": [
+        "tests/security/origin-validation.test.ts",
+        "tests/security/site-scoped-authorization.test.ts"
+      ],
       "e2e": [
         "tests/e2e/security.spec.ts",
         "tests/e2e/file-access.spec.ts",
-        "tests/e2e/extension-load.spec.ts"
+        "tests/e2e/extension-load.spec.ts",
+        "tests/e2e/tab-order.spec.ts"
       ],
       "clauses": [
         {
@@ -131,8 +136,16 @@
           "specRef": "\u00a710",
           "requirement": "tabs.get",
           "mandatory": true,
-          "status": "PARTIAL",
-          "note": "`tabs.get_active` returns the focused tab and `tabs.list` enumerates them, but there is no get-by-id. Wave 11 finding, untouched."
+          "status": "VERIFIED",
+          "note": "Closed in Wave 14. `tabs.get` is registered by `createTabTools`, which is what the service worker installs, so the model is offered it in its catalogue; it answers for the id it was given rather than the focused tab, withholds `groupId` as `tabs.list` does, and refuses an id the workspace does not hold.",
+          "evidence": [
+            "tests/unit/tab-tools.test.ts :: returns the named tab rather than the active one",
+            "tests/unit/tab-tools.test.ts :: returns the position a move needs, and withholds the group id",
+            "tests/unit/tab-tools.test.ts :: reports a tab id that never existed",
+            "tests/unit/tab-tools.test.ts :: refuses a tab outside the task\u2019s workspace",
+            "tests/integration/tab-management.test.ts :: gives the model the tab it asked about, not the active one",
+            "tests/e2e/tab-order.spec.ts :: tabs.get answers for the id it was given, and refuses one that is gone"
+          ]
         },
         {
           "id": "P-012-C3",
@@ -181,8 +194,16 @@
           "specRef": "\u00a710",
           "requirement": "tabs.move",
           "mandatory": true,
-          "status": "EVIDENCE_MISSING",
-          "note": "No tool exposes it. `BrowserAdapter.moveTab` is declared, implemented in the Chrome adapter and called by nothing in production. Wave 11 finding, untouched in Wave 13."
+          "status": "VERIFIED",
+          "note": "Closed in Wave 14. `BrowserAdapter.moveTab` existed and was called by nothing; a tool now wraps it, which is where a capability is declared in this architecture \u2014 schema, risk, site scope and registration. Scope is a tab's own window: the adapter passes no `windowId` and \u00a710 does not say which reading it means, so the narrower one is implemented rather than the wider one invented. The reported index is read back from the browser because `chrome.tabs.move` clamps instead of failing.",
+          "evidence": [
+            "tests/unit/tab-tools.test.ts :: actually reorders the window",
+            "tests/unit/tab-tools.test.ts :: reports the position Chrome gave the tab, not the one asked for",
+            "tests/unit/tab-tools.test.ts :: refuses a tab outside the task\u2019s workspace, and does not move it",
+            "tests/integration/tab-management.test.ts :: reads a tab\u2019s position and then moves it, changing the real order",
+            "tests/e2e/tab-order.spec.ts :: the model reorders real tabs and is told the position Chrome gave them",
+            "tests/e2e/tab-order.spec.ts :: an index past the end is reported as the position Chrome clamped it to"
+          ]
         },
         {
           "id": "P-012-C9",

@@ -197,6 +197,26 @@ Same design as this build's browser workspace, arrived at independently, and
 one of the closest behavioural matches in the file. Drag-in and drag-out are
 covered here by real-Chromium tests.
 
+**Per-tab operations: UNKNOWN, and checked.** Nothing published describes the
+benchmark's tab handling at the level of individual operations. There is no
+documented counterpart for _reordering_ a tab (this build's `tabs.move`) and
+none for _describing one named tab_ (`tabs.get`). What the published material
+says is that grouped tabs can be viewed and interacted with collectively; it
+does not say whether the benchmark can reorder a tab, whether it can address
+one tab by identity, or whether it exposes any per-tab operation to its model
+at all.
+
+So this is recorded as UNKNOWN rather than as parity or as a divergence. Both
+tools were built because **specification §10 lists them**, which is this
+project's own requirement, and §10 is met whatever the benchmark does. No
+inference runs the other way either: the absence of documentation is not
+evidence that the benchmark lacks the capability. A tab-group UI that lets a
+person drag tabs around has reordering by definition — what is unknown is
+whether its _agent_ can do it.
+
+Resolving it needs E0 — direct observation of the extension — which nobody on
+this project holds. It is listed under "What would resolve the unknowns".
+
 ## 11. Notifications (E1)
 
 _"Enable notifications to receive alerts when Claude requires permission or
@@ -448,7 +468,10 @@ only and not for behaviour.
 Eight of the seventeen sections above still rest on documentation alone, and
 three questions have no published answer in any surface: what a scheduled run
 does when it needs approval, what happens to an occurrence missed while the
-browser was closed, and whether the browser must be open at all (Gap-2).
+browser was closed, and whether the browser must be open at all (Gap-2). A
+fourth joined them with §10: whether the benchmark exposes any _per-tab_
+operation to its model — reordering a tab, or addressing one tab by identity —
+as against the collective view of a group that the documentation describes.
 
 Installing the extension and observing it. One session settles Gap-2 entirely,
 replaces the E4 permission list with the shipped manifest, and enumerates the

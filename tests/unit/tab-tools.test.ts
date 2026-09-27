@@ -187,3 +187,185 @@ describe('tabs.wait_for_navigation', () => {
     expect(result.envelope.retryable).toBe(true);
   });
 });
+
+describe('tabs.get', () => {
+  it('returns the named tab rather than the active one', async () => {
+    const result = await dispatch('tabs.get', { tabId: 2 });
+    const data = result.envelope.result as Record<string, unknown>;
+
+    // The bug this guards against is answering with the focused tab whatever
+    // was asked for, which would look right whenever the two coincide.
+    expect(data.tabId).toBe(2);
+    expect(data.url).toBe('https://docs.test/guide');
+    expect(data.title).toBe('Docs');
+    expect(data.active).toBe(false);
+    expect(data.index).toBe(1);
+  });
+
+  it('returns the position a move needs, and withholds the group id', async () => {
+    const result = await dispatch('tabs.get', { tabId: 1 });
+
+    expect(Object.keys(result.envelope.result as object).sort()).toEqual([
+      'active',
+      'automatable',
+      'index',
+      'tabId',
+      'title',
+      'url',
+      'windowId',
+    ]);
+  });
+
+  it('flags a tab the agent cannot drive', async () => {
+    adapter.addTab({ id: 3, url: 'chrome://settings', title: 'Settings' });
+    const result = await dispatch('tabs.get', { tabId: 3 });
+    expect((result.envelope.result as { automatable: boolean }).automatable).toBe(false);
+  });
+
+  it('reports a tab id that never existed', async () => {
+    const result = await dispatch('tabs.get', { tabId: 999 });
+    expect(result.envelope.error?.code).toBe('TAB_NOT_FOUND');
+    expect(result.envelope.retryable).toBe(false);
+  });
+
+  it('reports a tab that has since been closed', async () => {
+    await dispatch('tabs.close', { tabId: 2 });
+    const result = await dispatch('tabs.get', { tabId: 2 });
+    // Not an empty answer the model could read as "no title, no URL".
+    expect(result.envelope.error?.code).toBe('TAB_NOT_FOUND');
+  });
+
+  it('rejects a missing tab id at the schema', async () => {
+    const result = await dispatch('tabs.get', {});
+    expect(result.envelope.error?.code).toBe('INVALID_ARGUMENT');
+  });
+
+  it('is read-only and runs without a prompt', async () => {
+    const result = await dispatch('tabs.get', { tabId: 1 });
+    expect(result.risk).toBe('R0');
+    expect(prompter.seen).toHaveLength(0);
+  });
+
+  it('refuses a tab outside the task’s workspace', async () => {
+    harness = createHarness(createTabTools({ adapter, ownership }), {
+      prompter,
+      resolveWorkspaceTabs: () => Promise.resolve([1]),
+    });
+
+    // Answering for any id would leak the tabs tabs.list was narrowed to hide,
+    // one tab at a time.
+    const result = await dispatch('tabs.get', { tabId: 2 });
+    expect(result.envelope.error?.code).toBe('POLICY_BLOCKED');
+    expect(result.envelope.error?.message).toContain('not part of this task\u2019s workspace');
+  });
+
+  it('leaves tabs.get_active and tabs.list answering as they did', async () => {
+    const active = await dispatch('tabs.get_active', {});
+    expect((active.envelope.result as { tabId: number }).tabId).toBe(1);
+
+    const listed = await dispatch('tabs.list', {});
+    expect((listed.envelope.result as { tabs: unknown[] }).tabs).toHaveLength(2);
+  });
+});
+
+describe('tabs.move', () => {
+  const order = () =>
+    [...adapter.tabs.values()].sort((a, b) => a.index - b.index).map((tab) => tab.id);
+
+  it('actually reorders the window', async () => {
+    const result = await dispatch('tabs.move', { tabId: 1, index: 1 });
+    const data = result.envelope.result as Record<string, unknown>;
+
+    expect(result.envelope.status).toBe('success');
+    expect(order()).toEqual([2, 1]);
+    expect(data.fromIndex).toBe(0);
+    expect(data.index).toBe(1);
+    expect(data.clamped).toBe(false);
+  });
+
+  it('moves a tab to the front of a longer window', async () => {
+    adapter.addTab({ id: 3, url: 'https://third.test/' });
+    adapter.addTab({ id: 4, url: 'https://fourth.test/' });
+
+    await dispatch('tabs.move', { tabId: 4, index: 0 });
+
+    expect(order()).toEqual([4, 1, 2, 3]);
+    expect(adapter.tabs.get(1)?.index).toBe(1);
+  });
+
+  it('reports the position Chrome gave the tab, not the one asked for', async () => {
+    const result = await dispatch('tabs.move', { tabId: 1, index: 99 });
+    const data = result.envelope.result as Record<string, unknown>;
+
+    // chrome.tabs.move clamps instead of failing, so echoing the request would
+    // be a success report for a move that did not happen as asked.
+    expect(data.requestedIndex).toBe(99);
+    expect(data.index).toBe(1);
+    expect(data.clamped).toBe(true);
+    expect(order()).toEqual([2, 1]);
+  });
+
+  it('accepts a move that changes nothing', async () => {
+    const result = await dispatch('tabs.move', { tabId: 1, index: 0 });
+    const data = result.envelope.result as Record<string, unknown>;
+
+    expect(data.fromIndex).toBe(0);
+    expect(data.index).toBe(0);
+    expect(data.clamped).toBe(false);
+    expect(order()).toEqual([1, 2]);
+  });
+
+  it('reports a tab id that does not exist', async () => {
+    const result = await dispatch('tabs.move', { tabId: 999, index: 0 });
+    expect(result.envelope.error?.code).toBe('TAB_NOT_FOUND');
+    expect(order()).toEqual([1, 2]);
+  });
+
+  it('rejects a negative index at the schema', async () => {
+    const result = await dispatch('tabs.move', { tabId: 1, index: -1 });
+    expect(result.envelope.error?.code).toBe('INVALID_ARGUMENT');
+    expect(order()).toEqual([1, 2]);
+  });
+
+  it('rejects a fractional index at the schema', async () => {
+    const result = await dispatch('tabs.move', { tabId: 1, index: 1.5 });
+    expect(result.envelope.error?.code).toBe('INVALID_ARGUMENT');
+  });
+
+  it('rejects a missing index at the schema', async () => {
+    const result = await dispatch('tabs.move', { tabId: 1 });
+    expect(result.envelope.error?.code).toBe('INVALID_ARGUMENT');
+  });
+
+  it('refuses a tab outside the task’s workspace, and does not move it', async () => {
+    harness = createHarness(createTabTools({ adapter, ownership }), {
+      prompter,
+      resolveWorkspaceTabs: () => Promise.resolve([1]),
+    });
+
+    const result = await dispatch('tabs.move', { tabId: 2, index: 0 });
+
+    expect(result.envelope.error?.code).toBe('POLICY_BLOCKED');
+    expect(result.envelope.error?.message).toContain('not part of this task\u2019s workspace');
+    expect(order()).toEqual([1, 2]);
+  });
+
+  it('is a low-risk change that auto-approves without a prompt', async () => {
+    const result = await dispatch('tabs.move', { tabId: 1, index: 1 });
+    // R1 sits with tabs.activate and tabs.reload: visible, reversible,
+    // destroys nothing. A confirmation here would teach reflexive approval.
+    expect(result.risk).toBe('R1');
+    expect(prompter.seen).toHaveLength(0);
+  });
+
+  it('does not move a tab when the user declines in manual mode', async () => {
+    harness.setMode('manual');
+    prompter.setResponse({ kind: 'deny' });
+
+    const result = await dispatch('tabs.move', { tabId: 1, index: 1 });
+
+    expect(result.envelope.error?.code).toBe('PERMISSION_DENIED');
+    expect(prompter.seen).toHaveLength(1);
+    expect(order()).toEqual([1, 2]);
+  });
+});

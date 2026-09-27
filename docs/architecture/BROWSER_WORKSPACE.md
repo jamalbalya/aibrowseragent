@@ -669,3 +669,76 @@ boundary exists before anything invites the user to rely on it.
 
 These three confirm §14 (the guard's ambiguous cases), §8 (detach semantics)
 and §9 (multiple workspaces). Implementation proceeds per §22.
+
+---
+
+## 24. Two guards, not one: the ambient tab and an argument tab
+
+Added when `tabs.get` and `tabs.move` were built (§10 of the specification).
+Both take a tab id as an **argument**, which turns out to be a different
+question from the one the central guard answers, and the difference was not
+written down anywhere before.
+
+### What the central check actually covers
+
+`ToolRegistry.dispatch` calls `checkWorkspaceMember(taskId, invocation.tabId)`
+before anything is classified or authorised (`tool-registry.ts`, stage 1a).
+`invocation.tabId` comes from `AgentRuntime`, which sets it once per run from
+`input.tabId` — **the tab the task is standing on**, the same value for every
+call in that run. It is not read from the tool's arguments, and nothing
+downstream rewrites it per call.
+
+That is the right guard for the `browser.*` tools, because none of them takes a
+`tabId` argument at all: `requireTab()` resolves `context.tabId`, falling back
+to `activeWorkspaceTab`. For those tools the ambient tab is the only tab there
+is, so one check covers them completely.
+
+### What it does not cover
+
+The tools whose schema accepts a `tabId` — `tabs.get`, `tabs.move`,
+`tabs.close`, `tabs.activate`, `tabs.reload`, `tabs.group`, `tabs.ungroup`,
+`tabs.wait_for_navigation` — can be handed an id that has nothing to do with
+the ambient tab. Stage 1a will happily admit the run on its ambient tab and
+then the tool acts on the argument.
+
+`tabs.get` and `tabs.move` therefore ask for themselves, via `workspaceTab()`
+in `tab-tools.ts`: not a member, `POLICY_BLOCKED`, before the adapter is
+touched. `tabs.get` is the reason this matters rather than a style preference.
+`tabs.list` was narrowed to the workspace because telling the model every tab
+the user had open is an information leak in its own right — §2.16 of this
+document records that there was no scope boundary at all before — and a
+`tabs.get` that answered for any id would hand that back one tab at a time.
+
+### The state of the other six — a finding, not a fix
+
+Recorded rather than changed, because it is pre-existing and outside the scope
+of the wave that found it:
+
+- **`tabs.close`** checks only that the argument tab exists. It is not left
+  unguarded in practice: `classify` escalates to R3 for any tab this task did
+  not open, and R3 confirms in every permission mode, so a tab outside the
+  workspace cannot be closed without the user seeing the prompt. That is a
+  different control from a scope check, and it is a real one.
+- **`tabs.activate`, `tabs.reload`, `tabs.group`, `tabs.ungroup`,
+  `tabs.wait_for_navigation`** check existence only, at R1, with no escalation.
+  In `auto` mode R1 is approved without a prompt.
+
+None of these is a privilege escalation — every one of them is an operation the
+extension's own permissions already allow — but `tabs.activate` on an arbitrary
+id does move the user's focus to a tab in another workspace, and `tabs.reload`
+discards that tab's unsaved page state. The consistent fix is the same
+`workspaceTab()` call. It is not applied here because changing the risk surface
+of six shipped tools is its own change, with its own tests and its own
+acceptance evidence.
+
+### How this was established
+
+By mutation, not by reading. Deleting the `workspaceTab()` guard was caught by
+the unit suite and **not** by the first version of the real-Chromium test,
+which passed with the guard gone. The reason was that the test opened the
+out-of-workspace tab last, so that tab had focus, so it became the run's
+ambient tab and stage 1a refused every call before any tool ran — the test was
+green for a reason that had nothing to do with what it claimed to check.
+Bringing a workspace tab back to the front before starting the task
+(`tab-order.spec.ts`) makes the E2E discriminate the mutant. The two guards
+being genuinely distinct is what that experiment measured.

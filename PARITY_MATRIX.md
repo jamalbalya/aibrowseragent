@@ -165,8 +165,8 @@ capability, not necessarily a test of the capability itself.
 
 | Status          | Count  |
 | --------------- | ------ |
-| PASS            | 27     |
-| PARTIAL         | 11     |
+| PASS            | 28     |
+| PARTIAL         | 10     |
 | INTERFACES-ONLY | 0      |
 | NOT-STARTED     | 2      |
 | **Total**       | **40** |
@@ -185,6 +185,12 @@ still not PASS, because the capability is measured against specification §53
 and §53 names six things to notify for. Two were implemented. The reason is
 below.
 
+Movement since: multi-tab (P-012) moves **from PARTIAL back to PASS**, taking
+PASS from 27 to 28 and PARTIAL from 11 to 10. Both §10 clauses the clause gate
+reported are now built rather than argued away — `tabs.move` and `tabs.get` by
+id — and the row also gains its integration column. What that PASS means is
+unchanged: §84 condition 3 is still unmet repository-wide, here as everywhere.
+
 ### The clause gate, and the two rows it moved
 
 `parity-evidence.json` now carries a **clause inventory** for six capabilities,
@@ -199,7 +205,9 @@ had already established and neither of which was fixed in this wave:
 
 - **P-012 Multi-tab** → PARTIAL. §10 lists `tabs.move`, and no tool exposes it;
   `BrowserAdapter.moveTab` is implemented and called by nothing. §10's `tabs.get`
-  has no get-by-id either.
+  has no get-by-id either. _(Both built in the following wave; see
+  P-012 below. The finding is left as written because what the gate reported
+  when it first ran is the thing worth keeping.)_
 - **P-035 Capability doctor** → PARTIAL. §14 lists context capacity among the
   minimum checks and requires that every connected model be tested; the context
   window is copied from an advertised table and never measured.
@@ -395,7 +403,7 @@ rather than folded into the verdict.
 | P-009 | Image upload                         | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-010 | File upload                          | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-011 | Download                             | yes  | yes  | yes         | yes      | yes | PARTIAL     |
-| P-012 | Multi-tab                            | yes  | yes  | —           | yes      | yes | PARTIAL     |
+| P-012 | Multi-tab                            | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-013 | Tab grouping                         | yes  | yes  | —           | —        | yes | PASS        |
 | P-014 | DOM inspection                       | yes  | yes  | —           | yes      | yes | PASS        |
 | P-015 | Console inspection                   | yes  | yes  | —           | yes      | yes | PASS        |
@@ -552,23 +560,31 @@ keep. The row stays PARTIAL until a runtime provider-disconnection event
 exists to hang it on. Integration coverage is also absent, and §84 condition 3
 is unmet repository-wide as everywhere else.
 
-**P-012 Multi-tab** — Tab discovery, creation, closing, activation, reload,
-grouping, ungrouping, navigation waiting and per-task ownership all work and are
-tested, and the workspace model that binds tabs to a task is the closest
-behavioural match in this project to the benchmark's own tab group.
+**P-012 Multi-tab** — All eleven of §10's tools now exist, are registered by
+`createTabTools`, and are evidenced clause by clause. The workspace model that
+binds tabs to a task remains the closest behavioural match in this project to
+the benchmark's own tab group.
 
-PARTIAL for two §10 clauses, both surfaced by the clause gate rather than by a
-reading of the code. `tabs.move` has no tool at all: `BrowserAdapter.moveTab` is
-declared on the interface, implemented in the Chrome adapter, stubbed in the test
-fake, and called by nothing in production — an implementation with no caller,
-which is the mirror image of the orphan audit types this project removed in an
-earlier wave. And `tabs.get` has no get-by-id; `tabs.get_active` returns the
-focused tab and `tabs.list` enumerates them, which covers most of what the
-capability is for and is not what §10 asks for.
+The two clauses that made this row PARTIAL were closed by building them, which
+is worth a paragraph because of what the gap turned out to be. `tabs.move` was
+not missing an implementation: `BrowserAdapter.moveTab` was declared on the
+interface and implemented against `chrome.tabs.move`. It was missing a _tool_ —
+and in this architecture the tool is where a capability is declared, because
+that is what carries the schema, the risk level, the site-authorization scope
+and the registry entry the model's catalogue is built from. An adapter method
+with no tool is unreachable by the agent no matter how correct it is. `tabs.get`
+was the same shape over the existing `adapter.getTab`.
 
-Neither is blocked externally. Both resolve by building, and neither was built
-in the wave that exposed them, because a wave that fixes what its own new gate
-reports is a wave whose gate nobody can check.
+Two things were settled rather than assumed while building them. **Scope:**
+`chrome.tabs.move` accepts a `windowId` and can move a tab between windows; the
+adapter passes none, and §10 says only `tabs.move`. The narrower same-window
+reading is implemented and stated in the tool's own description, rather than the
+wider one being invented. **The reported position:** `chrome.tabs.move` clamps
+an index past the end instead of failing, so the tool reads the tab back and
+reports where it actually landed, with the requested index alongside it. Echoing
+the request would have been the fake success §76 forbids — and the test fake had
+the same hole, a `moveTab` that ignored both its arguments, so it was rewritten
+to reorder and clamp before anything was tested against it.
 
 **P-035 Capability doctor** — Eight of §14's nine minimum checks are real probes
 against the connected model: authentication, reachability, model availability,

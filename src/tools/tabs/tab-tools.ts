@@ -66,6 +66,36 @@ export async function activeWorkspaceTab(
   return await adapter.getTab(first);
 }
 
+/**
+ * Refuses a tab id the workspace does not hold.
+ *
+ * The registry has a central workspace check, and it guards the **run's ambient
+ * tab** — the one the task is standing on — not a tab id a tool was handed as an
+ * argument. So a tool that takes an explicit id has to ask for itself, and
+ * `tabs.list` explains why it matters: narrowing the listing to the workspace
+ * was done because telling the model every tab the user had open was an
+ * information leak. A `tabs.get` that answered for any id would hand back the
+ * same thing one tab at a time.
+ *
+ * `undefined` means no narrowing is configured, which happens only in unit
+ * tests; an empty array is a genuinely empty workspace and admits nothing.
+ */
+async function workspaceTab(
+  adapter: BrowserAdapter,
+  context: { readonly workspaceTabIds?: readonly number[] },
+  tabId: number,
+): Promise<TabInfo> {
+  if (context.workspaceTabIds !== undefined && !context.workspaceTabIds.includes(tabId)) {
+    throw new ToolError('POLICY_BLOCKED', `Tab ${tabId} is not part of this workspace.`, {
+      userMessage: 'That tab is not part of this task\u2019s workspace.',
+      retryable: false,
+    });
+  }
+  const tab = await adapter.getTab(tabId);
+  if (!tab) throw new ToolError('TAB_NOT_FOUND', `Tab ${tabId} no longer exists.`);
+  return tab;
+}
+
 export function createListTabsTool({ adapter }: TabToolDeps): AgentTool<typeof emptyInput> {
   return {
     name: 'tabs.list',
@@ -266,6 +296,123 @@ export function createActivateTabTool({ adapter }: TabToolDeps): AgentTool<typeo
   };
 }
 
+/**
+ * `tabs.get` — one named tab, rather than the active one or all of them.
+ *
+ * Specification §10 lists `tabs.get` and `tabs.get_active` as separate tools,
+ * and until now only the second existed: asking about a specific tab meant
+ * listing the workspace and searching the result. That works and is not what
+ * §10 asks for.
+ *
+ * It answers only for a tab the workspace holds, and it returns the same fields
+ * `tabs.list` does plus the tab's position, which is what makes `tabs.move`
+ * usable. `groupId` is withheld, exactly as `tabs.list` withholds it: the
+ * workspace's group is a runtime identifier the model has no business holding.
+ */
+export function createGetTabTool({ adapter }: TabToolDeps): AgentTool<typeof tabIdInput> {
+  return {
+    name: 'tabs.get',
+    version: '1.0.0',
+    description: 'Get one tab by id, with its title, URL and position.',
+    inputSchema: tabIdInput,
+    risk: 'R0',
+    executionMode: 'immediate',
+    siteAuthorization: 'none',
+    sideEffects: [],
+    timeoutMs: 10_000,
+    idempotent: true,
+    classify: (input) => ({ summary: `Look up tab ${input.tabId}.` }),
+
+    async execute(input, context): Promise<ToolExecutionResult> {
+      const tab = await workspaceTab(adapter, context, input.tabId);
+      return {
+        success: true,
+        data: {
+          tabId: tab.id,
+          title: tab.title,
+          url: tab.url,
+          active: tab.active,
+          windowId: tab.windowId,
+          index: tab.index,
+          automatable: checkNavigable(tab.url).allowed,
+        },
+      };
+    },
+  };
+}
+
+const moveTabInput = z.object({
+  tabId: z.number().int().describe('Tab id from tabs.list.'),
+  index: z
+    .number()
+    .int()
+    .min(0)
+    .describe('Position to move the tab to, counting from 0 at the left of its window.'),
+});
+
+/**
+ * `tabs.move` — reorder a tab within its own window.
+ *
+ * ## Scope, stated rather than assumed
+ *
+ * Same window only. `chrome.tabs.move` can take a `windowId` and move a tab
+ * between windows; the adapter this project already has does not pass one, and
+ * §10 lists `tabs.move` without saying which it means. Moving a tab to another
+ * window would also take it out of the window its workspace group lives in,
+ * which is a workspace question rather than a tab question. So the narrower
+ * reading is implemented and the wider one is left alone rather than invented.
+ *
+ * ## Why the result is measured rather than echoed
+ *
+ * `chrome.tabs.move` does not fail on an index past the end of the window — it
+ * clamps to the last position. Reporting the requested index would therefore
+ * claim a move that did not happen the way it was asked for, which is the fake
+ * success §76 forbids. The tab is read back afterwards and the position it
+ * actually has is what comes out.
+ */
+export function createMoveTabTool({ adapter }: TabToolDeps): AgentTool<typeof moveTabInput> {
+  return {
+    name: 'tabs.move',
+    version: '1.0.0',
+    description:
+      'Move a tab to a different position in its own window. Cannot move a tab between windows.',
+    inputSchema: moveTabInput,
+    // R1, alongside `tabs.activate` and `tabs.reload`: it changes what the user
+    // sees and is trivially reversible, and it destroys nothing. R0 would be
+    // wrong — this is not a read — and R3 would put a confirmation in front of
+    // rearranging a tab, which teaches people to approve without looking.
+    risk: 'R1',
+    executionMode: 'immediate',
+    siteAuthorization: 'none',
+    sideEffects: ['Changes the order of the tabs in a window.'],
+    timeoutMs: 10_000,
+    idempotent: true,
+    classify: (input) => ({ summary: `Move tab ${input.tabId} to position ${input.index}.` }),
+
+    async execute(input, context): Promise<ToolExecutionResult> {
+      const before = await workspaceTab(adapter, context, input.tabId);
+      await adapter.moveTab(input.tabId, input.index);
+
+      const after = await adapter.getTab(input.tabId);
+      if (!after) {
+        throw new ToolError('TAB_NOT_FOUND', `Tab ${input.tabId} disappeared during the move.`);
+      }
+      return {
+        success: true,
+        data: {
+          tabId: after.id,
+          fromIndex: before.index,
+          // What Chrome did, not what was asked for.
+          index: after.index,
+          requestedIndex: input.index,
+          clamped: after.index !== input.index,
+          windowId: after.windowId,
+        },
+      };
+    },
+  };
+}
+
 export function createReloadTabTool({ adapter }: TabToolDeps): AgentTool<typeof tabIdInput> {
   return {
     name: 'tabs.reload',
@@ -379,7 +526,9 @@ export function createTabTools(deps: TabToolDeps): AgentTool[] {
   return [
     createListTabsTool(deps),
     createGetActiveTabTool(deps),
+    createGetTabTool(deps),
     createCreateTabTool(deps),
+    createMoveTabTool(deps),
     createCloseTabTool(deps),
     createActivateTabTool(deps),
     createReloadTabTool(deps),

@@ -81,6 +81,12 @@ const AUDIT: Readonly<Record<string, SiteAuthorizationScope>> = {
   'files.select': 'none',
   'tabs.list': 'none',
   'tabs.get_active': 'none',
+  // Reading one named tab, and reordering one, both act on a tab the workspace
+  // already holds rather than on a site. The tools check that membership
+  // themselves, because the registry's central check guards the run's ambient
+  // tab and not an id passed as an argument.
+  'tabs.get': 'none',
+  'tabs.move': 'none',
   'tabs.activate': 'none',
   'tabs.close': 'none',
   'tabs.reload': 'none',

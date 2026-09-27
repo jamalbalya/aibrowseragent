@@ -42,6 +42,19 @@ export interface MockProvider {
    * exercise the doctor's CHAT_ONLY path.
    */
   setToolCallingSupported(supported: boolean): void;
+  /**
+   * Holds every agent reply open for this long before answering.
+   *
+   * For the tests that have to act on a task while a turn is genuinely
+   * outstanding. "One turn has been served" does not mean the task is still
+   * running: with a short script the remaining turns can finish before a
+   * `task.pause` is even delivered, and the pause then lands on a task that
+   * already completed. A delay makes "mid-conversation" a fact rather than a
+   * hope, and it releases itself, so nothing has to be un-held afterwards.
+   *
+   * Doctor probes are exempt — they are connection setup, not agent turns.
+   */
+  setReplyDelay(ms: number): void;
   reset(): void;
   close(): Promise<void>;
 }
@@ -273,8 +286,9 @@ export async function startMockProvider(): Promise<MockProvider> {
   let cursor = 0;
   let models: string[] = ['mock-model'];
   let toolCallingSupported = true;
+  let replyDelayMs = 0;
 
-  const handle = (req: IncomingMessage, res: ServerResponse, body: string): void => {
+  const handle = async (req: IncomingMessage, res: ServerResponse, body: string): Promise<void> => {
     const path = req.url ?? '';
     let parsed: unknown = null;
     try {
@@ -332,6 +346,10 @@ export async function startMockProvider(): Promise<MockProvider> {
     if (!probe) cursor += 1;
     const reply = resolvePlaceholders(scripted, request);
 
+    if (!probe && replyDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, replyDelayMs));
+    }
+
     if (reply.kind === 'http_error') {
       res.writeHead(reply.status, { 'Content-Type': 'application/json', ...cors });
       res.end(reply.body ?? JSON.stringify({ error: { message: 'mock failure' } }));
@@ -358,7 +376,9 @@ export async function startMockProvider(): Promise<MockProvider> {
     req.on('data', (chunk) => {
       body += String(chunk);
     });
-    req.on('end', () => handle(req, res, body));
+    req.on('end', () => {
+      void handle(req, res, body);
+    });
   });
 
   // The extension's fetch keeps connections alive, and `server.close()` waits
@@ -381,11 +401,15 @@ export async function startMockProvider(): Promise<MockProvider> {
     setToolCallingSupported(supported) {
       toolCallingSupported = supported;
     },
+    setReplyDelay(ms) {
+      replyDelayMs = ms;
+    },
     reset() {
       requests.length = 0;
       replies = [];
       cursor = 0;
       toolCallingSupported = true;
+      replyDelayMs = 0;
     },
     close: () =>
       new Promise<void>((resolve) => {
