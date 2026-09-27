@@ -772,17 +772,187 @@
     "P-014": {
       "unit": ["tests/unit/browser-tools.test.ts"],
       "security": ["tests/security/debugger-allowlist.test.ts"],
-      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts", "tests/e2e/file-access.spec.ts"]
+      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts", "tests/e2e/file-access.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-014-C1",
+          "specRef": "§11",
+          "requirement": "debugger.attach / debugger.detach",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Attachment is idempotent, and a competing debugger is reported clearly rather than fought over — Chrome allows one attacher per tab, so silence would look like a broken tool.",
+          "evidence": [
+            "tests/security/debugger-allowlist.test.ts :: is idempotent",
+            "tests/security/debugger-allowlist.test.ts :: reports a competing debugger clearly",
+            "tests/security/debugger-allowlist.test.ts :: detaches every attached tab",
+            "tests/security/debugger-allowlist.test.ts :: forgets a tab that detached externally"
+          ]
+        },
+        {
+          "id": "P-014-C2",
+          "specRef": "§11",
+          "requirement": "debugger.dom",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "§9 calls this `browser.get_dom`; §11 and §5.4 both put DOM access under the debugger, which is where it is, because it needs a user-visible attachment that the semantic model does not.",
+          "evidence": [
+            "tests/unit/browser-tools.test.ts :: returns the semantic model and records DOM evidence"
+          ]
+        },
+        {
+          "id": "P-014-C3",
+          "specRef": "§11",
+          "requirement": "debugger.command",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Constrained rather than general, and this is the clause that matters: the allowlist contains no script-execution method, and **no tool accepts a CDP method name as an argument**, so the model cannot reach an un-allowlisted domain by naming it.",
+          "evidence": [
+            "tests/security/debugger-allowlist.test.ts :: sends an allowlisted method",
+            "tests/security/debugger-allowlist.test.ts :: does not expose any script-execution method on the allowlist",
+            "tests/security/debugger-allowlist.test.ts :: exposes no tool that accepts a CDP method name",
+            "tests/security/debugger-allowlist.test.ts :: refuses a command when not attached"
+          ]
+        },
+        {
+          "id": "P-014-C4",
+          "specRef": "§11",
+          "requirement": "A failed enable leaves no half-instrumented tab.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/debugger-allowlist.test.ts :: leaves no half-instrumented tab when enabling a domain fails",
+            "tests/security/debugger-allowlist.test.ts :: enables the domains it needs after attaching"
+          ]
+        },
+        {
+          "id": "P-014-C5",
+          "specRef": "§31",
+          "requirement": "A non-automatable page is not inspected.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/debugger-allowlist.test.ts :: refuses to inspect a non-automatable page"
+          ]
+        }
+      ]
     },
     "P-015": {
       "unit": ["tests/unit/browser-tools.test.ts"],
       "security": ["tests/security/debugger-allowlist.test.ts"],
-      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts", "tests/e2e/file-access.spec.ts"]
+      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts", "tests/e2e/file-access.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-015-C1",
+          "specRef": "§11",
+          "requirement": "debugger.console",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/debugger-allowlist.test.ts :: captures console output and maps levels",
+            "tests/security/debugger-allowlist.test.ts :: renders object arguments without producing [object Object]"
+          ]
+        },
+        {
+          "id": "P-015-C2",
+          "specRef": "§33",
+          "requirement": "Console output is redacted before it can reach the model.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Redacted at collection, not at read. A secret that sits in a buffer until someone asks for it is a secret in memory that a later bug can surface; redacting on the way in means there is nothing to leak.",
+          "evidence": [
+            "tests/security/debugger-allowlist.test.ts :: redacts a secret at collection time, not at read time"
+          ]
+        },
+        {
+          "id": "P-015-C3",
+          "specRef": "§30",
+          "requirement": "Console output reaches the model tagged as untrusted.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/debugger-allowlist.test.ts :: returns console output wrapped as untrusted data"
+          ]
+        },
+        {
+          "id": "P-015-C4",
+          "specRef": "§33",
+          "requirement": "The buffer is bounded so a noisy page cannot exhaust memory.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/debugger-allowlist.test.ts :: bounds the buffer so a noisy page cannot exhaust memory",
+            "tests/security/debugger-allowlist.test.ts :: removes listeners and clears buffers"
+          ]
+        }
+      ]
     },
     "P-016": {
       "unit": ["tests/unit/browser-tools.test.ts"],
-      "security": ["tests/security/debugger-allowlist.test.ts"],
-      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts"]
+      "security": [
+        "tests/security/debugger-allowlist.test.ts",
+        "tests/security/secret-redaction.test.ts"
+      ],
+      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-016-C1",
+          "specRef": "§11",
+          "requirement": "debugger.network",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/debugger-allowlist.test.ts :: records requests and merges the response",
+            "tests/security/debugger-allowlist.test.ts :: records a failure"
+          ]
+        },
+        {
+          "id": "P-016-C2",
+          "specRef": "§11",
+          "requirement": "Authorization, Cookie, bearer, API-key, CSRF and session headers are redacted.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/debugger-allowlist.test.ts :: redacts request and response headers by name"
+          ]
+        },
+        {
+          "id": "P-016-C3",
+          "specRef": "§33",
+          "requirement": "A credential in a URL is redacted too, not only one in a header.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "The case a header-name allowlist misses entirely: a token in a query string is in the URL, which gets logged, recorded as evidence and shown in a trail.",
+          "evidence": [
+            "tests/security/debugger-allowlist.test.ts :: redacts a token carried in the URL query string"
+          ]
+        },
+        {
+          "id": "P-016-C4",
+          "specRef": "§33",
+          "requirement": "Redaction does not corrupt ordinary data, and reports honestly whether it fired.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Tested adversarially in both directions, which matters because an over-eager redactor destroys the diagnostic value the capability exists for: five thousand generated ids and five thousand timestamps survive untouched while five thousand synthesised Luhn-valid card numbers are still caught.",
+          "evidence": [
+            "tests/security/secret-redaction.test.ts :: does not corrupt 5000 generated ids of every kind",
+            "tests/security/secret-redaction.test.ts :: does not corrupt 5000 epoch-millisecond timestamps",
+            "tests/security/secret-redaction.test.ts :: still redacts 5000 synthesised Luhn-valid Visa numbers",
+            "tests/security/secret-redaction.test.ts :: does not report the rule as applied when every candidate is rejected",
+            "tests/security/secret-redaction.test.ts :: does not reintroduce a secret when redacting already redacted text"
+          ]
+        },
+        {
+          "id": "P-016-C5",
+          "specRef": "§33",
+          "requirement": "The request buffer is bounded.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/debugger-allowlist.test.ts :: bounds the request buffer",
+            "tests/security/debugger-allowlist.test.ts :: ignores events for a tab it is not attached to"
+          ]
+        }
+      ]
     },
     "P-017": {
       "integration": [
