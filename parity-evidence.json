@@ -758,8 +758,15 @@
           "specRef": "§14",
           "requirement": "Check context capacity.",
           "mandatory": true,
-          "status": "PARTIAL",
-          "note": "The reported context window is copied from the advertised model table and never measured, against §14’s \"Every connected model must be tested\". Wave 11 finding, untouched."
+          "status": "VERIFIED",
+          "note": "Closed in Wave 17, and precise about what it establishes. §14 lists nine minimum checks; eight were performed and the ninth was absent from the report entirely, while the context window was copied from the advertised model table. There is now a real probe: the model must carry a substantial prompt and the provider must report its own token count for it. That is a measured **floor**, not the window, and the check's own text says so — the window is still reported as this build's advertised figure and is labelled as not measured. Finding the ceiling would mean billing the user for a diagnostic, and reading it from provider model metadata is not uniformly available. The floor catches what the table cannot: an account tier whose usable context is far below the number published for the model.",
+          "evidence": [
+            "tests/unit/capability-doctor.test.ts :: reports every check the specification lists as a minimum",
+            "tests/unit/capability-doctor.test.ts :: passes when the model carries a large prompt and counts it",
+            "tests/unit/capability-doctor.test.ts :: says the window is advertised rather than measured",
+            "tests/unit/capability-doctor.test.ts :: fails when the provider under-counts the prompt it was sent",
+            "tests/unit/capability-doctor.test.ts :: fails when the model refuses a substantial prompt"
+          ]
         },
         {
           "id": "P-035-C10",
@@ -769,7 +776,8 @@
           "status": "VERIFIED",
           "evidence": [
             "tests/unit/capability-doctor.test.ts :: reports CHAT_ONLY when the model answers with text instead of calling the probe",
-            "tests/unit/capability-doctor.test.ts :: refuses to claim AGENT_READY on unverified capabilities"
+            "tests/unit/capability-doctor.test.ts :: refuses to claim AGENT_READY on unverified capabilities",
+            "tests/unit/capability-doctor.test.ts :: does not decide agent readiness, which §14 ties to tool calling alone"
           ]
         },
         {
@@ -819,8 +827,12 @@
           "specRef": "§59",
           "requirement": "On detection, stop and recover or ask.",
           "mandatory": true,
-          "status": "AMBIGUOUS",
-          "note": "The runtime stops with a distinguishable LOOP_DETECTED error. What \"recover/ask\" obliges beyond stopping is not defined in §59, and it is not resolved in favour of the implementation here. A specification question, not an implementation gap."
+          "status": "VERIFIED",
+          "note": "Resolved in Wave 17 by an explicit product decision, recorded rather than assumed. §59's \"stop and recover/ask\" is a disjunction, and this product answers it by asking: the run halts, the reason is separately identifiable as LOOP_DETECTED rather than a generic failure, the user-facing message says the task stopped and names the choice, the error is marked recoverable, the panel shows Retry for any finished task, and §53's task-failed notification fires. Automatic recovery is deliberately NOT attempted, and that is the divergence: §58's recovery ladder is given as an \"Example:\" rather than a requirement, and retrying a call the detector has just proved unproductive would re-enter the loop the check exists to break.",
+          "evidence": [
+            "tests/integration/agent-runtime.test.ts :: stops a task that repeats the same failing call",
+            "tests/integration/agent-runtime.test.ts :: puts the next step to the user rather than dead-ending"
+          ]
         }
       ]
     },

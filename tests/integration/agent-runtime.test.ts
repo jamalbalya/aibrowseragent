@@ -342,6 +342,41 @@ describe('malformed model output', () => {
 });
 
 describe('loop detection', () => {
+  it('puts the next step to the user rather than dead-ending', async () => {
+    // §59 says "stop and recover/ask". The disjunction is answered by asking:
+    // the detector's own wording says what repeated, which the model needs, and
+    // on its own it leaves the person reading it with nothing to do. Automatic
+    // recovery is deliberately not attempted — §58's ladder is an "Example:",
+    // and retrying a call just proved unproductive re-enters the loop.
+    adapter.onContent((type) => {
+      if (type === 'content.click') return new Error('Receiving end does not exist.');
+      return { page };
+    });
+    const provider = new FakeProvider(
+      Array.from({ length: 10 }, (_, i) =>
+        toolCallResponse('browser_click', { elementId: 'e1-0' }, `tc_${i}`),
+      ),
+    );
+    const rec = recorder();
+
+    await runtimeFor(rec).run({
+      task: makeTask(),
+      provider,
+      capabilities: FULL_CAPABILITIES,
+      signal: new AbortController().signal,
+      tabId: 1,
+    });
+
+    const failure = rec.steps.find((step) => step.kind === 'error')?.error;
+    expect(failure?.code).toBe('LOOP_DETECTED');
+    // Distinguishable from a generic failure, says it stopped, and names the
+    // choice the panel actually offers for a finished task.
+    expect(failure?.userMessage).toContain('stopped');
+    expect(failure?.userMessage).toMatch(/retry/i);
+    // Marked recoverable, which is what makes retrying the right offer.
+    expect(failure?.recoverable).toBe(true);
+  });
+
   it('stops a task that repeats the same failing call', async () => {
     adapter.onContent((type) => {
       if (type === 'content.click') return new Error('Receiving end does not exist.');

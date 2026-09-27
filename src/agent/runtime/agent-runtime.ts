@@ -474,8 +474,24 @@ export class AgentRuntime {
             kind: loop.kind,
             tool: loop.tool,
           });
+          // §59 says "stop and recover/ask", which is a disjunction, and this
+          // product answers it by asking rather than by recovering. Stopping
+          // is the line below; asking is this message. The detector's own
+          // wording diagnoses what repeated, which the model needs, and on its
+          // own it dead-ends the person reading it — so the user-facing half
+          // says that the task stopped and what they can do about it. The
+          // panel shows Retry for any finished task and §53's task-failed
+          // notification fires, so the choice it names is a real one.
+          //
+          // Automatic recovery is deliberately not attempted. §58's ladder is
+          // an "Example:" rather than a requirement, and retrying a call the
+          // detector has just proved unproductive would re-enter the loop this
+          // exists to break.
+          const diagnosis = loop.detail ?? 'The agent repeated the same action without progress.';
           const error = createError('LOOP_DETECTED', loop.detail ?? 'The task stopped repeating.', {
-            userMessage: loop.detail ?? 'The agent repeated the same action without progress.',
+            userMessage:
+              `${diagnosis} The task stopped rather than carrying on. Retry it, or start it ` +
+              'again with a more specific objective.',
             recoverable: true,
           });
           await this.recordStep(task.id, stepIndex++, {

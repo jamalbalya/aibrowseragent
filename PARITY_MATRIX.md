@@ -165,8 +165,8 @@ capability, not necessarily a test of the capability itself.
 
 | Status          | Count  |
 | --------------- | ------ |
-| PASS            | 29     |
-| PARTIAL         | 9      |
+| PASS            | 30     |
+| PARTIAL         | 8      |
 | INTERFACES-ONLY | 0      |
 | NOT-STARTED     | 2      |
 | **Total**       | **40** |
@@ -195,6 +195,12 @@ Then notifications (P-019) moves **from PARTIAL back to PASS**, taking PASS from
 28 to 29 and PARTIAL from 10 to 9. The clause that had no producer now has two,
 both in the worker's task lifecycle layer. Building it turned up a second blank
 record on the way, described below.
+
+Then the capability doctor (P-035) moves **from PARTIAL to PASS**, taking PASS
+from 29 to 30 and PARTIAL from 9 to 8 — §14's ninth minimum check now exists as
+a real probe. And loop detection (P-037) keeps its PASS with its one AMBIGUOUS
+clause resolved by an explicit decision rather than left open; the clause gate
+now reports no ambiguous clause at all.
 
 ### The clause gate, and the two rows it moved
 
@@ -431,7 +437,7 @@ rather than folded into the verdict.
 | P-032 | Task resume                          | yes  | yes  | yes         | —        | yes | PASS        |
 | P-033 | Provider switching                   | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-034 | Tool calling                         | yes  | yes  | yes         | yes      | yes | PASS        |
-| P-035 | Capability doctor                    | yes  | yes  | —           | —        | yes | PARTIAL     |
+| P-035 | Capability doctor                    | yes  | yes  | —           | —        | yes | PASS        |
 | P-036 | Error recovery                       | yes  | yes  | yes         | —        | yes | PASS        |
 | P-037 | Loop detection                       | yes  | yes  | yes         | —        | —   | PASS        |
 | P-038 | Audit trail                          | yes  | yes  | yes         | yes      | yes | PARTIAL     |
@@ -633,12 +639,47 @@ honours the clause that matters most — a model that did not call the probe
 function is `CHAT_ONLY`, never `AGENT_READY` — and no report carries credential
 material.
 
-PARTIAL for the ninth. Context capacity is reported from the advertised model
-table and never measured, and §14 opens with "Every connected model must be
-tested". Whether a context window can be _probed_ rather than read is a real
-question — it costs a large request to answer and the answer is approximate —
-and this row does not pretend the question has been settled. It is a PARTIAL
-with a stated reason, not a missing test.
+The ninth was the problem, and the problem was worse than the note said. Context
+capacity was not merely unmeasured — it was **absent from the report**. The
+doctor performed eight checks and showed eight, while `contextWindow` was copied
+out of the advertised model table into the result beside them. A figure nobody
+measured, presented next to eight that were, is exactly the quiet over-claim
+this component exists to prevent.
+
+There is a real probe now, and it is precise about what it settles. The model
+must carry a substantial prompt and the provider must report its own token count
+for it. That is a measured **floor, not the window**, and the check's own text
+says so: the window is still this build's advertised figure and is labelled as
+not measured. Finding the ceiling would mean billing the user for a diagnostic —
+a 200,000-token prompt to learn a number — and reading it out of provider model
+metadata is not uniformly available, so it is not claimed. What the floor buys is
+the case the table cannot catch: an account tier whose usable context is far
+below the number published for the model, which fails the check with the
+provider's own refusal as the detail.
+
+It deliberately does not decide readiness. §14 states one readiness rule —
+never claim Agent Ready if tool calling is unavailable — and a context probe
+that downgraded an otherwise working agent would be this project inventing a
+requirement the specification does not contain.
+
+**P-037 Loop detection** — §59's three clauses: the same action on the same
+target with the same result, repeated cycles, and "stop and recover/ask". The
+first two were evidenced already. The third was recorded AMBIGUOUS, and refusing
+to resolve it in the implementation's favour was the right call at the time.
+
+It is resolved now by an explicit decision rather than by reinterpretation. The
+sentence is a disjunction, and this product answers it by **asking**: the run
+halts, the reason is separately identifiable as `LOOP_DETECTED` rather than a
+generic failure, the user-facing message says the task stopped and names the
+choice, the error is marked recoverable, the panel offers Retry for any finished
+task, and §53's task-failed notification fires. The detector's own wording says
+what repeated — which the model needs — and on its own it left the person
+reading it with nothing to do; that is what changed.
+
+Automatic recovery is deliberately not attempted, and that is a recorded
+divergence rather than a gap. §58's recovery ladder is given as an "Example:",
+and retrying a call the detector has just proved unproductive would re-enter the
+loop the check exists to break.
 
 **P-038 Audit trail** — One append-only stream across every task, recording
 what was proposed and what was decided. Tool executions now reach it through

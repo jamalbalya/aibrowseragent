@@ -32,6 +32,10 @@ interface StubOptions {
   supportsStream?: boolean;
   streamFails?: boolean;
   structuredOutput?: string;
+  /** What the provider claims it counted for the context probe's prompt. */
+  contextPromptTokens?: number;
+  /** Makes the model refuse the context probe outright. */
+  rejectLargePrompt?: boolean;
 }
 
 /** The status of one check, by id. */
@@ -91,6 +95,19 @@ function stub(options: StubOptions = {}): AIProviderAdapter {
       }
 
       const asked = JSON.stringify(request.messages);
+      // The context probe, recognised the way a real provider would see it:
+      // by the prompt being large.
+      if (asked.includes('measuring usable context')) {
+        if (options.rejectLargePrompt) {
+          return Promise.reject(new Error('prompt is too long for this model'));
+        }
+        return Promise.resolve({
+          text: 'ok',
+          toolCalls: [],
+          finishReason: 'stop' as const,
+          usage: { promptTokens: options.contextPromptTokens ?? 1_480, completionTokens: 1 },
+        });
+      }
       if (asked.includes('JSON object')) {
         return Promise.resolve({
           text: options.structuredOutput ?? '{"ok":true}',
@@ -285,5 +302,82 @@ describe('quick mode', () => {
   it('never claims parallel tool calling without a passing tool check', async () => {
     const report = await doctor.run(stub({ emitToolCall: false }), 'test-model');
     expect(report.capabilities.parallelToolCalling).toBe(false);
+  });
+});
+
+describe('the nine minimum checks of §14', () => {
+  it('reports every check the specification lists as a minimum', async () => {
+    const report = await new CapabilityDoctor().run(stub({ emitToolCall: true }), 'test-model');
+    // Eight of these were performed and the ninth was absent from the report
+    // altogether, while the context window was copied from the advertised
+    // table. A figure nobody measured, sitting beside eight that were, is the
+    // quiet over-claim the doctor exists to prevent.
+    // §14's nine minimum checks, each mapped to the id the doctor reports.
+    const MINIMUM: readonly [string, string][] = [
+      ['Authentication', 'credentials'],
+      ['Provider reachability', 'reachability'],
+      ['Model availability', 'model'],
+      ['Text generation', 'text'],
+      ['Streaming', 'streaming'],
+      ['Tool calling', 'tools'],
+      ['Structured output', 'structured'],
+      ['Vision', 'vision'],
+      ['Context capacity', 'context'],
+    ];
+    const missing = MINIMUM.filter(([, id]) => byId(report, id) === undefined).map(
+      ([name]) => name,
+    );
+    expect(missing).toEqual([]);
+  });
+});
+
+describe('context capacity', () => {
+  it('passes when the model carries a large prompt and counts it', async () => {
+    const report = await new CapabilityDoctor().run(stub({ emitToolCall: true }), 'test-model');
+    expect(byId(report, 'context')).toBe('pass');
+  });
+
+  it('says the window is advertised rather than measured', async () => {
+    const report = await new CapabilityDoctor().run(stub({ emitToolCall: true }), 'test-model');
+    const detail = report.checks.find((check) => check.id === 'context')?.detail ?? '';
+    // What was measured is a floor. Claiming the window was measured would be
+    // the over-claim this check was added to remove, not to relocate.
+    expect(detail).toContain('advertised');
+    expect(detail).toContain('not measured');
+    expect(detail).toContain('1480');
+  });
+
+  it('fails when the provider under-counts the prompt it was sent', async () => {
+    // Token accounting that cannot be trusted cannot be budgeted against,
+    // which is the thing context capacity is needed for.
+    const report = await new CapabilityDoctor().run(
+      stub({ emitToolCall: true, contextPromptTokens: 12 }),
+      'test-model',
+    );
+    expect(byId(report, 'context')).toBe('fail');
+    expect(report.checks.find((c) => c.id === 'context')?.detail).toContain('12');
+  });
+
+  it('fails when the model refuses a substantial prompt', async () => {
+    // The case the advertised table cannot catch: a tier whose usable context
+    // is far below the number published for the model.
+    const report = await new CapabilityDoctor().run(
+      stub({ emitToolCall: true, rejectLargePrompt: true }),
+      'test-model',
+    );
+    expect(byId(report, 'context')).toBe('fail');
+    expect(report.checks.find((c) => c.id === 'context')?.detail).toContain('too long');
+  });
+
+  it('does not decide agent readiness, which §14 ties to tool calling alone', async () => {
+    // "Never claim Agent Ready if tool calling is unavailable" is the only
+    // readiness rule §14 states. A context probe that downgraded a working
+    // agent would be this wave inventing a requirement.
+    const report = await new CapabilityDoctor().run(
+      stub({ emitToolCall: true, rejectLargePrompt: true }),
+      'test-model',
+    );
+    expect(byId(report, 'context')).toBe('fail');
+    expect(report.readiness).toBe('AGENT_READY');
   });
 });

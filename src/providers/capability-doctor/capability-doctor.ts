@@ -32,6 +32,18 @@ const log = getLogger('provider');
 
 export type CheckStatus = 'pass' | 'fail' | 'skipped' | 'unsupported';
 
+/**
+ * How much filler the context probe sends, and the floor it must be counted at.
+ *
+ * Small on purpose. The probe is a diagnostic the user pays for, so it buys the
+ * cheapest finding that is still worth having: that a prompt far larger than a
+ * one-line probe is accepted and counted. The floor is well under the filler's
+ * real size so that no tokenizer's accounting fails it spuriously — it is there
+ * to catch a provider reporting a truncated count, not to measure the window.
+ */
+const CONTEXT_FILLER_REPEATS = 150;
+const CONTEXT_FLOOR_TOKENS = 500;
+
 export interface CapabilityCheck {
   readonly id: string;
   readonly label: string;
@@ -415,6 +427,67 @@ export class CapabilityDoctor {
       }
     });
     checks.push({ ...structuredCheck, id: 'structured', label: 'Structured output' });
+
+    // 9. Context capacity.
+    //
+    // §14 lists nine minimum checks and this build performed eight: the ninth
+    // was absent from the report entirely, while `contextWindow` was copied
+    // from the advertised model table. A figure nobody measured, presented
+    // beside eight that were, is the kind of quiet over-claim §76 exists to
+    // stop.
+    //
+    // What is measured here is a **floor, not the window**, and the check says
+    // so. Sending a 200,000-token prompt to find the ceiling would bill the
+    // user for a diagnostic, and reading the ceiling out of a provider's model
+    // metadata is not uniformly possible — so the honest test is that this
+    // model, on this account, really accepts a substantial prompt and really
+    // reports its own token accounting for it. That is what context budgeting
+    // depends on, and it catches the case the advertised table cannot: a tier
+    // whose usable context is far below the number published for the model.
+    const contextCheck = await timed(async () => {
+      const filler = 'The capability doctor is measuring usable context. '.repeat(
+        CONTEXT_FILLER_REPEATS,
+      );
+      const advertisedWindow = advertised.contextWindow;
+      try {
+        const response = await adapter.generate({
+          ...base,
+          messages: [textMessage('user', `${filler}\n\nReply with the single word: ok`)],
+        });
+        const counted = response.usage.promptTokens;
+        if (counted < CONTEXT_FLOOR_TOKENS) {
+          return {
+            id: 'context',
+            label: 'Context capacity',
+            status: 'fail' as const,
+            detail:
+              `The prompt was accepted but the provider reported only ${counted} prompt ` +
+              'tokens, which is fewer than it contained. Token accounting cannot be trusted ' +
+              'for budgeting on this model.',
+          };
+        }
+        return {
+          id: 'context',
+          label: 'Context capacity',
+          status: 'pass' as const,
+          // Stated rather than implied: the floor was measured, the window was not.
+          detail:
+            `Carried a ${counted}-token prompt, counted by the provider. The ` +
+            `${advertisedWindow}-token window is this build's advertised figure for the ` +
+            'model and was not measured.',
+        };
+      } catch (error) {
+        return {
+          id: 'context',
+          label: 'Context capacity',
+          status: 'fail' as const,
+          detail:
+            `The model would not carry a ${CONTEXT_FLOOR_TOKENS}-token prompt: ` +
+            (error instanceof Error ? error.message : String(error)),
+        };
+      }
+    });
+    checks.push({ ...contextCheck, id: 'context', label: 'Context capacity' });
 
     const observed: ModelCapabilities = {
       text: textCheck.status === 'pass',
