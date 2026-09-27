@@ -36,6 +36,23 @@ export interface CreateTabOptions {
   readonly groupId?: number;
 }
 
+export interface GroupTabsOptions {
+  readonly title?: string;
+  /**
+   * An existing group to join instead of making a new one.
+   *
+   * Measured in §3 of the workspace review: `tabs.group({tabIds})` returns a
+   * *new* group id, while `tabs.group({tabIds, groupId})` joins the existing
+   * group in one call. Which one is used decides a security question rather
+   * than a cosmetic one. A new group takes the tabs **out** of the workspace
+   * group, and membership is defined by that group — so the create form let a
+   * model destroy its own task's scope by grouping its own tabs. Measured, in
+   * real Chromium: the next call came back `POLICY_BLOCKED` with "this task's
+   * workspace is not open in the browser right now".
+   */
+  readonly joinGroupId?: number;
+}
+
 /**
  * The browser surface the tools depend on.
  * Implemented by `ChromeBrowserAdapter` in the extension, and by a fake in tests.
@@ -53,7 +70,7 @@ export interface BrowserAdapter {
   goForward(tabId: number): Promise<void>;
   /** Resolves once the tab reaches `complete`, or rejects on timeout. */
   waitForLoad(tabId: number, timeoutMs: number): Promise<TabInfo>;
-  groupTabs(tabIds: readonly number[], title?: string): Promise<number>;
+  groupTabs(tabIds: readonly number[], options?: GroupTabsOptions): Promise<number>;
   ungroupTabs(tabIds: readonly number[]): Promise<void>;
   moveTab(tabId: number, index: number): Promise<void>;
   /** Ensures the content script is present, injecting it if needed. */
@@ -226,10 +243,14 @@ export class ChromeBrowserAdapter implements BrowserAdapter {
     });
   }
 
-  async groupTabs(tabIds: readonly number[], title?: string): Promise<number> {
-    const groupId = await chrome.tabs.group({ tabIds: toNonEmpty(tabIds) });
-    if (title !== undefined) {
-      await chrome.tabGroups.update(groupId, { title });
+  async groupTabs(tabIds: readonly number[], options: GroupTabsOptions = {}): Promise<number> {
+    const groupId = await chrome.tabs.group(
+      options.joinGroupId === undefined
+        ? { tabIds: toNonEmpty(tabIds) }
+        : { tabIds: toNonEmpty(tabIds), groupId: options.joinGroupId },
+    );
+    if (options.title !== undefined) {
+      await chrome.tabGroups.update(groupId, { title: options.title });
     }
     return groupId;
   }

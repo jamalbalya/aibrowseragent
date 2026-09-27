@@ -79,6 +79,15 @@ export function createHarness(
      * by a test calling `execute` directly with a hand-built context.
      */
     resolveWorkspaceTabs?: ToolRegistryOptions['resolveWorkspaceTabs'];
+    /**
+     * The Chrome group the workspace is bound to.
+     *
+     * Needed because `tabs.group` joins that group rather than creating a new
+     * one, and a harness that left it undefined could not tell the two apart —
+     * which is the whole difference between reorganising the agent's own tabs
+     * and taking them out of the scope the task is running in.
+     */
+    resolveWorkspaceGroupId?: ToolRegistryOptions['resolveWorkspaceGroupId'];
     /** The observation hook, for the workflow recorder's tests. */
     onDispatched?: ToolRegistryOptions['onDispatched'];
     /**
@@ -146,6 +155,9 @@ export function createHarness(
     ...(options.resolveWorkspaceTabs === undefined
       ? {}
       : { resolveWorkspaceTabs: options.resolveWorkspaceTabs }),
+    ...(options.resolveWorkspaceGroupId === undefined
+      ? {}
+      : { resolveWorkspaceGroupId: options.resolveWorkspaceGroupId }),
     ...(options.onDispatched === undefined ? {} : { onDispatched: options.onDispatched }),
   });
   registry.registerAll(tools);

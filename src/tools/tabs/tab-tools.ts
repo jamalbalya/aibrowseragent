@@ -287,9 +287,13 @@ export function createActivateTabTool({ adapter }: TabToolDeps): AgentTool<typeo
     idempotent: true,
     classify: (input) => ({ summary: `Switch to tab ${input.tabId}.` }),
 
-    async execute(input): Promise<ToolExecutionResult> {
-      const tab = await adapter.getTab(input.tabId);
-      if (!tab) throw new ToolError('TAB_NOT_FOUND', `Tab ${input.tabId} no longer exists.`);
+    async execute(input, context): Promise<ToolExecutionResult> {
+      // Members only. Focusing an arbitrary tab moves the user somewhere the
+      // task was never scoped to, and the result returns that tab's URL — so
+      // this was also the enumeration leak `tabs.list` was narrowed to close,
+      // reachable one tab at a time. Measured before the fix: it succeeded on
+      // a tab outside the workspace and returned its URL.
+      await workspaceTab(adapter, context, input.tabId);
       const activated = await adapter.activateTab(input.tabId);
       return { success: true, data: { tabId: activated.id, url: activated.url } };
     },
@@ -427,9 +431,12 @@ export function createReloadTabTool({ adapter }: TabToolDeps): AgentTool<typeof 
     idempotent: true,
     classify: (input) => ({ summary: `Reload tab ${input.tabId}.` }),
 
-    async execute(input): Promise<ToolExecutionResult> {
-      const tab = await adapter.getTab(input.tabId);
-      if (!tab) throw new ToolError('TAB_NOT_FOUND', `Tab ${input.tabId} no longer exists.`);
+    async execute(input, context): Promise<ToolExecutionResult> {
+      // Members only. This tool's own declared side effect is that a reload
+      // "may resubmit a form", which is not something to do to a page the task
+      // was never scoped to. Measured before the fix: it reloaded a tab outside
+      // the workspace and reported success.
+      await workspaceTab(adapter, context, input.tabId);
       await adapter.reloadTab(input.tabId);
       return { success: true, data: { reloaded: true, tabId: input.tabId } };
     },
@@ -455,8 +462,21 @@ export function createGroupTabsTool({ adapter }: TabToolDeps): AgentTool<typeof 
     idempotent: false,
     classify: (input) => ({ summary: `Group ${input.tabIds.length} tabs.` }),
 
-    async execute(input): Promise<ToolExecutionResult> {
-      const groupId = await adapter.groupTabs(input.tabIds, input.title);
+    async execute(input, context): Promise<ToolExecutionResult> {
+      for (const tabId of input.tabIds) await workspaceTab(adapter, context, tabId);
+
+      // Join the workspace's own group rather than creating a new one. §11 of
+      // the workspace review already uses this form for agent-created tabs;
+      // the create form is what let a model pull its own tabs out of the
+      // workspace and destroy the scope it was running in. Joining is a no-op
+      // for a tab already in the group and re-seats one that drifted, so the
+      // capability stays real while the boundary stops moving.
+      const groupId = await adapter.groupTabs(input.tabIds, {
+        ...(input.title === undefined ? {} : { title: input.title }),
+        ...(context.workspaceGroupId === undefined
+          ? {}
+          : { joinGroupId: context.workspaceGroupId }),
+      });
       return { success: true, data: { groupId, tabIds: input.tabIds } };
     },
   };
@@ -480,7 +500,30 @@ export function createUngroupTabsTool({ adapter }: TabToolDeps): AgentTool<typeo
     idempotent: true,
     classify: (input) => ({ summary: `Ungroup ${input.tabIds.length} tabs.` }),
 
-    async execute(input): Promise<ToolExecutionResult> {
+    async execute(input, context): Promise<ToolExecutionResult> {
+      for (const tabId of input.tabIds) await workspaceTab(adapter, context, tabId);
+
+      // Releasing a tab the task is finished with only ever narrows the
+      // agent's own reach, so it is allowed. Releasing the *last* one does not
+      // narrow anything — it empties the group, and a group with no tabs left
+      // ceases to exist (measured, §3), which unbinds the workspace and leaves
+      // the running task with no scope at all. Measured before this guard: one
+      // `tabs.ungroup` call on its own tab, and every later call in the same
+      // task was refused because the workspace had gone.
+      if (context.workspaceTabIds !== undefined) {
+        const left = context.workspaceTabIds.filter((id) => !input.tabIds.includes(id));
+        if (left.length === 0) {
+          throw new ToolError(
+            'POLICY_BLOCKED',
+            'Ungrouping every tab would leave this task with no workspace.',
+            {
+              userMessage:
+                'That would remove the last tab from this task\u2019s workspace, so it was refused.',
+              retryable: false,
+            },
+          );
+        }
+      }
       await adapter.ungroupTabs(input.tabIds);
       return { success: true, data: { ungrouped: input.tabIds } };
     },
@@ -508,7 +551,13 @@ export function createWaitForNavigationTool({
     idempotent: true,
     classify: (input) => ({ summary: `Wait for tab ${input.tabId} to finish loading.` }),
 
-    async execute(input): Promise<ToolExecutionResult> {
+    async execute(input, context): Promise<ToolExecutionResult> {
+      // Members only, and this was the worst of the five: the result carries
+      // the tab's URL *and* title, so at R0 and with no prompt it answered
+      // "what is in that tab" for any id in any window. Measured before the
+      // fix, against a tab the user never put in scope: success, with the
+      // page's real URL and title handed to the model.
+      await workspaceTab(adapter, context, input.tabId);
       try {
         const tab = await adapter.waitForLoad(input.tabId, input.timeoutMs ?? 30_000);
         return { success: true, data: { url: tab.url, title: tab.title, loaded: true } };

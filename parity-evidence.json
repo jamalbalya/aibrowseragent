@@ -2,7 +2,7 @@
   "$comment": [
     "Source of truth for which tests back each capability claim in PARITY_MATRIX.md.",
     "scripts/check-parity.mjs verifies that every cited file exists and that the",
-    "matrix's yes/\u2014 columns match these citations exactly. An earlier revision of",
+    "matrix's yes/— columns match these citations exactly. An earlier revision of",
     "the matrix claimed integration coverage for three capabilities that had none;",
     "this file makes that class of claim checkable rather than a matter of trust.",
     "Cite a file only when it genuinely exercises the capability.",
@@ -118,12 +118,13 @@
         "tests/e2e/security.spec.ts",
         "tests/e2e/file-access.spec.ts",
         "tests/e2e/extension-load.spec.ts",
-        "tests/e2e/tab-order.spec.ts"
+        "tests/e2e/tab-order.spec.ts",
+        "tests/e2e/tab-scope.spec.ts"
       ],
       "clauses": [
         {
           "id": "P-012-C1",
-          "specRef": "\u00a710",
+          "specRef": "§10",
           "requirement": "tabs.list",
           "mandatory": true,
           "status": "VERIFIED",
@@ -133,7 +134,7 @@
         },
         {
           "id": "P-012-C2",
-          "specRef": "\u00a710",
+          "specRef": "§10",
           "requirement": "tabs.get",
           "mandatory": true,
           "status": "VERIFIED",
@@ -142,14 +143,14 @@
             "tests/unit/tab-tools.test.ts :: returns the named tab rather than the active one",
             "tests/unit/tab-tools.test.ts :: returns the position a move needs, and withholds the group id",
             "tests/unit/tab-tools.test.ts :: reports a tab id that never existed",
-            "tests/unit/tab-tools.test.ts :: refuses a tab outside the task\u2019s workspace",
+            "tests/unit/tab-tools.test.ts :: refuses a tab outside the task’s workspace",
             "tests/integration/tab-management.test.ts :: gives the model the tab it asked about, not the active one",
             "tests/e2e/tab-order.spec.ts :: tabs.get answers for the id it was given, and refuses one that is gone"
           ]
         },
         {
           "id": "P-012-C3",
-          "specRef": "\u00a710",
+          "specRef": "§10",
           "requirement": "tabs.create",
           "mandatory": true,
           "status": "VERIFIED",
@@ -157,65 +158,91 @@
         },
         {
           "id": "P-012-C4",
-          "specRef": "\u00a710",
+          "specRef": "§10",
           "requirement": "tabs.close",
           "mandatory": true,
           "status": "VERIFIED",
           "evidence": [
             "tests/unit/tab-tools.test.ts :: treats closing a tab the agent opened as low risk and does not prompt"
-          ]
+          ],
+          "note": "Left as it was, deliberately. classify escalates to R3 for any tab this task did not open, and R3 confirms in every permission mode, so a tab outside the workspace cannot be closed without the user seeing the prompt."
         },
         {
           "id": "P-012-C5",
-          "specRef": "\u00a710",
+          "specRef": "§10",
           "requirement": "tabs.activate",
           "mandatory": true,
           "status": "VERIFIED",
-          "evidence": ["tests/unit/tab-tools.test.ts :: focuses the tab"]
+          "evidence": [
+            "tests/unit/tab-tools.test.ts :: focuses the tab",
+            "tests/unit/tab-tools.test.ts :: tabs.activate refuses a tab outside the workspace",
+            "tests/unit/tab-tools.test.ts :: tabs.activate tells the model nothing about a tab it may not see",
+            "tests/e2e/tab-scope.spec.ts :: no tab tool will read, focus or reload a tab outside the workspace"
+          ],
+          "note": "Workspace-scoped in Wave 15. Measured before that: it focused a tab outside the workspace and returned its URL."
         },
         {
           "id": "P-012-C6",
-          "specRef": "\u00a710",
+          "specRef": "§10",
           "requirement": "tabs.reload",
           "mandatory": true,
           "status": "VERIFIED",
-          "evidence": ["tests/unit/tab-tools.test.ts :: reports a tab that no longer exists"]
+          "evidence": [
+            "tests/unit/tab-tools.test.ts :: reports a tab that no longer exists",
+            "tests/unit/tab-tools.test.ts :: tabs.reload refuses a tab outside the workspace",
+            "tests/e2e/tab-scope.spec.ts :: no tab tool will read, focus or reload a tab outside the workspace"
+          ],
+          "note": "Workspace-scoped in Wave 15. Its own declared side effect is that a reload may resubmit a form, which is not something to do to a page the task was never scoped to."
         },
         {
           "id": "P-012-C7",
-          "specRef": "\u00a710",
+          "specRef": "§10",
           "requirement": "tabs.group and tabs.ungroup",
           "mandatory": true,
           "status": "VERIFIED",
-          "evidence": ["tests/unit/tab-tools.test.ts :: groups tabs and returns the group id"]
+          "evidence": [
+            "tests/unit/tab-tools.test.ts :: groups tabs and returns the group id",
+            "tests/unit/tab-tools.test.ts :: tabs.group joins the workspace group instead of making a new one",
+            "tests/unit/tab-tools.test.ts :: tabs.group refuses the whole call when one id is outside",
+            "tests/unit/tab-tools.test.ts :: tabs.ungroup refuses to empty the workspace, and allows releasing one of several",
+            "tests/e2e/tab-scope.spec.ts :: the model cannot pull its own tab out of its workspace with tabs.group",
+            "tests/e2e/tab-scope.spec.ts :: the model cannot empty its own workspace with tabs.ungroup"
+          ],
+          "note": "Workspace-scoped in Wave 15, and tabs.group now joins the workspace's own Chrome group instead of creating a new one. The create form let a model move its own tabs out of the workspace group, and a group with no tabs left ceases to exist, so one call ended the task's scope. tabs.ungroup refuses to remove the last member for the same reason."
         },
         {
           "id": "P-012-C8",
-          "specRef": "\u00a710",
+          "specRef": "§10",
           "requirement": "tabs.move",
           "mandatory": true,
           "status": "VERIFIED",
-          "note": "Closed in Wave 14. `BrowserAdapter.moveTab` existed and was called by nothing; a tool now wraps it, which is where a capability is declared in this architecture \u2014 schema, risk, site scope and registration. Scope is a tab's own window: the adapter passes no `windowId` and \u00a710 does not say which reading it means, so the narrower one is implemented rather than the wider one invented. The reported index is read back from the browser because `chrome.tabs.move` clamps instead of failing.",
+          "note": "Closed in Wave 14. `BrowserAdapter.moveTab` existed and was called by nothing; a tool now wraps it, which is where a capability is declared in this architecture — schema, risk, site scope and registration. Scope is a tab's own window: the adapter passes no `windowId` and §10 does not say which reading it means, so the narrower one is implemented rather than the wider one invented. The reported index is read back from the browser because `chrome.tabs.move` clamps instead of failing.",
           "evidence": [
             "tests/unit/tab-tools.test.ts :: actually reorders the window",
             "tests/unit/tab-tools.test.ts :: reports the position Chrome gave the tab, not the one asked for",
-            "tests/unit/tab-tools.test.ts :: refuses a tab outside the task\u2019s workspace, and does not move it",
-            "tests/integration/tab-management.test.ts :: reads a tab\u2019s position and then moves it, changing the real order",
+            "tests/unit/tab-tools.test.ts :: refuses a tab outside the task’s workspace, and does not move it",
+            "tests/integration/tab-management.test.ts :: reads a tab’s position and then moves it, changing the real order",
             "tests/e2e/tab-order.spec.ts :: the model reorders real tabs and is told the position Chrome gave them",
             "tests/e2e/tab-order.spec.ts :: an index past the end is reported as the position Chrome clamped it to"
           ]
         },
         {
           "id": "P-012-C9",
-          "specRef": "\u00a710",
+          "specRef": "§10",
           "requirement": "tabs.wait_for_navigation",
           "mandatory": true,
           "status": "VERIFIED",
-          "evidence": ["tests/unit/tab-tools.test.ts :: resolves when the tab finishes loading"]
+          "evidence": [
+            "tests/unit/tab-tools.test.ts :: resolves when the tab finishes loading",
+            "tests/unit/tab-tools.test.ts :: tabs.wait_for_navigation refuses a tab outside the workspace",
+            "tests/unit/tab-tools.test.ts :: tabs.wait_for_navigation tells the model nothing about a tab it may not see",
+            "tests/e2e/tab-scope.spec.ts :: no tab tool will read, focus or reload a tab outside the workspace"
+          ],
+          "note": "Workspace-scoped in Wave 15. This was the widest of the disclosures: the result carries the tab's URL and title, at R0, where no permission mode prompts."
         },
         {
           "id": "P-012-C10",
-          "specRef": "\u00a710",
+          "specRef": "§10",
           "requirement": "tabs.get_active",
           "mandatory": true,
           "status": "VERIFIED",
@@ -223,7 +250,7 @@
         },
         {
           "id": "P-012-C11",
-          "specRef": "\u00a710",
+          "specRef": "§10",
           "requirement": "Every tool call must include task/session context.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -235,7 +262,57 @@
     },
     "P-013": {
       "unit": ["tests/unit/tab-tools.test.ts"],
-      "e2e": ["tests/e2e/agent-task.spec.ts"]
+      "e2e": [
+        "tests/e2e/agent-task.spec.ts",
+        "tests/e2e/tab-scope.spec.ts",
+        "tests/e2e/workspace.spec.ts"
+      ],
+      "clauses": [
+        {
+          "id": "P-013-C1",
+          "specRef": "§10",
+          "requirement": "tabs.group",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Grouping is how this build scopes a task: the workspace is a Chrome tab group. The model-callable tool joins that group rather than creating another one, so grouping cannot move the boundary.",
+          "evidence": [
+            "tests/unit/tab-tools.test.ts :: tabs.group joins the workspace group instead of making a new one",
+            "tests/e2e/tab-scope.spec.ts :: the model cannot pull its own tab out of its workspace with tabs.group"
+          ]
+        },
+        {
+          "id": "P-013-C2",
+          "specRef": "§10",
+          "requirement": "tabs.ungroup",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/tab-tools.test.ts :: tabs.ungroup refuses to empty the workspace, and allows releasing one of several",
+            "tests/e2e/tab-scope.spec.ts :: the model cannot empty its own workspace with tabs.ungroup"
+          ]
+        },
+        {
+          "id": "P-013-C3",
+          "specRef": "§10",
+          "requirement": "A group carries a user-visible label.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/tab-tools.test.ts :: tabs.group joins the workspace group instead of making a new one"
+          ]
+        },
+        {
+          "id": "P-013-C4",
+          "specRef": "§10",
+          "requirement": "Grouping is driven against the real Chrome tab-group API, not a simulation.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/workspace.spec.ts :: starting a task puts the active tab into a workspace group",
+            "tests/e2e/workspace.spec.ts :: dragging a tab in makes it eligible; dragging it out revokes it"
+          ]
+        }
+      ]
     },
     "P-014": {
       "unit": ["tests/unit/browser-tools.test.ts"],
@@ -261,7 +338,7 @@
       "clauses": [
         {
           "id": "P-017-C1",
-          "specRef": "\u00a757",
+          "specRef": "§57",
           "requirement": "Support Stop.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -271,7 +348,7 @@
         },
         {
           "id": "P-017-C2",
-          "specRef": "\u00a757",
+          "specRef": "§57",
           "requirement": "Support Pause.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -282,7 +359,7 @@
         },
         {
           "id": "P-017-C3",
-          "specRef": "\u00a757",
+          "specRef": "§57",
           "requirement": "Support Resume.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -292,7 +369,7 @@
         },
         {
           "id": "P-017-C4",
-          "specRef": "\u00a757",
+          "specRef": "§57",
           "requirement": "Support Retry.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -302,7 +379,7 @@
         },
         {
           "id": "P-017-C5",
-          "specRef": "\u00a757",
+          "specRef": "§57",
           "requirement": "After cancellation is acknowledged, no new tool call starts.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -313,7 +390,7 @@
         },
         {
           "id": "P-017-C6",
-          "specRef": "\u00a757",
+          "specRef": "§57",
           "requirement": "After cancellation is acknowledged, state is persisted.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -323,7 +400,7 @@
         },
         {
           "id": "P-017-C7",
-          "specRef": "\u00a756",
+          "specRef": "§56",
           "requirement": "A long task keeps running while the browser stays open.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -344,7 +421,7 @@
       "clauses": [
         {
           "id": "P-019-C1",
-          "specRef": "\u00a753",
+          "specRef": "§53",
           "requirement": "Notify when a task completes.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -355,7 +432,7 @@
         },
         {
           "id": "P-019-C2",
-          "specRef": "\u00a753",
+          "specRef": "§53",
           "requirement": "Notify when a permission is required.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -363,7 +440,7 @@
         },
         {
           "id": "P-019-C3",
-          "specRef": "\u00a753",
+          "specRef": "§53",
           "requirement": "Notify when a task fails.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -374,7 +451,7 @@
         },
         {
           "id": "P-019-C4",
-          "specRef": "\u00a753",
+          "specRef": "§53",
           "requirement": "Notify when a provider disconnects.",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
@@ -382,7 +459,7 @@
         },
         {
           "id": "P-019-C5",
-          "specRef": "\u00a753",
+          "specRef": "§53",
           "requirement": "Notify when a connector authorization expires.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -390,7 +467,7 @@
         },
         {
           "id": "P-019-C6",
-          "specRef": "\u00a753",
+          "specRef": "§53",
           "requirement": "Notify when a scheduled task starts or fails.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -400,7 +477,7 @@
         },
         {
           "id": "P-019-C7",
-          "specRef": "\u00a753",
+          "specRef": "§53",
           "requirement": "Do not place secrets in notifications.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -498,7 +575,7 @@
       "clauses": [
         {
           "id": "P-032-C1",
-          "specRef": "\u00a758",
+          "specRef": "§58",
           "requirement": "Retry limits are mandatory.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -509,7 +586,7 @@
         },
         {
           "id": "P-032-C2",
-          "specRef": "\u00a757",
+          "specRef": "§57",
           "requirement": "A paused task can be resumed and reaches a terminal state.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -520,7 +597,7 @@
         },
         {
           "id": "P-032-C3",
-          "specRef": "\u00a755",
+          "specRef": "§55",
           "requirement": "A paused task survives service-worker eviction and is still resumable.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -530,7 +607,7 @@
         },
         {
           "id": "P-032-C4",
-          "specRef": "\u00a758",
+          "specRef": "§58",
           "requirement": "A task interrupted by an eviction is parked for the user, not resumed blind.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -540,7 +617,7 @@
         },
         {
           "id": "P-032-C5",
-          "specRef": "\u00a776",
+          "specRef": "§76",
           "requirement": "Resuming must not report a state the task is not in.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -550,7 +627,7 @@
         },
         {
           "id": "P-032-C6",
-          "specRef": "\u00a758",
+          "specRef": "§58",
           "requirement": "The worked recovery ladder: refresh the page model, find the target, retry, screenshot fallback, alternate locator, model recovery.",
           "mandatory": false,
           "status": "PARTIAL",
@@ -584,7 +661,7 @@
       "clauses": [
         {
           "id": "P-035-C1",
-          "specRef": "\u00a714",
+          "specRef": "§14",
           "requirement": "Check authentication.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -594,7 +671,7 @@
         },
         {
           "id": "P-035-C2",
-          "specRef": "\u00a714",
+          "specRef": "§14",
           "requirement": "Check provider reachability.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -604,7 +681,7 @@
         },
         {
           "id": "P-035-C3",
-          "specRef": "\u00a714",
+          "specRef": "§14",
           "requirement": "Check model availability.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -614,7 +691,7 @@
         },
         {
           "id": "P-035-C4",
-          "specRef": "\u00a714",
+          "specRef": "§14",
           "requirement": "Check text generation.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -624,7 +701,7 @@
         },
         {
           "id": "P-035-C5",
-          "specRef": "\u00a714",
+          "specRef": "§14",
           "requirement": "Check streaming.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -634,7 +711,7 @@
         },
         {
           "id": "P-035-C6",
-          "specRef": "\u00a714",
+          "specRef": "§14",
           "requirement": "Check tool calling.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -644,7 +721,7 @@
         },
         {
           "id": "P-035-C7",
-          "specRef": "\u00a714",
+          "specRef": "§14",
           "requirement": "Check structured output.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -654,7 +731,7 @@
         },
         {
           "id": "P-035-C8",
-          "specRef": "\u00a714",
+          "specRef": "§14",
           "requirement": "Check vision.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -664,15 +741,15 @@
         },
         {
           "id": "P-035-C9",
-          "specRef": "\u00a714",
+          "specRef": "§14",
           "requirement": "Check context capacity.",
           "mandatory": true,
           "status": "PARTIAL",
-          "note": "The reported context window is copied from the advertised model table and never measured, against \u00a714\u2019s \"Every connected model must be tested\". Wave 11 finding, untouched."
+          "note": "The reported context window is copied from the advertised model table and never measured, against §14’s \"Every connected model must be tested\". Wave 11 finding, untouched."
         },
         {
           "id": "P-035-C10",
-          "specRef": "\u00a714",
+          "specRef": "§14",
           "requirement": "Never claim Agent Ready if tool calling is unavailable.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -683,7 +760,7 @@
         },
         {
           "id": "P-035-C11",
-          "specRef": "\u00a714",
+          "specRef": "§14",
           "requirement": "No credential material in a report.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -704,7 +781,7 @@
       "clauses": [
         {
           "id": "P-037-C1",
-          "specRef": "\u00a759",
+          "specRef": "§59",
           "requirement": "Detect the same action on the same target with the same result.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -714,7 +791,7 @@
         },
         {
           "id": "P-037-C2",
-          "specRef": "\u00a759",
+          "specRef": "§59",
           "requirement": "Detect repeated action cycles.",
           "mandatory": true,
           "status": "VERIFIED",
@@ -725,11 +802,11 @@
         },
         {
           "id": "P-037-C3",
-          "specRef": "\u00a759",
+          "specRef": "§59",
           "requirement": "On detection, stop and recover or ask.",
           "mandatory": true,
           "status": "AMBIGUOUS",
-          "note": "The runtime stops with a distinguishable LOOP_DETECTED error. What \"recover/ask\" obliges beyond stopping is not defined in \u00a759, and it is not resolved in favour of the implementation here. A specification question, not an implementation gap."
+          "note": "The runtime stops with a distinguishable LOOP_DETECTED error. What \"recover/ask\" obliges beyond stopping is not defined in §59, and it is not resolved in favour of the implementation here. A specification question, not an implementation gap."
         }
       ]
     },

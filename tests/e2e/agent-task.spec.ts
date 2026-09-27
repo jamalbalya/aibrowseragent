@@ -253,19 +253,40 @@ test('groups real tabs through the Chrome tab-group API', async ({
   // tool's contract and nothing about `chrome.tabs.group` — an API gated on
   // the `tabGroups` permission that a build can simply not have. The
   // capability was recorded as passing on the fake alone; this closes the gap.
+  //
+  // Both tabs are workspace members, which is now the only thing this tool
+  // will act on. The earlier version of this test grouped every tab on the
+  // site, including one the user had never put in scope, and it passed —
+  // that was the defect, not the test: `tabs.group` without a `groupId`
+  // creates a *new* group, so it moved the task's own tab out of the
+  // workspace group and destroyed the scope it was running in.
   const first = await context.newPage();
   await first.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await first.bringToFront();
+  await connectProvider(send, provider);
+
+  // A task first, so a workspace exists and the active tab is in its group.
+  provider.script([{ kind: 'text', text: 'ready' }]);
+  await waitForTask(send, (await send('task.create', { objective: 'start' })).task.id);
+
   const second = await context.newPage();
   await second.goto(`${site.baseUrl}/form`, { waitUntil: 'domcontentloaded' });
   await first.bringToFront();
 
-  await connectProvider(send, provider);
-
-  const ids = await serviceWorker.evaluate(async (prefix: string) => {
+  // The user drags the second tab in. `chrome.tabs.group` with an explicit
+  // group id is the same call a real drag produces events for (measured).
+  const { ids, workspaceGroup } = await serviceWorker.evaluate(async (prefix: string) => {
     const tabs = await chrome.tabs.query({});
-    return tabs.filter((tab) => tab.url?.startsWith(prefix)).map((tab) => tab.id!);
+    const onSite = tabs.filter((tab) => tab.url?.startsWith(prefix));
+    const group = onSite.find((tab) => (tab.groupId ?? -1) !== -1)?.groupId ?? -1;
+    const [head, ...rest] = onSite.filter((tab) => (tab.groupId ?? -1) === -1).map((t) => t.id!);
+    // chrome.tabs.group types tabIds as a non-empty tuple, so it is destructured
+    // rather than cast: an empty array is a real case here, not a type nuisance.
+    if (head !== undefined) await chrome.tabs.group({ tabIds: [head, ...rest], groupId: group });
+    return { ids: onSite.map((tab) => tab.id!), workspaceGroup: group };
   }, site.baseUrl);
   expect(ids.length).toBeGreaterThanOrEqual(2);
+  expect(workspaceGroup).toBeGreaterThan(-1);
 
   provider.script([
     {
@@ -280,16 +301,23 @@ test('groups real tabs through the Chrome tab-group API', async ({
 
   expect(finished.state).toBe('COMPLETED');
 
-  // Chrome really moved them: one shared group id, and not the "no group"
-  // sentinel a silently failing call would leave behind.
-  const groups = await serviceWorker.evaluate(async (tabIds: number[]) => {
+  // Chrome really did it: one shared group id, not the "no group" sentinel a
+  // silently failing call would leave behind, and the title landed on the real
+  // tab group — which is what needs the `tabGroups` permission.
+  const after = await serviceWorker.evaluate(async (tabIds: number[]) => {
     const tabs = await Promise.all(tabIds.map((id) => chrome.tabs.get(id)));
-    return tabs.map((tab) => tab.groupId ?? -1);
+    const groupId = tabs[0]?.groupId ?? -1;
+    return {
+      groups: tabs.map((tab) => tab.groupId ?? -1),
+      title: groupId === -1 ? null : ((await chrome.tabGroups.get(groupId)).title ?? null),
+    };
   }, ids);
 
-  expect(new Set(groups).size).toBe(1);
-  expect(groups[0]).not.toBe(-1);
-  expect(groups[0]).toBeGreaterThan(-1);
+  expect(new Set(after.groups).size).toBe(1);
+  expect(after.groups[0]).toBeGreaterThan(-1);
+  expect(after.title).toBe('Research');
+  // And it is still the workspace's group, so the task did not lose its scope.
+  expect(after.groups[0]).toBe(workspaceGroup);
 
   await first.close();
   await second.close();

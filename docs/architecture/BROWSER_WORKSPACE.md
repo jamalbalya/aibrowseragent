@@ -709,27 +709,77 @@ the user had open is an information leak in its own right — §2.16 of this
 document records that there was no scope boundary at all before — and a
 `tabs.get` that answered for any id would hand that back one tab at a time.
 
-### The state of the other six — a finding, not a fix
+### The other six, audited and then fixed
 
-Recorded rather than changed, because it is pre-existing and outside the scope
-of the wave that found it:
+The first version of this section recorded the other six as a finding and
+guessed at the severity — "none of these is a privilege escalation". That guess
+was wrong, and the audit that followed measured it in real Chromium rather than
+reasoning about it. Every result below was observed through the real
+model → tool → registry → adapter → Chrome path, on a tab the user had never put
+in scope, with a workspace tab focused so the ambient-tab check could not be
+what produced the result.
 
-- **`tabs.close`** checks only that the argument tab exists. It is not left
-  unguarded in practice: `classify` escalates to R3 for any tab this task did
-  not open, and R3 confirms in every permission mode, so a tab outside the
-  workspace cannot be closed without the user seeing the prompt. That is a
-  different control from a scope check, and it is a real one.
-- **`tabs.activate`, `tabs.reload`, `tabs.group`, `tabs.ungroup`,
-  `tabs.wait_for_navigation`** check existence only, at R1, with no escalation.
-  In `auto` mode R1 is approved without a prompt.
+| Tool                       | Measured, before the fix                                                               | Verdict          |
+| -------------------------- | -------------------------------------------------------------------------------------- | ---------------- |
+| `tabs.wait_for_navigation` | success, returning the tab's **URL and title** — at R0, with no prompt                 | EVIDENCE_MISSING |
+| `tabs.activate`            | success, returning the tab's **URL**, and the user's focus moved to it                 | EVIDENCE_MISSING |
+| `tabs.reload`              | success — re-ran a page the task was never scoped to                                   | EVIDENCE_MISSING |
+| `tabs.group`               | success — put the task's own tab in a new group, **destroying its workspace**          | EVIDENCE_MISSING |
+| `tabs.ungroup`             | success — same, in one call                                                            | EVIDENCE_MISSING |
+| `tabs.close`               | argument tab must exist; `classify` escalates to R3 for any tab this task did not open | VERIFIED         |
 
-None of these is a privilege escalation — every one of them is an operation the
-extension's own permissions already allow — but `tabs.activate` on an arbitrary
-id does move the user's focus to a tab in another workspace, and `tabs.reload`
-discards that tab's unsaved page state. The consistent fix is the same
-`workspaceTab()` call. It is not applied here because changing the risk surface
-of six shipped tools is its own change, with its own tests and its own
-acceptance evidence.
+Two of these are worse than an inconsistency.
+
+**The disclosure.** `tabs.list` was narrowed to the workspace because telling
+the model every tab the user had open is a leak in its own right. Two of these
+tools answered the same question one tab at a time —
+`tabs.wait_for_navigation` returning both URL and title, at R0, where no
+permission mode prompts. That is the §2.16 gap, still open in two places after
+the boundary was supposed to have closed it.
+
+**The self-destruct.** Membership _is_ `tab.groupId === the workspace's group`.
+`chrome.tabs.group({tabIds})` with no `groupId` creates a **new** group (§3), so
+the model grouping its own tabs moved them out of the workspace group; a group
+with no tabs left ceases to exist (§3 again), which unbound the workspace. The
+measured consequence was that every later call in the same task came back
+`POLICY_BLOCKED` — "this task's workspace is not open in the browser right
+now". A model could end its own task's scope with one call, and take the user's
+tab strip with it. `tabs.ungroup` did it in one step.
+
+Worth stating precisely, because the first probe overstated it: this is **not**
+a widening. The new group is not the workspace's group, so a tab outside never
+became a member, and a `tabs.get` in the same task was still refused. The
+damage is availability plus unrequested rearrangement of the user's tabs — and,
+indirectly, that `tabs.activate` chooses which tab is focused, and a _new_ task
+scopes itself to the focused tab.
+
+### What was changed
+
+- `tabs.activate`, `tabs.reload` and `tabs.wait_for_navigation` now call the
+  same `workspaceTab()` guard as `tabs.get` and `tabs.move`. Nothing else about
+  them moved: same risk levels, same site authorization, same schemas.
+- `tabs.group` requires every id to be a member, and **joins the workspace's own
+  group** rather than creating a new one — the `tabs.group({tabIds, groupId})`
+  form §11 already uses for agent-created tabs. A title updates that group. So
+  the capability stays real (it labels the agent's group and re-seats a member
+  that drifted) while the boundary cannot move. A call naming one non-member is
+  refused whole, rather than grouping the ids it is allowed: a half-applied
+  rearrangement of someone's tab strip is worse than none.
+- `tabs.ungroup` requires membership, and refuses to remove the **last** member.
+  Releasing a tab the task is finished with only narrows the agent's own reach,
+  so it is allowed; emptying the group narrows nothing and destroys the scope.
+
+`tabs.close` was left exactly as it is. Its R3 escalation for any tab this task
+did not open means a tab outside the workspace cannot be closed without the
+user seeing a prompt in every permission mode — a different control from a
+scope check, and a sufficient one. Changing it would add a second refusal in
+front of a confirmation the user already gets.
+
+Seven mutants, each killed: the three single-id guards removed one at a time,
+`tabs.group`'s guard removed, `tabs.group` put back to creating a new group,
+`tabs.ungroup`'s guard removed, and its last-tab protection removed. The first
+three and the last two are killed by the real-Chromium suite as well as the
+unit suite.
 
 ### How this was established
 

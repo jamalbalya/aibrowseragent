@@ -369,3 +369,112 @@ describe('tabs.move', () => {
     expect(order()).toEqual([1, 2]);
   });
 });
+
+describe('the workspace boundary on every tool that takes a tab id', () => {
+  /** A workspace holding tab 1 only; tab 2 is open but outside it. */
+  const scoped = (members: readonly number[] = [1]) => {
+    harness = createHarness(createTabTools({ adapter, ownership }), {
+      prompter,
+      resolveWorkspaceTabs: () => Promise.resolve(members),
+    });
+  };
+
+  /**
+   * Written out one by one rather than generated from a table.
+   *
+   * Clause evidence cites `file :: exact title`, and the parity gate requires
+   * the title to appear in the file as a complete string literal — so a
+   * templated `${tool} refuses …` title cannot be cited at all. The gate caught
+   * exactly that here, which is what it is for.
+   */
+  const refused = async (tool: string, args: Record<string, unknown>) => {
+    scoped();
+    const result = await dispatch(tool, args);
+    expect(result.envelope.error?.code).toBe('POLICY_BLOCKED');
+  };
+
+  it('tabs.activate refuses a tab outside the workspace', async () => {
+    await refused('tabs.activate', { tabId: 2 });
+  });
+
+  it('tabs.reload refuses a tab outside the workspace', async () => {
+    await refused('tabs.reload', { tabId: 2 });
+  });
+
+  it('tabs.wait_for_navigation refuses a tab outside the workspace', async () => {
+    await refused('tabs.wait_for_navigation', { tabId: 2 });
+  });
+
+  it('tabs.group refuses a tab outside the workspace', async () => {
+    await refused('tabs.group', { tabIds: [2] });
+  });
+
+  it('tabs.ungroup refuses a tab outside the workspace', async () => {
+    await refused('tabs.ungroup', { tabIds: [2] });
+  });
+
+  it('tabs.get and tabs.move still refuse one too', async () => {
+    await refused('tabs.get', { tabId: 2 });
+    await refused('tabs.move', { tabId: 2, index: 0 });
+  });
+
+  it('tabs.group refuses the whole call when one id is outside', async () => {
+    scoped();
+    // Not "group the ones it may": a partially applied reorganisation of the
+    // user's tab strip is worse than none.
+    const result = await dispatch('tabs.group', { tabIds: [1, 2] });
+    expect(result.envelope.error?.code).toBe('POLICY_BLOCKED');
+    expect(adapter.tabs.get(2)?.groupId).toBe(-1);
+  });
+
+  it('tabs.wait_for_navigation tells the model nothing about a tab it may not see', async () => {
+    scoped();
+    const result = await dispatch('tabs.wait_for_navigation', { tabId: 2 });
+    // The old version returned this tab's url and title at R0 with no prompt.
+    expect(JSON.stringify(result.envelope)).not.toContain('docs.test');
+  });
+
+  it('tabs.activate tells the model nothing about a tab it may not see', async () => {
+    scoped();
+    const result = await dispatch('tabs.activate', { tabId: 2 });
+    expect(JSON.stringify(result.envelope)).not.toContain('docs.test');
+    expect(adapter.tabs.get(2)?.active).toBe(false);
+  });
+
+  it('tabs.group joins the workspace group instead of making a new one', async () => {
+    adapter.tabs.set(1, { ...adapter.tabs.get(1)!, groupId: 77 });
+    harness = createHarness(createTabTools({ adapter, ownership }), {
+      prompter,
+      resolveWorkspaceTabs: () => Promise.resolve([1]),
+      resolveWorkspaceGroupId: () => Promise.resolve(77),
+    });
+
+    const result = await dispatch('tabs.group', { tabIds: [1], title: 'Research' });
+
+    expect((result.envelope.result as { groupId: number }).groupId).toBe(77);
+    // Still in the workspace. Creating a new group is what used to take the
+    // task's own tab out of the scope it was running in.
+    expect(adapter.tabs.get(1)?.groupId).toBe(77);
+    expect(adapter.groupTitles.get(77)).toBe('Research');
+  });
+
+  it('tabs.ungroup refuses to empty the workspace, and allows releasing one of several', async () => {
+    scoped([1, 2]);
+
+    const last = await dispatch('tabs.ungroup', { tabIds: [1, 2] });
+    expect(last.envelope.error?.code).toBe('POLICY_BLOCKED');
+    expect(last.envelope.error?.message).toContain('last tab');
+
+    const one = await dispatch('tabs.ungroup', { tabIds: [2] });
+    // Releasing a tab the task is done with only narrows its own reach.
+    expect(one.envelope.status).toBe('success');
+    expect(adapter.tabs.get(2)?.groupId).toBe(-1);
+  });
+
+  it('still works normally when no workspace narrowing is configured', async () => {
+    // Unit harnesses without narrowing, and any future caller that has no
+    // workspace, must not be broken by the guard.
+    const result = await dispatch('tabs.activate', { tabId: 2 });
+    expect(result.envelope.status).toBe('success');
+  });
+});

@@ -4,7 +4,12 @@
  * Models the parts of Chrome's tab behaviour the tools actually depend on:
  * tab identity, URL changes, load completion, and content-script dispatch.
  */
-import type { BrowserAdapter, CreateTabOptions, TabInfo } from '@/tools/browser/chrome-adapter';
+import type {
+  BrowserAdapter,
+  CreateTabOptions,
+  GroupTabsOptions,
+  TabInfo,
+} from '@/tools/browser/chrome-adapter';
 import type { ContentRequest, ContentRequestType, ContentResponse } from '@/messaging/protocol';
 import { MessagingError } from '@/messaging/bus';
 import { createError } from '@/types/result';
@@ -97,11 +102,33 @@ export class FakeBrowserAdapter implements BrowserAdapter {
     return tab ? Promise.resolve(tab) : Promise.reject(new Error('no such tab'));
   }
 
-  groupTabs(): Promise<number> {
-    return Promise.resolve(99);
+  /** Titles per group, so a test can check a label actually landed. */
+  readonly groupTitles = new Map<number, string>();
+  private nextGroupId = 99;
+
+  /**
+   * Moves the tabs into a group for real, rather than returning a number.
+   *
+   * The old stub returned `99` and touched nothing, which cannot tell a tool
+   * that joins the workspace group apart from one that creates a new one — and
+   * that difference is the whole point: creating a new group is what let a
+   * model take its own tabs out of its workspace.
+   */
+  groupTabs(tabIds: readonly number[], options: GroupTabsOptions = {}): Promise<number> {
+    const groupId = options.joinGroupId ?? this.nextGroupId++;
+    for (const id of tabIds) {
+      const tab = this.tabs.get(id);
+      if (tab) this.tabs.set(id, { ...tab, groupId });
+    }
+    if (options.title !== undefined) this.groupTitles.set(groupId, options.title);
+    return Promise.resolve(groupId);
   }
 
-  ungroupTabs(): Promise<void> {
+  ungroupTabs(tabIds: readonly number[]): Promise<void> {
+    for (const id of tabIds) {
+      const tab = this.tabs.get(id);
+      if (tab) this.tabs.set(id, { ...tab, groupId: -1 });
+    }
     return Promise.resolve();
   }
 
