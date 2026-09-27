@@ -276,6 +276,54 @@ describe('what the gate deliberately allows through', () => {
     expect(result.errors).toEqual([]);
   });
 
+  it('reports a blocker on a PARTIAL row, not only on a passing one', () => {
+    // The point of these three statuses is that a blocker stays visible. The
+    // notes loop used to sit after the "is this row PASS?" early return, so a
+    // capability still waiting on a person or a credential reported nothing —
+    // hiding them on exactly the rows where they are the reason for the wait.
+    // Four EXTERNAL_REQUIRED clauses naming this project's real blocker, that
+    // no OAuth application is registered, were invisible for that reason.
+    const result = run(
+      {
+        'P-001': {
+          clauses: [
+            clause({
+              status: 'EXTERNAL_REQUIRED',
+              evidence: [],
+              note: 'no application is registered',
+              blocker: 'nobody has registered an OAuth application',
+            }),
+          ],
+        },
+      },
+      { 'P-001': 'PARTIAL' },
+    );
+
+    expect(result.errors).toEqual([]);
+    expect(result.notes.join(' ')).toContain('EXTERNAL_REQUIRED');
+  });
+
+  it('reports a manual gate on a PARTIAL row too', () => {
+    const result = run(
+      {
+        'P-001': {
+          clauses: [
+            clause({
+              status: 'MANUAL_REQUIRED',
+              evidence: [],
+              note: 'a person has to do it',
+              acceptance: 'procedure D-3-1',
+            }),
+          ],
+        },
+      },
+      { 'P-001': 'PARTIAL' },
+    );
+
+    expect(result.errors).toEqual([]);
+    expect(result.notes.join(' ')).toContain('MANUAL_REQUIRED');
+  });
+
   it('does not let MANUAL_REQUIRED become an automated-evidence failure', () => {
     // §84 condition 3 is a separate, repository-wide gate. Folding it in here
     // would make the two indistinguishable, which is the whole reason the

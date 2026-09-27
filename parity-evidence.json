@@ -899,7 +899,98 @@
       "e2e": [
         "tests/e2e/workflow-controls.spec.ts",
         "tests/e2e/workflow-replay-conditions.spec.ts",
-        "tests/e2e/workflows.spec.ts"
+        "tests/e2e/workflows.spec.ts",
+        "tests/e2e/connector.spec.ts"
+      ],
+      "clauses": [
+        {
+          "id": "P-022-C1",
+          "specRef": "§49",
+          "requirement": "Record, stop, and save a workflow.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/workflows.spec.ts :: recording a real task captures its steps, and saving them runs nothing"
+          ]
+        },
+        {
+          "id": "P-022-C2",
+          "specRef": "§49",
+          "requirement": "Recorded actions are converted into semantic actions, with selectors as fallback hints only.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "A recorded step stores a role-and-name binding carrying PAGE_DERIVED provenance, not a handle and not an nth-child path.",
+          "evidence": [
+            "tests/e2e/workflows.spec.ts :: a recorded click is stored as a page-derived binding, never as a handle",
+            "tests/e2e/workflows.spec.ts :: a recorded binding carries PAGE_DERIVED provenance in real extension storage",
+            "tests/e2e/workflows.spec.ts :: replaying a recorded click acts on the element that was originally clicked"
+          ]
+        },
+        {
+          "id": "P-022-C3",
+          "specRef": "§48",
+          "requirement": "Replay drives the real browser and re-earns its approvals.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/workflows.spec.ts :: replaying a recording drives the real browser and asks again at each step"
+          ]
+        },
+        {
+          "id": "P-022-C4",
+          "specRef": "§49",
+          "requirement": "A binding that no longer identifies one element fails closed.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/workflows.spec.ts :: a renamed element fails the replay closed, with nothing clicked",
+            "tests/e2e/workflows.spec.ts :: a duplicated element fails the replay closed, with nothing clicked"
+          ]
+        },
+        {
+          "id": "P-022-C5",
+          "specRef": "§49",
+          "requirement": "A tampered or incomplete recording is refused rather than run.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/workflows.spec.ts :: a workflow whose stored definition was tampered with is refused, not run",
+            "tests/e2e/workflows.spec.ts :: an incomplete recording cannot be replayed at all"
+          ]
+        },
+        {
+          "id": "P-022-C6",
+          "specRef": "§32",
+          "requirement": "A recording never stores a secret-shaped value.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/workflows.spec.ts :: a secret-shaped accessible name is never stored, and the recording says so"
+          ]
+        },
+        {
+          "id": "P-022-C7",
+          "specRef": "§49",
+          "requirement": "A recording is not a capability the model can reach.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/workflows.spec.ts :: a recorded workflow never reaches the skill list or the model’s tools",
+            "tests/e2e/workflows.spec.ts :: recording added no permission and no host access"
+          ]
+        },
+        {
+          "id": "P-022-C8",
+          "specRef": "§44",
+          "requirement": "Record the reference QA workflow spanning Jira, Confluence, Figma and Google Sheets.",
+          "mandatory": true,
+          "status": "EXTERNAL_REQUIRED",
+          "blocker": "§44 names this as the primary reference integration workflow for validating the multi-tool architecture, and none of the four connectors it spans exists — each blocked on its own OAuth application, per P-023-C8 and C9. So the multi-connector case is untested against anything real, and nothing simulates it.",
+          "evidence": [
+            "tests/e2e/connector.spec.ts :: authorizing refuses honestly when no OAuth application is configured"
+          ],
+          "note": "Recording and replay are complete and evidenced for browser actions; what cannot be recorded is a workflow that spans services none of which can be connected. The gap is in the connectors, not in the recorder."
+        }
       ]
     },
     "P-023": {
@@ -914,7 +1005,119 @@
         "tests/security/connector-framework.test.ts",
         "tests/security/connector-security.test.ts"
       ],
-      "e2e": ["tests/e2e/connector.spec.ts"]
+      "e2e": ["tests/e2e/connector.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-023-C1",
+          "specRef": "§34",
+          "requirement": "Connector Registry",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/connector.spec.ts :: the connector is registered, and reports itself unconfigured rather than broken",
+            "tests/e2e/connector.spec.ts :: an unknown connector is refused rather than invented"
+          ]
+        },
+        {
+          "id": "P-023-C2",
+          "specRef": "§34",
+          "requirement": "Connector Adapter",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/integration/connector-workflow.test.ts :: carries the query to the service and nothing else",
+            "tests/integration/connector-workflow.test.ts :: tells a rate limit apart from a refusal, both of which are 403"
+          ]
+        },
+        {
+          "id": "P-023-C3",
+          "specRef": "§34",
+          "requirement": "Authentication",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "The flow is implemented end to end against a local mock authorization server over real HTTP — PKCE, state, callback validation and a token vault. What has never happened is a live authorization; see C8.",
+          "evidence": [
+            "tests/e2e/connector.spec.ts :: the OAuth callback page is reachable by redirect from an authorization server",
+            "tests/e2e/connector.spec.ts :: the callback page carries no script that could handle the code itself",
+            "tests/e2e/connector.spec.ts :: connector tokens live in session storage, which a content script cannot read"
+          ]
+        },
+        {
+          "id": "P-023-C4",
+          "specRef": "§34",
+          "requirement": "Scope Discovery",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": ["tests/e2e/connector.spec.ts :: reading needs no scope and writing does"]
+        },
+        {
+          "id": "P-023-C5",
+          "specRef": "§34",
+          "requirement": "Tool Registry",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/connector.spec.ts :: connector tools are in the registry the model is offered"
+          ]
+        },
+        {
+          "id": "P-023-C6",
+          "specRef": "§34",
+          "requirement": "Policy",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/connector.spec.ts :: a model-driven connector call is refused while the connector is not connected",
+            "tests/integration/connector-workflow.test.ts :: is declared as a confirmed, high-risk, non-idempotent operation"
+          ]
+        },
+        {
+          "id": "P-023-C7",
+          "specRef": "§34",
+          "requirement": "Execution",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/connector.spec.ts :: the service worker cannot reach the network outside the guarded transport",
+            "tests/integration/connector-workflow.test.ts :: refuses a write the connector was not authorised for"
+          ]
+        },
+        {
+          "id": "P-023-C8",
+          "specRef": "§34",
+          "requirement": "A connector can actually be connected and used against a real service.",
+          "mandatory": true,
+          "status": "EXTERNAL_REQUIRED",
+          "blocker": "No OAuth application is registered for this project, with any provider. A confidential client cannot be shipped in an extension, and a public client still needs a client id issued by the service and a redirect URI the service has been told about. Neither exists, so no authorization code can be obtained and no live authorization has ever been performed. The extension says so and refuses to start a flow it cannot finish rather than faking one.",
+          "evidence": [
+            "tests/e2e/connector.spec.ts :: authorizing refuses honestly when no OAuth application is configured"
+          ],
+          "note": "Everything above this line is exercised against a local mock authorization server and API over real HTTP. What has never happened is an authorization against a real service, and it cannot happen from this repository: the missing piece is a registered application, not code."
+        },
+        {
+          "id": "P-023-C9",
+          "specRef": "§36",
+          "requirement": "Tier 1 roadmap: Jira, Confluence, Google Sheets, Google Drive, Figma, GitHub.",
+          "mandatory": true,
+          "status": "EXTERNAL_REQUIRED",
+          "blocker": "One of the six is implemented — GitHub — and the other five are not. Each needs its own registered OAuth application before it could be connected even if it were written, so the blocker in C8 applies to every one of them. Nothing returns a fake response for a connector that does not exist.",
+          "evidence": [
+            "tests/e2e/connector.spec.ts :: an unknown connector is refused rather than invented"
+          ],
+          "note": "One of the six ships — GitHub — and the other five are not written. Recording them as external rather than unimplemented is deliberate: writing them would not make them connectable, because each still needs its own registered application first."
+        },
+        {
+          "id": "P-023-C10",
+          "specRef": "§7",
+          "requirement": "No identity, cookie or webRequest permission is taken for connectors.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/connector.spec.ts :: the extension holds no identity, cookies or webRequest permission",
+            "tests/e2e/connector.spec.ts :: chrome.identity is genuinely unavailable, not merely unused"
+          ]
+        }
+      ]
     },
     "P-024": {
       "unit": ["tests/unit/skill-model.test.ts", "tests/unit/skill-registry.test.ts"],
@@ -924,7 +1127,109 @@
         "tests/security/skill-security.test.ts",
         "tests/security/write-skill-authority.test.ts"
       ],
-      "e2e": ["tests/e2e/shortcut-prompt-and-skills.spec.ts", "tests/e2e/skills.spec.ts"]
+      "e2e": [
+        "tests/e2e/shortcut-prompt-and-skills.spec.ts",
+        "tests/e2e/skills.spec.ts",
+        "tests/e2e/connector.spec.ts"
+      ],
+      "clauses": [
+        {
+          "id": "P-024-C1",
+          "specRef": "§43",
+          "requirement": "A skill is a declarative definition the runtime executes step by step.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/skills.spec.ts :: the bundled skills register against the tools this build really has",
+            "tests/e2e/skills.spec.ts :: a skill drives the real browser through several steps"
+          ]
+        },
+        {
+          "id": "P-024-C2",
+          "specRef": "§43",
+          "requirement": "A skill carries an identity that changes when it changes.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": ["tests/e2e/skills.spec.ts :: each skill carries a definition hash"]
+        },
+        {
+          "id": "P-024-C3",
+          "specRef": "§28",
+          "requirement": "A skill’s risk is the highest its own steps reach, composition included.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/skills.spec.ts :: each skill reports the risk its own steps reach"
+          ]
+        },
+        {
+          "id": "P-024-C4",
+          "specRef": "§24",
+          "requirement": "Approving a skill run does not approve the actions inside it.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "The clause that matters most here: a skill is not a permission wrapper.",
+          "evidence": [
+            "tests/e2e/skills.spec.ts :: approving the run does not approve a step inside it",
+            "tests/e2e/skills.spec.ts :: a skill that navigates asks before it navigates",
+            "tests/e2e/skills.spec.ts :: declining the run stops it before any step"
+          ]
+        },
+        {
+          "id": "P-024-C5",
+          "specRef": "§43",
+          "requirement": "A skill cannot be created by the model or by the page.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/skills.spec.ts :: a skill the model invented is refused, not created",
+            "tests/e2e/skills.spec.ts :: a skill cannot be added through any message the panel can send",
+            "tests/e2e/skills.spec.ts :: a model cannot reach a skill except through skills.run"
+          ]
+        },
+        {
+          "id": "P-024-C6",
+          "specRef": "§38",
+          "requirement": "A skill run is recorded without its inputs or results.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/skills.spec.ts :: a skill run is recorded without its inputs or results"
+          ]
+        },
+        {
+          "id": "P-024-C7",
+          "specRef": "§55",
+          "requirement": "A skill run interrupted by eviction is not silently resumed.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/skills.spec.ts :: a skill run interrupted by a worker restart is not silently resumed"
+          ]
+        },
+        {
+          "id": "P-024-C8",
+          "specRef": "§32",
+          "requirement": "Egress inside a skill is gated like any other.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/skills.spec.ts :: a blocked egress inside a skill produces zero hits on the receiving origin"
+          ]
+        },
+        {
+          "id": "P-024-C9",
+          "specRef": "§44",
+          "requirement": "The reference QA skill spanning four services.",
+          "mandatory": true,
+          "status": "EXTERNAL_REQUIRED",
+          "blocker": "The same blocker as P-022-C8: §44's reference skill spans Jira, Confluence, Figma and Google Sheets, and none of those connectors exists because none has a registered OAuth application. Four workflows ship and one writes, to the page's own origin at R2; a connector-writing skill is deliberately not the easiest path through a young feature, so writes to a service stay individually requested.",
+          "evidence": [
+            "tests/e2e/connector.spec.ts :: authorizing refuses honestly when no OAuth application is configured"
+          ],
+          "note": "The skill engine is complete and evidenced, including the clause that matters most — approving a run does not approve the actions inside it. What is missing is the four services §44's reference skill spans."
+        }
+      ]
     },
     "P-025": {},
     "P-026": {},

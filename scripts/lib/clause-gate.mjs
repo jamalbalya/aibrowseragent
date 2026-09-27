@@ -199,6 +199,24 @@ export function checkClauses({ capabilities, statusById, fileExists, readFile })
       }
     }
 
+    // --- what is waiting on another gate, whatever this row reads ----------
+    //
+    // Reported for every capability, not only the passing ones. These three
+    // statuses exist to keep a blocker *visible* — a person, a credential, or
+    // an unreadable clause — and the check used to print them only for rows
+    // that already read PASS, which hid them on exactly the rows still waiting
+    // on something. Four EXTERNAL_REQUIRED clauses naming this project's real
+    // blocker, that no OAuth application is registered, were invisible for
+    // that reason.
+    for (const clause of clauses) {
+      if (clause?.mandatory !== true) continue;
+      if (DECLARED_NOT_BLOCKING.has(clause.status)) {
+        notes.push(
+          `${id} ${clause.id} (${clause.specRef}) is ${clause.status}: ${clause.requirement}`,
+        );
+      }
+    }
+
     // --- and now: may this capability read PASS? ---------------------------
     if (statusById[id] !== 'PASS') continue;
 
@@ -208,10 +226,6 @@ export function checkClauses({ capabilities, statusById, fileExists, readFile })
         errors.push(
           `${id} is PASS but its mandatory clause ${clause.id} (${clause.specRef}) is ` +
             `${clause.status}: ${clause.requirement} — ${clause.note ?? 'no note'}`,
-        );
-      } else if (DECLARED_NOT_BLOCKING.has(clause.status)) {
-        notes.push(
-          `${id} ${clause.id} (${clause.specRef}) is ${clause.status}: ${clause.requirement}`,
         );
       }
     }

@@ -222,7 +222,7 @@ stricter standard.
 
 ### The clause gate, and the two rows it moved
 
-`parity-evidence.json` now carries a **clause inventory** for six capabilities,
+`parity-evidence.json` carries a **clause inventory** for fifteen of the forty capabilities — 120 clauses at the time of writing — and
 and `scripts/check-parity.mjs` refuses a PASS whose mandatory clauses are not
 evidenced. Clause evidence names a _test_, not a file — `file :: exact title` —
 because citing a whole file is exactly the move that let P-019 read PASS while
@@ -245,6 +245,40 @@ Nothing was cited to make those rows keep their PASS, which was the point. Eight
 of §14's nine checks and ten of §10's eleven tools are evidenced clause by
 clause; the two that are not now say so in the matrix rather than only in an
 audit report.
+
+### What is waiting on somebody else, and where to see it
+
+Three clause statuses exist so that a blocker stays visible rather than being
+absorbed into a verdict: `MANUAL_REQUIRED` needs a person, `EXTERNAL_REQUIRED`
+needs something this repository cannot issue itself, and `AMBIGUOUS` marks a
+clause that cannot be read. The check prints each one on every run.
+
+It did not always. The loop that printed them sat after the check's own "is this
+row PASS?" early return, so a capability still waiting on something reported
+nothing — which hid these notes on precisely the rows where the blocker is the
+reason for the wait. Four `EXTERNAL_REQUIRED` clauses naming this project's real
+blocker were invisible for that reason. Fixed, with two cases that fail if the
+notes go back behind the PASS gate.
+
+What they now say, in full:
+
+- **P-023-C8, P-023-C9, P-022-C8, P-024-C9 — no OAuth application is
+  registered**, with any provider. A confidential client cannot ship in an
+  extension, and a public client still needs a client id issued by the service
+  and a redirect URI the service has been told about. Neither exists, so no
+  authorization code can be obtained and no connector has ever been connected to
+  a real service. Everything above that line — registry, adapter, PKCE, state,
+  callback validation, token vault, scope discovery, policy, execution — runs
+  against a local mock authorization server over real HTTP. The five unwritten
+  Tier 1 connectors are recorded as external rather than unimplemented on
+  purpose: writing them would not make them connectable. This one blocker is
+  what holds P-022, P-023 and P-024 below PASS, and §44's reference
+  multi-service workflow with them.
+- **P-011-C7 — Chrome's own optional-permission dialog**, which has no frame,
+  no exposed accessibility tree and no CDP domain behind it. Everything
+  downstream of the grant runs end to end.
+
+Neither is an effort question, and neither is hidden in a verdict.
 
 Three further clauses are declared and do **not** block a PASS, because they
 belong to other gates: a clause needing a person (§84 condition 3), a clause
