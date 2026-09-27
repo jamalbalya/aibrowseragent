@@ -398,10 +398,59 @@ possible. That is compatible with the existing architecture: an MCP server is a
 declared egress destination, its calls go through the guarded transport and the
 one egress gate, its tools get risk assigned locally, and its resources are
 `NEVER_PERSISTED` page-class content that taints the task. Every object in §1's
-MCP columns is expressible. What is genuinely undecided is **per-tool approval
-granularity** — the benchmark's `requiresUserInteraction` prompts on every call,
-and whether ABA matches that or maps MCP tools onto its own R0–R5 scale is a
-product decision nobody has taken.
+MCP columns is expressible.
+
+#### The approval-granularity decision, now taken
+
+This was recorded here as undecided, and it is the only thing that was holding
+the client direction, so leaving it open was the blocker. Taken as follows, with
+the reasoning, because a later reader needs to be able to disagree with it on the
+merits rather than guess.
+
+Neither of the two obvious answers works.
+
+_Prompt on every MCP call_, as the benchmark's `requiresUserInteraction` does, is
+safe in the small and corrosive in the large. This project has argued the same
+point three times about its own tools — a confirmation in front of rearranging a
+tab, a prompt for reading a page — and the conclusion has not changed: a prompt
+that fires on everything is a prompt nobody reads, and it costs more safety than
+it buys on the call that actually mattered.
+
+_Map each MCP tool onto R0–R5_ sounds right and quietly breaks the rule two
+paragraphs above. Risk would have to be inferred from the tool's name,
+description and schema, and all three come **from the server**. Inferring risk
+from server-supplied metadata is accepting the server's declaration through the
+back door, which is exactly what "the risk is ours" forbids.
+
+So the risk is derived from the only trustworthy thing available: **what the user
+said when they added the server.** An MCP server is added deliberately — it is a
+declared egress destination, which already requires an explicit act — and that is
+the moment to ask what it may do. The answer becomes a per-server **ceiling**,
+clamped by `MAX_GRANTABLE_RISK` exactly as a site grant is, and **every tool
+discovered from that server runs at the ceiling**, never below it.
+
+Consequences, stated rather than discovered later:
+
+- A read-only MCP tool costs the same as a write from the same server. That is
+  conservative and it is the safe direction: without trusting the server there is
+  no way to tell them apart, and guessing in the permissive direction is the one
+  mistake that cannot be walked back.
+- No prompt storm. The ceiling is granted once, deliberately, per server, and
+  ordinary policy then runs per call.
+- A write-capable server needs a ceiling the user set high on purpose, which is
+  visible in the same place site grants are.
+- No new authorization surface. The ceiling is an input to the existing policy
+  engine, in the same shape as a site rule, so there is still one engine and one
+  choke point.
+- Tool **discovery** is untrusted input in its own right: a name, a description
+  and a schema authored elsewhere, arriving into the model's context. It goes in
+  the data envelope like any other external content, and a discovered name can
+  never shadow a built-in tool.
+
+This is a product decision rather than a specification requirement, and it is
+cheap to revisit **before** implementation and expensive after, which is why it
+is written down here first. With it taken, the client direction has no
+unresolved design question left — what remains is build and evidence.
 
 **As a server.** This is the hard blocker. Exposing browser capability over MCP
 needs an inbound channel, and every inbound channel this manifest could offer is

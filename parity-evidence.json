@@ -2056,7 +2056,7 @@
           "requirement": "MCP client",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "The **client** direction is permitted and unbuilt; the server direction is closed and stays closed. §35 puts the MCP client below the agent runtime reaching out to a remote or local MCP, which is outbound and compatible with this architecture. Exposing this extension *as* an MCP server would need an inbound channel, and every inbound channel this manifest could offer — native messaging, externally_connectable, arbitrary inbound control — is prohibited. That decision is locked and is not reopened to imitate a transport."
+          "note": "The client direction is now unblocked by design and unbuilt by implementation. The transport is settled — remote MCP over HTTPS only, because local servers need native messaging or local process execution and both are prohibited — and the approval-granularity question that PLUGIN_TRUST_MODEL.md recorded as 'nobody has taken' has been taken: an MCP server carries a user-set per-server risk ceiling, clamped like a site grant, and every tool from it runs at that ceiling. Risk is never inferred from the server's own name, description or schema, because that is accepting the server's declaration through the back door. The server direction stays closed: it needs an inbound channel and every inbound channel this manifest could offer is prohibited."
         },
         {
           "id": "P-026-C2",
@@ -2080,7 +2080,7 @@
           "requirement": "tool discovery",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "The design question that has to be answered before code: a discovered tool arrives from outside with a name, a schema and a description, all of which are untrusted input to the model's context. None of it may set its own risk."
+          "note": "Unbuilt. The design question is answered rather than open: a discovered tool's name, description and schema are untrusted input authored elsewhere, so they travel in the same data envelope as page content, a discovered name can never shadow a built-in tool, and the tool's risk comes from the user's per-server ceiling rather than from anything the server said about itself."
         },
         {
           "id": "P-026-C5",
@@ -2096,7 +2096,7 @@
           "requirement": "Every MCP capability passes schema, policy, permission and audit.",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "The clause that decides the shape of the work. The existing registry already enforces all four at one choke point, so an MCP tool would have to be a registry entry like any other rather than a parallel path — and its risk would have to be assigned here, never declared by the server."
+          "note": "Unbuilt, and the shape is decided: the existing registry already enforces schema, policy, permission and audit at one choke point, so an MCP tool has to be an ordinary registry entry rather than a parallel path, with its risk assigned locally from the user's per-server ceiling."
         },
         {
           "id": "P-026-C7",
