@@ -207,13 +207,42 @@ function numberBefore(copy, at) {
   return Number.isFinite(n) ? { n, said: best[1] } : null;
 }
 
+/**
+ * "N of M capabilities PASS", which the PARTIAL and NOT-STARTED sweep below
+ * cannot see.
+ *
+ * Added because README.md read "30 of 40 mandatory capabilities PASS" for four
+ * waves after the count reached 34 — an understatement rather than a boast, but
+ * the same defect either way: a number in public copy that nothing compared
+ * against the table. The nearest-preceding-number rule cannot catch this shape,
+ * because the number nearest to the word PASS is the denominator.
+ */
+const FRACTION = /(\d+)\s+of\s+(\d+)\s+(?:\w+\s+)?capabilities\s+PASS/gi;
+
 for (const file of [
+  'README.md',
   'docs/release/store-listing.md',
   'docs/release/chrome-web-store-submission-checklist.md',
 ]) {
   const path = resolve(root, file);
   if (!existsSync(path)) continue;
   const copy = readFileSync(path, 'utf8');
+
+  for (const hit of copy.matchAll(FRACTION)) {
+    const [, passing, total] = hit;
+    if (Number(passing) !== actual.PASS) {
+      errors.push(
+        `${file} says ${passing} capabilities PASS, but the table has ${actual.PASS}. ` +
+          `Public copy has to agree with the matrix.`,
+      );
+    }
+    if (Number(total) !== rows.length) {
+      errors.push(
+        `${file} counts ${total} capabilities in total, but the table has ${rows.length}.`,
+      );
+    }
+  }
+
   for (const [status, label] of [
     ['NOT-STARTED', /not[- ]started/gi],
     ['PARTIAL', /\bpartial\b/gi],

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Checks the acceptance packages under `docs/testing/acceptance/` against the
- * repository they describe.
+ * Checks the acceptance packages under `docs/testing/acceptance/`, and the
+ * threat model at `docs/THREAT_MODEL.md`, against the repository they describe.
  *
  * An acceptance document is a claim about where evidence lives. A claim about
  * a file can go stale silently — a test renamed in one commit leaves a
@@ -30,6 +30,29 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dir = join(root, 'docs/testing/acceptance');
+
+/**
+ * Documents outside the acceptance directory that play by the same rules.
+ *
+ * `docs/THREAT_MODEL.md` is specification §81's threat model and it cites
+ * evidence in exactly this form, so it gets exactly this checking. Adding it
+ * here rather than giving it a checker of its own is the point: a second script
+ * with the same job would drift from this one, and the rule that matters — a
+ * citation names a test that really exists, quotes and all — is already written
+ * down once.
+ */
+const EXTRA_DOCUMENTS = ['docs/THREAT_MODEL.md'];
+
+/**
+ * Which `## ` headings in a document are items that owe a verdict.
+ *
+ * The acceptance packages are all items, so their default is "every heading".
+ * The threat model is one item per §82 threat plus front and back matter, and
+ * front matter explaining what a verdict means is not itself an item. Keying
+ * this off the `T-<n> —` numbering rather than off a list of prose headings
+ * means a nineteenth threat added without a verdict still fails.
+ */
+const ITEM_HEADING = { 'docs/THREAT_MODEL.md': /^T-\d+ — / };
 
 const VERDICTS = ['AUTOMATED', 'MANUAL', 'NOT POSSIBLE HERE'];
 
@@ -64,11 +87,22 @@ if (!existsSync(dir)) {
   process.exit(1);
 }
 
-const documents = readdirSync(dir).filter((name) => name.endsWith('.md'));
-if (documents.length === 0) problems.push('the acceptance directory holds no documents');
+const packages = readdirSync(dir).filter((name) => name.endsWith('.md'));
+if (packages.length === 0) problems.push('the acceptance directory holds no documents');
 
-for (const name of documents) {
-  const path = join(dir, name);
+for (const missing of EXTRA_DOCUMENTS.filter((rel) => !existsSync(join(root, rel)))) {
+  problems.push(`${missing} is required by specification §81 and does not exist`);
+}
+
+const documents = [
+  ...packages.map((name) => ({ name, path: join(dir, name) })),
+  ...EXTRA_DOCUMENTS.filter((rel) => existsSync(join(root, rel))).map((rel) => ({
+    name: rel,
+    path: join(root, rel),
+  })),
+];
+
+for (const { name, path } of documents) {
   const text = readFileSync(path, 'utf8');
 
   // 1. Evidence citations resolve.
@@ -116,9 +150,11 @@ for (const name of documents) {
 
   // 2-3. Each item's verdict, and what that verdict obliges it to carry.
   //      An item is a `## ` heading; its body runs to the next one.
+  const isItem = ITEM_HEADING[name];
   const sections = text.split(/\n## /).slice(1);
   for (const section of sections) {
     const heading = section.split('\n')[0].trim();
+    if (isItem !== undefined && !isItem.test(heading)) continue;
     const declared = VERDICTS.filter((verdict) =>
       new RegExp(`\\*\\*Verdict: \`${verdict}\``).test(section),
     );
