@@ -401,25 +401,62 @@ password-manager boundary (E1); this build has no password-manager integration
 and does not claim one. Credential entry belongs to the person until that
 changes, which is a separate design with its own trust questions.
 
-### Gap-5 — outbound MCP (server half now settled, by evidence)
+### Gap-5 — MCP (closed; neither half is a gap against the extension)
 
-P-026 has been scoped as "consume external tools". The comparison product also
-**exposes** browser capability over MCP.
+Re-audited in Wave 29 and closed. `docs/MCP_GUIDE.md` carries the full record;
+what belongs here is the benchmark evidence, because it turned out to say
+something different from what this section assumed.
 
-The client half stands as it was: remote MCP over HTTPS fits this architecture,
-and what is undecided is per-tool approval granularity — a product decision, not
-a blocker.
+**The comparison extension is not an MCP client** (E1/E3). The side panel "runs
+the same Claude Cowork session you use on desktop, web, and mobile", and that is
+why "your skills and connectors work in the browser". The connectors themselves
+are remote MCP reached **from the vendor's cloud, not from the browser**: a
+custom connector's "MCP server must be reachable over the public internet from
+Anthropic's IP ranges", and private-network servers must allowlist those
+addresses. Local MCP servers configured on the desktop "aren't available in
+Cowork or claude.ai".
 
-The server half is **settled against implementing it**, and §13 is why. The
-benchmark carries that direction over a native messaging host plus a vendor
-cloud relay. Both are on the locked prohibition list. So this is not "a
-transport decision nobody has taken": the only transport the benchmark is
-documented to use is one this project has already refused, twice, for reasons
-that have nothing to do with MCP. Reopening it means reopening "do not make the
-machine a server", which is a product decision and not an engineering one.
+**And it is not an MCP server**, per §13: `claude-in-chrome` is a reserved
+built-in server name inside the coding agent, reaching the extension over a
+native messaging host.
 
-`PLUGIN_TRUST_MODEL.md` §9 reached the same conclusion from the manifest alone.
-This is the external corroboration it did not have.
+So MCP lives entirely in the runtime behind the extension, in both directions,
+and the extension is the surface that runtime is displayed in. Against the
+parity floor — the comparison **extension** — there is no MCP gap at all.
+
+That does not make P-026 optional, and the reason is worth keeping straight:
+§5.11 asks for an `MCP client` as a component of _this_ project, so the
+specification is the authority for it rather than parity. It also means the
+client has to live in the extension or nowhere, because this build has no cloud
+session to delegate it to — the brain is an interchangeable provider API and
+browser-agent operation must not depend on the backend.
+
+**The server half stays settled against implementing it**, now on two grounds
+rather than one. §13's is unchanged: the benchmark carries that direction over a
+native messaging host plus a vendor cloud relay, both on the locked prohibition
+list. The new one is that §5.11 never asked for it — it names a client and lists
+no server component — so this is not a deferred requirement anybody is owed.
+
+**What the vendor's own MCP client does** (E1), usable as evidence of careful
+practice though it sets no parity obligation, because it is the coding agent and
+not the extension: an MCP tool call prompts by default; the escape is a rule the
+**user** writes, at `mcp__<server>` or `mcp__<server>__<tool>` scope; deny and
+ask rules may use unanchored globs but an **allow** glob must name a literal
+server, and `mcp__*` as an allow "is skipped with a warning and doesn't
+auto-approve anything"; a settings rule matching an MCP tool's arguments is
+skipped as invalid, so argument-level allows do not exist; a server-declared
+`requiresUserInteraction` forces a prompt that no allow rule, hook or permission
+mode can silence; and an organization setting a connector tool to `ask`
+overrides user rules the same way. Every channel by which a server or an org
+influences authority runs **toward more confirmation, never less**. `MCP_GUIDE.md`
+§5 adopts that asymmetry.
+
+One row of that evidence is a hazard rather than a model: `list_changed`
+refreshes a server's tool set "without requiring you to disconnect and
+reconnect", so a previously written server-scoped allow rule silently covers
+tools that did not exist when it was written. This project's R3 classification
+makes the situation unreachable, which is recorded in `MCP_GUIDE.md` §5.1 as the
+reason the earlier per-server ceiling was withdrawn.
 
 ### Gap-6 — deliberate divergences, recorded as such
 
@@ -429,6 +466,7 @@ Not gaps to close:
 | -------------------------- | ----------------------------------- | ---------------------------------------- |
 | Session storage            | _"sessions live with your account"_ | Local-first, by locked decision          |
 | Local MCP / native process | Supported                           | Refused — extension-only, no native host |
+| MCP client                 | In the cloud session (E1)           | In the extension — no session to host it |
 | Provider                   | Claude models                       | Interchangeable brain, by locked goal    |
 | Worker-eviction recovery   | User-driven reconnect (E2)          | Automatic reconciliation on startup      |
 
@@ -438,6 +476,8 @@ Not gaps to close:
 
 Sections 1–8 and the gaps were gathered on 2026-09-24. Sections 9–17 were added
 on 2026-09-25 by the Wave 9 parity audit; the new citations are marked below.
+Gap-5 was re-gathered on 2026-09-27 by the Wave 29 P-026 scope audit, against
+the four sources marked **W29**.
 
 E1 — [Get started](https://support.claude.com/en/articles/12012173-get-started-with-claude-in-chrome) ·
 [Permissions guide](https://support.claude.com/en/articles/12902446-claude-in-chrome-permissions-guide) ·
@@ -450,10 +490,13 @@ E2 — [Claude Code with Chrome](https://code.claude.com/docs/en/chrome) ·
 [Cowork scheduled tasks](https://support.claude.com/en/articles/13854387-schedule-recurring-tasks-in-claude-cowork) ·
 [Use Cowork safely](https://support.claude.com/en/articles/13364135-use-claude-cowork-safely) ·
 [Use plugins](https://support.claude.com/en/articles/13837440-use-plugins-in-claude) ·
-[Skills, connectors and plugins directory](https://support.claude.com/en/articles/14328846-browse-skills-connectors-and-plugins-in-one-directory)
+[Skills, connectors and plugins directory](https://support.claude.com/en/articles/14328846-browse-skills-connectors-and-plugins-in-one-directory) ·
+**W29** [Custom connectors using remote MCP](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp) ·
+**W29** [Connect Claude Code to tools via MCP](https://code.claude.com/docs/en/mcp) ·
+**W29** [Configure permissions](https://code.claude.com/docs/en/permissions)
 
 E3 — [Piloting Claude for Chrome](https://claude.com/blog/claude-for-chrome) ·
-[Cowork in the Chrome side panel](https://claude.com/blog/cowork-chrome-side-panel) ·
+**W29** [Cowork in the Chrome side panel](https://claude.com/blog/cowork-chrome-side-panel) ·
 [Claude in Chrome product page](https://claude.com/claude-in-chrome)
 
 E4 — third-party permission-list reports, used for the manifest permission set ·

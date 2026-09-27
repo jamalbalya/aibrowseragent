@@ -279,38 +279,60 @@ from one is registered, and nothing fakes either. Two of its clauses are
 nevertheless VERIFIED, and they are the two that decide whether §35's "MCP must
 never become a security bypass" can hold at all.
 
-The blocker recorded in `PLUGIN_TRUST_MODEL.md` was not trust but a product
-decision nobody had taken: whether an MCP tool prompts on every call, as the
-benchmark does, or maps onto this project's R0–R5 scale. Leaving it open _was_
-the block, so it has been taken. Prompting on everything is a prompt nobody
-reads — the same conclusion this project reached about confirming a tab
-rearrangement. And mapping onto R0–R5 quietly breaks the rule it sits beside,
-because the risk would have to be inferred from the tool's name, description and
-schema, all of which the **server** wrote.
+The scope was re-audited from the specification in Wave 29, because two answers
+had accumulated that nobody had re-derived. Both are corrected, and
+`docs/MCP_GUIDE.md` — which specification §81 requires and which did not exist —
+is now the authoritative record.
 
-So the risk comes from the user, at the one moment they are already making a
-deliberate decision: adding the server. That becomes a per-server ceiling,
-clamped exactly as a site grant is, and every tool from the server runs at it.
-A read costs the same as a write from the same server, which is the intended
-cost — without trusting the server the two are indistinguishable, and of the two
-ways to be wrong, permissive is the one that cannot be walked back.
+**The direction narrowed.** §5.11 names `MCP client` first and lists no server
+component; §35's diagram runs `Agent Runtime → MCP Client → Remote/Local MCP →
+Tools/Resources`, all downstream. So P-026 is a client capability only: this
+build calls out to servers other people run, and is never itself an MCP server.
+That was previously treated as a deferred transport question. It is not deferred
+— it is not asked for. A related finding from the same audit: the comparison
+**extension** is not an MCP client either. Its connectors are remote MCP reached
+from the vendor's cloud, and its side panel is a cloud session displayed in a
+browser. So there is no benchmark behaviour to copy here, and §5.11 rather than
+parity is the authority for building a client at all.
 
-Both bypasses are now closed in code, ahead of any transport, because a risk
+**The approval-granularity question turned out not to exist.** It had been
+answered with a user-set per-server risk _ceiling_, every tool from the server
+running at it. That is withdrawn. A ceiling is a number a user picks, and the
+user who picks R0 or R1 — reasonably, for a server they believe only reads — has
+put that server's entire present _and future_ tool set below
+`AUTO_APPROVE_BELOW`. A safeguard whose safe setting is the counter-intuitive one
+is not a safeguard.
+
+An MCP tool is **R3** instead, classified here from what the call is:
+`RISK_DESCRIPTIONS.R3` is "Sensitive external side effect. Writes data outside
+the browser", which is an MCP call exactly, including one that only reads on the
+far side. Everything else then follows from thresholds that already ship —
+`evaluatePolicy` stage 5 confirms at R3 before the mode switch, so `manual`,
+`auto` and `skip` all confirm, and `MAX_GRANTABLE_RISK` is R2, so no site rule
+and no plan approval can reach it. Approval is per call as arithmetic rather than
+as a policy choice, no new authorization surface was added, and a tool a server
+adds later cannot be covered by a grant that was never able to exist.
+
+Both bypasses are closed in code, ahead of any transport, because a risk
 model written after the socket works is a risk model written around whatever the
 socket happened to do:
 
-- **P-026-C8** — risk is assigned locally. `mcpToolRisk` does not take the tool
-  at all, so there is no branch a server could influence, and a source census
-  holds it there. The mutant that honours a server-declared `readOnly` is killed.
+- **P-026-C8** — risk is assigned locally and is ungrantable. `mcpToolRisk` takes
+  no argument at all, and a test pins its arity at zero, because a parameter is
+  the shape every "let the server hint at it" change would arrive in. The cases
+  behind it run the real `evaluatePolicy` rather than a fixture.
 - **P-026-C9** — a discovered tool cannot shadow a built-in, cannot forge another
   server's namespace, cannot arrive without an input schema, and cannot arrive
   ten thousand at a time.
 
-Eight mutants, each killed. What remains for this row is transport, discovery
-over the wire, and registry wiring — build and evidence, with no unresolved
-design question left. The server direction stays closed and is not a
-build question: it needs an inbound channel, and every inbound channel this
-manifest could offer is prohibited.
+Thirteen mutants across both, each killed — the five newest being lowering the
+MCP risk to R2, giving `mcpToolRisk` a parameter, raising `ALWAYS_CONFIRM_AT`,
+raising `MAX_GRANTABLE_RISK`, and restoring the withdrawn ceiling field.
+
+What remains for this row is transport, discovery over the wire, registry
+wiring, a settings surface and audit emission — build and evidence, with no
+unresolved design question left, and validation against a real remote server
+needing a credential this project does not hold.
 
 ### What is waiting on somebody else, and where to see it
 
@@ -1249,13 +1271,15 @@ minimum:
    today, P-025 Plugins and P-026 MCP. This line read "nine" until the count
    was checked against the table beneath it. Both now have a design gate rather
    than a blank: [`PLUGIN_TRUST_MODEL.md`](./docs/architecture/PLUGIN_TRUST_MODEL.md)
-   records what a plugin can safely be under this architecture, and what each
-   capability is actually waiting on. Neither is implemented, and the gate is
-   deliberately not permission to start: P-025 is waiting on a package format
-   and the fact that a package's _authenticity_ cannot be established here at
-   all, and P-026 is waiting on a transport decision — exposing an MCP server
-   needs an inbound channel and every inbound channel this manifest could offer
-   is prohibited.
+   records what a plugin can safely be under this architecture, and
+   [`MCP_GUIDE.md`](./docs/MCP_GUIDE.md) records what P-026 is. Neither is
+   implemented, and the gate is deliberately not permission to start: P-025 is
+   waiting on a package format and the fact that a package's _authenticity_
+   cannot be established here at all. P-026 is waiting on build alone — this
+   line previously said "a transport decision", conflating two directions. The
+   specification asks only for an MCP **client**, which has no unresolved design
+   question left; exposing an MCP **server** needs an inbound channel every one
+   of which is prohibited, and is not asked for.
 3. ~~At least three provider adapters passing the same suite, proving P-033
    rather than asserting it.~~ **Done.** Three adapters —
    `openai-compatible`, `anthropic`, `gemini` — pass one 21-case conformance

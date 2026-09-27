@@ -2056,7 +2056,7 @@
           "requirement": "MCP client",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "The client direction is now unblocked by design and unbuilt by implementation. The transport is settled — remote MCP over HTTPS only, because local servers need native messaging or local process execution and both are prohibited — and the approval-granularity question that PLUGIN_TRUST_MODEL.md recorded as 'nobody has taken' has been taken: an MCP server carries a user-set per-server risk ceiling, clamped like a site grant, and every tool from it runs at that ceiling. Risk is never inferred from the server's own name, description or schema, because that is accepting the server's declaration through the back door. The server direction stays closed: it needs an inbound channel and every inbound channel this manifest could offer is prohibited."
+          "note": "Scope re-audited from the specification in Wave 29, and the answer narrowed rather than widened. §5.11 names `MCP client` first and no server component; §35's diagram runs `Agent Runtime → MCP Client → Remote/Local MCP → Tools/Resources`, all downstream. So P-026 is a client capability only — this build is never an MCP server, which the specification never asks for and every available inbound channel forbids. The transport is remote MCP over HTTPS. The approval-granularity question is gone rather than answered: the earlier per-server risk ceiling was withdrawn because a user who sets it low, reasonably, for a server they think only reads, auto-approves that server's whole present and future tool set. An MCP tool is R3 instead, classified from what the call is, which puts it above `MAX_GRANTABLE_RISK` so no grant can reach it. Unbuilt: transport, registry, discovery, settings and audit emission are the work. See docs/MCP_GUIDE.md."
         },
         {
           "id": "P-026-C2",
@@ -2064,7 +2064,7 @@
           "requirement": "remote MCP",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "Unbuilt. A remote server also needs credentials this project does not hold, so even a finished client could not be validated against a real one here."
+          "note": "Unbuilt. HTTPS is the settled transport, and loopback is permitted only for a test double. A real remote server also needs credentials this project does not hold, so even a finished client could not be validated against one here."
         },
         {
           "id": "P-026-C3",
@@ -2072,7 +2072,7 @@
           "requirement": "local MCP where supported",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "Reaching a local MCP process from an extension needs native messaging, which is prohibited. 'Where supported' is the specification's own hedge, and here it is not supported."
+          "note": "Not supported, and the specification is what says so rather than a preference. §5.11 hedges it \"where supported\"; §66 places local MCP behind the native-messaging desktop bridge and instructs that the bridge not be an MVP dependency. An MV3 extension cannot spawn a process, so stdio is unreachable."
         },
         {
           "id": "P-026-C4",
@@ -2096,7 +2096,7 @@
           "requirement": "Every MCP capability passes schema, policy, permission and audit.",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "Not wired. The rule it depends on is built: an MCP tool's risk comes from the user's per-server ceiling, assigned locally — see P-026-C8. What remains is making such a tool an ordinary registry entry so schema, policy, permission and audit apply at the existing single choke point."
+          "note": "Not wired. The rule it depends on is built and its consequences are evidenced against the real policy engine: an MCP tool is R3, so stage 5 confirms it in every mode before the mode switch and no site rule or plan approval can reach it — see P-026-C8. What remains is making such a tool an ordinary registry entry so schema, policy, permission and audit apply at the existing single choke point."
         },
         {
           "id": "P-026-C7",
@@ -2109,15 +2109,19 @@
         {
           "id": "P-026-C8",
           "specRef": "§35",
-          "requirement": "An MCP tool's risk is assigned locally and can never be lowered by the server.",
+          "requirement": "An MCP tool's risk is assigned locally, can never be lowered by the server, and cannot be pre-approved by any grant.",
           "mandatory": true,
           "status": "VERIFIED",
-          "note": "The first of §35's two bypasses, closed before any transport exists. Risk is the user's per-server ceiling, clamped like a site grant; `mcpToolRisk` does not take the tool at all, so there is no branch a server could influence, and a source census holds it to that. The mutant that honours a server-declared `readOnly` is killed.",
+          "note": "The first of §35's two bypasses, closed before any transport exists, and corrected in Wave 29. Risk is not the server's and not the user's: every MCP tool is R3, because `RISK_DESCRIPTIONS.R3` — \"Sensitive external side effect. Writes data outside the browser\" — is what an MCP call is, including one that only reads on the far side. `mcpToolRisk` takes no argument at all, and a test pins its arity at zero, because a parameter is the shape every \"let the server hint at it\" change would arrive in. R3 then sits above `MAX_GRANTABLE_RISK`, so approval is per call as arithmetic rather than as a policy choice: the cases below run the real `evaluatePolicy`, not a fixture. Five mutants were killed — lowering the risk to R2, giving the function a parameter, raising `ALWAYS_CONFIRM_AT`, raising `MAX_GRANTABLE_RISK`, and restoring the withdrawn ceiling field.",
           "evidence": [
-            "tests/security/mcp-trust-core.test.ts :: is the server’s ceiling, whatever the server says about the tool",
-            "tests/security/mcp-trust-core.test.ts :: cannot be lowered by anything a server could author",
-            "tests/security/mcp-trust-core.test.ts :: clamps a ceiling above what any grant may express",
-            "tests/security/mcp-trust-core.test.ts :: charges a read the same as a write from the same server"
+            "tests/security/mcp-trust-core.test.ts :: is fixed at R3, because that is what an MCP call is",
+            "tests/security/mcp-trust-core.test.ts :: cannot be lowered by anything a server, a schema or a setting could supply",
+            "tests/security/mcp-trust-core.test.ts :: sits above everything a grant can express, so approval is per call by construction",
+            "tests/security/mcp-trust-core.test.ts :: is confirmed in every permission mode, skip included",
+            "tests/security/mcp-trust-core.test.ts :: is not cleared by a site grant on the server’s own origin",
+            "tests/security/mcp-trust-core.test.ts :: is not cleared by a plan the user approved for the task",
+            "tests/security/mcp-trust-core.test.ts :: fails closed in an unattended run, so a scheduled task cannot call one",
+            "tests/security/mcp-trust-core.test.ts :: takes no risk setting at all, so a stored descriptor cannot lower one"
           ]
         },
         {

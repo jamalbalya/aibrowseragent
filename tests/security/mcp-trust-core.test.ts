@@ -3,16 +3,24 @@
  *
  * §35's one normative sentence is "MCP must never become a security bypass",
  * and everything here is a case against that. The decisions this file pins were
- * taken in `PLUGIN_TRUST_MODEL.md` before any transport existed, deliberately:
- * a risk model written after the socket works is a risk model written around
+ * taken in `docs/MCP_GUIDE.md` before any transport existed, deliberately: a
+ * risk model written after the socket works is a risk model written around
  * whatever the socket happened to do.
  *
+ * "Server" throughout means a server somebody else runs and this build calls
+ * out to. This extension is not an MCP server and §5.11 does not ask it to be
+ * one, so no case here concerns an inbound caller.
+ *
  * Every field of a `DiscoveredTool` was authored by the server, so these are
- * adversarial-input tests, not parser tests.
+ * adversarial-input tests, not parser tests. Group 02 is the exception: it runs
+ * the real `evaluatePolicy` rather than the MCP model, because the claim being
+ * tested is about what the shipped policy engine does with an R3 tool, and
+ * asserting that against a fixture would prove the fixture.
  */
 import { describe, expect, it } from 'vitest';
 import {
   MCP_NAME_SEPARATOR,
+  MCP_TOOL_RISK,
   admitDiscoveredTool,
   admitListing,
   isMcpToolName,
@@ -22,23 +30,46 @@ import {
   type McpServerDescriptor,
 } from '@/mcp/core/mcp-model';
 import { MAX_GRANTABLE_RISK } from '@/policy/site-policy';
+import { RISK_DESCRIPTIONS, RISK_RANK } from '@/policy/risk-classifier';
+import {
+  ALWAYS_CONFIRM_AT,
+  AUTO_APPROVE_BELOW,
+  evaluatePolicy,
+  type PermissionMode,
+  type PolicyContext,
+} from '@/policy/policy-engine';
+import { emptySitePolicyState, upsertRule } from '@/policy/site-policy';
+import { APPROVAL_PROVENANCE } from '@/policy/plan-model';
 
 const server: McpServerDescriptor = {
   id: 'example',
   displayName: 'Example MCP',
   url: 'https://mcp.example.com/',
-  ceiling: 'R1',
 };
+
+/** A call on an admitted MCP tool, shaped the way the registry would build it. */
+const mcpCall = {
+  tool: mcpToolName(server.id, 'search'),
+  taskId: 'task-mcp',
+  risk: MCP_TOOL_RISK,
+  targetUrl: server.url,
+} as const;
+
+const contextFor = (mode: PermissionMode, over: Partial<PolicyContext> = {}): PolicyContext => ({
+  mode,
+  sitePolicy: emptySitePolicyState(),
+  unattended: false,
+  ...over,
+});
 
 const schema = { type: 'object', properties: {} };
 
 describe('01 adding a server', () => {
-  it('accepts an https server with a ceiling', () => {
+  it('accepts an https server', () => {
     const verdict = validateServerDescriptor({
       id: 'example',
       displayName: 'Example MCP',
       url: 'https://mcp.example.com/',
-      ceiling: 'R1',
     });
     expect(verdict.ok).toBe(true);
   });
@@ -48,7 +79,6 @@ describe('01 adding a server', () => {
       id: 'example',
       displayName: 'Example',
       url: 'http://mcp.example.com/',
-      ceiling: 'R1',
     });
     expect(verdict.ok).toBe(false);
     if (!verdict.ok) expect(verdict.problems.join(' ')).toContain('not https');
@@ -62,18 +92,22 @@ describe('01 adding a server', () => {
         id: 'mock',
         displayName: 'Mock',
         url: 'http://127.0.0.1:8931/',
-        ceiling: 'R0',
       }).ok,
     ).toBe(true);
   });
 
-  it('clamps a ceiling above what any grant may express', () => {
-    // R3 always confirms and R5 is always denied, so a stored ceiling of either
-    // would describe an authority the product does not have — the same reason
-    // GrantableRiskLevel exists at all.
-    const verdict = validateServerDescriptor({ ...server, ceiling: 'R4' });
+  it('takes no risk setting at all, so a stored descriptor cannot lower one', () => {
+    // The earlier draft asked for a ceiling here. It is gone rather than
+    // clamped: a field a user sets low is a field that auto-approves a server's
+    // whole tool set, including the tools it adds later.
+    const verdict = validateServerDescriptor({ ...server, ceiling: 'R0' } as {
+      readonly id?: unknown;
+      readonly displayName?: unknown;
+      readonly url?: unknown;
+    });
     expect(verdict.ok).toBe(true);
-    if (verdict.ok) expect(verdict.server.ceiling).toBe(MAX_GRANTABLE_RISK);
+    if (verdict.ok)
+      expect(Object.keys(verdict.server).sort()).toEqual(['displayName', 'id', 'url']);
   });
 
   it('refuses a server id that could not survive becoming part of a tool name', () => {
@@ -89,29 +123,93 @@ describe('01 adding a server', () => {
   });
 });
 
-describe('02 where a tool’s risk comes from', () => {
-  it('is the server’s ceiling, whatever the server says about the tool', () => {
-    expect(mcpToolRisk(server)).toBe('R1');
-    expect(mcpToolRisk({ ...server, ceiling: 'R2' })).toBe('R2');
+describe('02 where a tool’s risk comes from, and what the engine does with it', () => {
+  it('is fixed at R3, because that is what an MCP call is', () => {
+    // Not a preference. R3's own description is the sentence, so a tool that
+    // only reads on the far side still qualifies: the arguments left the
+    // browser either way.
+    expect(MCP_TOOL_RISK).toBe('R3');
+    expect(RISK_DESCRIPTIONS.R3).toBe(
+      'Sensitive external side effect. Writes data outside the browser.',
+    );
   });
 
-  it('cannot be lowered by anything a server could author', () => {
-    // The rule this encodes: a server that could declare its own tool R0 would
-    // be a server that could decide it needs no approval. There is deliberately
-    // no branch here for a server to influence — mcpToolRisk does not even take
-    // the tool.
-    const source = mcpToolRisk.toString();
-    expect(source).not.toMatch(/description|inputSchema|readOnly|annotations/);
-    expect(source).toContain('ceiling');
+  it('cannot be lowered by anything a server, a schema or a setting could supply', () => {
+    // The rule: a server that could declare its own tool R0 would be a server
+    // that could decide it needs no approval. `mcpToolRisk` takes no argument
+    // at all, so there is no input to carry such a declaration — and this
+    // pins the arity, because a later parameter is the shape every "let the
+    // server hint at it" change would arrive in.
+    expect(mcpToolRisk.length).toBe(0);
+    expect(mcpToolRisk()).toBe(MCP_TOOL_RISK);
+    expect(mcpToolRisk.toString()).not.toMatch(
+      /description|inputSchema|readOnly|annotations|ceiling/,
+    );
   });
 
-  it('charges a read the same as a write from the same server', () => {
-    // Stated as an intended cost rather than found later: without trusting the
-    // server the two are indistinguishable, and being wrong permissively is the
-    // mistake that cannot be walked back.
-    const read = mcpToolRisk(server);
-    const write = mcpToolRisk(server);
-    expect(read).toBe(write);
+  it('sits above everything a grant can express, so approval is per call by construction', () => {
+    // This is the whole approval-granularity answer, and it is arithmetic
+    // rather than a product decision: a rule may allow up to R2, MCP starts at
+    // R3, so no rule reaches it. If either constant ever moves toward the
+    // other, this fails instead of quietly creating a grantable MCP tool.
+    expect(RISK_RANK[MCP_TOOL_RISK]).toBeGreaterThan(RISK_RANK[MAX_GRANTABLE_RISK]);
+    expect(RISK_RANK[MCP_TOOL_RISK]).toBeGreaterThanOrEqual(RISK_RANK[ALWAYS_CONFIRM_AT]);
+    expect(RISK_RANK[MCP_TOOL_RISK]).toBeGreaterThanOrEqual(RISK_RANK[AUTO_APPROVE_BELOW]);
+  });
+
+  it('is confirmed in every permission mode, skip included', () => {
+    for (const mode of ['manual', 'auto', 'skip'] as const) {
+      const decision = evaluatePolicy(mcpCall, contextFor(mode));
+      expect(decision.verdict, mode).toBe('ALLOW_WITH_CONFIRMATION');
+      expect(decision.code, mode).toBe('RISK_REQUIRES_APPROVAL');
+    }
+  });
+
+  it('is not cleared by a site grant on the server’s own origin', () => {
+    // The nearest thing to a per-server ceiling the product actually has. A
+    // user may trust `mcp.example.com` up to R2 and it changes nothing here,
+    // which is the property the rejected ceiling design lacked.
+    const sitePolicy = upsertRule(emptySitePolicyState(), {
+      site: 'mcp.example.com',
+      decision: 'allow',
+      maxRisk: MAX_GRANTABLE_RISK,
+      createdAt: 1,
+    });
+    const decision = evaluatePolicy(mcpCall, contextFor('auto', { sitePolicy }));
+    expect(decision.verdict).toBe('ALLOW_WITH_CONFIRMATION');
+    expect(decision.code).not.toBe('SITE_ALLOWED');
+  });
+
+  it('is not cleared by a plan the user approved for the task', () => {
+    const decision = evaluatePolicy(
+      { ...mcpCall, siteScope: 'mcp.example.com' },
+      contextFor('auto', {
+        planApproval: {
+          planId: 'plan-1',
+          taskId: 'task-mcp',
+          version: 1,
+          approvedSites: ['mcp.example.com'],
+          approvedAt: 1,
+          approvalProvenance: APPROVAL_PROVENANCE,
+        },
+      }),
+    );
+    expect(decision.verdict).toBe('ALLOW_WITH_CONFIRMATION');
+    expect(decision.code).not.toBe('PLAN_ALLOWED');
+  });
+
+  it('fails closed in an unattended run, so a scheduled task cannot call one', () => {
+    // Stated as a consequence rather than discovered later: stage 5 returns
+    // before the unattended clause, so the call becomes a confirmation and a
+    // confirmation with nobody present is refused downstream.
+    const decision = evaluatePolicy(mcpCall, contextFor('skip', { unattended: true }));
+    expect(decision.verdict).toBe('ALLOW_WITH_CONFIRMATION');
+  });
+
+  it('charges a read the same as a write, which is the accepted cost', () => {
+    // Without trusting the server the two are indistinguishable, and being
+    // wrong permissively is the mistake that cannot be walked back.
+    expect(mcpToolRisk()).toBe(mcpToolRisk());
   });
 });
 

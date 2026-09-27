@@ -233,9 +233,10 @@ Four contents are excluded outright, and the reasons are not symmetrical:
   object is a task, and tasks are created by a person, a schedule or a replay.
   A package that could create tasks would be a package that could act without
   anyone asking it to, which is a different product.
-- **MCP references** are P-026's, and P-026 has an unresolved transport
-  question (§9). A plugin that carried an MCP reference today would carry a
-  reference to nothing.
+- **MCP references** are P-026's, and P-026 has no client built yet (§9,
+  `docs/MCP_GUIDE.md`). A plugin that carried an MCP reference today would carry
+  a reference to nothing. When one is built the reference is a server the client
+  connects to, never a server the plugin exposes.
 - **Policy declarations** would be a second policy engine by another name. The
   one call site is the one call site.
 
@@ -387,83 +388,54 @@ to be re-derived rather than extended.
 
 ### P-026 — MCP
 
-Not unblocked, and the missing piece is transport rather than trust.
+Settled, and moved out. `docs/MCP_GUIDE.md` is the authoritative record —
+specification §81 requires that file and it did not exist, which is part of how
+this section came to hold two answers nobody had re-derived.
 
-The benchmark shows both directions: Claude consumes MCP tools, and
-`claude-in-chrome` is itself an MCP server. Taking them separately:
+Three things it corrects, kept here because the wrong versions were stated here:
 
-**As a client.** Local MCP servers are excluded by the locked constraints — no
-native messaging, no local process execution — so only remote MCP over HTTPS is
-possible. That is compatible with the existing architecture: an MCP server is a
-declared egress destination, its calls go through the guarded transport and the
-one egress gate, its tools get risk assigned locally, and its resources are
-`NEVER_PERSISTED` page-class content that taints the task. Every object in §1's
-MCP columns is expressible.
+**The word "server" was doing two jobs.** This section used to say "the benchmark
+shows both directions: Claude consumes MCP tools, and `claude-in-chrome` is
+itself an MCP server", and then reasoned about "MCP server risk" without saying
+which direction it meant. The two are:
 
-#### The approval-granularity decision, now taken
+- **this build as a client**, calling out to an endpoint somebody else runs — the
+  whole of what §5.11 and §35 ask for, and the only direction in scope;
+- **this build as a server**, driven from outside — never requested by the
+  specification, and locked shut.
 
-This was recorded here as undecided, and it is the only thing that was holding
-the client direction, so leaving it open was the blocker. Taken as follows, with
-the reasoning, because a later reader needs to be able to disagree with it on the
-merits rather than guess.
+Every risk argument in this repository is about the first. `CLAUDE_BENCHMARK.md`
+§13 had already corrected the mechanism — `claude-in-chrome` is a server inside
+the coding agent, reaching the extension over a native messaging host — and the
+same audit found that the comparison **extension** is not an MCP client either:
+its connectors are remote MCP reached from the vendor's cloud. So the benchmark
+provides no behaviour to copy on this surface, and §5.11 rather than parity is
+the authority for building a client at all.
 
-Neither of the two obvious answers works.
+**The approval-granularity question was answered wrongly here, and there is no
+question.** This section asked the user for a per-server risk **ceiling** and ran
+every tool from the server at it. A ceiling is a number a user picks, and the
+user who picks R0 or R1 — reasonably, for a server they think only reads — has put
+the server's entire present _and future_ tool set below `AUTO_APPROVE_BELOW`.
+The safe setting was the counter-intuitive one, which makes it not a safeguard.
 
-_Prompt on every MCP call_, as the benchmark's `requiresUserInteraction` does, is
-safe in the small and corrosive in the large. This project has argued the same
-point three times about its own tools — a confirmation in front of rearranging a
-tab, a prompt for reading a page — and the conclusion has not changed: a prompt
-that fires on everything is a prompt nobody reads, and it costs more safety than
-it buys on the call that actually mattered.
+The correct answer is that an MCP tool is **R3**, classified here from what the
+call is: `RISK_DESCRIPTIONS.R3` is "Sensitive external side effect. Writes data
+outside the browser", which is an MCP call exactly, including one that only reads
+on the far side. Then the thresholds that already ship do the rest — stage 5
+confirms at R3 before the mode switch, so `manual`, `auto` and `skip` all
+confirm; `MAX_GRANTABLE_RISK` is R2, so no site rule and no plan can reach it.
+Approval is per call as arithmetic rather than as a policy choice, no new
+authorization surface exists, and a tool the server adds later cannot be covered
+by a grant that was never able to exist.
 
-_Map each MCP tool onto R0–R5_ sounds right and quietly breaks the rule two
-paragraphs above. Risk would have to be inferred from the tool's name,
-description and schema, and all three come **from the server**. Inferring risk
-from server-supplied metadata is accepting the server's declaration through the
-back door, which is exactly what "the risk is ours" forbids.
-
-So the risk is derived from the only trustworthy thing available: **what the user
-said when they added the server.** An MCP server is added deliberately — it is a
-declared egress destination, which already requires an explicit act — and that is
-the moment to ask what it may do. The answer becomes a per-server **ceiling**,
-clamped by `MAX_GRANTABLE_RISK` exactly as a site grant is, and **every tool
-discovered from that server runs at the ceiling**, never below it.
-
-Consequences, stated rather than discovered later:
-
-- A read-only MCP tool costs the same as a write from the same server. That is
-  conservative and it is the safe direction: without trusting the server there is
-  no way to tell them apart, and guessing in the permissive direction is the one
-  mistake that cannot be walked back.
-- No prompt storm. The ceiling is granted once, deliberately, per server, and
-  ordinary policy then runs per call.
-- A write-capable server needs a ceiling the user set high on purpose, which is
-  visible in the same place site grants are.
-- No new authorization surface. The ceiling is an input to the existing policy
-  engine, in the same shape as a site rule, so there is still one engine and one
-  choke point.
-- Tool **discovery** is untrusted input in its own right: a name, a description
-  and a schema authored elsewhere, arriving into the model's context. It goes in
-  the data envelope like any other external content, and a discovered name can
-  never shadow a built-in tool.
-
-This is a product decision rather than a specification requirement, and it is
-cheap to revisit **before** implementation and expensive after, which is why it
-is written down here first. With it taken, the client direction has no
-unresolved design question left — what remains is build and evidence.
-
-**As a server.** This is the hard blocker. Exposing browser capability over MCP
-needs an inbound channel, and every inbound channel this manifest could offer is
-forbidden: `externally_connectable` is prohibited, native messaging is
-prohibited, and a local listening socket is not available to an extension.
-There is therefore **no way to expose an MCP server from this build**, and no
-amount of trust modelling changes that. If the capability is ever required it
-needs a component outside the extension, which reopens "do not make the Mac a
-server" and must be decided at product level first.
-
-Caller authentication, session and workspace isolation for that direction are
-downstream of a channel that does not exist, and designing them now would be
-designing against nothing.
+**As a server.** Unchanged, and now also unrequested. The blocker was always
+transport: an inbound channel is needed and every one this manifest could offer
+is prohibited — `externally_connectable`, native messaging, and a listening
+socket an extension cannot hold. The re-audit adds that §5.11 never asked for
+it, so this is not a deferred requirement. Caller authentication, session and
+workspace isolation for that direction stay undesigned, because designing them
+would be designing against nothing.
 
 ---
 
@@ -531,9 +503,11 @@ of one. Every identity in the trail is something this extension minted for
 itself. Introducing an external principal is not an audit change; it is the
 inbound channel §9 says is prohibited, arriving through the audit schema.
 
-So the honest position is that server-side MCP audit is undesignable until the
-transport question is answered, and designing it now would put a principal in
-the record that nothing can authenticate.
+So the honest position is that server-side MCP audit is undesignable, and
+designing it now would put a principal in the record that nothing can
+authenticate. The re-audit in §9 adds that it is also unrequested: §5.11 asks for
+a client and names no server component, so this is not an audit gap waiting on a
+decision.
 
 ## 10. Consistency with the existing invariants
 
