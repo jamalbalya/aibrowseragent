@@ -165,8 +165,8 @@ capability, not necessarily a test of the capability itself.
 
 | Status          | Count  |
 | --------------- | ------ |
-| PASS            | 28     |
-| PARTIAL         | 10     |
+| PASS            | 29     |
+| PARTIAL         | 9      |
 | INTERFACES-ONLY | 0      |
 | NOT-STARTED     | 2      |
 | **Total**       | **40** |
@@ -190,6 +190,11 @@ PASS from 27 to 28 and PARTIAL from 11 to 10. Both §10 clauses the clause gate
 reported are now built rather than argued away — `tabs.move` and `tabs.get` by
 id — and the row also gains its integration column. What that PASS means is
 unchanged: §84 condition 3 is still unmet repository-wide, here as everywhere.
+
+Then notifications (P-019) moves **from PARTIAL back to PASS**, taking PASS from
+28 to 29 and PARTIAL from 10 to 9. The clause that had no producer now has two,
+both in the worker's task lifecycle layer. Building it turned up a second blank
+record on the way, described below.
 
 ### The clause gate, and the two rows it moved
 
@@ -410,7 +415,7 @@ rather than folded into the verdict.
 | P-016 | Network inspection                   | yes  | yes  | —           | yes      | yes | PASS        |
 | P-017 | Long-running task                    | yes  | —    | yes         | —        | yes | PASS        |
 | P-018 | Background task while Chrome is open | yes  | —    | yes         | —        | yes | PASS        |
-| P-019 | Notifications                        | yes  | yes  | —           | yes      | yes | PARTIAL     |
+| P-019 | Notifications                        | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-020 | Scheduled tasks                      | yes  | —    | —           | yes      | yes | PARTIAL     |
 | P-021 | Shortcuts                            | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-022 | Workflow recording                   | yes  | yes  | yes         | yes      | yes | PARTIAL     |
@@ -549,16 +554,51 @@ permanently. That was tolerable while the only one was an approval the user
 was being asked for. It is not now, so the panel has a switch, and turning it
 off is proved to silence the worker rather than only the checkbox.
 
-PARTIAL, and not for the reason every other row here is. **One of §53's six
-has no producer at all**: nothing in this build ever reports that a provider
-became disconnected. The only place an account's status becomes `disconnected`
-is cloud-metadata restore, which is a backend path, and a provider failing
-mid-task surfaces as a task error rather than a status change. Adding a
-notification for an event nothing emits would be the orphan-audit-type defect
-this project already fixed once — a promise the product makes and does not
-keep. The row stays PARTIAL until a runtime provider-disconnection event
-exists to hang it on. Integration coverage is also absent, and §84 condition 3
-is unmet repository-wide as everywhere else.
+The sixth was the last to arrive, and the reason it waited is worth keeping:
+nothing in this build ever reported that a provider had become disconnected.
+The only place an account's status became `disconnected` was cloud-metadata
+restore, a backend path, and a provider failing mid-task surfaced as a task
+error. A notification for an event nothing emits is an orphan declaration, so
+the row stayed PARTIAL until there was something real to hang it on rather than
+a message with no fact behind it.
+
+There are now two producers, and both sit in the worker's task lifecycle layer
+rather than in any adapter — the same structural rule the other notifications
+follow, for the same reason: an adapter reports what one HTTP call did, and
+whether the brain is connected is a fact about the installation. At resolve
+time, which runs at the start of every task, every resume and every scheduled
+run, a provider that rejects its stored credentials has its account marked
+`disconnected` and the user is told. That status write is what makes this more
+than a toast: a notification saying "disconnected" over a Settings page still
+reading "connected" would be worse than neither. Mid-run, a key revoked during
+a task arrives at the lifecycle observer as a terminal `AUTH_EXPIRED` — the code
+the provider layer reports for `authentication_failed`, which it treats as
+terminal because a rejected key is rejected on every retry. A rate limit or a
+503 is the provider being busy rather than gone, and is deliberately not
+announced as a disconnect; treating them alike would train the user to ignore
+the notice.
+
+**And writing it found the same defect a second time.** Wave 10 fixed the
+runtime's terminal path, which told the lifecycle observer nothing.
+`TaskManager.fail` — the manager's _own_ ending, which three paths reach: a
+provider that cannot be resolved, a resume whose provider no longer matches,
+and a planning turn that failed — still told it nothing. So a task failing any
+of those three ways raised no "task failed" notification, wrote no
+`task.completed` audit record, and left its staged files in memory. Wave 10's
+fix had been applied to one of the two places a task can end. Underneath that
+sat a smaller one with a direct cost to users: `execute`'s catch flattened
+every thrown error to "the task stopped because of an internal error",
+including `ProviderUnavailable`, which carries an `AUTH_REQUIRED` and the
+words "open Settings and connect a provider". Somebody whose API key had been
+rejected was being sent to look for a bug in the extension. A thrown error that
+already names a reason now keeps it.
+
+Six mutants, each killed: `fail` reporting nothing again, the carried reason
+thrown away, the observer no longer told which failure it was, the provider id
+no longer travelling with it, and the disconnect notice losing first its
+idempotency and then its separate key space from task ids.
+
+§84 condition 3 is unmet repository-wide, here as everywhere else.
 
 **P-012 Multi-tab** — All eleven of §10's tools now exist, are registered by
 `createTabTools`, and are evidenced clause by clause. The workspace model that

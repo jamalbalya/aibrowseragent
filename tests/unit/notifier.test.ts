@@ -279,3 +279,64 @@ describe('telling the user a connector needs reconnecting', () => {
     await expect(enabled().connectorAuthExpired('GitHub')).resolves.toBeUndefined();
   });
 });
+
+describe('telling the user the AI provider is gone', () => {
+  it('announces a disconnected provider', async () => {
+    await enabled().providerDisconnected('openai');
+    expect(port.shown).toHaveLength(1);
+    expect(port.shown[0]?.title).toBe('AI provider disconnected');
+    expect(port.shown[0]?.message).toContain('openai');
+    // Priority 2: the agent cannot think at all until this is fixed.
+    expect(port.shown[0]?.priority).toBe(2);
+  });
+
+  it('carries the provider id and nothing else about the account', async () => {
+    await enabled().providerDisconnected('anthropic');
+    const text = `${port.shown[0]?.title} ${port.shown[0]?.message}`;
+    // A notification is rendered by the OS and can outlive the task in a
+    // notification centre, so it gets the build's own constant — not the
+    // display name the user typed, not the endpoint, and not the key.
+    expect(text).toContain('anthropic');
+    expect(text).not.toMatch(/http|key|sk-|token|Bearer/i);
+  });
+
+  it('announces one provider once, however many tasks fail on it', async () => {
+    const notifier = enabled();
+    await notifier.providerDisconnected('openai');
+    await notifier.providerDisconnected('openai');
+    await notifier.providerDisconnected('openai');
+    // A rejected credential is rejected on every attempt; three identical
+    // toasts say nothing the first one did not.
+    expect(port.shown).toHaveLength(1);
+  });
+
+  it('keeps separate providers separate', async () => {
+    const notifier = enabled();
+    await notifier.providerDisconnected('openai');
+    await notifier.providerDisconnected('gemini');
+    expect(port.shown).toHaveLength(2);
+  });
+
+  it('announces again after the provider has been reconnected', async () => {
+    const notifier = enabled();
+    await notifier.providerDisconnected('openai');
+    notifier.providerReconnected('openai');
+    await notifier.providerDisconnected('openai');
+    // A second, genuine disconnect hours later is news.
+    expect(port.shown).toHaveLength(2);
+  });
+
+  it('does not announce a provider disconnect when a task id shares the name', async () => {
+    const notifier = enabled();
+    await notifier.taskFinished('openai', 'FAILED');
+    await notifier.providerDisconnected('openai');
+    // Task ids and provider ids share one "already announced" set, so the
+    // keys have to be namespaced or a task would silence a provider notice.
+    expect(port.shown).toHaveLength(2);
+  });
+
+  it('stays quiet when the user has turned notifications off', async () => {
+    await notifierWith(() => Promise.resolve(false)).providerDisconnected('openai');
+    expect(port.shown).toHaveLength(0);
+  });
+});

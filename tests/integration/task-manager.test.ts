@@ -13,6 +13,7 @@ import { TaskManager, TaskManagerError } from '@/background/task-manager';
 import { AgentRuntime } from '@/agent/runtime/agent-runtime';
 import { createBrowserTools } from '@/tools/browser/browser-tools';
 import { isTerminal } from '@/tasks/task-model';
+import { createError } from '@/types/result';
 import { FakeBrowserAdapter } from '../fixtures/fake-browser';
 import { fakeDebugger } from '../fixtures/fake-debugger';
 import {
@@ -281,6 +282,96 @@ describe('provider unavailable', () => {
     });
 
     await expect(manager.create('Do something', 's1')).rejects.toThrow(/No AI provider/);
+  });
+});
+
+describe('a failure the manager itself produces', () => {
+  /**
+   * A provider that works when the task is created and is gone when it runs.
+   *
+   * That is the only way to reach `execute`'s catch: `create` resolves the
+   * provider too, so a provider missing from the start rejects the create call
+   * instead, and the panel shows the reason directly.
+   */
+  function failingOnRun(error: Error) {
+    const backing = new SerializedStorageArea(new MemoryStorageArea());
+    const store = new TaskStore(new NamespacedStorageArea(backing, 'tasks'));
+    const seen: { state?: string; errorCode?: string; providerId?: string }[] = [];
+    let calls = 0;
+    const manager = new TaskManager({
+      store,
+      resolveProvider: () => {
+        calls += 1;
+        if (calls > 1) return Promise.reject(error);
+        return Promise.resolve({
+          adapter: new FakeProvider([textResponse('unused')]),
+          capabilities: FULL_CAPABILITIES,
+          providerId: 'fake',
+          modelId: 'fake-model',
+        });
+      },
+      getPermissionMode: () => Promise.resolve('auto'),
+      getActiveTabId: () => Promise.resolve(undefined),
+      onLifecycle: (event) => {
+        if (event.kind === 'completed') {
+          seen.push({
+            ...(event.state === undefined ? {} : { state: event.state }),
+            ...(event.errorCode === undefined ? {} : { errorCode: event.errorCode }),
+            ...(event.providerId === undefined ? {} : { providerId: event.providerId }),
+          });
+        }
+      },
+    });
+    manager.setRuntime(
+      new AgentRuntime({
+        registry: createHarness([]).registry,
+        callbacks: manager.createCallbacks(),
+      }),
+    );
+    return { manager, store, seen };
+  }
+
+  it('tells the lifecycle observer that the task ended', async () => {
+    // Three paths end in `fail()` and none of them reported. The observer is
+    // where staged files are released, where the audit trail's task.completed
+    // record is written, and where §53's "task failed" notification is raised —
+    // so a task failing this way did none of the three.
+    const { manager, store, seen } = failingOnRun(new Error('the provider went away'));
+    const task = await manager.create('Do something', 's1');
+    await settle(store, task.id);
+
+    expect((await store.getTask(task.id))?.state).toBe('FAILED');
+    expect(seen).toEqual([{ state: 'FAILED', errorCode: 'INTERNAL_ERROR', providerId: 'fake' }]);
+  });
+
+  it('keeps a reason the thrown error already carried', async () => {
+    // What a user with a rejected API key is told. `ProviderUnavailable` names
+    // an AUTH_REQUIRED with "open Settings and connect a provider"; reporting
+    // "an internal error" instead sent them looking for a bug in the extension.
+    const carried = Object.assign(new Error('No AI provider is connected.'), {
+      agentError: createError('AUTH_REQUIRED', 'No AI provider is connected.', {
+        userMessage: 'No AI provider is connected. Open Settings and connect one.',
+      }),
+    });
+    const { manager, store, seen } = failingOnRun(carried);
+    const task = await manager.create('Do something', 's1');
+    await settle(store, task.id);
+
+    const failed = await store.getTask(task.id);
+    expect(failed?.error?.code).toBe('AUTH_REQUIRED');
+    expect(failed?.error?.userMessage).toContain('Open Settings');
+    // And the observer is told which failure it was, which is what lets the
+    // worker raise "provider disconnected" rather than a generic notice.
+    expect(seen[0]?.errorCode).toBe('AUTH_REQUIRED');
+  });
+
+  it('reports the ending exactly once', async () => {
+    const { manager, store, seen } = failingOnRun(new Error('gone'));
+    const task = await manager.create('Do something', 's1');
+    await settle(store, task.id);
+    await drain(5);
+
+    expect(seen).toHaveLength(1);
   });
 });
 

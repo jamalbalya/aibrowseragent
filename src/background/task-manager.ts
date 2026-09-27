@@ -94,11 +94,44 @@ export interface TaskManagerOptions {
     readonly sessionId?: string;
     readonly state?: TaskState;
     readonly outcome?: string;
+    /**
+     * Why a terminal failure happened, as a canonical error code.
+     *
+     * `outcome` is the state — `FAILED` — which cannot tell a rejected provider
+     * credential apart from a page that would not load. §53 asks for a
+     * "provider disconnected" notification, and an observer that only knows
+     * *that* a task failed cannot raise it. Present only on a terminal failure.
+     */
+    readonly errorCode?: string;
     readonly providerId?: string;
     readonly modelId?: string;
     readonly permissionMode?: PermissionMode;
   }) => void;
   readonly now?: () => number;
+}
+
+/**
+ * Keeps a canonical reason that a thrown error already carried.
+ *
+ * `ProviderUnavailable` is the case that matters: it names an `AUTH_REQUIRED`
+ * with an actionable message, and the catch that produced it used to report
+ * "an internal error" instead — sending a user whose API key was rejected to
+ * look for a bug in the extension. Anything with no reason attached stays an
+ * internal error, because it is one.
+ */
+function carriedError(error: unknown): AgentError {
+  const candidate = (error as { agentError?: unknown }).agentError;
+  if (
+    typeof candidate === 'object' &&
+    candidate !== null &&
+    typeof (candidate as AgentError).code === 'string'
+  ) {
+    return candidate as AgentError;
+  }
+  return createError('INTERNAL_ERROR', 'The task failed unexpectedly.', {
+    userMessage: 'The task stopped because of an internal error.',
+    technicalDetails: error instanceof Error ? error.message : String(error),
+  });
 }
 
 export class TaskManager {
@@ -306,13 +339,13 @@ export class TaskManager {
         taskId,
         error: error instanceof Error ? error.message : String(error),
       });
-      await this.fail(
-        taskId,
-        createError('INTERNAL_ERROR', 'The task failed unexpectedly.', {
-          userMessage: 'The task stopped because of an internal error.',
-          technicalDetails: error instanceof Error ? error.message : String(error),
-        }),
-      );
+      // A thrown error that already carries a canonical reason keeps it.
+      // `resolveProvider` throws `ProviderUnavailable`, whose `agentError` is
+      // an `AUTH_REQUIRED` with "Open Settings and connect a provider first" —
+      // and flattening that to "an internal error" told a user with a rejected
+      // key to look for a bug in the extension. Anything without a reason is
+      // still an internal error, because it really is one.
+      await this.fail(taskId, carriedError(error));
     } finally {
       this.running.delete(taskId);
       const final = await this.options.store.getTask(taskId);
@@ -478,6 +511,12 @@ export class TaskManager {
             taskId,
             state: outcome.state,
             outcome: outcome.state,
+            // Both carried so an observer can tell *which* provider stopped
+            // working and why. §53's "provider disconnected" needs the pair:
+            // the state alone cannot distinguish a revoked key from a page
+            // that would not load.
+            ...(outcome.error?.code === undefined ? {} : { errorCode: outcome.error.code }),
+            ...(updated?.providerId === undefined ? {} : { providerId: updated.providerId }),
           });
         }
       },
@@ -754,19 +793,49 @@ export class TaskManager {
     });
   }
 
+  /**
+   * The manager's own way of ending a task, as against the runtime's.
+   *
+   * It reports to the lifecycle observer, and that line is the point of this
+   * method's second revision. It did not, and three paths end here: a provider
+   * that could not be resolved, a resume whose provider no longer matches, and
+   * a planning turn that failed. None of them produced a `task.completed`
+   * audit record, none released the task's staged files, and none raised the
+   * §53 "task failed" notification — because every one of those hangs off the
+   * observer, which only `transition` and the runtime's `onComplete` were
+   * calling. The same blank-record defect as the one Wave 10 fixed on the
+   * runtime path, on the path that wave did not touch.
+   *
+   * Reported after the write and only when the write moved the task, so an
+   * observer can never see a terminal state the store does not hold, and a
+   * second terminal write reports nothing.
+   */
   private async fail(taskId: string, error: AgentError): Promise<void> {
-    const updated = await this.options.store.updateTask(taskId, (task) =>
-      isTerminal(task.state)
-        ? task
-        : {
-            ...task,
-            state: 'FAILED' as const,
-            error,
-            finishedAt: this.now(),
-            updatedAt: this.now(),
-          },
-    );
+    let applied = false;
+    const updated = await this.options.store.updateTask(taskId, (task) => {
+      if (isTerminal(task.state)) return task;
+      applied = true;
+      return {
+        ...task,
+        state: 'FAILED' as const,
+        error,
+        finishedAt: this.now(),
+        updatedAt: this.now(),
+      };
+    });
     if (updated) this.emit(updated);
+    if (applied) {
+      this.observeLifecycle({
+        kind: 'completed',
+        taskId,
+        state: 'FAILED',
+        outcome: 'FAILED',
+        // Which failure it was, so an observer can tell a rejected provider
+        // credential apart from a page that would not load.
+        errorCode: error.code,
+        ...(updated?.providerId === undefined ? {} : { providerId: updated.providerId }),
+      });
+    }
   }
 
   isRunning(taskId: string): boolean {

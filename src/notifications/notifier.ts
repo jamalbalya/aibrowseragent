@@ -162,6 +162,58 @@ export class Notifier {
     });
   }
 
+  /**
+   * Tells the user the AI brain itself is no longer usable.
+   *
+   * Specification §53, and the one item on its list that had no producer at
+   * all. An account only ever became `disconnected` during cloud-metadata
+   * restore — a backend path — and a credential the provider rejected surfaced
+   * as a task error, so nothing could emit this. A notification for an event
+   * nothing raises is the orphan declaration this repository has now removed
+   * three times.
+   *
+   * It is the analogue of `connectorAuthExpired` one layer down, and it matters
+   * more: a connector expiring costs one tool, a rejected provider costs the
+   * agent its ability to think at all. For a scheduled run the panel is not
+   * open, so without this the user learns nothing until they next look.
+   *
+   * Announced once per provider per worker generation, for the same reason
+   * `taskFinished` is once per task: a rejected credential is rejected on every
+   * attempt, and a queue of identical toasts says nothing the first one did not.
+   * Reconnecting clears it, so a later genuine disconnect is announced again.
+   *
+   * **The provider id is a constant this build registered** — `openai`,
+   * `anthropic`, `gemini`. Never the account's display name, which the user
+   * typed and which a shared screen would then show; never the endpoint, the
+   * key, the key suffix, or the failure text the provider returned.
+   */
+  async providerDisconnected(providerId: string): Promise<void> {
+    const key = `provider:${providerId}`;
+    if (this.announced.has(key)) return;
+    this.announced.add(key);
+
+    if (!(await this.enabled())) return;
+
+    await this.show({
+      type: 'basic',
+      iconUrl: ICON,
+      title: 'AI provider disconnected',
+      message: `${trim(providerId)} would not accept its saved credentials. Open Settings to connect it again.`,
+      priority: 2,
+    });
+  }
+
+  /**
+   * Forgets a disconnect, so the next real one is announced.
+   *
+   * Called when a provider connects successfully. Without it the "once per
+   * worker generation" rule would silence a second disconnect hours later,
+   * which is news.
+   */
+  providerReconnected(providerId: string): void {
+    this.announced.delete(`provider:${providerId}`);
+  }
+
   async scheduleStarted(name: string): Promise<void> {
     await this.scheduleNotice('Scheduled task started', `"${trim(name)}" is running.`, 0);
   }

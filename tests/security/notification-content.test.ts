@@ -88,6 +88,61 @@ describe('who may announce a task ending', () => {
   });
 });
 
+describe('who may announce a disconnected provider', () => {
+  it('names the provider with a build constant, never the account the user named', () => {
+    // A display name is whatever the user typed — "OpenAI (work project)" —
+    // and a notification is rendered by the operating system, outside every
+    // boundary this extension controls, where it can sit in a notification
+    // centre on a shared screen. The provider id is `openai`, `anthropic` or
+    // `gemini`: a constant this build registered.
+    const body = NOTIFIER.slice(NOTIFIER.indexOf('async providerDisconnected'));
+    const method = body.slice(0, body.indexOf('providerReconnected'));
+    expect(method).not.toContain('displayName');
+    expect(method).not.toContain('statusReason');
+    expect(method).not.toContain('baseUrl');
+    expect(method).not.toMatch(/apiKey|keySuffix|token/);
+  });
+
+  it('is announced from the worker and never from a provider adapter', () => {
+    // The same structural independence `taskFinished` has: an adapter reports
+    // what one HTTP call did, and whether the brain is connected is a fact
+    // about the installation.
+    for (const path of [
+      'src/providers/adapters/anthropic.ts',
+      'src/providers/adapters/gemini.ts',
+      'src/providers/adapters/openai-compatible.ts',
+    ]) {
+      expect(withoutComments(read(path))).not.toContain('providerDisconnected');
+    }
+    expect(WORKER).toContain('notifier.providerDisconnected(');
+  });
+
+  it('is dispatched without being awaited, so it cannot delay a failing task', () => {
+    const calls = WORKER.match(/notifier\.providerDisconnected\(/g) ?? [];
+    expect(calls.length).toBeGreaterThan(0);
+    for (const _ of calls) void _;
+    expect(WORKER).not.toMatch(/await notifier\.providerDisconnected\(/);
+  });
+
+  it('writes the account status before telling the user, so the panel agrees', () => {
+    // A toast saying "disconnected" over a Settings page still showing
+    // "connected" is worse than either on its own.
+    const producer = WORKER.slice(WORKER.indexOf('async function noteProviderDisconnected'));
+    const body = producer.slice(0, producer.indexOf('\n}\n'));
+    expect(body.indexOf("status: 'disconnected'")).toBeLessThan(
+      body.indexOf('notifier.providerDisconnected('),
+    );
+  });
+
+  it('treats only a terminal authentication failure as a disconnect', () => {
+    // A rate limit or a 503 is the provider being busy, not gone. Announcing
+    // those as a disconnect would train the user to ignore the notice.
+    expect(WORKER).toContain("event.errorCode === 'AUTH_EXPIRED'");
+    expect(WORKER).not.toMatch(/errorCode === 'RATE_LIMITED'/);
+    expect(WORKER).not.toMatch(/errorCode === 'NETWORK_ERROR'/);
+  });
+});
+
 describe('a notification never becomes task authority', () => {
   it('is dispatched without being awaited, so it cannot delay a finished task', () => {
     expect(WORKER).toContain('void notifier.taskFinished(');

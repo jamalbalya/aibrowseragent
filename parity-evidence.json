@@ -446,16 +446,28 @@
           "status": "VERIFIED",
           "evidence": [
             "tests/unit/notifier.test.ts :: announces a failed task",
-            "tests/security/notification-content.test.ts :: is announced from exactly one place in the worker"
-          ]
+            "tests/security/notification-content.test.ts :: is announced from exactly one place in the worker",
+            "tests/integration/task-manager.test.ts :: tells the lifecycle observer that the task ended",
+            "tests/integration/task-manager.test.ts :: reports the ending exactly once"
+          ],
+          "note": "Re-audited in Wave 16 and found half-blank. The runtime's terminal path reported to the lifecycle observer; `TaskManager.fail` did not, and three failures end there — a provider that could not be resolved, a resume whose provider no longer matches, and a failed planning turn. None of those raised the notification, wrote the task.completed audit record, or released the task's staged files. `fail` now reports like every other ending."
         },
         {
           "id": "P-019-C4",
           "specRef": "§53",
           "requirement": "Notify when a provider disconnects.",
           "mandatory": true,
-          "status": "EVIDENCE_MISSING",
-          "note": "No producer exists. The only place an account becomes `disconnected` is cloud-metadata restore, a backend path; a provider failing mid-task surfaces as a task error rather than a status change. A notification for an event nothing emits would be the orphan-audit-type defect this repository already fixed once."
+          "status": "VERIFIED",
+          "note": "Closed in Wave 16. The clause had no producer: an account only ever became `disconnected` during cloud-metadata restore, a backend path, and a rejected credential surfaced as a task error. There are now two producers, both in the worker's task lifecycle layer and neither in any adapter. At resolve time — which runs at the start of every task, resume and scheduled run — a provider that rejects its stored credentials marks the account `disconnected` and notifies. Mid-run, a credential revoked during a task reaches the lifecycle observer as a terminal AUTH_EXPIRED, which the provider layer treats as terminal because a rejected key is rejected on every retry; a rate limit or a 503 is deliberately not treated as a disconnect. The notification carries the build's own provider id and never the account's display name, endpoint or key.",
+          "evidence": [
+            "tests/unit/notifier.test.ts :: announces a disconnected provider",
+            "tests/unit/notifier.test.ts :: announces one provider once, however many tasks fail on it",
+            "tests/unit/notifier.test.ts :: announces again after the provider has been reconnected",
+            "tests/security/notification-content.test.ts :: names the provider with a build constant, never the account the user named",
+            "tests/security/notification-content.test.ts :: writes the account status before telling the user, so the panel agrees",
+            "tests/security/notification-content.test.ts :: treats only a terminal authentication failure as a disconnect",
+            "tests/integration/task-manager.test.ts :: keeps a reason the thrown error already carried"
+          ]
         },
         {
           "id": "P-019-C5",
@@ -484,10 +496,12 @@
           "evidence": [
             "tests/security/notification-content.test.ts :: takes a task id and a state, and nothing that could carry content",
             "tests/e2e/notifications.spec.ts :: the notification carries nothing the task read, typed or was told",
-            "tests/unit/notifier.test.ts :: never carries the task id itself"
+            "tests/unit/notifier.test.ts :: never carries the task id itself",
+            "tests/security/notification-content.test.ts :: names the provider with a build constant, never the account the user named"
           ]
         }
-      ]
+      ],
+      "integration": ["tests/integration/task-manager.test.ts"]
     },
     "P-020": {
       "security": ["tests/security/scheduled-execution.test.ts"],

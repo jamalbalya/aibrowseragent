@@ -1701,6 +1701,53 @@ interface ResolvedProvider {
  * last account's credential in it is exactly the cross-account leak this
  * wave exists to prevent.
  */
+/**
+ * The one place "this provider is no longer usable" becomes a recorded fact.
+ *
+ * Specification §53 lists a "provider disconnected" notification, and nothing
+ * could raise it: an account only ever became `disconnected` during
+ * cloud-metadata restore, which is a backend path, and a credential the
+ * provider rejected surfaced as a task error. So the status was unreachable and
+ * the notification was an orphan.
+ *
+ * It lives in the worker rather than in any adapter, for the reason Wave 10
+ * settled and this wave has not changed: an adapter reports what one HTTP call
+ * did, while whether the brain is connected is a fact about the installation.
+ * Every provider reaches this identically because none of them knows it exists.
+ *
+ * Two things happen together on purpose. The account's stored status is written
+ * so the panel agrees with the toast — a notification saying "disconnected"
+ * over a Settings page still showing "connected" is worse than neither — and
+ * only then is the user told. The status write is what makes this more than a
+ * message.
+ *
+ * `statusReason` carries the provider's own wording because Settings is inside
+ * the extension and the user needs to know whether the key was revoked or the
+ * endpoint refused them. The *notification* carries neither: see
+ * `Notifier.providerDisconnected`.
+ */
+async function noteProviderDisconnected(
+  providerId: string,
+  connectionId: string | undefined,
+  reason: string,
+): Promise<void> {
+  if (connectionId !== undefined) {
+    try {
+      const account = await accountStore.get(connectionId);
+      if (account && account.status !== 'disconnected') {
+        await accountStore.put({ ...account, status: 'disconnected', statusReason: reason });
+      }
+    } catch (error) {
+      // A status that could not be written must not stop the user being told.
+      log.warn('Could not record the provider as disconnected.', {
+        providerId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  void notifier.providerDisconnected(providerId);
+}
+
 async function resolveFromAccount(account: ConnectedAccount): Promise<ResolvedProvider> {
   if (!account.modelId) {
     throw new ProviderUnavailable(
@@ -1723,9 +1770,10 @@ async function resolveFromAccount(account: ConnectedAccount): Promise<ResolvedPr
     model: account.modelId,
   });
   if (!auth.authenticated) {
-    throw new ProviderUnavailable(
-      auth.error?.userMessage ?? 'The connected account rejected its stored credentials.',
-    );
+    const reason =
+      auth.error?.userMessage ?? 'The connected account rejected its stored credentials.';
+    await noteProviderDisconnected(account.providerId, account.connectionId, reason);
+    throw new ProviderUnavailable(reason);
   }
 
   return {
@@ -1774,9 +1822,12 @@ async function resolveProvider(): Promise<ResolvedProvider> {
     ...(config?.project === undefined ? {} : { project: config.project }),
   });
   if (!auth.authenticated) {
-    throw new ProviderUnavailable(
-      auth.error?.userMessage ?? 'The connected provider rejected its stored credentials.',
-    );
+    const reason =
+      auth.error?.userMessage ?? 'The connected provider rejected its stored credentials.';
+    // No connectionId on this path: the pre-account settings slot has no
+    // account record to mark, so the notification is all there is to give.
+    await noteProviderDisconnected(settings.activeProviderId, undefined, reason);
+    throw new ProviderUnavailable(reason);
   }
 
   return {
@@ -1842,6 +1893,17 @@ const taskManager = new TaskManager({
       // toast is a supporting signal and never task authority, so a task that
       // finished stays finished whether or not anyone could be told.
       if (event.state !== undefined) void notifier.taskFinished(event.taskId, event.state);
+
+      // §53's "provider disconnected", for the case `resolveProvider` cannot
+      // see: a credential that was accepted at the start of the run and
+      // revoked during it. `AUTH_EXPIRED` is what the provider layer reports
+      // for `authentication_failed`, which it treats as terminal — a rejected
+      // key is rejected on every retry — so it is the honest signal that the
+      // brain is gone rather than briefly unreachable. A transient failure or
+      // a rate limit is neither, and is deliberately not treated as one.
+      if (event.errorCode === 'AUTH_EXPIRED' && event.providerId !== undefined) {
+        void notifier.providerDisconnected(event.providerId);
+      }
     }
 
     void auditLog
@@ -2070,6 +2132,10 @@ router.on('provider.connect', async (request) => {
 
   // The key goes to the credential store; the rest is ordinary configuration.
   if (request.apiKey) await credentialStore.setApiKey(request.providerId, request.apiKey);
+  // A disconnect is announced once per worker generation, so reconnecting has
+  // to forget it — otherwise a second, genuine disconnect hours later would be
+  // silent, and that is news.
+  notifier.providerReconnected(request.providerId);
   await credentialStore.setConfig({
     providerId: request.providerId,
     ...(request.baseUrl === undefined ? {} : { baseUrl: request.baseUrl }),
@@ -2846,6 +2912,7 @@ router.on('accounts.connect', async (request) => {
   // why. A key with no record is invisible but harmless, and the next
   // connect overwrites it.
   await credentialStore.setConnectionKey(credentialKeyFor(connectionId), request.apiKey);
+  notifier.providerReconnected(request.providerId);
 
   const account: ConnectedAccount = {
     connectionId,
