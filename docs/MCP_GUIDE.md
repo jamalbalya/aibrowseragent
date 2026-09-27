@@ -10,9 +10,10 @@ a user had least reason to choose. Both are corrected below, and both
 corrections are recorded rather than quietly applied.
 
 **Status: P-026 is NOT-STARTED.** Nothing in this document is an implementation
-claim. What is built is the trust core, the guarded transport and discovery —
-none of which is invoked by anything, so all of it is tree-shaken out of the
-shipped extension. A client nothing can start is not a client. See §8.
+claim. What is built is the trust core, the guarded transport, discovery, the
+schema compiler and the tool factory — and nothing starts any of it: there is no
+stored server, no worker wiring and no settings surface. A client nothing can
+start is not a client. See §8.
 
 ---
 
@@ -372,24 +373,76 @@ Pagination is bounded three ways — a page cap, an end on a repeated cursor, an
 admission applied to the **accumulated** set rather than per page, so a server
 that splits a listing does not evade the tool cap.
 
-**Not built.** A server registry, tool registration through the one dispatch
-path, a settings surface, audit emission. Until tool registration exists, no MCP
-tool reaches the model and no MCP call can be made by a task — which is why
-P-026-C1 and P-026-C4 stay unmet even though the mechanisms beneath them are
-evidenced. A mechanism with no caller is not a capability, and recording it
-otherwise would be the defect this project has now found eight times.
+**`src/mcp/core/mcp-schema.ts` — compiling an untrusted JSON Schema.** §22 makes
+argument validation the contract. Every other tool in this build satisfies it
+with a schema its author wrote; an MCP tool's schema came from the server, so
+this is the only validator in the product built out of hostile input.
 
-**Nothing imports any of the three**, so none of their code ships: the built
-service worker contains no `mcp__`, no `jsonrpc`, no `tools/list` and no
-`MCP_PROTOCOL`.
+It compiles a **subset** and refuses the rest by name. Both available shortcuts
+were rejected for stated reasons: `z.record(z.unknown())` would put an
+unvalidated argument set on the wire, so a model that hallucinated a field would
+reach the server with it; and a full JSON Schema implementation would put a large
+parser over attacker-controlled input inside the service worker, with `$ref`
+alone bringing cycles, remote references and resolution order. Refusing is a real
+cost — some servers offer tools this build cannot use — and it is the right
+direction, because the alternative to refusing a schema is guessing at it.
+
+The bounds on property count, nesting, enum length and name length are each a
+number the server would otherwise choose. `__proto__`, `constructor` and
+`prototype` are refused as property names, and that was **found by a test rather
+than by reading**: the compiler builds its shape with `shape[name] = …`, and
+`shape['__proto__'] = x` sets the prototype instead of adding a key — so the
+property vanished from the compiled schema and the argument was refused as
+unrecognised. Fail-closed, and by accident, with the accumulator's prototype
+replaced on the way.
+
+**`src/mcp/tools/mcp-tool.ts` — the tool factory.** It produces an ordinary
+`AgentTool`, so dispatch runs through the single `evaluatePolicy` call site and
+the single `tool.execute` path. An MCP tool is a registry entry or it does not
+exist. Four things are fixed here rather than taken from the server: the
+namespaced name, the R3 risk, the site scope (`destination`, resolved to the
+**descriptor's** URL closed over by the factory — `classify` receives the model's
+arguments, so a target it could read out of them is a target the model could
+choose), and the payload declaration that puts the arguments in front of the
+exfiltration gate. What comes back is bounded, a non-text part is named rather
+than decoded, `isError` is a failure rather than a success whose text says so,
+and the result taints the task.
+
+Building it also surfaced a collision the earlier `__` reasoning had missed. The
+registry's `fromWireName` restores the first `_` in a wire name to a `.`, so
+`mcp__example__search` became `mcp._example__search` — a name nothing is
+registered under, making **every MCP tool undispatchable**. The earlier argument
+for `__` was that no built-in family contains it, so a discovered name cannot
+shadow one; that is true, and it is about shadowing rather than about the wire
+round trip, which is where the two conventions actually met. The fix is a prefix
+test in the registry, which a server cannot reach because
+`admitDiscoveredTool` refuses a discovered name containing the separator. The
+suite caught it because its cases drive a real `ToolRegistry` rather than calling
+`execute` directly.
+
+**Not built.** A server registry that holds a descriptor, worker wiring that
+discovers and registers at startup, a settings surface, audit emission. Until
+those exist nothing starts any of the above, which is why P-026-C1 and P-026-C4
+stay unmet even though the mechanisms beneath them are evidenced. A mechanism
+with no caller is not a capability, and recording it otherwise would be the
+defect this project has now found eight times.
+
+**Nothing imports the MCP layer**, so none of its code ships: the built service
+worker contains no `jsonrpc`, no `tools/list` and no `MCP_PROTOCOL`.
 
 The release artifact's checksum **did** change, and the reason is worth stating
 rather than glossing, because the easy sentence here — "the checksum is
-unchanged, so nothing shipped" — would have been false. Two bytes: the string
-`'mcp'` was added to `EGRESS_CHANNELS` in `src/security/egress/destination.ts`,
-which is a file that does ship. One occurrence, verified in the bundle. That is
-the whole of what this work put into the extension, and it is a channel name
-that nothing yet produces a destination on.
+unchanged, so nothing shipped" — would have been false. Thirteen bytes, in three
+files that already shipped:
+
+| What                          | Where                                 |
+| ----------------------------- | ------------------------------------- |
+| `'mcp'` as an egress channel  | `src/security/egress/destination.ts`  |
+| `'MCP_ERROR'` in the taxonomy | `src/types/result.ts`                 |
+| `'mcp__'` in the wire guard   | `src/tools/registry/tool-registry.ts` |
+
+Three strings and one prefix test. No MCP behaviour, and a channel and an error
+code that nothing yet produces.
 
 ### The test suites
 
@@ -402,15 +455,34 @@ that nothing yet produces a destination on.
   consent store are in the path.
 - `tests/security/mcp-discovery.test.ts` (TEST-MCP-003). Written as "what would
   a server that wants more than it should send here", not as a parser test.
+- `tests/security/mcp-schema.test.ts` (TEST-MCP-004). The positive cases
+  establish that the subset is usable at all, because a compiler that refused
+  everything would be trivially safe and useless.
+- `tests/security/mcp-tool-dispatch.test.ts` (TEST-MCP-005). Drives a real
+  `ToolRegistry` with the real policy engine and prompter, which is how the
+  wire-name collision was found.
 
-Fourteen mutants have been run against these invariants and all fourteen were
-caught. The five on the risk model: lowering `MCP_TOOL_RISK` to R2, giving
-`mcpToolRisk` a parameter, raising `ALWAYS_CONFIRM_AT`, raising
-`MAX_GRANTABLE_RISK`, and restoring a `ceiling` field. The nine on the transport
-and discovery: redirects followed, the use-time address re-check removed, the
-decoded-length check removed, the failure body surfaced, any protocol revision
-accepted, the repeated-cursor guard removed, admission applied per page, the
-`mcp:` identity prefix dropped, and the `mcp` channel treated as internal.
+**Thirty-four mutants** have been run against these invariants and all
+thirty-four were caught.
+
+- _The risk model (5)._ `MCP_TOOL_RISK` lowered to R2; `mcpToolRisk` given a
+  parameter; `ALWAYS_CONFIRM_AT` raised; `MAX_GRANTABLE_RISK` raised; a
+  `ceiling` field restored.
+- _Transport and discovery (9)._ Redirects followed; the use-time address
+  re-check removed; the decoded-length check removed; the failure body surfaced;
+  any protocol revision accepted; the repeated-cursor guard removed; admission
+  applied per page; the `mcp:` identity prefix dropped; the `mcp` channel treated
+  as internal.
+- _The schema compiler (10)._ `.strict()` dropped; an object with no properties
+  accepted; refused keywords ignored; the depth bound removed; open
+  `additionalProperties` allowed; the forbidden names allowed; `required` not
+  checked against `properties`; a tuple approximated by its first entry; a union
+  of types taken as its first member; the property-count bound removed.
+- _The tool and the wire guard (10)._ The wire guard removed; the wire guard
+  widened to any `mcp` prefix; risk taken from the arguments; the destination read
+  from the arguments; the namespaced name sent to the server; `isError` treated as
+  success; the result left unbounded; the taint dropped; a non-text part decoded;
+  the payload declaration dropped.
 
 ## 9. What is still open, and who owns it
 

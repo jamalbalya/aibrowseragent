@@ -2056,7 +2056,7 @@
           "requirement": "MCP client",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "Scope re-audited from the specification in Wave 29, and the answer narrowed rather than widened. §5.11 names `MCP client` first and no server component; §35's diagram runs `Agent Runtime → MCP Client → Remote/Local MCP → Tools/Resources`, all downstream. So P-026 is a client capability only — this build is never an MCP server, which the specification never asks for and every available inbound channel forbids. The transport is remote MCP over HTTPS. The approval-granularity question is gone rather than answered: the earlier per-server risk ceiling was withdrawn because a user who sets it low, reasonably, for a server they think only reads, auto-approves that server's whole present and future tool set. An MCP tool is R3 instead, classified from what the call is, which puts it above `MAX_GRANTABLE_RISK` so no grant can reach it. Two of the five pieces now exist and are evidenced — the guarded transport (P-026-C10) and discovery (P-026-C11) — and neither is invoked by anything yet, so the clause stays unmet: a client nothing can start is not a client. What remains is a server registry, tool registration through the one dispatch path, a settings surface and audit emission. See docs/MCP_GUIDE.md."
+          "note": "Scope re-audited from the specification in Wave 29, and the answer narrowed rather than widened. §5.11 names `MCP client` first and no server component; §35's diagram runs `Agent Runtime → MCP Client → Remote/Local MCP → Tools/Resources`, all downstream. So P-026 is a client capability only — this build is never an MCP server, which the specification never asks for and every available inbound channel forbids. Four of the five pieces now exist and are evidenced: the trust core (C8, C9), the guarded transport (C10), discovery (C11), and tool construction through the one dispatch path (C12). The clause stays unmet because nothing starts any of it: no stored server, no worker wiring, no settings surface. A client nothing can start is not a client. See docs/MCP_GUIDE.md."
         },
         {
           "id": "P-026-C2",
@@ -2080,7 +2080,7 @@
           "requirement": "tool discovery",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "Discovery is implemented and evidenced against a hostile server — handshake, bounded pagination, and admission of every tool name, description and schema (P-026-C11). The clause stays unmet because nothing invokes it: no registry holds a server to discover from, and no discovered tool becomes a registry entry. Recording it this way rather than as VERIFIED is deliberate — a mechanism with no caller is not a capability, which is a defect pattern this project has now found eight times."
+          "note": "Discovery is implemented and evidenced against a hostile server — handshake, bounded pagination, and admission of every tool name, description and schema (P-026-C11). The clause stays unmet because nothing invokes it: no registry holds a server to discover from. Recording it this way rather than as VERIFIED is deliberate — a mechanism with no caller is not a capability, which is a defect pattern this project has now found eight times."
         },
         {
           "id": "P-026-C5",
@@ -2096,7 +2096,7 @@
           "requirement": "Every MCP capability passes schema, policy, permission and audit.",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "Not wired. The rule it depends on is built and its consequences are evidenced against the real policy engine: an MCP tool is R3, so stage 5 confirms it in every mode before the mode switch and no site rule or plan approval can reach it — see P-026-C8. What remains is making such a tool an ordinary registry entry so schema, policy, permission and audit apply at the existing single choke point."
+          "note": "The schema, policy, permission and audit stages are all reached, and by the existing path rather than a parallel one: `createMcpTool` produces an ordinary `AgentTool`, so dispatch runs through the single `evaluatePolicy` call site and the single `tool.execute` path — see P-026-C12, whose cases drive a real `ToolRegistry`. What is not yet wired is the worker registering such a tool at startup, so no task can reach one."
         },
         {
           "id": "P-026-C7",
@@ -2175,13 +2175,41 @@
             "tests/security/mcp-discovery.test.ts :: assigns no risk, because risk is not the server’s to influence",
             "tests/security/mcp-discovery.test.ts :: registers nothing, so a listing alone cannot reach the model"
           ]
+        },
+        {
+          "id": "P-026-C12",
+          "specRef": "§35",
+          "requirement": "An MCP tool is an ordinary registry entry: its schema, risk, destination and result are all fixed by this build, and dispatch runs through the one existing path.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "§22 makes argument validation the contract, and an MCP tool's schema came from the server — so this is the only validator in the product built out of hostile input. It compiles a **subset** of JSON Schema and refuses the rest by name: `$ref`, the combinators, tuple items, unions of types, open `additionalProperties`, an object declaring no properties. `z.record(z.unknown())` was the available shortcut and would have put an unvalidated argument set on the wire; a full JSON Schema implementation would have put a large parser over attacker input in the service worker. Bounds on property count, nesting, enum length and name length are each a number the server would otherwise choose. `__proto__`, `constructor` and `prototype` are refused as names — found by a test, not by reading: the compiler assigns `shape[name]`, and `shape['__proto__'] = x` sets the prototype rather than adding a key, so the property vanished and the argument was refused as unrecognised, fail-closed by accident. The tool itself fixes four things: the namespaced name, R3 risk, the destination (the descriptor's URL, closed over, never read from the model's arguments), and the payload declaration that puts the arguments in front of the exfiltration gate. The result is bounded, a non-text part is named rather than decoded, `isError` is a failure rather than a success whose text says so, and the result taints the task. A dispatch case also caught a collision the earlier `__` reasoning missed: `fromWireName` restored the first `_` to a `.`, so every MCP tool was undispatchable — the suite found it because it drives the real registry rather than calling `execute`. Twenty mutants killed across the compiler, the tool and the wire guard.",
+          "evidence": [
+            "tests/security/mcp-schema.test.ts :: refuses a field the schema never declared",
+            "tests/security/mcp-schema.test.ts :: refuses a schema that would accept anything",
+            "tests/security/mcp-schema.test.ts :: refuses every reference and combinator by name",
+            "tests/security/mcp-schema.test.ts :: refuses a self-referential schema, which is what a cycle arrives as",
+            "tests/security/mcp-schema.test.ts :: refuses __proto__, constructor and prototype",
+            "tests/security/mcp-schema.test.ts :: bounds nesting, because nesting is what turns a schema into a stack",
+            "tests/security/mcp-tool-dispatch.test.ts :: leaves an MCP name untouched in both directions",
+            "tests/security/mcp-tool-dispatch.test.ts :: still translates a built-in name, so the guard is not a blanket exemption",
+            "tests/security/mcp-tool-dispatch.test.ts :: is confirmed on every call, in manual, auto and skip alike",
+            "tests/security/mcp-tool-dispatch.test.ts :: is not pre-approved by a grant on the server’s own origin",
+            "tests/security/mcp-tool-dispatch.test.ts :: is refused outright when the server’s site is blocked",
+            "tests/security/mcp-tool-dispatch.test.ts :: takes its destination from the descriptor, so the model cannot name one",
+            "tests/security/mcp-tool-dispatch.test.ts :: sends the server’s own name for the tool, not the namespaced one",
+            "tests/security/mcp-tool-dispatch.test.ts :: records the server as a taint source, so a later write meets the gate",
+            "tests/security/mcp-tool-dispatch.test.ts :: treats isError as a failure, not as a success whose text says \"error\"",
+            "tests/security/mcp-tool-dispatch.test.ts :: bounds the result, whose length the server chose"
+          ]
         }
       ],
       "unit": [],
       "security": [
         "tests/security/mcp-trust-core.test.ts",
         "tests/security/mcp-transport-security.test.ts",
-        "tests/security/mcp-discovery.test.ts"
+        "tests/security/mcp-discovery.test.ts",
+        "tests/security/mcp-schema.test.ts",
+        "tests/security/mcp-tool-dispatch.test.ts"
       ]
     },
     "P-027": {

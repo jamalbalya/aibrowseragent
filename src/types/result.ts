@@ -18,6 +18,15 @@ export const ERROR_CODES = [
   'NAVIGATION_TIMEOUT',
   'NETWORK_ERROR',
   'CONNECTOR_ERROR',
+  /**
+   * An external MCP server refused a call, or reported that its tool failed.
+   *
+   * Separate from `CONNECTOR_ERROR` because the two are different domains and a
+   * trail that could not tell them apart would be reporting "a connector
+   * failed" about a server this project never wrote an adapter for. It is added
+   * with its producer rather than ahead of one: `createMcpTool` raises it.
+   */
+  'MCP_ERROR',
   'RATE_LIMITED',
   'MODEL_ERROR',
   'MODEL_UNSUPPORTED',
@@ -67,6 +76,13 @@ const NON_RETRYABLE: ReadonlySet<ErrorCode> = new Set<ErrorCode>([
   'BUDGET_EXHAUSTED',
   'NOT_IMPLEMENTED',
   'ORIGIN_CHANGED',
+  /*
+   * A server that refused a call, or whose tool reported a failure, said so
+   * about *this* call. Retrying an unknown third party's side effect on the
+   * strength of its own error message would be asserting that repeating it is
+   * free, which nothing here knows.
+   */
+  'MCP_ERROR',
 ]);
 
 /** Transient failures that a bounded retry may resolve. */

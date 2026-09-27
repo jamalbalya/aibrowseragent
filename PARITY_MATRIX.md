@@ -341,22 +341,49 @@ capability rather than the capability:
   admission applied to the accumulated set rather than per page, so splitting a
   listing does not evade the tool cap.
 
-Fourteen mutants across the four clauses, each killed.
+And two more by building the layers above them:
+
+- **P-026-C12** — an MCP tool is an ordinary registry entry. Its schema is
+  compiled from the server's JSON Schema as a **subset**, with `$ref`, the
+  combinators, tuple items, unions of types and open `additionalProperties`
+  refused by name: `z.record(z.unknown())` would have put an unvalidated
+  argument set on the wire, and a full JSON Schema implementation would have put
+  a large parser over attacker input inside the worker. Its risk, its
+  destination and its payload declaration are all fixed by this build, not read
+  from the model's arguments. Its result is bounded and taints the task.
+
+Two defects were found by tests rather than by reading, which is the part worth
+recording:
+
+- `shape['__proto__'] = x` **sets the prototype** rather than adding a key, so a
+  server declaring a `__proto__` argument had it silently vanish from the
+  compiled schema — fail-closed by accident, with the accumulator's prototype
+  replaced. The three names are refused now.
+- `fromWireName` restored the first `_` in a wire name to a `.`, turning
+  `mcp__example__search` into `mcp._example__search`, so **every MCP tool was
+  undispatchable**. The earlier argument for `__` — that no built-in family
+  contains it, so a discovered name cannot shadow one — is true and is about
+  shadowing, not about the wire round trip. The dispatch suite found it because
+  its cases drive a real `ToolRegistry` rather than calling `execute` directly.
+
+Thirty-four mutants across the six clauses, each killed.
 
 **And the row is still NOT-STARTED**, which is the part worth being exact about.
 Nothing imports any of the three MCP files, so none of their code ships — the
 built service worker contains no `mcp__`, no `jsonrpc` and no `tools/list` — and
-no task can make an MCP call. The artifact's checksum did move by two bytes, and
-that is recorded rather than glossed: `'mcp'` was added to `EGRESS_CHANNELS` in a
-file that does ship, which is one string and a channel nothing yet produces a
-destination on. "The checksum is unchanged, so nothing shipped" would have been
-the convenient sentence and it would have been wrong. P-026-C1
+no task can make an MCP call. The artifact's checksum did move, by thirteen
+bytes, and that is recorded rather than glossed: three strings landed in files
+that already ship — `'mcp'` in `EGRESS_CHANNELS`, `'MCP_ERROR'` in the error
+taxonomy, and `'mcp__'` in the registry's wire-name guard. No MCP behaviour, and
+a channel and an error code nothing yet produces. "The checksum is unchanged, so
+nothing shipped" would have been the convenient sentence and it would have been
+wrong. P-026-C1
 and P-026-C4 stay unmet for that reason even though the mechanisms beneath them
 are evidenced: a mechanism with no caller is not a capability, and this project
-has found that defect eight times now. What remains is a server registry, tool
-registration through the one dispatch path, a settings surface and audit
-emission, plus validation against a real remote server, which needs a credential
-this project does not hold.
+has found that defect eight times now. What remains is a server registry that holds a
+descriptor, worker wiring that discovers and registers at startup, a settings
+surface and audit emission, plus validation against a real remote server, which
+needs a credential this project does not hold.
 
 ### What is waiting on somebody else, and where to see it
 

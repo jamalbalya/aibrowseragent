@@ -768,13 +768,42 @@ function deepFreeze<T>(value: T): T {
   return Object.freeze(value);
 }
 
+/**
+ * The namespace an MCP tool name starts with, spelled once.
+ *
+ * Deliberately a local constant rather than an import from `@/mcp`: the
+ * registry is the bottom of the dependency graph and must not gain a dependency
+ * on the MCP layer to know how to leave a name alone. A test asserts the two
+ * spellings agree, so they cannot drift.
+ */
+const MCP_WIRE_PREFIX = 'mcp__';
+
 export function toWireName(name: string): string {
   return name.replace(/\./g, '_');
 }
 
-/** `browser_click` → `browser.click`, restoring only the first separator. */
+/**
+ * `browser_click` → `browser.click`, restoring only the first separator.
+ *
+ * An MCP tool's name is returned untouched, and the reason is a defect this
+ * check was written to fix rather than a preference. `mcpToolName` mints
+ * `mcp__<server>__<tool>`, which holds no `.` at all — so it needs no
+ * translation, and running the general rule over it produced
+ * `mcp._example__search`, a name nothing is registered under. Every MCP tool
+ * was undispatchable.
+ *
+ * The earlier reasoning for `__` was that no built-in family contains it, so a
+ * discovered name cannot shadow one. That is true and it is about a different
+ * question: it says nothing about the wire round trip, which is where the two
+ * conventions actually met.
+ *
+ * The guard is a prefix test on this build's own namespace, so a server cannot
+ * reach it — `admitDiscoveredTool` refuses a discovered name containing the
+ * separator, so no tool name arrives already looking like one.
+ */
 export function fromWireName(name: string): string {
   if (name.includes('.')) return name;
+  if (name.startsWith(MCP_WIRE_PREFIX)) return name;
   const index = name.indexOf('_');
   return index === -1 ? name : `${name.slice(0, index)}.${name.slice(index + 1)}`;
 }
