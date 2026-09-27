@@ -691,13 +691,203 @@
     },
     "P-020": {
       "security": ["tests/security/scheduled-execution.test.ts"],
-      "e2e": ["tests/e2e/schedules.spec.ts"]
+      "e2e": ["tests/e2e/schedules.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-020-C1",
+          "specRef": "§51",
+          "requirement": "daily",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/scheduled-execution.test.ts :: 07 daily lands on the next matching wall-clock time",
+            "tests/security/scheduled-execution.test.ts :: 08 daily rolls to tomorrow once today has passed",
+            "tests/e2e/schedules.spec.ts :: creating a schedule arms a real alarm and lists nothing that runs"
+          ]
+        },
+        {
+          "id": "P-020-C2",
+          "specRef": "§51",
+          "requirement": "weekly",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/scheduled-execution.test.ts :: 09 weekly lands on the chosen weekday"
+          ]
+        },
+        {
+          "id": "P-020-C3",
+          "specRef": "§51",
+          "requirement": "monthly",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/scheduled-execution.test.ts :: 10 monthly lands on the chosen day",
+            "tests/security/scheduled-execution.test.ts :: 11 monthly skips a month without that day rather than clamping it"
+          ]
+        },
+        {
+          "id": "P-020-C4",
+          "specRef": "§51",
+          "requirement": "annually",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/scheduled-execution.test.ts :: 12 annual lands on the chosen month and day",
+            "tests/security/scheduled-execution.test.ts :: 13 annual on 29 February happens in leap years only"
+          ]
+        },
+        {
+          "id": "P-020-C5",
+          "specRef": "§51",
+          "requirement": "Use Chrome alarms for browser-local scheduling.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/schedules.spec.ts :: the alarms permission is in the shipped manifest and usable from the worker",
+            "tests/e2e/schedules.spec.ts :: a due schedule runs unattended after a worker restart, and drives the page"
+          ]
+        },
+        {
+          "id": "P-020-C6",
+          "specRef": "§51",
+          "requirement": "Do not claim cloud or offline scheduling unless a backend runtime exists.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "The panel states the limit rather than leaving the user to discover it: a schedule only fires while Chrome is running.",
+          "evidence": [
+            "tests/e2e/schedules.spec.ts :: the schedules screen is in the shipped panel and says what a run will not do"
+          ]
+        },
+        {
+          "id": "P-020-C7",
+          "specRef": "§25",
+          "requirement": "An unattended run stops at a confirmation rather than answering it.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/schedules.spec.ts :: a due schedule stops at the confirmation boundary instead of asking",
+            "tests/e2e/schedules.spec.ts :: pausing stops a due schedule from running at all",
+            "tests/security/scheduled-execution.test.ts :: 29 R3 stops in every mode, including skip"
+          ]
+        },
+        {
+          "id": "P-020-C8",
+          "specRef": "§51",
+          "requirement": "Scheduling is not a capability the model can reach.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/schedules.spec.ts :: a model is offered no schedule tool and no schedule appears in its context"
+          ]
+        },
+        {
+          "id": "P-020-C9",
+          "specRef": "§51",
+          "requirement": "A schedule can target a shortcut, a workflow or a skill.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Recorded because this file said the opposite. The P-021 entry claimed a shortcut cannot be scheduled and that adding the target kind would be a frozen P-020 change; `ScheduleTarget` has carried a `shortcut` kind all along, and two cases exercise it — including the one that matters, which is that the name is resolved at the moment it fires rather than at the moment it was scheduled.",
+          "evidence": [
+            "tests/security/scheduled-execution.test.ts :: 20 fires through a shortcut, resolved at the moment it fires",
+            "tests/security/scheduled-execution.test.ts :: 21 follows a shortcut that was retargeted after the schedule was made"
+          ]
+        }
+      ]
     },
     "P-021": {
       "unit": ["tests/unit/shortcut-name.test.ts"],
       "integration": ["tests/integration/shortcut-invocation.test.ts"],
-      "security": ["tests/security/shortcut-security.test.ts"],
-      "e2e": ["tests/e2e/shortcut-prompt-and-skills.spec.ts", "tests/e2e/shortcuts.spec.ts"]
+      "security": [
+        "tests/security/shortcut-security.test.ts",
+        "tests/security/scheduled-execution.test.ts"
+      ],
+      "e2e": ["tests/e2e/shortcut-prompt-and-skills.spec.ts", "tests/e2e/shortcuts.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-021-C1",
+          "specRef": "§50",
+          "requirement": "Support reusable slash commands.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/shortcuts.spec.ts :: a shortcut resolves to its target and runs nothing until confirmed",
+            "tests/e2e/shortcuts.spec.ts :: confirming a shortcut runs its target through the normal pipeline"
+          ]
+        },
+        {
+          "id": "P-021-C2",
+          "specRef": "§50",
+          "requirement": "name",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Names are normalised and a confusable duplicate is refused, so one typed name cannot mean two things.",
+          "evidence": [
+            "tests/e2e/shortcuts.spec.ts :: a second shortcut cannot take a name confusable with an existing one"
+          ]
+        },
+        {
+          "id": "P-021-C3",
+          "specRef": "§50",
+          "requirement": "prompt",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Carried as a target of kind `prompt` with its objective, plus the shortcut's skeleton.",
+          "evidence": [
+            "tests/e2e/shortcuts.spec.ts :: the side panel shows what a shortcut means before it runs"
+          ]
+        },
+        {
+          "id": "P-021-C4",
+          "specRef": "§50",
+          "requirement": "requiredSkills",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Met more strongly than a list of names: a shortcut targets one skill by id **and version**, so a redefined skill does not silently inherit the name.",
+          "evidence": [
+            "tests/e2e/shortcuts.spec.ts :: a shortcut to a deleted workflow refuses with nothing executed",
+            "tests/e2e/shortcuts.spec.ts :: a shortcut to an incomplete recording refuses with nothing executed"
+          ]
+        },
+        {
+          "id": "P-021-C5",
+          "specRef": "§50",
+          "requirement": "allowedTools",
+          "mandatory": true,
+          "status": "PARTIAL",
+          "note": "Not implemented, and the reason is the architecture rather than effort. A shortcut here is an **alias, not an execution path**: there is no `shortcut.run`, and invoking one is two steps the panel takes — resolve the name, show the user what it means, then call workflow.replay or skill.run. So a shortcut carries no execution authority to narrow. The tool set is bounded where it is actually determined: a skill's reachable tools are derived from its steps at registration, composition included, and a workflow's are fixed by its recording. Putting a second allow-list on the name would add an authorization input to an object that does not execute, which is the second authorization surface this architecture refuses. Recorded as a divergence rather than a gap, and left mandatory so the matrix cannot read as fully satisfying §50."
+        },
+        {
+          "id": "P-021-C6",
+          "specRef": "§50",
+          "requirement": "permissionProfile",
+          "mandatory": true,
+          "status": "PARTIAL",
+          "note": "Not implemented, deliberately, and this one is a security position rather than a scoping one. A named permission profile attached to a shortcut is a **stored permission with a name on it**. The workflow and shortcut design turns on the opposite rule: a recording never becomes a standing grant, and replay re-earns every approval it needs at the risk the action actually carries. A profile would make the easiest path through the product the one that pre-approves. Recorded as a divergence, and left mandatory for the same reason as C5."
+        },
+        {
+          "id": "P-021-C7",
+          "specRef": "§50",
+          "requirement": "A shortcut is not a capability the model can reach.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/shortcuts.spec.ts :: shortcuts are invisible to the model",
+            "tests/e2e/shortcuts.spec.ts :: shortcuts added no permission and no host access"
+          ]
+        },
+        {
+          "id": "P-021-C8",
+          "specRef": "§51",
+          "requirement": "A shortcut can be the target of a schedule.",
+          "mandatory": false,
+          "status": "VERIFIED",
+          "note": "Non-mandatory because §50 does not ask for it. Recorded because the previous entry for this capability stated the opposite as a limitation, and it was never true.",
+          "evidence": [
+            "tests/security/scheduled-execution.test.ts :: 20 fires through a shortcut, resolved at the moment it fires"
+          ]
+        }
+      ]
     },
     "P-022": {
       "unit": ["tests/unit/workflow-recording.test.ts"],
@@ -1030,7 +1220,110 @@
         "tests/security/audit-log.test.ts",
         "tests/security/route-trust-security.test.ts"
       ],
-      "e2e": ["tests/e2e/audit.spec.ts", "tests/e2e/route-trust.spec.ts"]
+      "e2e": ["tests/e2e/audit.spec.ts", "tests/e2e/route-trust.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-038-C1",
+          "specRef": "§38",
+          "requirement": "Every tool execution reaches the trail.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/audit.spec.ts :: a genuine browser action leaves a record in the trail"
+          ]
+        },
+        {
+          "id": "P-038-C2",
+          "specRef": "§38",
+          "requirement": "A refusal is recorded, and nothing runs.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/audit.spec.ts :: a permission refusal is recorded, and nothing ran"
+          ]
+        },
+        {
+          "id": "P-038-C3",
+          "specRef": "§38",
+          "requirement": "Permission grants and revocations are recorded.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/audit.spec.ts :: granting a site and revoking it are both in the trail"
+          ]
+        },
+        {
+          "id": "P-038-C4",
+          "specRef": "§38",
+          "requirement": "Task lifecycle endings are recorded.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/audit.spec.ts :: a task that finishes normally is recorded as having finished",
+            "tests/integration/task-manager.test.ts :: tells the lifecycle observer that the task ended"
+          ]
+        },
+        {
+          "id": "P-038-C5",
+          "specRef": "§38",
+          "requirement": "Ordering survives a service-worker restart.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/audit.spec.ts :: the trail keeps its sequence across a real worker termination"
+          ]
+        },
+        {
+          "id": "P-038-C6",
+          "specRef": "§38",
+          "requirement": "Records correlate by the thing that caused them.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/audit.spec.ts :: a workflow replay and a shortcut launch are recorded by their own ids",
+            "tests/e2e/audit.spec.ts :: two tasks stay apart in the one trail"
+          ]
+        },
+        {
+          "id": "P-038-C7",
+          "specRef": "§33",
+          "requirement": "No page text, model output or credential material enters the trail or its export.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/audit.spec.ts :: the panel exports a file holding decisions and nothing forbidden"
+          ]
+        },
+        {
+          "id": "P-038-C8",
+          "specRef": "§38",
+          "requirement": "The trail is append-only and offers no deletion.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Deliberate, and it cuts both ways: a user cannot clear their own history from the panel either. Whether such a deletion should itself be recorded is an open product question, not an implementation gap.",
+          "evidence": [
+            "tests/e2e/audit.spec.ts :: the panel shows the integrity verdict and never offers a delete"
+          ]
+        },
+        {
+          "id": "P-038-C9",
+          "specRef": "§38",
+          "requirement": "The trail is not a capability the model can reach.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/audit.spec.ts :: audit added no permission and is invisible to the model"
+          ]
+        },
+        {
+          "id": "P-038-C10",
+          "specRef": "§38",
+          "requirement": "The read route filters on every correlation the record carries.",
+          "mandatory": false,
+          "status": "PARTIAL",
+          "note": "Non-mandatory because §38 does not specify the query surface. Stated rather than implied: the route filters on task and site, while a record also carries workflow, shortcut, schedule, run, connector and skill correlations. A reader of the export can use them; a route caller cannot yet."
+        }
+      ]
     },
     "P-039": {
       "unit": ["tests/unit/evidence-store.test.ts"],

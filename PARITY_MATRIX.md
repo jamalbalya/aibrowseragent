@@ -165,8 +165,8 @@ capability, not necessarily a test of the capability itself.
 
 | Status          | Count  |
 | --------------- | ------ |
-| PASS            | 32     |
-| PARTIAL         | 6      |
+| PASS            | 34     |
+| PARTIAL         | 4      |
 | INTERFACES-ONLY | 0      |
 | NOT-STARTED     | 2      |
 | **Total**       | **40** |
@@ -201,6 +201,14 @@ from 29 to 30 and PARTIAL from 9 to 8 — §14's ninth minimum check now exists 
 a real probe. And loop detection (P-037) keeps its PASS with its one AMBIGUOUS
 clause resolved by an explicit decision rather than left open; the clause gate
 now reports no ambiguous clause at all.
+
+Then scheduled tasks (P-020) and the audit trail (P-038) move **from PARTIAL to
+PASS**, taking PASS from 32 to 34 and PARTIAL from 6 to 4. Both were PARTIAL on
+§84 condition 3 alone — P-020's entry said so in as many words — plus, for
+P-038, three stated limits, the one of which §38 does not require now carried as
+a non-mandatory clause. Shortcuts (P-021) stays PARTIAL, for a reason that is
+now precise rather than general: two fields §50 names are deliberately not
+implemented.
 
 Then forms (P-006) and download (P-011) move **from PARTIAL to PASS**, taking
 PASS from 30 to 32 and PARTIAL from 8 to 6. Neither moved because anything was
@@ -440,7 +448,7 @@ rather than folded into the verdict.
 | P-017 | Long-running task                    | yes  | —    | yes         | —        | yes | PASS        |
 | P-018 | Background task while Chrome is open | yes  | —    | yes         | —        | yes | PASS        |
 | P-019 | Notifications                        | yes  | yes  | yes         | yes      | yes | PASS        |
-| P-020 | Scheduled tasks                      | yes  | —    | —           | yes      | yes | PARTIAL     |
+| P-020 | Scheduled tasks                      | yes  | —    | —           | yes      | yes | PASS        |
 | P-021 | Shortcuts                            | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-022 | Workflow recording                   | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-023 | Connector framework                  | yes  | yes  | yes         | yes      | yes | PARTIAL     |
@@ -458,7 +466,7 @@ rather than folded into the verdict.
 | P-035 | Capability doctor                    | yes  | yes  | —           | —        | yes | PASS        |
 | P-036 | Error recovery                       | yes  | yes  | yes         | —        | yes | PASS        |
 | P-037 | Loop detection                       | yes  | yes  | yes         | —        | —   | PASS        |
-| P-038 | Audit trail                          | yes  | yes  | yes         | yes      | yes | PARTIAL     |
+| P-038 | Audit trail                          | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-039 | Evidence model                       | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-040 | Provider/model capability detection  | yes  | yes  | —           | —        | yes | PASS        |
 
@@ -953,8 +961,35 @@ shortcut names a whole target and takes no per-run inputs, so a workflow with
 runtime slots is reached through the review surface rather than by name;
 extending shortcuts to carry input values would mean storing values, which is
 a different security question and deliberately out of P-021's scope. And a
-shortcut cannot be scheduled: schedules target skills and workflows, and
-adding a target kind to them is a P-020 change, which is frozen.
+shortcut **can** be scheduled, and the claim that it could not was never true —
+corrected here rather than left to mislead somebody deciding what to build.
+`ScheduleTarget` has carried a `shortcut` kind all along, and two cases
+exercise it, including the one that matters: the name is resolved at the moment
+the schedule fires rather than when it was created, so retargeting the shortcut
+changes what the schedule does.
+
+What P-021 **is** PARTIAL for is narrower and was not stated before. §50 gives a
+shortcut shape carrying `allowedTools` and `permissionProfile`, and neither
+exists. Both omissions are deliberate, and they are different in kind. A
+shortcut here is an **alias, not an execution path** — there is no
+`shortcut.run`; the panel resolves the name, shows the user what it means, and
+then calls `workflow.replay` or `skill.run`. So a shortcut carries no execution
+authority for an `allowedTools` list to narrow, and the tool set is already
+bounded where it is determined: a skill's reachable tools are derived from its
+steps at registration, composition included, and a workflow's are fixed by its
+recording. Putting a second allow-list on the name would add an authorization
+input to an object that does not execute.
+
+`permissionProfile` is a security position rather than a scoping one. A named
+profile attached to a shortcut is a stored permission with a name on it, and the
+whole workflow-and-shortcut design turns on the opposite rule: a recording never
+becomes a standing grant, and replay re-earns every approval at the risk the
+action actually carries. A profile would make the easiest path through the
+product the one that pre-approves.
+
+Both are carried as mandatory clauses so this row cannot read as fully
+satisfying §50, which is the honest outcome: the capability works, and two named
+fields of the specified shape are refused on architectural grounds.
 
 **P-022 Workflow recording** — Recording and replay are implemented, on top
 of the skill definition, validator, runner and dispatch path rather than
