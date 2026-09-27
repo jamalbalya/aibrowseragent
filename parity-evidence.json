@@ -20,26 +20,225 @@
       "e2e": ["tests/e2e/extension-load.spec.ts"]
     },
     "P-002": {
-      "unit": ["tests/unit/semantic-tree.test.ts", "tests/unit/browser-tools.test.ts"],
+      "unit": [
+        "tests/unit/semantic-tree.test.ts",
+        "tests/unit/browser-tools.test.ts",
+        "tests/unit/occlusion.test.ts"
+      ],
       "integration": ["tests/integration/agent-runtime.test.ts"],
       "security": ["tests/security/prompt-injection.test.ts"],
       "e2e": [
         "tests/e2e/agent-task.spec.ts",
         "tests/e2e/security.spec.ts",
         "tests/e2e/file-access.spec.ts"
+      ],
+      "clauses": [
+        {
+          "id": "P-002-C1",
+          "specRef": "§8",
+          "requirement": "Do not expose the raw DOM as the default model context.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "The default context is the semantic layer. Raw DOM is reachable only through the debugger namespace, which is a separate, user-visible attachment.",
+          "evidence": [
+            "tests/unit/semantic-tree.test.ts :: captures interactive elements with roles and names"
+          ]
+        },
+        {
+          "id": "P-002-C2",
+          "specRef": "§8",
+          "requirement": "A semantic/accessibility representation, with roles and accessible names.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Names follow the accname precedence rather than a convenient approximation, including the cases that usually go wrong: a select is not named after its options, a textarea not after its content.",
+          "evidence": [
+            "tests/unit/semantic-tree.test.ts :: prefers aria-labelledby over everything else",
+            "tests/unit/semantic-tree.test.ts :: does not name an unlabelled select after its options",
+            "tests/unit/semantic-tree.test.ts :: does not name a textarea after its content",
+            "tests/unit/semantic-tree.test.ts :: derives implicit roles from the tag"
+          ]
+        },
+        {
+          "id": "P-002-C3",
+          "specRef": "§8",
+          "requirement": "visible text and structure",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/semantic-tree.test.ts :: falls back to visible text, then placeholder",
+            "tests/unit/semantic-tree.test.ts :: skips hidden elements"
+          ]
+        },
+        {
+          "id": "P-002-C4",
+          "specRef": "§8",
+          "requirement": "layout information",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Visibility is a layout judgement, and occlusion is the part `isVisible` cannot answer: five sampled points, insets so a border pixel is not the verdict, and a scroll before hit-testing because an off-screen box is the wrong box.",
+          "evidence": [
+            "tests/unit/semantic-tree.test.ts :: rejects display:none and visibility:hidden",
+            "tests/unit/occlusion.test.ts :: samples five points, so a corner clipped by a tooltip is still reachable",
+            "tests/unit/occlusion.test.ts :: scrolls before it hit-tests, because an off-screen box is the wrong box"
+          ]
+        },
+        {
+          "id": "P-002-C5",
+          "specRef": "§8",
+          "requirement": "screenshot",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/screenshot-capture.test.ts :: captures an https page and files the image as evidence"
+          ]
+        },
+        {
+          "id": "P-002-C6",
+          "specRef": "§8",
+          "requirement": "Every element carries an internal identifier with role, name, visible, enabled, selectorHints and frameId.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/semantic-tree.test.ts :: captures interactive elements with roles and names",
+            "tests/unit/semantic-tree.test.ts :: prefers id, then test id, then name",
+            "tests/unit/semantic-tree.test.ts :: detects the disabled attribute and aria-disabled"
+          ]
+        },
+        {
+          "id": "P-002-C7",
+          "specRef": "§8",
+          "requirement": "The identifier must not be assumed permanent after page mutation.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "The clause this layer turns on, and it distinguishes three outcomes rather than one: a handle from an earlier snapshot, an element that detached, and an id never issued. Collapsing them would tell the model to retry when it should re-read.",
+          "evidence": [
+            "tests/unit/semantic-tree.test.ts :: invalidates handles from an earlier snapshot",
+            "tests/unit/semantic-tree.test.ts :: reports a detached element separately from a stale handle",
+            "tests/unit/semantic-tree.test.ts :: reports an unrecognised handle as unknown"
+          ]
+        },
+        {
+          "id": "P-002-C8",
+          "specRef": "§32",
+          "requirement": "A password value never enters the page model.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/semantic-tree.test.ts :: never includes a password field value in the page model"
+          ]
+        }
       ]
     },
     "P-003": {
-      "unit": ["tests/unit/interaction-engine.test.ts", "tests/unit/browser-tools.test.ts"],
+      "unit": [
+        "tests/unit/interaction-engine.test.ts",
+        "tests/unit/browser-tools.test.ts",
+        "tests/unit/occlusion.test.ts"
+      ],
       "integration": ["tests/integration/agent-runtime.test.ts"],
       "security": ["tests/security/origin-validation.test.ts"],
-      "e2e": ["tests/e2e/agent-task.spec.ts"]
+      "e2e": ["tests/e2e/agent-task.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-003-C1",
+          "specRef": "§9",
+          "requirement": "browser.click",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Dispatches the sequence a real user produces, and focuses before activating, because a page that listens for focus behaves differently otherwise.",
+          "evidence": [
+            "tests/unit/interaction-engine.test.ts :: dispatches the down/up/click sequence a real user produces",
+            "tests/unit/interaction-engine.test.ts :: focuses the element before activating it",
+            "tests/unit/interaction-engine.test.ts :: still clicks when PointerEvent is unavailable"
+          ]
+        },
+        {
+          "id": "P-003-C2",
+          "specRef": "§8",
+          "requirement": "A stale, detached, hidden or disabled target is refused with a reason.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/interaction-engine.test.ts :: refuses a handle from an earlier snapshot and says why",
+            "tests/unit/interaction-engine.test.ts :: refuses a detached element",
+            "tests/unit/interaction-engine.test.ts :: refuses a hidden element",
+            "tests/unit/interaction-engine.test.ts :: refuses a disabled element"
+          ]
+        },
+        {
+          "id": "P-003-C3",
+          "specRef": "§8",
+          "requirement": "A covered element is not clicked blind.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Clicking what is on top of the target is how an agent accepts a cookie banner while believing it accepted the form. The refusal names the covering element and the way out.",
+          "evidence": [
+            "tests/unit/occlusion.test.ts :: throws when the element is covered, naming the cause and the way out",
+            "tests/unit/occlusion.test.ts :: reports obscured when an overlay is topmost at every point",
+            "tests/unit/occlusion.test.ts :: accepts the element’s own child as topmost"
+          ]
+        },
+        {
+          "id": "P-003-C4",
+          "specRef": "§28",
+          "requirement": "A click that also submits a form costs more than a plain click.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/browser-tools.test.ts :: escalates risk when it also submits a form"
+          ]
+        }
+      ]
     },
     "P-004": {
       "unit": ["tests/unit/interaction-engine.test.ts", "tests/unit/browser-tools.test.ts"],
       "integration": ["tests/integration/agent-runtime.test.ts"],
       "security": ["tests/security/secret-redaction.test.ts"],
-      "e2e": ["tests/e2e/agent-task.spec.ts"]
+      "e2e": ["tests/e2e/agent-task.spec.ts"],
+      "clauses": [
+        {
+          "id": "P-004-C1",
+          "specRef": "§9",
+          "requirement": "browser.type",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/interaction-engine.test.ts :: sets the value and fires input and change",
+            "tests/unit/interaction-engine.test.ts :: replaces the existing value by default and appends when asked"
+          ]
+        },
+        {
+          "id": "P-004-C2",
+          "specRef": "§9",
+          "requirement": "A framework-controlled input receives the change.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "Assigning `.value` directly leaves React's own tracker believing the field never changed, so the prototype setter is used instead. Typing into a page that silently ignored it is the failure this prevents.",
+          "evidence": [
+            "tests/unit/interaction-engine.test.ts :: uses the prototype value setter so framework trackers stay in sync"
+          ]
+        },
+        {
+          "id": "P-004-C3",
+          "specRef": "§32",
+          "requirement": "Typed text is never echoed back into the model’s context.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/browser-tools.test.ts :: reports only the character count, never the typed text"
+          ]
+        },
+        {
+          "id": "P-004-C4",
+          "specRef": "§9",
+          "requirement": "Submitting the containing form is an explicit choice, not a side effect.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/interaction-engine.test.ts :: submits the containing form via requestSubmit when asked"
+          ]
+        }
+      ]
     },
     "P-005": {
       "unit": ["tests/unit/browser-tools.test.ts"],
@@ -190,6 +389,76 @@
         "tests/e2e/agent-task.spec.ts",
         "tests/e2e/security.spec.ts",
         "tests/e2e/file-access.spec.ts"
+      ],
+      "clauses": [
+        {
+          "id": "P-008-C1",
+          "specRef": "§9",
+          "requirement": "browser.screenshot",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/screenshot-capture.test.ts :: captures an https page and files the image as evidence"
+          ]
+        },
+        {
+          "id": "P-008-C2",
+          "specRef": "§31",
+          "requirement": "A capture is refused when the page is not the authorised origin.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "A screenshot is a read of whatever is on screen, so origin drift matters as much here as for a write: the tab may have moved since the action was planned.",
+          "evidence": [
+            "tests/security/screenshot-capture.test.ts :: refuses to capture a cross-origin page instead of the authorised one",
+            "tests/security/screenshot-capture.test.ts :: still captures when the page only moved within the authorised origin",
+            "tests/security/screenshot-capture.test.ts :: refuses a tab that no longer exists rather than capturing another"
+          ]
+        },
+        {
+          "id": "P-008-C3",
+          "specRef": "§31",
+          "requirement": "A file:// page is never captured and the debugger never attaches to one.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/screenshot-capture.test.ts :: never attaches the debugger to a file:// tab",
+            "tests/security/screenshot-capture.test.ts :: refuses a page that navigated from https to a local file"
+          ]
+        },
+        {
+          "id": "P-008-C4",
+          "specRef": "§28",
+          "requirement": "A capture is declared read-only and is allowed in manual mode.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/screenshot-capture.test.ts :: declares itself as a debugger-attaching, read-only action",
+            "tests/security/screenshot-capture.test.ts :: is still allowed in manual mode, because it changes nothing on the page"
+          ]
+        },
+        {
+          "id": "P-008-C5",
+          "specRef": "§76",
+          "requirement": "A refused or failed capture stores nothing and says so.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/screenshot-capture.test.ts :: reports the failure and stores nothing when Chrome refuses to attach",
+            "tests/security/screenshot-capture.test.ts :: refuses before capturing when the action is aborted"
+          ]
+        },
+        {
+          "id": "P-008-C6",
+          "specRef": "§21",
+          "requirement": "An image goes to evidence rather than into the model’s context.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/unit/browser-tools.test.ts :: stores the image as evidence and returns only a reference",
+            "tests/unit/browser-tools.test.ts :: refuses an empty capture rather than filing it as evidence"
+          ],
+          "note": "An image in the context would cost tokens on every later turn and put page pixels in front of the model repeatedly; a reference costs nothing and is auditable."
+        }
       ]
     },
     "P-009": {
