@@ -271,6 +271,47 @@ What it is **not** is parity certification. §84 condition 3 requires manual
 acceptance, none of which has been executed, and the six clauses below are
 waiting on a person, a credential or a service.
 
+### P-026 MCP — NOT-STARTED, with two clauses verified
+
+An unusual row, so it is worth saying what it means. The status column is
+`NOT-STARTED` and that is accurate: nothing connects to an MCP server, no tool
+from one is registered, and nothing fakes either. Two of its clauses are
+nevertheless VERIFIED, and they are the two that decide whether §35's "MCP must
+never become a security bypass" can hold at all.
+
+The blocker recorded in `PLUGIN_TRUST_MODEL.md` was not trust but a product
+decision nobody had taken: whether an MCP tool prompts on every call, as the
+benchmark does, or maps onto this project's R0–R5 scale. Leaving it open _was_
+the block, so it has been taken. Prompting on everything is a prompt nobody
+reads — the same conclusion this project reached about confirming a tab
+rearrangement. And mapping onto R0–R5 quietly breaks the rule it sits beside,
+because the risk would have to be inferred from the tool's name, description and
+schema, all of which the **server** wrote.
+
+So the risk comes from the user, at the one moment they are already making a
+deliberate decision: adding the server. That becomes a per-server ceiling,
+clamped exactly as a site grant is, and every tool from the server runs at it.
+A read costs the same as a write from the same server, which is the intended
+cost — without trusting the server the two are indistinguishable, and of the two
+ways to be wrong, permissive is the one that cannot be walked back.
+
+Both bypasses are now closed in code, ahead of any transport, because a risk
+model written after the socket works is a risk model written around whatever the
+socket happened to do:
+
+- **P-026-C8** — risk is assigned locally. `mcpToolRisk` does not take the tool
+  at all, so there is no branch a server could influence, and a source census
+  holds it there. The mutant that honours a server-declared `readOnly` is killed.
+- **P-026-C9** — a discovered tool cannot shadow a built-in, cannot forge another
+  server's namespace, cannot arrive without an input schema, and cannot arrive
+  ten thousand at a time.
+
+Eight mutants, each killed. What remains for this row is transport, discovery
+over the wire, and registry wiring — build and evidence, with no unresolved
+design question left. The server direction stays closed and is not a
+build question: it needs an inbound channel, and every inbound channel this
+manifest could offer is prohibited.
+
 ### What is waiting on somebody else, and where to see it
 
 Three clause statuses exist so that a blocker stays visible rather than being
@@ -513,7 +554,7 @@ rather than folded into the verdict.
 | P-023 | Connector framework                  | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-024 | Skills                               | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-025 | Plugins                              | no   | —    | —           | —        | —   | NOT-STARTED |
-| P-026 | MCP                                  | no   | —    | —           | —        | —   | NOT-STARTED |
+| P-026 | MCP                                  | no   | —    | —           | yes      | —   | NOT-STARTED |
 | P-027 | Permission modes                     | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-028 | Site permissions                     | yes  | yes  | —           | yes      | yes | PASS        |
 | P-029 | Permission history                   | yes  | yes  | —           | yes      | yes | PASS        |

@@ -2080,7 +2080,7 @@
           "requirement": "tool discovery",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "Unbuilt. The design question is answered rather than open: a discovered tool's name, description and schema are untrusted input authored elsewhere, so they travel in the same data envelope as page content, a discovered name can never shadow a built-in tool, and the tool's risk comes from the user's per-server ceiling rather than from anything the server said about itself."
+          "note": "Nothing discovers from a server yet. What does exist and is evidenced is the half that had to be right first: the admission rules a discovered listing must pass — see P-026-C9."
         },
         {
           "id": "P-026-C5",
@@ -2096,7 +2096,7 @@
           "requirement": "Every MCP capability passes schema, policy, permission and audit.",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "Unbuilt, and the shape is decided: the existing registry already enforces schema, policy, permission and audit at one choke point, so an MCP tool has to be an ordinary registry entry rather than a parallel path, with its risk assigned locally from the user's per-server ceiling."
+          "note": "Not wired. The rule it depends on is built: an MCP tool's risk comes from the user's per-server ceiling, assigned locally — see P-026-C8. What remains is making such a tool an ordinary registry entry so schema, policy, permission and audit apply at the existing single choke point."
         },
         {
           "id": "P-026-C7",
@@ -2104,10 +2104,40 @@
           "requirement": "MCP must never become a security bypass.",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "Currently satisfied vacuously, which is worth saying plainly rather than counting as a pass: there is no MCP surface, so there is nothing to bypass through."
+          "note": "There is still no MCP surface, so the clause is not yet met by a working path — but it is no longer met only vacuously: the two ways MCP would become a bypass are now closed in code and under mutation, per C8 and C9."
+        },
+        {
+          "id": "P-026-C8",
+          "specRef": "§35",
+          "requirement": "An MCP tool's risk is assigned locally and can never be lowered by the server.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "The first of §35's two bypasses, closed before any transport exists. Risk is the user's per-server ceiling, clamped like a site grant; `mcpToolRisk` does not take the tool at all, so there is no branch a server could influence, and a source census holds it to that. The mutant that honours a server-declared `readOnly` is killed.",
+          "evidence": [
+            "tests/security/mcp-trust-core.test.ts :: is the server’s ceiling, whatever the server says about the tool",
+            "tests/security/mcp-trust-core.test.ts :: cannot be lowered by anything a server could author",
+            "tests/security/mcp-trust-core.test.ts :: clamps a ceiling above what any grant may express",
+            "tests/security/mcp-trust-core.test.ts :: charges a read the same as a write from the same server"
+          ]
+        },
+        {
+          "id": "P-026-C9",
+          "specRef": "§35",
+          "requirement": "A discovered tool cannot shadow a built-in tool, impersonate another server, or arrive unvalidated.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "note": "The second bypass. Names are namespaced per server, so two servers offering `search` stay two tools; a name carrying the separator is refused because it could forge another server's namespace; a tool with no input schema is refused, because §22 makes argument validation the contract; descriptions are bounded; and a listing is bounded, because the count comes from the server too and ten thousand tools is a context-exhaustion channel rather than a feature.",
+          "evidence": [
+            "tests/security/mcp-trust-core.test.ts :: cannot produce the name of a tool this project ships",
+            "tests/security/mcp-trust-core.test.ts :: refuses a name carrying the separator, which could forge a namespace",
+            "tests/security/mcp-trust-core.test.ts :: refuses a tool with no input schema",
+            "tests/security/mcp-trust-core.test.ts :: bounds the listing, because the count comes from the server too",
+            "tests/security/mcp-trust-core.test.ts :: keeps the first of a repeated name and says the second was refused"
+          ]
         }
       ],
-      "unit": []
+      "unit": [],
+      "security": ["tests/security/mcp-trust-core.test.ts"]
     },
     "P-027": {
       "unit": [
