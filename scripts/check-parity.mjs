@@ -181,6 +181,54 @@ for (const row of rows.filter((r) => r.cells[7] === 'PARTIAL')) {
   }
 }
 
+// --- the public-facing copy agrees with the table --------------------------
+//
+// The store listing and the submission checklist both state these counts in
+// prose, and prose drifts. It had: the listing still said scheduled tasks were
+// not implemented while, four screens later, justifying the `alarms` permission
+// by scheduled tasks — a self-contradiction in the document a Chrome Web Store
+// reviewer reads, and on the half that would look like an unjustified
+// permission. Nothing was checking it, so nothing caught it.
+//
+// Matched loosely on purpose: the requirement is that the numbers are right,
+// not that the sentence is phrased one way.
+const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
+const NUMBER = new RegExp(`\\b(\\d+|${WORDS.join('|')})\\b`, 'gi');
+
+/** The number nearest before this point, which is the one the claim used. */
+function numberBefore(copy, at) {
+  let best = null;
+  for (const hit of copy.slice(0, at).matchAll(NUMBER)) best = hit;
+  if (best === null) return null;
+  // Too far back to be part of the same sentence.
+  if (at - (best.index ?? 0) > 80) return null;
+  const said = best[1].toLowerCase();
+  const n = WORDS.indexOf(said) >= 0 ? WORDS.indexOf(said) : Number(said);
+  return Number.isFinite(n) ? { n, said: best[1] } : null;
+}
+
+for (const file of [
+  'docs/release/store-listing.md',
+  'docs/release/chrome-web-store-submission-checklist.md',
+]) {
+  const path = resolve(root, file);
+  if (!existsSync(path)) continue;
+  const copy = readFileSync(path, 'utf8');
+  for (const [status, label] of [
+    ['NOT-STARTED', /not[- ]started/gi],
+    ['PARTIAL', /\bpartial\b/gi],
+  ]) {
+    for (const hit of copy.matchAll(label)) {
+      const stated = numberBefore(copy, hit.index ?? 0);
+      if (stated === null || stated.n === actual[status]) continue;
+      errors.push(
+        `${file} says ${stated.said} capabilities are ${status}, but the table has ` +
+          `${actual[status]}. Public copy has to agree with the matrix.`,
+      );
+    }
+  }
+}
+
 // --- clause-level evidence, where an inventory exists ----------------------
 const statusById = Object.fromEntries(rows.map((row) => [row.id, row.cells[7]]));
 const clauseCheck = checkClauses({

@@ -22,6 +22,16 @@ AI Browser Agent
 A provider-agnostic browser agent. You choose the AI model; the extension supplies the browser capabilities.
 ```
 
+## Developer / creator
+
+```text
+Created by Jamal Balya
+```
+
+This belongs in the **store listing only**. It is deliberately not in the
+extension's own interface, and a check would be the wrong tool for that: the
+string simply is not there, and the release audit confirms it each time.
+
 ## Category
 
 `Workflow & Planning`, or `Developer Tools`. Not chosen here — it affects
@@ -90,8 +100,11 @@ is worse:
 
 • Only one connector exists: GitHub. There is no Jira, Confluence, Figma or
   Google Sheets integration.
-• Scheduled and recurring tasks are not implemented.
 • Plugins and MCP are not implemented.
+• Scheduled tasks run only while Chrome is running. There is no cloud
+  scheduler, so a schedule due while the browser is closed is skipped rather
+  than caught up, and a scheduled run stops instead of approving anything on
+  your behalf.
 • It does not work inside cross-origin iframes — a form in an embedded frame
   is out of reach, deliberately, because reaching into every frame on every
   page is a much larger risk than the feature is worth.
@@ -189,10 +202,10 @@ Already in the detailed description above. Repeated here as a checklist so
 none is quietly dropped when the copy is edited:
 
 - One connector only (GitHub).
-- No scheduled tasks, plugins or MCP.
+- No plugins or MCP. Scheduled tasks exist, but only while Chrome is running.
 - No cross-origin iframe support.
 - Requires a tool-calling model and the user's own API key.
-- Seven of forty specification capabilities are partial; three are not started.
+- Four of forty specification capabilities are partial; two are not started.
 
 ## What is NOT claimed anywhere in this copy
 

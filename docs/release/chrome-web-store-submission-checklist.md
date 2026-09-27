@@ -237,7 +237,7 @@ store does not care, but users read it. If the intent is a public v1, change
 it in `package.json`; the single-sourcing check will fail until the manifest
 agrees, which is the intended behaviour.
 
-**Seven capabilities are PARTIAL and three are NOT-STARTED.** See
+**Four capabilities are PARTIAL and two are NOT-STARTED.** See
 `PARITY_MATRIX.md`. That is a fine state to publish from — it is not a fine
 state to publish _silently_. The detailed description should say what the
 extension does not yet do, because a user who discovers it after installing
