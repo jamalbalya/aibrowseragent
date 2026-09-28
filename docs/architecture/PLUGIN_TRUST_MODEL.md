@@ -509,6 +509,89 @@ authenticate. The re-audit in §9 adds that it is also unrequested: §5.11 asks 
 a client and names no server component, so this is not an audit gap waiting on a
 decision.
 
+## 9b. Which P-025 clause is actually authenticity-bound
+
+Added by the final independent audit, which pushed back on "P-025 is blocked
+because third-party executable plugins cannot be authenticated". That sentence
+is true and it is too coarse to act on: it does not say which of §5.10's eight
+clauses the authenticity problem reaches, and the answer turns out to be **one**.
+
+Six delivery models, against the eight clauses. `✓` means the model can satisfy
+the clause here; `partial` means it can satisfy the clause's own shape while
+something downstream of it is separately blocked; `✗` means it cannot.
+
+| §5.10 clause            | A executable | B declarative | C first-party | D signed | E org-managed | F user-installed declarative |
+| ----------------------- | ------------ | ------------- | ------------- | -------- | ------------- | ---------------------------- |
+| C1 plugin registry      | ✗            | ✓             | ✓             | —        | ✓             | ✓                            |
+| C2 plugin manifest      | ✗            | ✓             | ✓             | —        | ✓             | ✓                            |
+| C3 bundled skills       | ✗            | ✓             | ✓             | —        | ✓             | ✓                            |
+| C4 bundled connectors   | ✗            | partial       | partial       | —        | partial       | partial                      |
+| C5 bundled MCP servers  | ✗            | partial       | partial       | —        | partial       | partial                      |
+| C6 permissions          | ✗            | ✓             | ✓             | —        | ✓             | ✓                            |
+| **C7 trust metadata**   | ✗            | **✗**         | ✓             | —        | ✓             | **✗**                        |
+| C8 lifecycle/versioning | ✗            | ✓             | ✓             | —        | ✓             | ✓                            |
+
+**A — executable plugins.** Not blocked; _unreachable by construction_. The CSP
+is `script-src 'self'` with no `unsafe-eval`, there is no native messaging and no
+local process execution, and `tests/security/security-invariants.test.ts` asserts
+the source holds no code-execution primitive at all. There is nothing here that
+could run a package, so "the user decided to trust it" has nowhere to go.
+
+**B — declarative over already-registered tools.** §0 already records that this
+is a shape the repository has: a `RecordedWorkflow` is a declarative step list
+over registered tools, carrying no code, hashed by the store, invisible to the
+model, runnable only by user action, re-adjudicated per step. Seven of the eight
+clauses follow from that.
+
+**C — first-party / built-in.** Everything B can do, and C7 as well — because the
+authenticity anchor is the extension's **own** Chrome Web Store signature, which
+is verifiable and which no package author can forge. It is therefore the one
+route that could take P-025 to PASS, and it is the route this document
+recommends **against**, for a reason that is about honesty rather than security:
+it satisfies the clause shapes while the capability a person means by "plugins"
+— installing one — does not exist. Moving five clauses to VERIFIED that way would
+make the matrix read as substantially complete for a feature nobody could use.
+That is distorting the matrix, which the audit instruction forbids in terms.
+
+**D — signed plugins.** Collapses into C rather than standing on its own. Signing
+needs a trust anchor, and from inside an extension the only anchor available is a
+public key shipped in the extension — which means only the holder of that private
+key can sign, which is first-party signing wearing a different hat. Verifying a
+_third-party publisher_ needs an identity system outside the extension, so D is
+C plus an external registry this project does not have.
+
+**E — organization-managed.** The one route with a real external anchor:
+`chrome.storage.managed` is written by enterprise policy and is not writable by
+the user, a page or the extension, so an admin-pinned allowlist is authenticity
+this build could actually check. It needs an organization and a managed
+deployment, neither of which exists here, and it would satisfy C7 only for
+managed installations. External rather than unavailable.
+
+**F — user-installed declarative.** The honest middle, and the one worth stating
+precisely because the coarse sentence obscured it. A declarative package cannot
+_act_: every tool it references re-earns permission per call, and §5's rule that
+approving a skill run does not approve the actions inside it already holds for
+skills built this way. So the residual risk of an unauthenticated declarative
+package is **social engineering** — a misleading name or description — rather than
+privilege escalation. That is a materially smaller problem than the one the
+authenticity argument was defending against, and it does not make C7 satisfiable:
+trust metadata that the package asserts about itself is not trust metadata.
+
+### What this changes, and what it does not
+
+It does not unblock P-025. C7 is mandatory, and no route available here satisfies
+it without either becoming first-party (which distorts the matrix) or acquiring
+an organization (which is external). So the row stays NOT-STARTED.
+
+What it changes is what a later wave would be building and why. Option F is
+implementable safely — a package format, a parser, a validator, a registry and a
+lifecycle, all over already-registered tools with executable content refused —
+and it would satisfy seven of eight clauses while leaving the row PARTIAL on C7.
+That is a defined piece of work with a known ceiling, which is a better thing to
+hand somebody than "blocked".
+
+---
+
 ## 10. Consistency with the existing invariants
 
 Checked against the security architecture as it stands, item by item, so a

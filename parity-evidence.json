@@ -2011,7 +2011,7 @@
           "requirement": "plugin registry",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "Nothing is implemented, and the trust model records why this is not simply unstarted work: a package's **authenticity** cannot be established from inside an extension. There is no publisher identity to verify against, no revocation channel, and no signature this build could check that a package author could not also produce. `PLUGIN_TRUST_MODEL.md` settles what a plugin may safely be here — declarative, referencing only already-registered tools, creating no tool, permission, egress, credential or policy of its own, with executable content forbidden — and that gate is deliberately not permission to start."
+          "note": "Nothing is implemented, and the trust model records why this is not simply unstarted work: a package's **authenticity** cannot be established from inside an extension. There is no publisher identity to verify against, no revocation channel, and no signature this build could check that a package author could not also produce. `PLUGIN_TRUST_MODEL.md` settles what a plugin may safely be here — declarative, referencing only already-registered tools, creating no tool, permission, egress, credential or policy of its own, with executable content forbidden — and that gate is deliberately not permission to start. The final audit re-derived which clause the authenticity problem actually reaches, and it is **C7 alone** — see `PLUGIN_TRUST_MODEL.md` §9b, which compares six delivery models against all eight clauses. Executable packages are unreachable by construction (CSP `script-src 'self'`, no `unsafe-eval`, no native messaging, and an invariant test asserting no code-execution primitive exists). A declarative package over already-registered tools satisfies this clause's own shape; what it cannot do is authenticate itself."
         },
         {
           "id": "P-025-C2",
@@ -2019,7 +2019,7 @@
           "requirement": "plugin manifest",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "No package format is defined. The trust model names what a manifest may contain; nothing parses one, and nothing fakes one."
+          "note": "No package format is defined. The trust model names what a manifest may contain; nothing parses one, and nothing fakes one. The final audit re-derived which clause the authenticity problem actually reaches, and it is **C7 alone** — see `PLUGIN_TRUST_MODEL.md` §9b, which compares six delivery models against all eight clauses. Executable packages are unreachable by construction (CSP `script-src 'self'`, no `unsafe-eval`, no native messaging, and an invariant test asserting no code-execution primitive exists). A declarative package over already-registered tools satisfies this clause's own shape; what it cannot do is authenticate itself."
         },
         {
           "id": "P-025-C3",
@@ -2027,7 +2027,7 @@
           "requirement": "bundled skills",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "Skills themselves ship and are evidenced under P-024. What does not exist is a *plugin* that carries one."
+          "note": "Skills themselves ship and are evidenced under P-024. What does not exist is a *plugin* that carries one. The final audit re-derived which clause the authenticity problem actually reaches, and it is **C7 alone** — see `PLUGIN_TRUST_MODEL.md` §9b, which compares six delivery models against all eight clauses. Executable packages are unreachable by construction (CSP `script-src 'self'`, no `unsafe-eval`, no native messaging, and an invariant test asserting no code-execution primitive exists). A declarative package over already-registered tools satisfies this clause's own shape; what it cannot do is authenticate itself."
         },
         {
           "id": "P-025-C4",
@@ -2035,7 +2035,7 @@
           "requirement": "bundled connectors",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "Blocked twice over: no plugin format, and no connector can be connected at all (P-023-C8)."
+          "note": "Blocked twice over: no plugin format, and no connector can be connected at all (P-023-C8). §9b records this as *partial* rather than blocked: a package can carry a reference to a connector that exists, and what is separately blocked is the connector itself needing a registered OAuth application (P-023-C8)."
         },
         {
           "id": "P-025-C5",
@@ -2043,7 +2043,7 @@
           "requirement": "bundled MCP servers where supported",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "Depends on P-026, which is itself unimplemented."
+          "note": "Depends on P-026, which is itself unimplemented. §9b records this as *partial*: a package can name a server the user must still add through `mcp.add`, which is control-plane and confirmed. P-026's client now exists, so the reference would resolve to something real."
         },
         {
           "id": "P-025-C6",
@@ -2051,7 +2051,7 @@
           "requirement": "permissions",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "The trust model's hardest line: a plugin may not create a permission. Enforcing that needs the package layer that does not exist."
+          "note": "The trust model's hardest line: a plugin may not create a permission. Enforcing that needs the package layer that does not exist. The final audit re-derived which clause the authenticity problem actually reaches, and it is **C7 alone** — see `PLUGIN_TRUST_MODEL.md` §9b, which compares six delivery models against all eight clauses. Executable packages are unreachable by construction (CSP `script-src 'self'`, no `unsafe-eval`, no native messaging, and an invariant test asserting no code-execution primitive exists). A declarative package over already-registered tools satisfies this clause's own shape; what it cannot do is authenticate itself."
         },
         {
           "id": "P-025-C7",
@@ -2059,7 +2059,7 @@
           "requirement": "trust metadata",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "Nothing is implemented, and the trust model records why this is not simply unstarted work: a package's **authenticity** cannot be established from inside an extension. There is no publisher identity to verify against, no revocation channel, and no signature this build could check that a package author could not also produce. `PLUGIN_TRUST_MODEL.md` settles what a plugin may safely be here — declarative, referencing only already-registered tools, creating no tool, permission, egress, credential or policy of its own, with executable content forbidden — and that gate is deliberately not permission to start."
+          "note": "The one authenticity-bound clause, and the reason P-025 cannot reach PASS by any route available here. Trust metadata a package asserts about itself is not trust metadata. `PLUGIN_TRUST_MODEL.md` §9b works through the six delivery models: only first-party packages satisfy it (the anchor is the extension's own Chrome Web Store signature) and only organization-managed packages satisfy it with an external anchor (`chrome.storage.managed`, written by enterprise policy and unwritable by the user, a page or the extension). Signed third-party packages collapse into first-party, because the only trust anchor available inside an extension is a public key shipped in it — which means only the holder of that private key can sign. The first-party route is recommended **against**: it would move five clauses to VERIFIED while the capability a person means by \"plugins\" — installing one — still did not exist, which is distorting the matrix rather than advancing the product."
         },
         {
           "id": "P-025-C8",
@@ -2067,7 +2067,7 @@
           "requirement": "lifecycle and versioning",
           "mandatory": true,
           "status": "EVIDENCE_MISSING",
-          "note": "Install, review, enable, disable, revoke and update are designed and unbuilt. Revocation is the part that depends on the authenticity problem above: there is no channel to learn that a package should stop being trusted."
+          "note": "Install, review, enable, disable, revoke and update are designed and unbuilt. Revocation is the part that depends on the authenticity problem above: there is no channel to learn that a package should stop being trusted. The final audit re-derived which clause the authenticity problem actually reaches, and it is **C7 alone** — see `PLUGIN_TRUST_MODEL.md` §9b, which compares six delivery models against all eight clauses. Executable packages are unreachable by construction (CSP `script-src 'self'`, no `unsafe-eval`, no native messaging, and an invariant test asserting no code-execution primitive exists). A declarative package over already-registered tools satisfies this clause's own shape; what it cannot do is authenticate itself."
         }
       ],
       "unit": []
