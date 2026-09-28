@@ -64,12 +64,44 @@ if (pkg.version !== manifest.version) {
 // ---------------------------------------------------------------------------
 // A1. Nothing development-only ships.
 // ---------------------------------------------------------------------------
+/**
+ * The one Markdown file that must ship, and why it is named rather than the
+ * rule below being widened.
+ *
+ * Documentation is a development artefact, which is why `.md` is forbidden.
+ * This file is not documentation: four MIT dependencies are compiled into the
+ * bundles, and MIT requires their notices accompany the distribution. Shipping
+ * without it makes the package non-compliant, and widening the rule to all
+ * Markdown would let the next stray document through on this one's warrant.
+ */
+const REQUIRED_NOTICES = 'THIRD-PARTY-NOTICES.md';
+
 const FORBIDDEN_EXTENSIONS = ['.map', '.ts', '.tsx', '.md', '.log'];
 for (const rel of relPaths) {
+  if (rel === REQUIRED_NOTICES) continue;
   const ext = extname(rel);
   if (FORBIDDEN_EXTENSIONS.includes(ext)) {
     fail(`Development artefact in the package: ${rel}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// The licence notices reached the package.
+//
+// `check:notices` proves the repository's copy matches the installed licences.
+// It says nothing about whether that copy ships, and for most of this
+// project's life it did not: the file was generated, checked, and then left
+// behind at packaging time. The obligation is discharged by the artifact, so
+// it is asserted on the artifact.
+// ---------------------------------------------------------------------------
+if (!relPaths.includes(REQUIRED_NOTICES)) {
+  fail(
+    `${REQUIRED_NOTICES} is missing from the package. Bundled MIT dependencies ` +
+      'require their notices accompany the distribution, so this artifact may ' +
+      'not be published.',
+  );
+} else if (readFileSync(resolve(dist, REQUIRED_NOTICES), 'utf8').trim().length === 0) {
+  fail(`${REQUIRED_NOTICES} ships empty, which discharges no licence obligation.`);
 }
 
 const FORBIDDEN_PATHS = [

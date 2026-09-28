@@ -10,7 +10,7 @@
  * actually emitted the HTML, and the result is validated.
  */
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, copyFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -77,6 +77,24 @@ if (process.env.RELEASE_BUILD === '1' && Array.isArray(manifest.web_accessible_r
 }
 
 writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+// The licence notices travel with the package, because that is what reaches a
+// user.
+//
+// Four MIT dependencies are compiled into the bundles, and MIT requires the
+// notice accompany the software rather than merely exist near it. The file is
+// generated from the installed licences and `npm run check:notices` fails the
+// build when it drifts — but that only keeps the repository copy truthful, and
+// the repository is not what anyone installs. Copying it here is the step that
+// discharges the obligation, and `scripts/validate-release.mjs` asserts it
+// arrived rather than trusting that this line still runs.
+const NOTICES = 'THIRD-PARTY-NOTICES.md';
+const noticesSource = resolve(root, NOTICES);
+if (!existsSync(noticesSource)) {
+  console.error(`\n✗ ${NOTICES} is missing. Run \`npm run notices\` to generate it.`);
+  process.exit(1);
+}
+copyFileSync(noticesSource, resolve(root, 'dist', NOTICES));
 
 console.log(`\n✓ Build complete. Side panel: ${found}`);
 console.log('  Load dist/ as an unpacked extension at chrome://extensions.');
