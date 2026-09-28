@@ -180,7 +180,26 @@ const MIN_DOCUMENT_LINES = 40;
  * this off the `T-<n> —` numbering rather than off a list of prose headings
  * means a nineteenth threat added without a verdict still fails.
  */
-const ITEM_HEADING = { 'docs/THREAT_MODEL.md': /^T-\d+ — / };
+const ITEM_HEADING = {
+  'docs/THREAT_MODEL.md': /^T-\d+ — /,
+  '84-capabilities.md': /^P-\d{3} — /,
+};
+
+/**
+ * The per-capability census of specification §84 condition 3.
+ *
+ * Condition 3 — "manual acceptance test exists" — is stated per capability, and
+ * for most of this repository's history nothing answered it per capability: the
+ * sixty-three procedures here are organised by specification section, and of the
+ * forty capabilities in `PARITY_MATRIX.md` exactly one appeared in this
+ * directory at all. `84-capabilities.md` is the census that closes that, and
+ * this is the guard that keeps it a census rather than a list.
+ *
+ * Enumerating the matrix's own table rather than a hand-written array of forty
+ * ids is the whole point: a forty-first capability added to the matrix fails
+ * here until condition 3 is answered for it.
+ */
+const CONDITION_3 = '84-capabilities.md';
 
 const VERDICTS = ['AUTOMATED', 'MANUAL', 'NOT POSSIBLE HERE'];
 
@@ -346,6 +365,83 @@ for (const { name, path } of documents) {
       problems.push(
         `${name}:${index + 1}: awards a PASS — verdicts are AUTOMATED, MANUAL or NOT POSSIBLE HERE`,
       );
+    }
+  }
+}
+
+// 5. §84 condition 3, capability by capability.
+//
+//    Three things are checked and each one is a way the census could agree
+//    with everything. Every capability the matrix lists has an entry, so a new
+//    capability cannot arrive without one. A `COVERED BY` names a procedure id
+//    that really appears in MATRIX.md, so a pointer cannot outlive what it
+//    points at. And a written procedure carries a criterion and a failure
+//    condition, because "run it and see" is not a procedure a second person
+//    could execute the same way.
+{
+  const censusPath = join(dir, CONDITION_3);
+  const matrixPath = join(dir, 'MATRIX.md');
+  if (!existsSync(censusPath)) {
+    problems.push(`${CONDITION_3} is the §84 condition 3 census and does not exist`);
+  } else if (!existsSync(matrixPath)) {
+    problems.push('MATRIX.md does not exist, so no COVERED BY reference can be resolved');
+  } else {
+    const census = readFileSync(censusPath, 'utf8');
+    const matrix = readFileSync(matrixPath, 'utf8');
+    const parity = readFileSync(join(root, 'PARITY_MATRIX.md'), 'utf8');
+
+    // The real population, read off the matrix's own table.
+    const capabilities = [...parity.matchAll(/^\| (P-\d{3}) \| /gm)].map((match) => match[1]);
+    const unique = [...new Set(capabilities)];
+    // An empty enumeration would pass every check below it.
+    if (unique.length < 40) {
+      problems.push(
+        `PARITY_MATRIX.md yielded ${unique.length} capabilities, which is fewer than the forty ` +
+          `it documents — the census would be checked against almost nothing`,
+      );
+    }
+
+    const entries = new Map();
+    for (const section of census.split(/\n## /).slice(1)) {
+      const heading = section.split('\n')[0].trim();
+      const id = /^(P-\d{3}) — /.exec(heading);
+      if (id) entries.set(id[1], section);
+    }
+
+    for (const capability of unique) {
+      const section = entries.get(capability);
+      if (section === undefined) {
+        problems.push(
+          `${CONDITION_3}: ${capability} is in the parity matrix and has no §84 condition 3 entry`,
+        );
+        continue;
+      }
+      const covered = /- COVERED BY: ([^\n]+)/.exec(section);
+      const written = section.includes('- PROCEDURE:');
+      const impossible = section.includes('`NOT POSSIBLE HERE`');
+      if (!covered && !written && !impossible) {
+        problems.push(
+          `${CONDITION_3}: ${capability} neither cites an existing procedure nor writes one`,
+        );
+      }
+      if (covered) {
+        // Each id named before the explanatory sentence, e.g. "85-A-1 and 85-B-1".
+        for (const id of covered[1].match(/\b\d{2}-[A-Za-z0-9-]+\b/g) ?? []) {
+          if (!matrix.includes(id)) {
+            problems.push(
+              `${CONDITION_3}: ${capability} is COVERED BY \u201C${id}\u201D, which MATRIX.md does not list`,
+            );
+          }
+        }
+      }
+      if (written) {
+        if (!section.includes('- CRITERION:')) {
+          problems.push(`${CONDITION_3}: ${capability} writes a procedure with no criterion`);
+        }
+        if (!section.includes('- FAILS IF:')) {
+          problems.push(`${CONDITION_3}: ${capability} writes a procedure that cannot be failed`);
+        }
+      }
     }
   }
 }

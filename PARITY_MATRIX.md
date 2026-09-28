@@ -126,7 +126,9 @@ needs an `acceptance` reference and `EXTERNAL_REQUIRED` a named `blocker`.
 
 **The three non-blocking states are not leniency.** They are the other gates.
 §84 condition 3 is unmet repository-wide and is tracked in
-`docs/testing/acceptance/`; a missing credential is tracked there too. Folding
+`docs/testing/acceptance/` — where it is now answered **per capability** in
+`84-capabilities.md`, because condition 3 is stated per capability and this file
+had only ever answered it in the aggregate; a missing credential is tracked there too. Folding
 either into this check would make them indistinguishable from an automated
 gap, and the distinction is the reason the matrix can say what it does. An
 `AMBIGUOUS` clause is a specification question to escalate: resolving it against

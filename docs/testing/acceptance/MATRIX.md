@@ -35,15 +35,67 @@ in real Chromium, 0 dependency vulnerabilities.
 | `FAIL`                        | 0     |
 | `BLOCKED — CREDENTIAL`        | 17    |
 | `BLOCKED — OAUTH`             | 5     |
-| `BLOCKED — HUMAN/ENVIRONMENT` | 4     |
-| `NOT IMPLEMENTED`             | 3     |
+| `BLOCKED — HUMAN/ENVIRONMENT` | 26    |
+| `NOT IMPLEMENTED`             | 4     |
 | `NOT EXECUTED`                | 0     |
+
+The §84 section below added twenty-two `BLOCKED — HUMAN/ENVIRONMENT` rows and
+one `NOT IMPLEMENTED` row to the counts above, which is the whole of the change
+from the figures this table carried before it.
 
 Two procedures were executed and **failed**; both were product defects, both
 are fixed, and both now read `PASS` against the criterion they originally
 failed. The failures are recorded in [RESULTS.md](RESULTS.md) rather than
 erased — a criterion that was once failed and is now met is a different fact
 from one that always passed.
+
+---
+
+## §84 — Per-capability manual acceptance
+
+Specification §84 condition 3 is stated per capability, and nothing answered it
+per capability until [`84-capabilities.md`](84-capabilities.md). Seventeen
+capabilities turned out to be covered by procedures already on this page;
+P-025 has nothing to put a person in front of; and the twenty-two below had no
+manual acceptance test at all, so one is written for each.
+
+Every row is `BLOCKED — HUMAN/ENVIRONMENT`, which is what a manual acceptance
+test is. Twenty-one of them **also need a provider key**, for the reason §90
+records: there is no agent task to observe without a configured provider, and
+saying otherwise would send an owner to a dead end.
+
+| ID       | Capability               | What the procedure asks                                                                                            | Also needs                            | Status                        |
+| -------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------- | ----------------------------- |
+| 84-P-001 | P-001 Side panel         | Open the panel, send a message, switch tabs, reopen — the conversation survives and the page under it never shifts | a provider key                        | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-006 | P-006 Forms              | Fill text, select, checkbox, radio and textarea in one form and submit                                             | a provider key                        | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-007 | P-007 Scroll             | Reach a target below the fold, and again inside a nested scrolling container                                       | a provider key                        | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-008 | P-008 Screenshot         | Answer a question only the rendered appearance can answer                                                          | a provider key with vision            | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-009 | P-009 Image upload       | Attach an image on a vision model, and be refused before sending on one without                                    | a provider key with vision            | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-010 | P-010 File upload        | Attach a file you chose and confirmed — and decline, and get nothing attached                                      | a provider key                        | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-013 | P-013 Tab grouping       | A named group appears in Chrome's own tab strip holding exactly the tabs named                                     | a provider key                        | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-017 | P-017 Long-running task  | A task longer than the worker idle timeout finishes without repeating a step                                       | a provider key                        | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-018 | P-018 Background task    | A task keeps running with the panel closed, and its progress is there on reopening                                 | a provider key                        | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-019 | P-019 Notifications      | A confirmation and a completion notification arrive, click through, and name no page content                       | a provider key                        | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-020 | P-020 Scheduled tasks    | Fires once at its time, survives a browser restart, does not run while paused                                      | a provider key                        | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-021 | P-021 Shortcuts          | Invoke, export, delete, import, invoke again — the imported one has the same scope                                 | a provider key                        | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-022 | P-022 Workflow recording | Record a sign-in, review the steps, replay on a fresh profile; no password in the recording                        | none                                  | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-024 | P-024 Skills             | Run a bundled skill, resume it after a panel close, and watch a definition the build did not ship stay inert       | a provider key                        | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-026 | P-026 MCP                | Every MCP call prompts, a decline does nothing, and an unattended run cannot reach one                             | a provider key and a local MCP server | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-027 | P-027 Permission modes   | All three modes still stop at R3, `skip` included                                                                  | a provider key                        | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-028 | P-028 Site permissions   | A grant covers the site it names, not a subdomain, and never R3                                                    | a provider key                        | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-029 | P-029 Permission history | An approval, a denial, a grant and a revocation all appear, the revocation as its own entry                        | a provider key                        | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-035 | P-035 Capability doctor  | A missing capability is named before anything is sent, in words that say what to change                            | a provider key                        | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-037 | P-037 Loop detection     | The agent stops and says it is repeating itself, rather than spending its budget                                   | a provider key                        | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-038 | P-038 Audit trail        | Every authority-changing action is recorded and exported, with no page text and no secret                          | a provider key                        | `BLOCKED — HUMAN/ENVIRONMENT` |
+| 84-P-039 | P-039 Evidence model     | Every claim traces back to something observed, and nothing is attributed to a page that did not say it             | a provider key                        | `BLOCKED — HUMAN/ENVIRONMENT` |
+
+| 84-P-025 | P-025 Plugins | — | — | `NOT IMPLEMENTED` |
+
+`84-P-025` is the one capability whose condition 3 cannot be answered by
+writing a procedure. Nothing is implemented, so there is no behaviour to put a
+person in front of, and a procedure for a product that does not exist would be
+the census agreeing with itself. Whether it ships at all is owner decision C-1
+in [`BLOCKER-CERTIFICATION.md`](../../release/BLOCKER-CERTIFICATION.md).
 
 ---
 

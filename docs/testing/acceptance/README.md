@@ -10,6 +10,15 @@ the only thing standing between a capability and its evidence is a step a
 person has to take, and such a step needs a written procedure like any other.
 `91-downloads.md` is the first of those, and it says at the top that it is one.
 
+[`84-capabilities.md`](84-capabilities.md) is not a package at all. §84
+condition 3 — "manual acceptance test exists" — is stated **per capability**,
+and every other document here is organised by specification section, so for
+most of this directory's life the question could not be answered for a
+capability: one of the forty appeared here. That file is the census that
+answers it forty times, and `scripts/check-acceptance.mjs` enumerates the
+parity matrix's own table so a forty-first capability cannot arrive without an
+answer.
+
 ## Three verdicts, and no fourth
 
 Every item carries exactly one:

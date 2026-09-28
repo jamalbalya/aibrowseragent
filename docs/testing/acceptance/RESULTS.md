@@ -44,6 +44,13 @@ establish it, and those tests are part of the run above.
 **Three of the fifteen written procedures have been executed, plus two that
 were not on the list. Twelve remain blocked.**
 
+**That count is dated and is not updated in place.** The §84 condition 3
+census added twenty-two further written procedures, one per capability that had
+none, and every one of them is `NOT YET EXECUTED`. They are listed in
+[`84-capabilities.md`](84-capabilities.md) and carried in
+[`MATRIX.md`](MATRIX.md); nothing below records a result for any of them,
+because nobody has run one.
+
 Executed on 2026-09-22 against the built extension in real Chromium: §89's
 P-1 (popup), S-1 (SPA navigation) and M-1 (modal) from the list of fifteen,
 and two further procedures that were not on it — the iframe exclusion, and
