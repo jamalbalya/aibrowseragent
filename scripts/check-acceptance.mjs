@@ -75,6 +75,99 @@ const SPEC_81_DOCUMENTS = {
   'TESTING.md': 'docs/testing.md',
 };
 
+/**
+ * What each acceptance package must cover, from the specification section it is
+ * named for.
+ *
+ * The gap this closes is the §81 failure one level down. §81's twelve documents
+ * went unmet with nothing able to notice, because no clause covers a
+ * project-structure requirement; the same was true of the packages' *contents*.
+ * This script checked that every item present owes a verdict and that every
+ * citation resolves — and nothing checked that the items present are the items
+ * the specification asks for. A scenario dropped from a package was invisible.
+ *
+ * Measured before it was written, and all six packages did cover their sections,
+ * so this is a guard rather than a repair. It is written down because the two
+ * previous times a set went unchecked in this repository, it had already drifted
+ * by the time anybody looked.
+ *
+ * The items are transcribed here rather than parsed out of the specification,
+ * for the reason `SPEC_81_DOCUMENTS` gives for the same choice: §87 through §90
+ * list their items in fenced blocks and bullets rather than headings, and a
+ * parser for that would be guessing at prose. The cost is that editing the
+ * specification does not fail this check; the benefit is that a reviewer can
+ * read the table against the section in a minute. Matching ignores case, because
+ * a package titles its items as sentences and the specification does not.
+ *
+ * A package may carry *more* than its section names — `90-mv3-failures.md` adds
+ * "Malformed persisted state", and `87-providers.md` ends with a procedure note
+ * — so this checks coverage rather than equality. Extra items are coverage;
+ * missing ones are the failure.
+ */
+const SPEC_ITEMS = {
+  '85-mandatory.md': [
+    'A. Basic browser',
+    'B. Multi-tab',
+    'C. Debugging',
+    'D. Connector',
+    'E. QA workflow',
+    'F. Provider swap',
+  ],
+  '86-security.md': [
+    'Prompt injection',
+    'Exfiltration',
+    'Redirect',
+    'Credential leakage',
+    'Duplicate write',
+  ],
+  '87-providers.md': [
+    'Connect',
+    'Validate',
+    'List models',
+    'Text generation',
+    'Streaming',
+    'Tool calling',
+    'Multiple tool calls',
+    'Vision',
+    'Invalid credentials',
+    'Expired auth',
+    'Rate limit',
+    'Unsupported capability',
+  ],
+  '88-connectors.md': [
+    'Connect',
+    'Scope validation',
+    'Read',
+    'Write',
+    'Auth expiry',
+    'Revocation',
+    'Rate limit',
+    'Permission denied',
+    'Least privilege',
+  ],
+  '89-browser-failures.md': [
+    'Page not loaded',
+    'Element missing',
+    'Element disabled',
+    'Tab closed',
+    'Navigation timeout',
+    'Iframe',
+    'Popup',
+    'Redirect',
+    'SPA navigation',
+    'Modal',
+    'Stale element',
+    'Debugger unavailable',
+  ],
+  '90-mv3-failures.md': [
+    'Service worker restart',
+    'Side panel close',
+    'Browser restart',
+    'Extension reload',
+    'Network interruption',
+  ],
+};
+
 /** How short a §81 document may be before it counts as a placeholder. */
 const MIN_DOCUMENT_LINES = 40;
 
@@ -124,6 +217,25 @@ if (!existsSync(dir)) {
 
 const packages = readdirSync(dir).filter((name) => name.endsWith('.md'));
 if (packages.length === 0) problems.push('the acceptance directory holds no documents');
+
+// Every package covers the items its specification section names.
+for (const [file, required] of Object.entries(SPEC_ITEMS)) {
+  const path = join(dir, file);
+  if (!existsSync(path)) {
+    problems.push(`${file} is required by the specification and does not exist`);
+    continue;
+  }
+  const headings = [...readFileSync(path, 'utf8').matchAll(/^## (.+)$/gm)].map((match) =>
+    match[1].trim().toLowerCase(),
+  );
+  // An empty population would agree with everything.
+  if (headings.length === 0) problems.push(`${file} has no items at all`);
+  for (const item of required) {
+    if (!headings.includes(item.toLowerCase())) {
+      problems.push(`${file}: the specification names "${item}" and the package has no such item`);
+    }
+  }
+}
 
 for (const [mandated, actual] of Object.entries(SPEC_81_DOCUMENTS)) {
   const path = join(root, actual);

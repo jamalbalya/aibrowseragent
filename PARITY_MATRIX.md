@@ -264,6 +264,14 @@ predicate that has already diverged once will diverge again. There is one
 body appears nowhere else under any name. P-005 gains **P-005-C8** and the
 inventory reaches 266.
 
+Part 10 found the same shape once more, in the acceptance packages: the script
+checked that every item present owes a verdict and that every citation resolves,
+and nothing checked that the items present are the items the specification asks
+for. A scenario dropped from a package was invisible. All six packages did cover
+their sections — measured, not assumed — so this is a guard rather than a repair,
+and it is written because the two previous times a set went unchecked here it had
+already drifted by the time anybody looked.
+
 The same pass found the census table in `docs/security.md` had itself drifted:
 two of its six rows disagreed with the suite they point at — nine manifest
 permissions against ten asserted, three network-primitive files against four —

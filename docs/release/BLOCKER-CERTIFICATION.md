@@ -83,17 +83,18 @@ The category this audit existed to populate, and the reason the rule at the top
 was written. Everything listed here **has been done during the audit** — it is
 recorded so that the table is a history rather than a promise.
 
-| Found                                                      | Was classified as     | Actually                                                                |
-| ---------------------------------------------------------- | --------------------- | ----------------------------------------------------------------------- |
-| Local MCP interop                                          | External (`P-026-C3`) | An npm package. Done, and it found two handshake-breaking defects       |
-| Twelve authority-changing actions recording nothing        | Not classified at all | Nobody had asked the question in that direction                         |
-| A debugger attachment outliving its task                   | Not classified at all | Found by asking what a terminal state releases                          |
-| An export/import widening a shortcut                       | Not classified at all | Found by asking what crosses a boundary in the _safe_ direction         |
-| Six copies of the loopback predicate, one already diverged | Not classified at all | Found by reading the shipped bundle rather than the source              |
-| Two stale rows in the security census table                | Not classified at all | Found by checking prose against the suite it points at                  |
-| `siteAuthorization: 'destination'` pinned by nothing       | Not classified at all | Found by mutation                                                       |
-| A clause citing `§91` for a permission dialog              | Not classified at all | Found by reading project-level clauses rather than capability clauses   |
-| A threat-model row claiming a control it did not have      | Not classified at all | Found by asking what the audit trail does in a profile two people share |
+| Found                                                                    | Was classified as     | Actually                                                                |
+| ------------------------------------------------------------------------ | --------------------- | ----------------------------------------------------------------------- |
+| Local MCP interop                                                        | External (`P-026-C3`) | An npm package. Done, and it found two handshake-breaking defects       |
+| Twelve authority-changing actions recording nothing                      | Not classified at all | Nobody had asked the question in that direction                         |
+| A debugger attachment outliving its task                                 | Not classified at all | Found by asking what a terminal state releases                          |
+| An export/import widening a shortcut                                     | Not classified at all | Found by asking what crosses a boundary in the _safe_ direction         |
+| Six copies of the loopback predicate, one already diverged               | Not classified at all | Found by reading the shipped bundle rather than the source              |
+| Two stale rows in the security census table                              | Not classified at all | Found by checking prose against the suite it points at                  |
+| `siteAuthorization: 'destination'` pinned by nothing                     | Not classified at all | Found by mutation                                                       |
+| A clause citing `§91` for a permission dialog                            | Not classified at all | Found by reading project-level clauses rather than capability clauses   |
+| A threat-model row claiming a control it did not have                    | Not classified at all | Found by asking what the audit trail does in a profile two people share |
+| Acceptance packages unchecked against the specification's own item lists | Not classified at all | Found by asking whether §81's failure mode repeats one level down       |
 
 The last of those is worth separating, because only half of it was mine to fix.
 `IDENTITY_AND_SYNC.md` listed "Cross-user data access" against a control that only
