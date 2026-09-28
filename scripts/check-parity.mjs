@@ -268,6 +268,48 @@ const clauseCheck = checkClauses({
 });
 errors.push(...clauseCheck.errors);
 
+/*
+ * Every `specRef` names a section the specification actually has.
+ *
+ * The clause gate already checks the *shape* — `§53`, `§5.1` — and shape is not
+ * enough. The Part 10 project-level audit found `P-011-C7` citing `§91` for
+ * "granting the optional permission through Chrome's own dialog", while §91 of
+ * the specification is "Current Reference Product Differences That Must NOT Be
+ * Missed" and says nothing about a permission dialog. The §91 meant was this
+ * project's own acceptance package, whose own first line says it is not a
+ * specification section — so one field in a file of specification references was
+ * quietly pointing somewhere else.
+ *
+ * Worth being honest about the limit of this check: it catches a reference to a
+ * section that does not exist, and it would not have caught that one, because §91
+ * does exist. What it protects against is a renumbered or dropped section, and a
+ * typo. Whether a clause's subject matches the section it cites is a reading, and
+ * no script does readings.
+ */
+const specPath = resolve(root, 'docs/spec/AI_Browser_Agent_Specs_Kit_v1.1_Unbranded.md');
+if (existsSync(specPath)) {
+  const spec = readFileSync(specPath, 'utf8');
+  const sections = new Set([
+    ...[...spec.matchAll(/^# (\d+)\./gm)].map((match) => match[1]),
+    ...[...spec.matchAll(/^#+ (\d+\.\d+)/gm)].map((match) => match[1]),
+  ]);
+  if (sections.size === 0) {
+    // An empty population agrees with everything.
+    errors.push('the specification parsed to no sections, so specRefs could not be checked');
+  }
+  for (const [id, entry] of Object.entries(evidence)) {
+    for (const clause of entry.clauses ?? []) {
+      const ref = String(clause.specRef ?? '').replace('§', '');
+      // A sub-section reference is accepted when its parent section exists: the
+      // specification numbers some of them in prose rather than in a heading.
+      if (sections.has(ref) || sections.has(ref.split('.')[0])) continue;
+      errors.push(
+        `${id} clause ${clause.id}: specRef "${clause.specRef}" names no section of the specification.`,
+      );
+    }
+  }
+}
+
 if (errors.length > 0) {
   console.error('✗ PARITY_MATRIX.md does not match its evidence:\n');
   for (const error of errors) console.error(`  - ${error}`);

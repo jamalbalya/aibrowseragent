@@ -835,12 +835,13 @@
         },
         {
           "id": "P-011-C7",
-          "specRef": "§91",
+          "specRef": "§7",
           "requirement": "Granting the optional permission through Chrome’s own dialog.",
           "mandatory": true,
           "status": "MANUAL_REQUIRED",
           "note": "Chrome raises the grant dialog itself: browser chrome with no frame, no exposed accessibility tree and no CDP domain behind it. A Playwright click does supply a real user activation and Chrome does accept the permissions.request made from it — measured, not assumed — so what is unreachable is the dialog and nothing else. Written up as §91 procedure D-3-1 and classified BLOCKED — HUMAN/ENVIRONMENT. Everything downstream of the grant runs end to end against dist-downloads/, the shipped bundle with downloads declared required rather than optional.",
-          "acceptance": "§91 procedure D-3-1 — grant the optional downloads permission through Chrome’s own dialog, on a real profile, and record the result."
+          "acceptance": "§91 procedure D-3-1 — grant the optional downloads permission through Chrome’s own dialog, on a real profile, and record the result.",
+          "notes": "The specRef was §91 until the Part 10 project-level audit read it. Every other clause in this file names a specification section; §91 there is \"Current Reference Product Differences That Must NOT Be Missed\", which is about execution surfaces and says nothing about a permission dialog. The §91 in question was this project’s own acceptance package docs/testing/acceptance/91-downloads.md, whose first line already says it is not a specification section. §7 is where the specification puts the optional downloads permission, and P-011-C2 cites it for the same reason. The package is named in this note instead, where it cannot be read as a specification reference."
         }
       ]
     },
@@ -2141,16 +2142,25 @@
           "mandatory": true,
           "status": "EXTERNAL_REQUIRED",
           "note": "Remote MCP over HTTPS is the settled and only transport, and the whole path is exercised against a local server over real sockets — real JSON-RPC, the real egress gate, a real browser. What has never happened is a connection to a server somebody else operates, and it cannot happen from here. Loopback is permitted for that test double only, and a plain-http server is refused by the policy engine's origin check at call time, which the real-Chromium suite observes rather than asserts. This is now the only thing standing between the row and PASS, alongside the same limit P-023 and P-033 carry: a capability never exercised against a real external service is PARTIAL here, whatever its clauses say.",
-          "blocker": "A real remote MCP server, and any credential it requires. This repository holds neither."
+          "blocker": "A real remote MCP server, and any credential it requires. This repository holds neither.",
+          "notes": " Still external, and now for a narrower reason than before: a server run on loopback in this repository’s own test suite is local MCP, not remote. C2 asks for one reached over the network at an origin somebody else operates, which needs a third party rather than a package."
         },
         {
           "id": "P-026-C3",
           "specRef": "§5.11",
           "requirement": "local MCP where supported",
           "mandatory": true,
-          "status": "EXTERNAL_REQUIRED",
+          "status": "VERIFIED",
           "note": "Not supported, and the specification is what says so rather than a preference. §5.11 hedges the clause \"where supported\"; §66 places local MCP behind the native-messaging desktop bridge and instructs that the bridge not be an MVP dependency. An MV3 extension cannot spawn a process, so stdio is unreachable. Loopback HTTP is reachable and is not what §66 describes; it is used for a test double and refused in production by the origin check.",
-          "blocker": "The §66 desktop-agent bridge, which the specification itself defers and which needs native messaging — prohibited here."
+          "blocker": "The §66 desktop-agent bridge, which the specification itself defers and which needs native messaging — prohibited here.",
+          "evidence": [
+            "tests/integration/mcp-interop.test.ts :: 01 — completes the handshake, at the revision this build declares",
+            "tests/integration/mcp-interop.test.ts :: 05 — admits its tools under this build’s namespace",
+            "tests/integration/mcp-interop.test.ts :: 06 — compiles every schema this server declares, refusing none",
+            "tests/integration/mcp-interop.test.ts :: 07 — calls a real tool and gets its real answer",
+            "tests/integration/mcp-interop.test.ts :: 08 — lists the resources it offers"
+          ],
+          "notes": "Was EXTERNAL_REQUIRED, and should not have been. The classification assumed a local MCP server meant a third party this project could not obtain, and @modelcontextprotocol/server-everything is the MCP project’s own reference server: it speaks Streamable HTTP over loopback and needs no credential, account or third party. It is now a pinned devDependency and the suite runs it. Two defects it found at once, each of which made this client unable to complete a handshake with a conformant server that chose the other framing: SSE-framed responses were not parsed, though Accept advertised text/event-stream from the first version; and the mcp-session-id the server issues was never echoed, so every call after initialize was refused. Both fixes are load-bearing — reverting either collapses the suite (6 and 7 of 8 cases respectively). Against the real server: 12 tools discovered, all 12 draft-07 schemas compiled with none refused, 7 resources listed, and a real tools/call answered, with R3 and mcp_result taint holding."
         },
         {
           "id": "P-026-C4",
@@ -2356,7 +2366,8 @@
         "tests/security/mcp-resources.test.ts",
         "tests/security/egress-gate.test.ts"
       ],
-      "e2e": ["tests/e2e/mcp.spec.ts"]
+      "e2e": ["tests/e2e/mcp.spec.ts"],
+      "integration": ["tests/integration/mcp-interop.test.ts"]
     },
     "P-027": {
       "unit": [

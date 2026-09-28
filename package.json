@@ -44,6 +44,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.37.0",
+    "@modelcontextprotocol/server-everything": "2026.8.31",
     "@playwright/test": "^1.63.0",
     "@types/chrome": "^0.1.28",
     "@types/node": "^22.18.8",

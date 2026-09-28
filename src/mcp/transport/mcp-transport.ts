@@ -30,6 +30,24 @@
  * `{"error": …}` answered; a server that returns HTML answered something that
  * is not MCP. The two are different failures and the caller needs to tell them
  * apart, so the shape of the envelope is checked rather than assumed.
+ *
+ * **Either framing is read, because servers use both.** Streamable HTTP lets a
+ * server answer a POST with `application/json` or with `text/event-stream`, and
+ * this file advertised both in `Accept` from its first version while parsing only
+ * the first — `JSON.parse` on an SSE body threw `NOT_MCP`. Measured against the
+ * reference `@modelcontextprotocol/server-everything`, which answers a successful
+ * `initialize` as SSE and a refused request as plain JSON: this client could not
+ * complete a handshake with it at all. The framing is detected from the body
+ * rather than from the content type, because the content type comes from the
+ * server too.
+ *
+ * **A session id the server issues is echoed back, and validated first.** That
+ * same server answers every request after `initialize` with `Bad Request: Server
+ * not initialized` unless `mcp-session-id` is returned to it, so discovery failed
+ * on its second call. The id is server-authored text on its way into a request
+ * header, which is a header-injection shape, so it is held to the
+ * specification's own rule — visible ASCII only — and an id that breaks it is
+ * refused rather than sanitised.
  */
 
 import { getLogger } from '@/logging/logger';
@@ -43,6 +61,24 @@ import type { McpServerDescriptor } from '@/mcp/core/mcp-model';
 const log = getLogger('security');
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+/**
+ * Bounds on a session id the server chose.
+ *
+ * The value goes into a request header on every later call, so the limit is
+ * about what may go in a header rather than about what a session id plausibly
+ * looks like.
+ */
+const MAX_SESSION_ID = 128;
+
+/** Visible ASCII, which is what the specification requires of a session id. */
+const SESSION_ID_SHAPE = /^[\x21-\x7e]+$/;
+
+/** How many SSE events are read out of one response before it is refused. */
+const MAX_SSE_EVENTS = 64;
+
+/** The header a Streamable HTTP server issues a session under. */
+const SESSION_HEADER = 'mcp-session-id';
 
 /**
  * How much of a response body is read before it is refused.
@@ -176,12 +212,91 @@ async function readBounded(response: Response): Promise<string> {
  * here is a shape a hostile or broken server can produce, and they are the
  * branches most likely to be got wrong.
  */
-export function parseRpcEnvelope(text: string): McpRpcOutcome {
+/**
+ * The JSON-RPC messages in an SSE-framed body.
+ *
+ * Detected and parsed from the body rather than from `Content-Type`, because the
+ * content type is chosen by the server: one that mislabels an SSE body as JSON,
+ * or the reverse, must still be read correctly or refused for the right reason.
+ *
+ * One response may legitimately carry several messages — a server may interleave
+ * notifications with the answer — so every event is collected and the caller
+ * picks the one that answers its request. `MAX_SSE_EVENTS` bounds that, for the
+ * same reason the body length is bounded: the count is the server's choice.
+ *
+ * Deliberately not a general SSE implementation. There is no reconnection, no
+ * `Last-Event-ID` handling and no stream kept open; this reads one complete
+ * response body that has already been bounded and closed.
+ */
+export function parseSseMessages(text: string): readonly unknown[] {
+  const messages: unknown[] = [];
+  // Events are separated by a blank line. Normalised first, because a server may
+  // use CRLF and splitting on "\n\n" alone would then find no boundary at all.
+  const blocks = text.replace(/\r\n/g, '\n').split(/\n\n+/);
+  for (const block of blocks) {
+    if (block.trim().length === 0) continue;
+    if (messages.length >= MAX_SSE_EVENTS) {
+      throw new McpTransportError(
+        'RESPONSE_TOO_LARGE',
+        'The server sent more events in one response than are read from it.',
+      );
+    }
+    // A `data` field may be split across lines, which are joined with a newline.
+    // Every other field — `event`, `id`, `retry` — is ignored: this is a
+    // request/response exchange, and none of them changes what the answer is.
+    const data = block
+      .split('\n')
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice('data:'.length).replace(/^ /, ''))
+      .join('\n');
+    if (data.length === 0) continue;
+    try {
+      messages.push(JSON.parse(data) as unknown);
+    } catch {
+      throw new McpTransportError('NOT_MCP', 'The server sent an event that was not JSON.');
+    }
+  }
+  return messages;
+}
+
+/** Whether a body is SSE-framed. Judged by shape, never by the declared type. */
+function looksSseFramed(text: string): boolean {
+  // An SSE body's first non-blank line is a field. A JSON body's is `{` or `[`.
+  const first = text.trimStart();
+  return /^(event|data|id|retry):/.test(first);
+}
+
+export function parseRpcEnvelope(text: string, requestId?: number): McpRpcOutcome {
   let envelope: unknown;
-  try {
-    envelope = JSON.parse(text) as unknown;
-  } catch {
-    throw new McpTransportError('NOT_MCP', 'The server did not answer with JSON.');
+  if (looksSseFramed(text)) {
+    const messages = parseSseMessages(text);
+    // The message that answers this request, not merely the first one: a server
+    // may send a notification ahead of the response, and a notification has no
+    // `id` at all. When no id was supplied — the parser is exported for tests
+    // that exercise one envelope at a time — the last message stands, because a
+    // response follows any notifications that preceded it.
+    const answer =
+      requestId === undefined
+        ? messages[messages.length - 1]
+        : messages.find(
+            (message) =>
+              typeof message === 'object' &&
+              message !== null &&
+              (message as Record<string, unknown>)['id'] === requestId,
+          );
+    if (answer === undefined) {
+      throw new McpTransportError(
+        'NOT_MCP',
+        'The server sent events but none of them answered the request.',
+      );
+    }
+    envelope = answer;
+  } else {
+    try {
+      envelope = JSON.parse(text) as unknown;
+    } catch {
+      throw new McpTransportError('NOT_MCP', 'The server did not answer with JSON.');
+    }
   }
   if (typeof envelope !== 'object' || envelope === null || Array.isArray(envelope)) {
     // A JSON-RPC batch is an array, and this build never sends one, so an
@@ -211,17 +326,41 @@ export function parseRpcEnvelope(text: string): McpRpcOutcome {
   return { ok: true, result: record.result };
 }
 
+/**
+ * A session id this transport is willing to send back.
+ *
+ * The specification requires visible ASCII, and holding the server to that is
+ * what makes echoing the value safe: a header value cannot contain CR, LF or a
+ * control character, so there is no header-injection shape left. An id that
+ * breaks the rule is refused rather than trimmed — a sanitised id would be a
+ * different id, and the session it names is not one this client can hold.
+ */
+function usableSessionId(value: string | null): string | undefined {
+  if (value === null || value.length === 0 || value.length > MAX_SESSION_ID) return undefined;
+  return SESSION_ID_SHAPE.test(value) ? value : undefined;
+}
+
 export function createMcpTransport(options: McpTransportOptions): McpTransport {
   const { server } = options;
   let nextId = 1;
+  /**
+   * The session this server issued, for as long as this transport lives.
+   *
+   * Held in the closure and nowhere else: a session is a property of one
+   * conversation with one server, and persisting it would outlive both the
+   * worker generation that opened it and the registration that produced the
+   * tools.
+   */
+  let sessionId: string | undefined;
 
   return {
     async call(method: string, params: unknown, context: McpEgressContext): Promise<McpRpcOutcome> {
       assertUsable(server.url, server.displayName);
 
+      const id = nextId++;
       const body = JSON.stringify({
         jsonrpc: '2.0',
-        id: nextId++,
+        id,
         method,
         ...(params === undefined ? {} : { params }),
       });
@@ -237,6 +376,10 @@ export function createMcpTransport(options: McpTransportOptions): McpTransport {
               // here rather than trusted to be what was asked for.
               Accept: 'application/json, text/event-stream',
               'Content-Type': 'application/json',
+              // Sent only once the server has issued one. A client that invented
+              // a session id would be asserting a conversation that never
+              // happened.
+              ...(sessionId === undefined ? {} : { [SESSION_HEADER]: sessionId }),
             },
             body,
             // Never followed. See the module comment: there is no declared
@@ -273,6 +416,13 @@ export function createMcpTransport(options: McpTransportOptions): McpTransport {
         );
       }
 
+      // Captured before the status is judged, because a server may issue the
+      // session on the same response that reports a problem, and never reissue
+      // it. Only ever set, never cleared here: a server that drops a session
+      // answers the next call with an error, which is the caller's to handle.
+      const issued = usableSessionId(response.headers.get(SESSION_HEADER));
+      if (issued !== undefined && sessionId === undefined) sessionId = issued;
+
       const text = await readBounded(response);
 
       if (!response.ok) {
@@ -284,7 +434,7 @@ export function createMcpTransport(options: McpTransportOptions): McpTransport {
         );
       }
 
-      return parseRpcEnvelope(text);
+      return parseRpcEnvelope(text, id);
     },
   };
 }

@@ -654,6 +654,59 @@ every page grant stayed domain-scoped. What does distinguish them is
 `targetUrl` on the request and `mcp:<serverId>@<origin>` in the trail, both of
 which carry the full origin. Recorded here as a known limit, not fixed.
 
+## 8c. Measured against a server this project did not write
+
+Every other MCP suite here drives a mock written alongside the client, and a mock
+cannot falsify a misreading of the specification: if client and mock share a wrong
+assumption, both agree and both are wrong. That is the reason to run somebody
+else's server, and the reason `P-026-C3` sat classified as external for as long as
+it did.
+
+It was not external. `@modelcontextprotocol/server-everything` is the MCP
+project's own reference server, it speaks Streamable HTTP over loopback, and it
+needs no credential, no account and no third party. It is a pinned devDependency,
+and `tests/integration/mcp-interop.test.ts` starts it and drives the real
+transport, discovery, schema compiler and tool factory against it.
+
+**Two defects it found before it finished a handshake.** Both would have stopped
+this client talking to any conformant server that chose the other framing:
+
+1. **SSE-framed responses were not parsed.** Streamable HTTP lets a server answer
+   a POST with `application/json` _or_ `text/event-stream`. The transport
+   advertised both in `Accept` from its first version and then ran `JSON.parse` on
+   whatever came back, so an SSE body raised `NOT_MCP` — "the server did not
+   answer with JSON" — about a body that was valid MCP. This server answers a
+   successful `initialize` as SSE and a refusal as plain JSON, so both branches
+   are real rather than hypothetical. Framing is now judged from the body, not
+   from `Content-Type`, because the content type comes from the server too.
+2. **The session id was never echoed.** The server issues `mcp-session-id` on
+   `initialize` and answers every later request with `Bad Request: Server not
+initialized` without it, so discovery failed on its second call. The id is
+   server-authored text going into a request header, so it is held to the
+   specification's own rule — visible ASCII only — and an id that breaks it is
+   dropped rather than trimmed, because a trimmed id names a session this client
+   cannot hold.
+
+On the second: `new Headers()` already refuses CR, LF and NUL, so a classic
+header-injection payload cannot be delivered through `fetch` at all and this guard
+is defence in depth for that shape. It is the only line for a space, a non-ASCII
+byte or an over-long value, which `Headers` carries happily — and a case asserts
+the platform still refuses the first two, so that if it ever stops, the guard
+becomes load-bearing for them visibly rather than silently.
+
+**What it measured once it worked.** Twelve tools discovered and namespaced;
+all twelve draft-07 schemas compiled with none refused, including `$schema`,
+`enum`, `default`, `minimum` and `maximum`; seven resources listed; a real
+`tools/call` answered, at R3, with the result taken as `mcp_result` taint rather
+than trusted content. The schema compiler had been written against hand-made
+fixtures, so "it handles real schemas" was an assumption until this.
+
+**What it is not.** `P-026-C2` asks for a _remote_ MCP server, and this is not
+one. The distinction the audit had to get right is that the reference server is an
+independent **implementation** while this repository remains its **operator**. C2
+wants an origin somebody else runs, and no package supplies that — so C2 stays
+external and P-026 stays PARTIAL.
+
 ## 9. What is still open, and who owns it
 
 - **A real server.** Every mandatory clause is now VERIFIED except the two

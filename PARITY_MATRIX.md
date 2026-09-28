@@ -346,11 +346,34 @@ waiting on a person, a credential or a service.
 ### P-026 MCP — why PARTIAL
 
 **P-026 MCP** — An MCP _client_ is built and reachable: a person adds a server in
-Settings, the worker discovers it, and its tools appear in the set the model is
-offered, each confirmed on every call. It is PARTIAL because **resource
-discovery is unbuilt** (`P-026-C5`), and because remote MCP has never been
-exercised against a server somebody else operates and local MCP needs a bridge
-the specification defers — both recorded as external rather than unimplemented.
+Settings, the worker discovers it, and its tools and resources appear in the set
+the model is offered, each confirmed on every call. It is PARTIAL for one reason
+only: **no MCP server that somebody else operates has been reached**
+(`P-026-C2`), which is recorded as external rather than unimplemented.
+
+This paragraph previously gave two more reasons, and both were wrong by the time
+the final audit re-read them. It said resource discovery was unbuilt; it was
+built in a later wave, and `P-026-C5` has been VERIFIED since. And it said local
+MCP "needs a bridge the specification defers", which is what kept `P-026-C3`
+classified external. That was not true either:
+`@modelcontextprotocol/server-everything` is the MCP project's own reference
+server, it speaks Streamable HTTP with no bridge at all, and it needs no
+credential, account or third party — so the classification was hiding work that
+was possible from the start. It is now a pinned devDependency,
+`tests/integration/mcp-interop.test.ts` runs it, and `P-026-C3` is VERIFIED
+against it: twelve tools discovered, all twelve draft-07 schemas compiled with
+none refused, seven resources listed, and a real `tools/call` answered.
+
+Running it found two defects that made this client unable to complete a handshake
+with any conformant server that chose the other framing — SSE-framed responses
+were unparsed, and the session id the server issues was never echoed. Both are
+described in `docs/MCP_GUIDE.md`; both fixes are load-bearing, in that reverting
+either collapses the interop suite.
+
+The distinction that keeps C2 external after all this is worth stating, because it
+is the one the audit had to get right: the reference server is an independent
+**implementation** and this repository is still its **operator**. What C2 asks for
+is an origin somebody else runs, and no package can supply that.
 
 The scope was re-audited from the specification, the design question it had been
 stuck on turned out not to exist, and the capability was then built. Three
@@ -442,6 +465,34 @@ the one direction that flatters it.
 
 §84 condition 3 — manual acceptance — is also unmet repository-wide, which every
 PASS row already carries.
+
+### Each external clause, re-tested rather than re-asserted
+
+The final audit's second part asked of every `EXTERNAL_REQUIRED` clause whether it
+is genuinely external or whether the classification was hiding work. One was
+hiding work, and the method that found it is worth keeping: ask whether an
+_independent implementation_ of the thing exists as an obtainable artifact, which
+is a different question from whether a _third-party operator_ is needed.
+
+| Clause                                                      | Asks for                                                                                         | Verdict                                                                                                                                                         |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `P-026-C3` local MCP                                        | a local MCP server                                                                               | **Was wrong.** The MCP project's own reference server is an npm package speaking Streamable HTTP over loopback. Now VERIFIED, and running it found two defects. |
+| `P-026-C2` remote MCP                                       | an origin somebody else operates                                                                 | Genuinely external. An independent implementation is obtainable; an independent operator is not.                                                                |
+| `P-023-C8` a connector used against a real service          | a real service and its OAuth application                                                         | Genuinely external, and doubly so: inventing OAuth credentials is on this project's locked prohibition list.                                                    |
+| `P-023-C9` the Tier 1 connector roadmap                     | six named services                                                                               | Genuinely external. Writing connector definitions without their services would be inventing production connectors, also prohibited.                             |
+| `P-022-C8` / `P-024-C9` the reference QA workflow and skill | §44's scenario names Jira, Confluence, Figma, Sheets, a Jira **write** and the permission system | Genuinely external. The clause requires executing against four services, not authoring a definition.                                                            |
+| `P-033-C5` live commercial provider endpoints               | the vendors' paid APIs                                                                           | Genuinely external.                                                                                                                                             |
+
+One option was considered and **rejected** rather than silently skipped: running an
+independent OpenAI-compatible server to give the provider adapters the same
+treatment the MCP client just got. The MCP case worked because the reference server
+is the protocol's own conformance vehicle — an implementation written to define
+correct behaviour. There is no equivalent for the OpenAI wire format; the npm
+packages that look like one are test doubles, so driving the adapters against one
+would produce evidence no stronger than the mock already in the suite while
+reading as though it were stronger. A real inference server would be genuine, and
+is out of proportion here. Recorded so the question is not reopened as though it
+had never been asked.
 
 ### What is waiting on somebody else, and where to see it
 
@@ -685,7 +736,7 @@ rather than folded into the verdict.
 | P-023 | Connector framework                  | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-024 | Skills                               | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-025 | Plugins                              | no   | —    | —           | —        | —   | NOT-STARTED |
-| P-026 | MCP                                  | yes  | —    | —           | yes      | yes | PARTIAL     |
+| P-026 | MCP                                  | yes  | —    | yes         | yes      | yes | PARTIAL     |
 | P-027 | Permission modes                     | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-028 | Site permissions                     | yes  | yes  | —           | yes      | yes | PASS        |
 | P-029 | Permission history                   | yes  | yes  | —           | yes      | yes | PASS        |
