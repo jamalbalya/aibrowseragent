@@ -192,3 +192,25 @@ test('local features work with no AI account connected', async ({ send, panel })
   const composer = panel.getByPlaceholder(/connect an ai account to start/i);
   await expect(composer).toBeVisible();
 });
+
+test('the credit is a link and never a byline', async ({ panel }) => {
+  // Two rules that meet, and that a change could break in opposite directions.
+  // The Chrome Web Store listing carries "Created by Jamal Balya"; the
+  // extension's own interface carries a profile link and no attribution text.
+  // The unit suite reads the built bundle for both; this reads the rendered
+  // panel, which is a different claim — a string can ship and never appear.
+  await panel.getByRole('button', { name: 'Settings' }).click();
+
+  const link = panel.getByRole('link', { name: 'LinkedIn profile' });
+  await expect(link).toBeVisible();
+  await expect(link).toHaveAttribute('href', 'https://www.linkedin.com/in/jamalbalya');
+  // The opened tab gets no handle back to the panel and no referrer.
+  await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  await expect(link).toHaveAttribute('target', '_blank');
+
+  // NEGATIVE CONTROL, and the half that is easy to lose: no byline anywhere in
+  // the rendered interface, and no name beside the icon.
+  const body = await panel.locator('body').innerText();
+  expect(body).not.toContain('Created by');
+  expect(body).not.toContain('Jamal');
+});

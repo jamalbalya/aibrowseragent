@@ -3,6 +3,7 @@ import { sendToBackground, MessagingError } from '@/messaging/bus';
 import { AccountPanel } from './AccountPanel';
 import { TechnicalDetails } from './TechnicalDetails';
 import { DataPanel } from './DataPanel';
+import { AboutLink } from './AboutLink';
 import { ConnectedAccounts } from './ConnectedAccounts';
 import { McpServers } from './McpServers';
 import { SignInMethods } from './SignInMethods';
@@ -592,6 +593,9 @@ export function SettingsView({
       <section className="settings__section">
         <TechnicalDetails />
       </section>
+
+      {/* An icon, and nothing else. The byline belongs to the store listing. */}
+      <AboutLink />
     </div>
   );
 }

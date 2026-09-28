@@ -1267,3 +1267,28 @@ body {
   gap: 0.5rem;
   margin-top: 0.75rem;
 }
+
+/* The profile link at the foot of Settings. Quiet by design: it is a credit,
+   not a control, and it must not compete with anything a user came here to do. */
+.about {
+  display: flex;
+  justify-content: center;
+  margin: 1.5rem 0 0.5rem;
+}
+
+.about__link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  color: var(--muted, #6b7280);
+  opacity: 0.7;
+}
+
+.about__link:hover,
+.about__link:focus-visible {
+  opacity: 1;
+  background: var(--surface-2, rgba(127, 127, 127, 0.12));
+}

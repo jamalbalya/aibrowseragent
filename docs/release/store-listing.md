@@ -29,8 +29,35 @@ Created by Jamal Balya
 ```
 
 This belongs in the **store listing only**. It is deliberately not in the
-extension's own interface, and a check would be the wrong tool for that: the
-string simply is not there, and the release audit confirms it each time.
+extension's own interface.
+
+That used to be followed by "a check would be the wrong tool for that: the
+string simply is not there". The reasoning was backwards, and it is the exact
+shape this repository keeps finding — an absence nothing verifies is an absence
+that comes back. Two checks now hold it:
+
+- `tests/unit/about-link.test.ts` reads the **built bundle** and fails if
+  "Created by" appears anywhere in it.
+- `tests/e2e/standalone-ux.spec.ts :: the credit is a link and never a byline`
+  reads the **rendered panel**, which is a different claim: a string can ship
+  and never appear, and it is what a person sees that matters here.
+
+## The credit that is in the interface
+
+The extension's Settings screen ends with one icon linking to
+`https://www.linkedin.com/in/jamalbalya`, and nothing else — no name, no
+byline, no label beyond the accessible name "LinkedIn profile".
+
+It is the **only** outbound link in the interface, and the same unit suite
+censuses the panel source to keep it that way. The URL is a module constant, so
+nothing a model produces, a page supplies or storage holds can redirect it; the
+link carries `rel="noopener noreferrer"` and `target="_blank"`; and the glyph is
+inline SVG, so it needs no network request and no CSP relaxation.
+
+One thing for the account owner to confirm rather than for this repository to
+decide: the mark is a simple rendering of the LinkedIn glyph, and LinkedIn
+publishes brand guidelines for use of its logo. Whether the rendering as shipped
+satisfies them is a judgement about someone else's trademark policy.
 
 ## Category
 
