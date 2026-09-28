@@ -234,6 +234,34 @@ describe('03 the two tools, and the risk they carry', () => {
     }
   });
 
+  it('both name the server in the prompt, so neither asks about nothing', async () => {
+    // The same gap the tool-dispatch suite had: `siteAuthorization:
+    // 'destination'` was declared on both resource tools and pinned by nothing,
+    // so removing it broke no test while leaving the confirmation with no site
+    // at all. Taking the destination from the descriptor, tested below, is a
+    // different fact — it is this declaration that carries it into the prompt.
+    for (const name of [RESOURCE_LIST_TOOL, RESOURCE_READ_TOOL]) {
+      const tool = tools().find((candidate) => candidate.name.endsWith(name)) as AgentTool;
+      expect(tool.siteAuthorization, name).toBe('destination');
+
+      const prompter = new ScriptedPrompter();
+      const harness = createHarness(tools(), { mode: 'manual', prompter });
+      await harness.registry.dispatch({
+        taskId: TASK,
+        sessionId: 's',
+        toolCallId: 'c',
+        name: `mcp__docs__${name}`,
+        arguments: name === RESOURCE_READ_TOOL ? { uri: 'docs://guide' } : {},
+        signal: new AbortController().signal,
+      });
+
+      expect(prompter.seen, name).toHaveLength(1);
+      // The registrable domain, as every site grant in this product is.
+      expect(prompter.seen[0]?.site, name).toBe('docs.test');
+      expect(prompter.seen[0]?.targetUrl, name).toBe(SERVER.url);
+    }
+  });
+
   it('takes the destination from the descriptor, not from the arguments', () => {
     const read = tools().find((tool) => tool.name.endsWith(RESOURCE_READ_TOOL)) as AgentTool;
     const classified = read.classify?.(

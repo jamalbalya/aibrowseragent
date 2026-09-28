@@ -622,19 +622,37 @@ What makes that not an attack anybody else can mount:
 - **The prompt names where it is going.** An MCP tool declares
   `siteAuthorization: 'destination'` and its `classify` returns the server's URL
   from the closure, never the model's arguments, so the confirmation's `site` is
-  the server's site rather than the page's. A replacement on a different host is
-  visible in the prompt before anything runs.
+  the server's site rather than the page the task was working on. A replacement
+  on a different registrable domain is visible in the prompt before anything
+  runs.
+
+  That declaration was unpinned when this section was first written: removing
+  `siteAuthorization: 'destination'` from the tool broke no test, and with
+  `'none'` the request carries no site at all — the prompt would show the person
+  nothing about where their data was going. `classify` returning the URL was
+  tested and is not the same fact; it is the declaration that makes
+  `resolveSiteScope` read the site off it. Two cases now pin it, and removing the
+  declaration fails them.
+
 - **The trail names it too.** `mcp.server.added` carries the URL as its
   `destination`, and every call's egress record carries
   `mcp:<serverId>@<origin>`. A substitution is reconstructable after the fact
   even if it was approved.
 
-The one residual case the prompt cannot distinguish is two servers on the **same
-site** at different paths, because `site` is a registrable domain and both
-resolve to the same one. That is a limit of site-granularity rather than a
-defect in this capability — it is the same granularity every site grant in the
-product uses — and closing it would mean making MCP authorization path-scoped
-while nothing else is. Recorded here as a known limit, not fixed.
+The residual case the prompt cannot distinguish is two servers sharing a
+**registrable domain**, because `site` is that domain and nothing narrower. This
+is wider than paths: `mcp.example.test` and `anything-else.example.test` both
+resolve to `example.test`, so a replacement within one domain reads identically.
+Measured rather than assumed — the prompt's `site` for the test server
+`https://mcp.example.test/rpc` is `example.test`, which is what the cases above
+assert.
+
+It is a limit of site-granularity rather than a defect in this capability: it is
+the same granularity every site grant in the product uses, and narrowing it for
+MCP alone would make this the one path-scoped authorization in the product while
+every page grant stayed domain-scoped. What does distinguish them is
+`targetUrl` on the request and `mcp:<serverId>@<origin>` in the trail, both of
+which carry the full origin. Recorded here as a known limit, not fixed.
 
 ## 9. What is still open, and who owns it
 

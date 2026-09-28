@@ -190,6 +190,39 @@ describe('02 what the policy engine does with it', () => {
     }
   });
 
+  it('names the server in the prompt, so a substituted server is visible before it runs', async () => {
+    // The mitigation MCP_GUIDE.md §8b relies on, and it was unpinned: removing
+    // `siteAuthorization: 'destination'` from the tool broke no test at all, and
+    // the guide's argument that a replaced server "is visible in the prompt
+    // before anything runs" rested on a declaration nothing checked.
+    //
+    // `classify` returning the server's URL is tested above, and it is not the
+    // same fact. It is `siteAuthorization: 'destination'` that makes
+    // `resolveSiteScope` read the site off `classification.targetUrl`; with
+    // `'none'` the request carries no site and the prompt shows the person
+    // nothing about where their data is going.
+    expect(build().tool.siteAuthorization).toBe('destination');
+
+    const { tool } = build();
+    await dispatch(harnessFor(tool, 'manual'), tool, { query: 'x' });
+    expect(prompter.seen).toHaveLength(1);
+    // The registrable domain, as every site grant in this product is — not the
+    // host. `targetUrl` is the part that distinguishes one server on a shared
+    // domain from another, and it is what the record carries.
+    expect(prompter.seen[0]?.site).toBe('example.test');
+    expect(prompter.seen[0]?.targetUrl).toBe(SERVER.url);
+  });
+
+  // There is deliberately no second case here asserting "the server, not the
+  // page the task was reading". The first attempt at one called
+  // `harness.publishSecurityContext?.(...)` to seed a page taint; that method
+  // does not exist on the fixture, the optional call was a no-op, and the case
+  // passed while establishing nothing — caught by `tsc`, not by the suite.
+  // Adding a taint facility to the shared harness for one assertion is not
+  // proportionate, and the fact it was reaching for is covered from the other
+  // side: `takes its destination from the descriptor, so the model cannot name
+  // one` proves a `url` in the arguments cannot become the destination.
+
   it('is not pre-approved by a grant on the server’s own origin', async () => {
     // The nearest thing to a per-server ceiling the product has. It changes
     // nothing, which is the property the rejected ceiling design lacked.

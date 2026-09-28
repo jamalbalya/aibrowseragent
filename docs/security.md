@@ -1378,6 +1378,48 @@ Two lessons about writing one, because each cost a cycle:
    names its rows individually, so a broken enumeration fails rather than
    passing quietly.
 
+## What the mutation sweep found, and what it did not
+
+Part 1 of the final audit asked whether any cited test would pass with the
+production code broken. Eighteen mutations were applied to the load-bearing
+invariants, one at a time, each reverted after.
+
+Sixteen were killed: the risk floor and the deny floor off by one, the shortcut
+narrowing disabled, the https requirement removed, `MCP_TOOL_RISK` lowered to R1,
+the task-scoped audit requirement dropped, the MCP wire-name guard removed, the
+prototype-pollution guard removed, `strictestMode` renamed, confirmation ids made
+replayable, staged files made reachable across tasks, `mcp.add` reclassified as a
+content route, shortcut creation silenced, `releaseTask` stopped detaching,
+`allowedTools` made portable, and the MCP wire prefix broken.
+
+Two survived, and both were the same defect: `siteAuthorization: 'destination'`
+on the MCP tool and on both MCP resource tools was declared and pinned by
+nothing. Removing it broke no test — and it is what makes `resolveSiteScope` read
+the site off `classification.targetUrl`, so with `'none'` the confirmation
+carries no site and the prompt tells the person nothing about where their data is
+going. `classify` returning the server's URL was tested, and that is a different
+fact. Three cases now pin it, each mutation-verified, and every declaration
+independently.
+
+Writing them corrected a claim in the MCP guide. The prompt's `site` is the
+registrable domain rather than the host, so the residual limit is any two servers
+sharing a domain, not only two at different paths — measured, not assumed.
+
+Three lessons about the sweep itself, because each cost a cycle:
+
+- **A mutation that stops the suite loading is not a survivor.** Replacing an
+  identifier broke its own declaration twice; the test count fell by a thousand
+  and the run reported "passed". The harness now flags any run whose total is far
+  below the baseline.
+- **The sweep has to span both runners.** Removing the `k1.disable` audit record
+  survived `vitest` and was killed twice by the real-Chromium suite, which
+  `vitest` does not run. Coverage living in a different runner is not missing
+  coverage.
+- **`tsc` caught a test that passed vacuously.** A case seeded a page taint
+  through a fixture method that does not exist; the optional call was a no-op and
+  the assertion passed against nothing. It was dropped rather than repaired,
+  because the fact it reached for is covered from the other side.
+
 ## Reporting a vulnerability
 
 Open a security advisory on the repository rather than a public issue.
