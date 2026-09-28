@@ -86,7 +86,7 @@ at the specified time and notifies you when it's done or needs input."_
 
 Everything else is UNKNOWN for Chrome — see §Gap-2.
 
-## 4. Plugins, skills, connectors, MCP (E2)
+## 4. Plugins, skills, connectors, MCP (E2, with an E1 correction below)
 
 A plugin _"bundles skills, connectors, and sub-agents into a single package"_
 and may include _"local MCP servers that run on your computer with the same
@@ -95,11 +95,111 @@ URL or a custom upload; auto-updates; uninstallable except where an
 organization requires them. Trust is delegated to the user — _"Only install
 plugins from sources you trust"_ — with optional Enterprise scanning.
 
+### 4a. Which mode plugins belong to (E1) — and the correction that produced it
+
+§2 says a single "Claude Extension behaviour" does not exist and that **which
+mode is being matched has to be stated**. This section never stated it, and the
+P-025 adjudication is what forced the question.
+
+The Claude in Chrome get-started article was read twice during that adjudication.
+The first reading reported no mention of plugins and that reading was **wrong**.
+A targeted re-read found the sentence _"Your skills, plugins, and connectors work
+here."_ It sits under _"Chat with Claude in the browser side panel"_, describing
+the **Cowork-session** side panel, available _"On Max and Team plans, on Pro plans
+as the rollout reaches you, and on Enterprise plans where your admin has enabled
+it."_ The error is recorded rather than quietly fixed, because an absence of
+evidence had briefly been treated as evidence of absence — the exact move the
+evidence classes exist to prevent.
+
+The two modes carry **different and partly disjoint** capability sets:
+
+| Mode               | Documented capabilities (E1)                                                                                                                                                                     |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Classic**        | record a workflow, console logs, scheduled tasks, multi-tab, enhanced site navigation, 1Password sign-in, background workflows, visual context, image uploads, shortcuts, contextual suggestions |
+| **Cowork session** | skills, plugins and connectors work; sessions saved to history and continued across web, desktop and mobile                                                                                      |
+
+Two facts follow, and they point in opposite directions:
+
+- **Plugins are not listed among classic-mode capabilities.**
+- **Recording is not available in Cowork mode** — §2 already quotes _"Recording
+  isn't available when the side panel runs as a Cowork session."_
+
+So the modes are not a subset relationship. This project's capability set —
+workflow recording (P-022), shortcuts (P-021), scheduled tasks (P-020), console
+and network inspection, multi-tab, background continuation — is the **classic**
+set, and the specification says so in its own baseline: _"record workflows in the
+classic side panel"_ (§1).
+
+**The mechanism by which plugins reach the Cowork side panel is a cloud session.**
+The product page places _"The skills, plugins, and connectors you've already built
+are there, with nothing to set up in the browser"_ under the heading _"Your whole
+setup, in the side panel"_, and the help centre states the side panel **runs as a
+Claude Cowork session**. "Already built" and "nothing to set up in the browser"
+both locate plugin creation, configuration and lifecycle outside the extension.
+This is the same shape §13 established for MCP: the capability is visible in the
+side panel while the mechanism is a cloud session, not the extension.
+
 The `claude-in-chrome` MCP server is blockable by the `deniedMcpServers` managed
 setting, with tools viewable through `/mcp`. MCP tools marked
 `requiresUserInteraction` prompt on every call. **Where that server actually
 runs is not the extension** — see §13, which corrects an earlier reading of this
 paragraph and decides Gap-5's server half.
+
+### 4b. P-025 adjudication — is a plugin system required for extension parity?
+
+The locked goal measures against **the Claude browser extension**, and §2 requires
+the mode to be named. Naming it settles P-025.
+
+**Finding: plugin availability is documented Claude-in-Chrome behaviour in
+Cowork-session mode only, and the mechanism that delivers it is a cloud session
+this project's locks forbid as a runtime dependency.**
+
+Four facts, each with its class:
+
+1. Plugins are documented as working in the Chrome side panel — _"Your skills,
+   plugins, and connectors work here."_ **(A)**
+2. That sentence describes the **Cowork-session** side panel, not the classic
+   one, and plugins are absent from the classic capability list. **(A)**
+3. The side panel in that mode **runs as a Claude Cowork session**, and plugin
+   creation and configuration happen outside the browser — _"nothing to set up in
+   the browser"_. **(A)** for the wording; **(C)** for the inference that the
+   extension hosts no plugin runtime of its own.
+4. No Claude-in-Chrome source documents plugin installation, a plugin registry, a
+   plugin manifest, plugin permissions, plugin trust metadata or a plugin
+   lifecycle **as extension behaviour**. The permissions guide and the admin
+   controls article do not mention plugins at all. **(A** as documented silence —
+   recorded as silence, never as a denial.**)**
+
+What this does **not** say: it does not say Claude in Chrome lacks plugins. It
+says the only documented route by which plugins reach that side panel is a cloud
+session, and the locked architecture states the backend "must NOT become a
+mandatory runtime dependency for normal browser-agent operation".
+
+So there are exactly two ways this project could reach plugin parity, and neither
+is a parity obligation:
+
+- **Reproduce the mechanism** — run the agent as a cloud session and surface an
+  account's plugins in the panel. Barred by the locks: standalone, local-first, no
+  cloud runtime dependency.
+- **Reproduce the capability locally** — a local plugin format over
+  already-registered tools (`PLUGIN_TRUST_MODEL.md` §9b models B and F). Possible,
+  and it would be **this project doing something the Claude extension does not
+  do**, rather than matching it.
+
+The second is a product decision, not a parity requirement. That is the
+adjudication: **P-025 is an internal specification requirement (§5.10) and is not
+demonstrated as Claude-in-Chrome extension behaviour.** The specification keeps
+it; the parity critical path does not.
+
+One clause is separate. §5.10's _"bundled MCP servers where supported"_ maps to
+plugin content that Claude documents as _"local MCP servers that run on your
+computer with the same permissions as any other program you run"_. Running a
+local process at user privilege requires native messaging or local process
+execution, both on this project's locked prohibition list. The clause's own
+_"where supported"_ qualifier is what resolves it: it is not supported here, by
+decision. Note that this is a different thing from P-026-C3 local MCP, which is
+VERIFIED — this build connects to a local MCP server over Streamable HTTP; what it
+does not do is **spawn** one.
 
 ## 5. Injection defence (E1/E3)
 

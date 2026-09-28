@@ -351,6 +351,61 @@ What it is **not** is parity certification. §84 condition 3 requires manual
 acceptance, none of which has been executed, and the six clauses below are
 waiting on a person, a credential or a service.
 
+### P-025 Plugins — an internal specification requirement, not a parity gap
+
+The row stays **NOT-STARTED**, and nothing below moves it. What changed is what
+the row is a gap _against_, which had never been adjudicated: specification §5.10
+lists eight plugin clauses under "the mandatory parity baseline", and that word
+had been carrying an assumption nobody checked.
+
+The locked goal measures against **the Claude browser extension**. `CLAUDE_BENCHMARK.md`
+§2 already established that a single "Claude Extension behaviour" does not exist —
+the side panel runs in two modes — and §4a now states which mode each documented
+capability belongs to. Plugins belong to the **Cowork-session** mode, where the
+panel runs as a cloud session and the plugins are ones a person "already built"
+elsewhere, "with nothing to set up in the browser". They are absent from the
+documented **classic**-mode capability list. Classic is the mode this project
+reproduces — workflow recording, shortcuts, scheduled tasks, console and network
+inspection, multi-tab, background continuation — and the specification's own
+baseline says so: "record workflows in the classic side panel" (§1). The two modes
+are partly disjoint, not nested: recording is unavailable in Cowork mode.
+
+So there are two routes to plugin parity and neither is a parity obligation.
+Reproducing the **mechanism** means running the agent as a cloud session, which
+the locks forbid — standalone, local-first, no cloud runtime dependency.
+Reproducing the **capability** locally means a declarative plugin format over
+already-registered tools, which is possible and is this project doing something
+the comparison extension is not documented to do.
+
+**The adjudication: P-025 is an internal specification requirement (§5.10) and is
+not demonstrated as Claude-in-Chrome extension behaviour.** The specification
+keeps the clauses; the Claude-Extension-parity critical path does not carry them.
+`CLAUDE_BENCHMARK.md` §4b is the full record with each fact's evidence class, and
+`parity-evidence.json` now classifies all eight clauses — seven
+`INTERNAL_SPEC_ONLY`, and `P-025-C5` `CONFLICTS_WITH_LOCKED_ARCHITECTURE`, because
+a plugin-bundled MCP server that "runs on your computer" needs native messaging or
+local process execution, both prohibited here, which the clause's own "where
+supported" qualifier resolves.
+
+Three things this deliberately does **not** do. It does not delete P-025 from the
+specification. It does not move any clause off `EVIDENCE_MISSING`, because none of
+them acquired evidence — the finding is about which baseline they answer to, not
+about whether they are built. And it does not convert documented silence into a
+denial: no Claude-in-Chrome source describes a plugin registry, manifest,
+permission model, trust metadata or lifecycle as extension behaviour, and that is
+recorded as silence.
+
+One further finding, recorded because it is about this repository rather than
+about Claude. The specification's own §1 routes plugins "through the broader the
+reference AI environment"; §2 names nine runtimes and **no plugin runtime**; §4's
+"what we are actually reproducing" architecture diagram **omits plugins
+entirely**. Three places in the specification treat plugins as environment rather
+than as extension, and §5.10 is the one place that does not. Whether that
+broadening from "the reference extension" to "the broader reference AI
+environment" was ever explicitly decided is not recorded anywhere in this
+repository — the evidence for such a decision is **absent**, which is stated here
+as an absence rather than settled in either direction.
+
 ### P-026 MCP — why PARTIAL
 
 **P-026 MCP** — An MCP _client_ is built and reachable: a person adds a server in
@@ -1488,7 +1543,11 @@ minimum:
    [`MCP_GUIDE.md`](./docs/MCP_GUIDE.md) records what P-026 is. Neither is
    implemented, and the gate is deliberately not permission to start: P-025 is
    waiting on a package format and the fact that a package's _authenticity_
-   cannot be established here at all. P-026 is waiting on build alone — this
+   cannot be established here at all. P-025 is also the one row now adjudicated
+   as **not on the Claude-Extension-parity critical path** — it is an internal
+   specification requirement, and the section above says on what evidence. The
+   sentence at the head of this list is therefore a statement of the internal
+   specification's standard, not of the locked product goal's. P-026 is waiting on build alone — this
    line previously said "a transport decision", conflating two directions. The
    specification asks only for an MCP **client**, which has no unresolved design
    question left; exposing an MCP **server** needs an inbound channel every one
