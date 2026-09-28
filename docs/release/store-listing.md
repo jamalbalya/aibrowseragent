@@ -205,7 +205,7 @@ none is quietly dropped when the copy is edited:
 - No plugins or MCP. Scheduled tasks exist, but only while Chrome is running.
 - No cross-origin iframe support.
 - Requires a tool-calling model and the user's own API key.
-- Five of forty specification capabilities are partial; one is not started.
+- Four of forty specification capabilities are partial; one is not started.
 
 ## What is NOT claimed anywhere in this copy
 

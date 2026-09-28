@@ -350,3 +350,90 @@ test('shortcuts added no permission and no host access', async ({ serviceWorker 
   expect(manifest.host_permissions ?? []).toEqual(['http://*/*', 'https://*/*']);
   expect((manifest.host_permissions ?? []).includes('<all_urls>')).toBe(false);
 });
+
+// --- §50's two narrowings, in the real worker (P-021) --------------------
+
+test('a shortcut’s permission profile makes a run stricter than the mode setting', async ({
+  send,
+  provider,
+}) => {
+  // The claim only a real worker can settle: the floor is applied by
+  // `loadPolicyContext`, against the mode in force at the moment of each
+  // dispatch, so it holds even when the ambient setting is the most permissive
+  // one there is.
+  await connectProvider(send, provider);
+  await send('session.setPermissionMode', { mode: 'skip' });
+
+  const created = await send('shortcut.create', {
+    name: 'careful',
+    target: { kind: 'prompt', objective: 'read the page' },
+    permissionProfile: 'confirm-each-action',
+  });
+  expect(created.shortcut).not.toBeNull();
+
+  const started = await send('task.create', {
+    objective: 'read the page',
+    shortcutId: created.shortcut!.shortcutId,
+  });
+  // The floor is on the durable record, so it survives a worker eviction and
+  // is not a fact about this worker generation.
+  const stored = await send('task.get', { taskId: started.task.id });
+  expect(stored.task?.permissionFloor).toBe('manual');
+});
+
+test('a shortcut with no profile leaves the mode setting alone', async ({ send, provider }) => {
+  // The negative control: without one, nothing is stored and nothing tightens,
+  // so the case above is not passing because every task gets a floor.
+  await connectProvider(send, provider);
+  const created = await send('shortcut.create', {
+    name: 'ordinary',
+    target: { kind: 'prompt', objective: 'read the page' },
+  });
+  const started = await send('task.create', {
+    objective: 'read the page',
+    shortcutId: created.shortcut!.shortcutId,
+  });
+  const stored = await send('task.get', { taskId: started.task.id });
+  expect(stored.task?.permissionFloor).toBeUndefined();
+  expect(stored.task?.allowedTools).toBeUndefined();
+});
+
+test('a shortcut’s allowedTools reaches the task it starts', async ({ send, provider }) => {
+  await connectProvider(send, provider);
+  const created = await send('shortcut.create', {
+    name: 'read-only',
+    target: { kind: 'prompt', objective: 'read the page' },
+    allowedTools: ['browser.read_page'],
+  });
+  expect(created.shortcut).not.toBeNull();
+
+  const started = await send('task.create', {
+    objective: 'read the page',
+    shortcutId: created.shortcut!.shortcutId,
+  });
+  const stored = await send('task.get', { taskId: started.task.id });
+  expect(stored.task?.allowedTools).toEqual(['browser.read_page']);
+});
+
+test('the worker refuses a profile it does not implement, and a name that cannot be a tool', async ({
+  send,
+}) => {
+  // Refused rather than ignored: a stored profile nobody implements would
+  // leave a shortcut that reads as stricter than it is, and a tool name that
+  // cannot resolve would narrow to nothing while looking like a constraint.
+  const badProfile = await send('shortcut.create', {
+    name: 'loose',
+    target: { kind: 'prompt', objective: 'x' },
+    permissionProfile: 'qa-default',
+  });
+  expect(badProfile.shortcut).toBeNull();
+  expect(badProfile.error?.reason).toBe('UNKNOWN_PERMISSION_PROFILE');
+
+  const badTool = await send('shortcut.create', {
+    name: 'broken',
+    target: { kind: 'prompt', objective: 'x' },
+    allowedTools: ['not a tool name'],
+  });
+  expect(badTool.shortcut).toBeNull();
+  expect(badTool.error?.reason).toBe('INVALID_ALLOWED_TOOLS');
+});

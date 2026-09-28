@@ -197,7 +197,13 @@ export class TaskManager {
   async create(
     objective: string,
     sessionId: string,
-    options: { readonly authorizationModel?: AuthorizationModel } = {},
+    options: {
+      readonly authorizationModel?: AuthorizationModel;
+      /** A tool narrowing, from the shortcut that started this task (P-021). */
+      readonly allowedTools?: readonly string[];
+      /** A floor on strictness, from that shortcut's permission profile. */
+      readonly permissionFloor?: PermissionMode;
+    } = {},
   ): Promise<AgentTask> {
     await this.requireHealthyPersistence('starting a task');
     const trimmed = objective.trim();
@@ -223,6 +229,15 @@ export class TaskManager {
       ...(options.authorizationModel === undefined
         ? {}
         : { authorizationModel: options.authorizationModel }),
+      // Both fixed here and never afterwards, like the workspace and the
+      // authorization model: a constraint a running task could change would be
+      // a boundary that depends on when you asked.
+      ...(options.allowedTools === undefined || options.allowedTools.length === 0
+        ? {}
+        : { allowedTools: options.allowedTools }),
+      ...(options.permissionFloor === undefined
+        ? {}
+        : { permissionFloor: options.permissionFloor }),
       now: this.now(),
     });
 

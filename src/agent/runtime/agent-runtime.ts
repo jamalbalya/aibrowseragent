@@ -187,7 +187,15 @@ export class AgentRuntime {
       saltEpoch = recovered.epoch;
     }
 
-    const tools = this.options.registry.toCanonicalSchemas();
+    // Narrowed when the task was started with a tool constraint (P-021). This
+    // is the half that keeps a restricted run from *wasting* turns on tools it
+    // may not use; the registry refuses them regardless, which is the half
+    // that makes the constraint a constraint.
+    const tools = this.options.registry.toCanonicalSchemas(
+      task.allowedTools !== undefined && task.allowedTools.length > 0
+        ? task.allowedTools
+        : undefined,
+    );
 
     await this.options.callbacks.onStateChange(task.id, 'PLANNING', 'Planning the approach.');
 

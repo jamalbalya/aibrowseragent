@@ -189,6 +189,31 @@ export interface AgentTask {
    */
   readonly authorizationModel?: AuthorizationModel;
   /**
+   * Tools this task may use, when it was started with a narrowing (P-021).
+   *
+   * Fixed at creation, like `permissionMode` and `authorizationModel` and for
+   * the same reason: a constraint that could change mid-run would be a
+   * boundary that depends on when you asked.
+   *
+   * A narrowing and never a grant. It removes tools from the set the model is
+   * offered and from the set the registry will dispatch; it cannot admit a
+   * tool, raise what one may do, or pre-approve a call. Absent or empty means
+   * no narrowing.
+   */
+  readonly allowedTools?: readonly string[];
+  /**
+   * A floor on how strict this task's permission mode may be (P-021).
+   *
+   * Distinct from `permissionMode`, which records what the ambient mode was
+   * when the task was made and decides nothing. This one is consulted on every
+   * dispatch, through `strictestMode`, against the mode in force at that
+   * moment — so it can make a run stricter than the current setting and can
+   * never make one looser, whichever direction the setting later moves.
+   *
+   * Set from a shortcut's permission profile. Absent means no floor.
+   */
+  readonly permissionFloor?: PermissionMode;
+  /**
    * What the model proposed, when this task plans first.
    *
    * Model output. It authorizes nothing, and no policy decision reads it —
@@ -280,6 +305,31 @@ export interface CreateTaskInput {
   readonly modelId: string;
   readonly permissionMode: PermissionMode;
   readonly authorizationModel?: AuthorizationModel;
+  /**
+   * Tools this task may use, when it was started with a narrowing (P-021).
+   *
+   * Fixed at creation, like `permissionMode` and `authorizationModel` and for
+   * the same reason: a constraint that could change mid-run would be a
+   * boundary that depends on when you asked.
+   *
+   * A narrowing and never a grant. It removes tools from the set the model is
+   * offered and from the set the registry will dispatch; it cannot admit a
+   * tool, raise what one may do, or pre-approve a call. Absent or empty means
+   * no narrowing.
+   */
+  readonly allowedTools?: readonly string[];
+  /**
+   * A floor on how strict this task's permission mode may be (P-021).
+   *
+   * Distinct from `permissionMode`, which records what the ambient mode was
+   * when the task was made and decides nothing. This one is consulted on every
+   * dispatch, through `strictestMode`, against the mode in force at that
+   * moment — so it can make a run stricter than the current setting and can
+   * never make one looser, whichever direction the setting later moves.
+   *
+   * Set from a shortcut's permission profile. Absent means no floor.
+   */
+  readonly permissionFloor?: PermissionMode;
   readonly now: number;
   /**
    * Hex-encoded 32-byte HMAC key for egress evidence.
@@ -322,6 +372,10 @@ export function createTask(input: CreateTaskInput): AgentTask {
     ...(input.authorizationModel === undefined
       ? {}
       : { authorizationModel: input.authorizationModel }),
+    ...(input.allowedTools === undefined || input.allowedTools.length === 0
+      ? {}
+      : { allowedTools: input.allowedTools }),
+    ...(input.permissionFloor === undefined ? {} : { permissionFloor: input.permissionFloor }),
     createdAt: input.now,
     updatedAt: input.now,
     plan: [],

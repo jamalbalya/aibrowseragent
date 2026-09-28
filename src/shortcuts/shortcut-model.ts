@@ -88,6 +88,34 @@ export function isUsableObjective(value: unknown): value is string {
  *  - `skeleton` is the confusability key, which only ever decides whether a
  *    *new* shortcut may be created. Nothing is ever looked up by it.
  */
+import type { PermissionMode } from '@/policy/policy-engine';
+
+/**
+ * The permission profiles a shortcut may name (§50).
+ *
+ * One member, and the reason is the whole of the design. A profile may only
+ * ever make a run **stricter**: `manual` is the strictest mode this build has,
+ * so there is exactly one tightening to express and exactly one name for it.
+ *
+ * What a profile deliberately cannot be is a *grant*. §50's example value is
+ * `"qa-default"`, which reads as a user-defined profile — and a user-defined
+ * profile that could select `auto` or `skip` would be a stored escalation of
+ * the ambient permission mode, which is the one thing the workflow and
+ * shortcut design refuses: a recording never becomes a standing grant, and
+ * replay re-earns every permission. A profile store would also be a second
+ * authorization surface with nothing to add, because the set of safe
+ * tightenings is this list.
+ *
+ * So an unrecognised profile name is **refused** rather than ignored. Ignoring
+ * one would leave a shortcut that reads as stricter than it is, which is worse
+ * than not offering the field.
+ */
+export const SHORTCUT_PERMISSION_PROFILES = ['confirm-each-action'] as const;
+export type ShortcutPermissionProfile = (typeof SHORTCUT_PERMISSION_PROFILES)[number];
+
+/** How many tools a shortcut's narrowing list may name. */
+export const MAX_SHORTCUT_ALLOWED_TOOLS = 64;
+
 export interface ShortcutRecord {
   readonly shortcutId: string;
   readonly formatVersion: number;
@@ -98,8 +126,90 @@ export interface ShortcutRecord {
   /** The confusability key. Unique. Never a lookup key. */
   readonly skeleton: string;
   readonly target: ShortcutTarget;
+  /**
+   * Tools the run this shortcut starts may use (§50 `allowedTools`).
+   *
+   * A **narrowing**, never a grant, and the distinction is what makes the
+   * field safe to store. Every name here must already be a registered tool;
+   * the list cannot bring one into existence, cannot raise what one may do,
+   * and cannot pre-approve a call. What it does is remove tools from the set
+   * the model is offered *and* from the set it may reach — both halves,
+   * because narrowing the offer alone is not a constraint if the model can
+   * still name what it was not offered.
+   *
+   * Absent means no narrowing. An **empty array also means no narrowing**,
+   * matching §50's own example, which shows `"allowedTools": []` on a shortcut
+   * that plainly does something. A shortcut that may use no tools at all is
+   * therefore not expressible, which is stated rather than hidden.
+   */
+  readonly allowedTools?: readonly string[];
+  /**
+   * A permission profile for the run (§50 `permissionProfile`).
+   *
+   * Tightening only. See `SHORTCUT_PERMISSION_PROFILES`.
+   */
+  readonly permissionProfile?: ShortcutPermissionProfile;
   readonly createdAt: number;
   readonly updatedAt: number;
+}
+
+/**
+ * The permission mode a profile asks for.
+ *
+ * Only ever consulted through `strictestMode`, so the value here is a *floor*
+ * on strictness rather than the mode a run gets. A profile that named `skip`
+ * would therefore still not loosen anything — and no profile names it, because
+ * a loosening profile is the thing this design refuses.
+ */
+export const SHORTCUT_PROFILE_MODE: Record<ShortcutPermissionProfile, PermissionMode> = {
+  'confirm-each-action': 'manual',
+};
+
+/** Whether a name is one of the profiles this build implements. */
+export function isShortcutPermissionProfile(value: unknown): value is ShortcutPermissionProfile {
+  return (
+    typeof value === 'string' && (SHORTCUT_PERMISSION_PROFILES as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * Normalises a proposed `allowedTools` list, or refuses it.
+ *
+ * Names are checked for *shape* here and for *existence* at launch, and the
+ * split matters: a tool set changes when a server is added or removed, so a
+ * name that resolves today may not tomorrow. Refusing at storage time on a
+ * name the registry does not currently know would make a shortcut undeletable
+ * by being uncreatable; refusing at launch tells the user at the moment it
+ * matters.
+ */
+export function normaliseAllowedTools(
+  value: unknown,
+):
+  | { readonly ok: true; readonly tools: readonly string[] }
+  | { readonly ok: false; readonly detail: string } {
+  if (value === undefined) return { ok: true, tools: [] };
+  if (!Array.isArray(value)) return { ok: false, detail: 'allowedTools must be a list of names' };
+  if (value.length > MAX_SHORTCUT_ALLOWED_TOOLS) {
+    return {
+      ok: false,
+      detail: `a shortcut may name at most ${MAX_SHORTCUT_ALLOWED_TOOLS} tools`,
+    };
+  }
+  const tools: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'string') {
+      return { ok: false, detail: 'every entry in allowedTools must be a tool name' };
+    }
+    const name = entry.trim();
+    // The charset both built-in (`family.verb`) and MCP (`mcp__server__tool`)
+    // names live in. A name outside it cannot be a registered tool, so it
+    // could only ever narrow to nothing while looking like a constraint.
+    if (name.length === 0 || !/^[A-Za-z0-9_.-]+$/.test(name)) {
+      return { ok: false, detail: `"${entry.slice(0, 40)}" is not a usable tool name` };
+    }
+    if (!tools.includes(name)) tools.push(name);
+  }
+  return { ok: true, tools };
 }
 
 /**

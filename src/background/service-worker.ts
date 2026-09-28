@@ -82,6 +82,11 @@ import { WorkflowRecorder } from '@/workflows/workflow-recorder';
 import { WorkflowReplayer } from '@/workflows/workflow-replay';
 import { ShortcutStore, ShortcutError } from '@/shortcuts/shortcut-store';
 import { ShortcutResolver } from '@/shortcuts/shortcut-resolver';
+import {
+  SHORTCUT_PROFILE_MODE,
+  isShortcutPermissionProfile,
+  normaliseAllowedTools,
+} from '@/shortcuts/shortcut-model';
 import { SkillLauncher } from './skill-launcher';
 import type { ShortcutRecord } from '@/shortcuts/shortcut-model';
 import type { ScheduleRunSummary, ScheduleSummary, ShortcutSummary } from '@/messaging/protocol';
@@ -109,7 +114,7 @@ import {
   sanitiseSitePolicyState,
   type SitePolicyState,
 } from '@/policy/site-policy';
-import type { PolicyContext } from '@/policy/policy-engine';
+import { strictestMode, type PolicyContext } from '@/policy/policy-engine';
 import { parsePlanApproval } from '@/policy/plan-model';
 import { AgentRuntime } from '@/agent/runtime/agent-runtime';
 import { TaskManager } from './task-manager';
@@ -350,8 +355,16 @@ const loadPolicyContext = async (taskId: string): Promise<PolicyContext> => {
   // one. `parsePlanApproval` is the boundary where that is decided, so the
   // engine only ever sees an approval this build would have produced.
   const planApproval = parsePlanApproval(task?.planApproval, taskId);
+  // A task started from a shortcut with a permission profile carries a floor
+  // on strictness. Resolved through `strictestMode` against the mode in force
+  // right now, so the floor can only tighten this call and can never loosen it
+  // — including when the ambient setting has moved since the task started.
+  const mode =
+    task?.permissionFloor === undefined
+      ? settings.permissionMode
+      : strictestMode(settings.permissionMode, task.permissionFloor);
   return {
-    mode: settings.permissionMode,
+    mode,
     sitePolicy: await loadSitePolicy(),
     allowInsecureOrigins: settings.allowInsecureOrigins,
     unattended,
@@ -777,6 +790,13 @@ const toolRegistry = new ToolRegistry({
   permissionEngine,
   loadPolicyContext,
   evidenceStore,
+  // P-021's narrowing, read from the durable task record rather than from
+  // worker memory, so a run that outlives an eviction is still narrowed when
+  // it wakes. A task that cannot be read yields `undefined`, which is no
+  // narrowing — and that is safe here only because every other gate still
+  // applies: the constraint removes tools, it never admits one.
+  resolveAllowedTools: async (taskId) =>
+    (await taskStore.getTask(taskId).catch(() => undefined))?.allowedTools,
 });
 // ---------------------------------------------------------------------------
 // Connectors
@@ -2115,27 +2135,44 @@ const router = new MessageRouter({
 
 router.on('task.create', async ({ objective, authorizationModel, shortcutId }) => {
   const session = await getOrCreateSession();
+
+  /*
+   * Read before the task is made, because a shortcut's `allowedTools` and
+   * `permissionProfile` are fixed at creation and cannot be applied afterwards.
+   *
+   * The **stored record** is the authority for its own constraint, and the
+   * panel only names which shortcut it is launching. A route that took the
+   * narrowing as a parameter would let any caller invent one — harmless in
+   * itself, since a narrowing only removes, but it would no longer be *this
+   * shortcut's* constraint, and a restricted shortcut would be one the panel
+   * had to remember to restrict.
+   */
+  const shortcut =
+    shortcutId === undefined
+      ? undefined
+      : await shortcutStore.get(shortcutId).catch(() => undefined);
+
   const task = await taskManager.create(objective, session.id, {
     ...(authorizationModel === undefined ? {} : { authorizationModel }),
+    ...(shortcut?.allowedTools === undefined ? {} : { allowedTools: shortcut.allowedTools }),
+    ...(shortcut?.permissionProfile === undefined
+      ? {}
+      : { permissionFloor: SHORTCUT_PROFILE_MODE[shortcut.permissionProfile] }),
   });
 
-  // Written after the task exists, and only for a shortcut that really is
-  // stored: a record naming a shortcut nobody created would be a trail
-  // asserting a provenance it cannot support. A failure to record it never
-  // fails the task — the task already started.
-  if (shortcutId !== undefined) {
-    const record = await shortcutStore.get(shortcutId).catch(() => undefined);
-    if (record) {
-      await auditLog
-        .record({
-          type: 'shortcut.launched',
-          taskId: task.id,
-          shortcutId: record.shortcutId,
-          code: record.target.kind,
-          outcome: 'info',
-        })
-        .catch(() => undefined);
-    }
+  // Recorded only for a shortcut that really is stored: a record naming a
+  // shortcut nobody created would be a trail asserting a provenance it cannot
+  // support. A failure to record it never fails the task — it already started.
+  if (shortcut) {
+    await auditLog
+      .record({
+        type: 'shortcut.launched',
+        taskId: task.id,
+        shortcutId: shortcut.shortcutId,
+        code: shortcut.target.kind,
+        outcome: 'info',
+      })
+      .catch(() => undefined);
   }
 
   return { task };
@@ -3882,7 +3919,7 @@ router.on('shortcut.list', async () => ({
   shortcuts: await Promise.all((await shortcutStore.list()).map(summariseShortcut)),
 }));
 
-router.on('shortcut.create', async ({ name, target }) => {
+router.on('shortcut.create', async ({ name, target, allowedTools, permissionProfile }) => {
   // Checked at creation so a user is not allowed to name something that is
   // already broken. It is checked again at every resolution, because a target
   // that exists now can be deleted later.
@@ -3892,8 +3929,37 @@ router.on('shortcut.create', async ({ name, target }) => {
       error: { reason: 'INVALID_TARGET', detail: 'That workflow is not available to run.' },
     };
   }
+
+  // Both narrowings are validated here rather than in the store, because both
+  // refusals are things the panel has to be able to tell the user about by
+  // name — and neither is a storage concern.
+  const narrowing = normaliseAllowedTools(allowedTools);
+  if (!narrowing.ok) {
+    return { shortcut: null, error: { reason: 'INVALID_ALLOWED_TOOLS', detail: narrowing.detail } };
+  }
+  if (permissionProfile !== undefined && !isShortcutPermissionProfile(permissionProfile)) {
+    // Refused, never ignored. A stored profile nobody implements would leave a
+    // shortcut that reads as stricter than it is.
+    return {
+      shortcut: null,
+      error: {
+        reason: 'UNKNOWN_PERMISSION_PROFILE',
+        detail:
+          `"${String(permissionProfile).slice(0, 40)}" is not a permission profile this ` +
+          'extension implements. A profile may only make a run stricter.',
+      },
+    };
+  }
+
   try {
-    return { shortcut: await summariseShortcut(await shortcutStore.create(name, target)) };
+    return {
+      shortcut: await summariseShortcut(
+        await shortcutStore.create(name, target, {
+          allowedTools: narrowing.tools,
+          ...(permissionProfile === undefined ? {} : { permissionProfile }),
+        }),
+      ),
+    };
   } catch (error) {
     // A collision comes back as data rather than an exception, because the
     // panel has to tell the user which existing name they clashed with.

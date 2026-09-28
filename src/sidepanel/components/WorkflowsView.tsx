@@ -50,6 +50,16 @@ export function WorkflowsView({
   const [skills, setSkills] = useState<PanelResponse<'skill.list'>['skills']>([]);
   const [naming, setNaming] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
+  /**
+   * §50's two narrowings, offered on the same form as the name.
+   *
+   * Both are restrictions, so the default for each is "no restriction" and
+   * neither can grant anything. `allowedTools` is free text because the tool
+   * set is not fixed — an MCP server adds to it — and the worker names the
+   * refusal precisely when an entry cannot be a tool.
+   */
+  const [confirmEachAction, setConfirmEachAction] = useState(false);
+  const [allowedToolsText, setAllowedToolsText] = useState('');
 
   const refresh = useCallback(async () => {
     try {
@@ -181,7 +191,16 @@ export function WorkflowsView({
   const addShortcut = async (target: ShortcutSummaryTarget, label: string): Promise<void> => {
     setBusy('shortcut');
     try {
-      const result = await sendToBackground('shortcut.create', { name: newName, target });
+      const allowedTools = allowedToolsText
+        .split(/[\s,]+/)
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+      const result = await sendToBackground('shortcut.create', {
+        name: newName,
+        target,
+        ...(allowedTools.length === 0 ? {} : { allowedTools }),
+        ...(confirmEachAction ? { permissionProfile: 'confirm-each-action' } : {}),
+      });
       setMessage(
         result.shortcut
           ? { tone: 'ok', text: `/${result.shortcut.name} now runs ${label}.` }
@@ -190,6 +209,8 @@ export function WorkflowsView({
       if (result.shortcut) {
         setNaming(null);
         setNewName('');
+        setAllowedToolsText('');
+        setConfirmEachAction(false);
       }
       await refresh();
     } catch (error) {
@@ -210,27 +231,52 @@ export function WorkflowsView({
   };
 
   const nameForm = (target: ShortcutSummaryTarget, label: string): React.JSX.Element => (
-    <span className="settings__actions">
-      <input
-        className="field__input"
-        value={newName}
-        maxLength={48}
-        placeholder="qa-regression"
-        aria-label="Shortcut name"
-        onChange={(event) => setNewName(event.target.value)}
-      />
-      <button
-        type="button"
-        className="button"
-        disabled={busy !== null || newName.trim().length === 0}
-        onClick={() => void addShortcut(target, label)}
-      >
-        Save
-      </button>
-      <button type="button" className="button button--ghost" onClick={() => setNaming(null)}>
-        Cancel
-      </button>
-    </span>
+    <>
+      <span className="settings__actions">
+        <input
+          className="field__input"
+          value={newName}
+          maxLength={48}
+          placeholder="qa-regression"
+          aria-label="Shortcut name"
+          onChange={(event) => setNewName(event.target.value)}
+        />
+        <button
+          type="button"
+          className="button"
+          disabled={busy !== null || newName.trim().length === 0}
+          onClick={() => void addShortcut(target, label)}
+        >
+          Save
+        </button>
+        <button type="button" className="button button--ghost" onClick={() => setNaming(null)}>
+          Cancel
+        </button>
+      </span>
+      <div className="field">
+        <input
+          className="field__input"
+          value={allowedToolsText}
+          placeholder="browser.read_page, browser.click"
+          aria-label="Tools this shortcut may use"
+          onChange={(event) => setAllowedToolsText(event.target.value)}
+        />
+        <p className="field__hint">
+          Optional. Names the only tools this shortcut’s run may use — it can restrict what the
+          agent reaches, never widen it. Leave empty for no restriction.
+        </p>
+      </div>
+      <label className="field__hint">
+        <input
+          type="checkbox"
+          checked={confirmEachAction}
+          aria-label="Confirm every action in this shortcut’s run"
+          onChange={(event) => setConfirmEachAction(event.target.checked)}
+        />{' '}
+        Confirm every action, whatever the permission mode is set to. This can only make a run
+        stricter.
+      </label>
+    </>
   );
 
   const remove = async (workflowId: string): Promise<void> => {

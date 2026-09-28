@@ -21,6 +21,7 @@ import {
   assertShortcutSafe,
   isUsableShortcut,
   SHORTCUT_FORMAT_VERSION,
+  type ShortcutPermissionProfile,
   type ShortcutRecord,
   type ShortcutTarget,
 } from './shortcut-model';
@@ -122,7 +123,14 @@ export class ShortcutStore {
    * the check only here would let a shortcut created when its target existed
    * keep working after the target was deleted.
    */
-  async create(displayName: string, target: ShortcutTarget): Promise<ShortcutRecord> {
+  async create(
+    displayName: string,
+    target: ShortcutTarget,
+    constraint: {
+      readonly allowedTools?: readonly string[];
+      readonly permissionProfile?: ShortcutPermissionProfile;
+    } = {},
+  ): Promise<ShortcutRecord> {
     const verdict = normaliseShortcutName(displayName);
     if (!verdict.ok) throw new ShortcutError(verdict.reason, verdict.detail);
 
@@ -157,6 +165,15 @@ export class ShortcutStore {
       name: verdict.name,
       skeleton: verdict.skeleton,
       target,
+      // Both narrowings, and both optional. An empty list is dropped rather
+      // than stored, so "no narrowing" has one representation on disk instead
+      // of two that a later reader would have to know are the same.
+      ...(constraint.allowedTools === undefined || constraint.allowedTools.length === 0
+        ? {}
+        : { allowedTools: constraint.allowedTools }),
+      ...(constraint.permissionProfile === undefined
+        ? {}
+        : { permissionProfile: constraint.permissionProfile }),
       createdAt: this.now(),
       updatedAt: this.now(),
     };

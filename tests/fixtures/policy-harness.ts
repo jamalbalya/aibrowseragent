@@ -80,6 +80,14 @@ export function createHarness(
      */
     resolveWorkspaceTabs?: ToolRegistryOptions['resolveWorkspaceTabs'];
     /**
+     * The tools this task is narrowed to (P-021 `allowedTools`).
+     *
+     * Supplied so the narrowing is enforced by the real dispatch path rather
+     * than by a test calling `execute` directly — the point being that the
+     * constraint is a *refusal*, not an absence from the offered list.
+     */
+    resolveAllowedTools?: ToolRegistryOptions['resolveAllowedTools'];
+    /**
      * The Chrome group the workspace is bound to.
      *
      * Needed because `tabs.group` joins that group rather than creating a new
@@ -155,6 +163,9 @@ export function createHarness(
     ...(options.resolveWorkspaceTabs === undefined
       ? {}
       : { resolveWorkspaceTabs: options.resolveWorkspaceTabs }),
+    ...(options.resolveAllowedTools === undefined
+      ? {}
+      : { resolveAllowedTools: options.resolveAllowedTools }),
     ...(options.resolveWorkspaceGroupId === undefined
       ? {}
       : { resolveWorkspaceGroupId: options.resolveWorkspaceGroupId }),

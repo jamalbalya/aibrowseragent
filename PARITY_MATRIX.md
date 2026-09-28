@@ -165,8 +165,8 @@ capability, not necessarily a test of the capability itself.
 
 | Status          | Count  |
 | --------------- | ------ |
-| PASS            | 34     |
-| PARTIAL         | 5      |
+| PASS            | 35     |
+| PARTIAL         | 4      |
 | INTERFACES-ONLY | 0      |
 | NOT-STARTED     | 1      |
 | **Total**       | **40** |
@@ -609,7 +609,7 @@ rather than folded into the verdict.
 | P-018 | Background task while Chrome is open | yes  | —    | yes         | —        | yes | PASS        |
 | P-019 | Notifications                        | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-020 | Scheduled tasks                      | yes  | —    | —           | yes      | yes | PASS        |
-| P-021 | Shortcuts                            | yes  | yes  | yes         | yes      | yes | PARTIAL     |
+| P-021 | Shortcuts                            | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-022 | Workflow recording                   | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-023 | Connector framework                  | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-024 | Skills                               | yes  | yes  | yes         | yes      | yes | PARTIAL     |
@@ -1115,14 +1115,51 @@ stay refused at any depth, a prompt target is refused unless it carries the
 objective and nothing else, and the confirmation shows the objective rather
 than a risk level it cannot know before the run exists.
 
-PARTIAL because the §85 A–F manual acceptance scenarios have not been
-executed — as for every row in this file — and for two reach limits. A
-shortcut names a whole target and takes no per-run inputs, so a workflow with
-runtime slots is reached through the review surface rather than by name;
-extending shortcuts to carry input values would mean storing values, which is
-a different security question and deliberately out of P-021's scope. And a
-shortcut **can** be scheduled, and the claim that it could not was never true —
-corrected here rather than left to mislead somebody deciding what to build.
+§50's `allowedTools` and `permissionProfile` are now implemented, and how they
+came to be implemented is the part worth recording, because this row was
+PARTIAL on a reading of them that turned out to be under-derived.
+
+The note here said a permission profile is "a stored permission with a name on
+it", and the workflow and shortcut design turns on the opposite rule — a
+recording never becomes a standing grant. That is true of exactly one reading
+of the field, the _authority_ reading, and three others were never evaluated.
+Re-derived, both fields have a reading that grants nothing:
+
+- **`allowedTools` is a narrowing.** It names already-registered tools and
+  removes everything else from the set the model is offered _and_ from the set
+  the registry will dispatch. Both halves matter: narrowing the offer alone is
+  not a constraint, because a model that saw a name in an earlier turn or simply
+  guessed it arrives at the registry anyway. It cannot admit a tool, cannot
+  raise what one may do, and does not pre-approve what it admits — a narrowed-to
+  tool meets exactly the confirmation it would have met without any narrowing.
+  The mechanism it needed already existed and had no caller:
+  `toCanonicalSchemas(allowed)` was written with the comment "a skill or
+  shortcut can narrow the surface", and the one production call site passed
+  nothing.
+- **`permissionProfile` is a tightening.** It resolves to a permission mode, and
+  the effective mode for a dispatch is `strictestMode(ambient, floor)` — so it
+  can make a run stricter than the current setting and can never make one
+  looser, whichever way the setting later moves. One profile exists because
+  `manual` is the strictest mode there is, so there is exactly one tightening to
+  express; a user-defined profile store was rejected as a second authorization
+  surface with nothing to add. An unrecognised name, §50's own `"qa-default"`
+  example included, is refused rather than ignored, because ignoring one would
+  leave a shortcut that reads as stricter than it is.
+
+Ten mutants killed, including the two that matter most: removing the dispatch
+refusal, which turns the narrowing into advice, and inverting `strictestMode`,
+which turns the tightening into a loosening.
+
+Two reach limits remain and are not blockers. A shortcut names a whole target
+and takes no per-run inputs, so a workflow with runtime slots is reached through
+the review surface rather than by name; extending shortcuts to carry input
+values would mean storing values, which is a different security question and
+deliberately out of P-021's scope. And a shortcut **can** be scheduled — the
+claim that it could not was never true, and is corrected here rather than left
+to mislead somebody deciding what to build.
+
+§84 condition 3 manual acceptance is unmet repository-wide, which every PASS row
+in this file carries.
 `ScheduleTarget` has carried a `shortcut` kind all along, and two cases
 exercise it, including the one that matters: the name is resolved at the moment
 the schedule fires rather than when it was created, so retargeting the shortcut

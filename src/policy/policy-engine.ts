@@ -34,6 +34,31 @@ export type PolicyVerdict = 'ALLOW' | 'ALLOW_WITH_CONFIRMATION' | 'DENY';
 export const PERMISSION_MODES = ['manual', 'auto', 'skip'] as const;
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
 
+/**
+ * How strict each mode is, most strict first.
+ *
+ * Written down as data rather than left implicit in a comparison, because two
+ * things now depend on the ordering being the same ordering: `strictestMode`
+ * below, and P-021's permission profiles, which may only ever tighten a run.
+ * `PERMISSION_MODES` happens to be in this order today and is a *declaration
+ * order*, not a claim about strictness — relying on it would make a reordering
+ * for display purposes silently change what a profile does.
+ */
+const MODE_STRICTNESS: Record<PermissionMode, number> = { manual: 2, auto: 1, skip: 0 };
+
+/**
+ * The stricter of two modes.
+ *
+ * Exists so a stored preference can tighten a run and can never loosen one. A
+ * shortcut's permission profile is resolved through here against the ambient
+ * mode, so the answer is never more permissive than either input — which is
+ * what makes storing the preference safe at all. See
+ * `SHORTCUT_PERMISSION_PROFILES`.
+ */
+export function strictestMode(a: PermissionMode, b: PermissionMode): PermissionMode {
+  return MODE_STRICTNESS[a] >= MODE_STRICTNESS[b] ? a : b;
+}
+
 export interface PolicyRequest {
   readonly tool: string;
   readonly taskId: string;

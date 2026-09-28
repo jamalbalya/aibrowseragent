@@ -902,6 +902,20 @@ export interface PanelRequestMap {
         | { kind: 'prompt'; objective: string }
         | { kind: 'workflow'; workflowId: string }
         | { kind: 'skill'; skillId: string; skillVersion: string };
+      /**
+       * Tools the run may use (§50 `allowedTools`). A narrowing, never a grant.
+       *
+       * Validated in the worker, not trusted: a name outside the tool-name
+       * charset is refused rather than stored, because it could only ever
+       * narrow to nothing while looking like a constraint.
+       */
+      allowedTools?: readonly string[];
+      /**
+       * A permission profile (§50 `permissionProfile`). Tightening only, and an
+       * unrecognised name is refused rather than ignored — ignoring one would
+       * leave a shortcut that reads as stricter than it is.
+       */
+      permissionProfile?: string;
     };
     response: { shortcut: ShortcutSummary | null; error?: { reason: string; detail: string } };
   };

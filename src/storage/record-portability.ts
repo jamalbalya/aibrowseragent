@@ -157,6 +157,22 @@ export const TASK_FIELD_PORTABILITY: Readonly<Record<keyof AgentTask, FieldPorta
   // authorises nothing; naming it at all is a file choosing how the agent
   // asks.
   authorizationModel: 'SECURITY_SENSITIVE',
+  /*
+   * A tool narrowing can only ever reduce, so a file *carrying* one is not the
+   * danger — a file **dropping** one is. A record imported without the
+   * constraint its original run had would be a task that looks like the one
+   * somebody restricted and is not, and the widening would be invisible
+   * precisely because nothing was added.
+   *
+   * Refused on both grounds, then: the narrowing names tools by the importing
+   * installation's own registry, which may hold a different set, and the field
+   * is the kind whose absence means "no restriction".
+   */
+  allowedTools: 'SECURITY_SENSITIVE',
+  // A floor on strictness, and the same asymmetry: carrying one is harmless
+  // because it can only tighten, and dropping one silently loosens a run
+  // somebody restricted. Refused rather than reconstructed.
+  permissionFloor: 'SECURITY_SENSITIVE',
 };
 
 /** Every field of the durable `Workspace` record. */

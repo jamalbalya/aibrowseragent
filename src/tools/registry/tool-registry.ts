@@ -137,6 +137,20 @@ export interface ToolRegistryOptions {
    * tabs would have been refused.
    */
   readonly resolveWorkspaceTabs?: (taskId: string) => Promise<readonly number[]>;
+  /**
+   * Tools this task is narrowed to, if any (P-021 `allowedTools`).
+   *
+   * Consulted here and not only where the tool list is built for the model,
+   * and that is the point rather than belt-and-braces for its own sake:
+   * narrowing what a model is *offered* is not a constraint if it can still
+   * name what it was not offered. A model that has seen `browser.click` in an
+   * earlier turn, or that guesses the name, reaches this line either way.
+   *
+   * `undefined` and an empty list both mean no narrowing. A list can only ever
+   * remove: there is no value here that admits a tool the registry does not
+   * hold, raises what one may do, or pre-approves a call.
+   */
+  readonly resolveAllowedTools?: (taskId: string) => Promise<readonly string[] | undefined>;
   /** The Chrome group backing this task's workspace, for tab creation. */
   readonly resolveWorkspaceGroupId?: (taskId: string) => Promise<number | undefined>;
   readonly egress?: {
@@ -432,6 +446,33 @@ export class ToolRegistry {
         userMessage: `The model asked for a tool that does not exist: ${canonicalName}.`,
       });
       return this.refuse(invocation, error, 'R0');
+    }
+
+    // 0. The task's tool narrowing, before anything else looks at the call.
+    //
+    //    Before schema validation on purpose: a tool this task may not use is
+    //    refused whether or not its arguments happen to parse, so the refusal
+    //    reason is the constraint rather than whatever else was also wrong.
+    //
+    //    `POLICY_BLOCKED` rather than `TOOL_NOT_FOUND`: the tool does exist,
+    //    and telling the model it does not would be a lie it could waste a
+    //    turn on. It is also not retryable — the narrowing is fixed for the
+    //    task's lifetime, so trying again cannot succeed.
+    const allowed = this.options.resolveAllowedTools
+      ? await this.options.resolveAllowedTools(invocation.taskId)
+      : undefined;
+    if (allowed !== undefined && allowed.length > 0 && !allowed.includes(canonicalName)) {
+      const error = createError(
+        'POLICY_BLOCKED',
+        `${canonicalName} is outside the tools this task may use.`,
+        {
+          userMessage:
+            `This task was started with a restricted set of tools, and ${canonicalName} ` +
+            'is not one of them.',
+          retryable: false,
+        },
+      );
+      return this.refuse(invocation, error, tool.risk);
     }
 
     // 1. Schema validation. Model output never reaches an implementation raw.

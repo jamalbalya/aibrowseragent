@@ -1548,7 +1548,8 @@
       "integration": ["tests/integration/shortcut-invocation.test.ts"],
       "security": [
         "tests/security/shortcut-security.test.ts",
-        "tests/security/scheduled-execution.test.ts"
+        "tests/security/scheduled-execution.test.ts",
+        "tests/security/shortcut-constraints.test.ts"
       ],
       "e2e": ["tests/e2e/shortcut-prompt-and-skills.spec.ts", "tests/e2e/shortcuts.spec.ts"],
       "clauses": [
@@ -1602,16 +1603,39 @@
           "specRef": "§50",
           "requirement": "allowedTools",
           "mandatory": true,
-          "status": "PARTIAL",
-          "note": "Not implemented, and the reason is the architecture rather than effort. A shortcut here is an **alias, not an execution path**: there is no `shortcut.run`, and invoking one is two steps the panel takes — resolve the name, show the user what it means, then call workflow.replay or skill.run. So a shortcut carries no execution authority to narrow. The tool set is bounded where it is actually determined: a skill's reachable tools are derived from its steps at registration, composition included, and a workflow's are fixed by its recording. Putting a second allow-list on the name would add an authorization input to an object that does not execute, which is the second authorization surface this architecture refuses. Recorded as a divergence rather than a gap, and left mandatory so the matrix cannot read as fully satisfying §50."
+          "status": "VERIFIED",
+          "note": "Implemented, after the previous note here was found to be under-derived. It said a shortcut is \"an alias, not an execution path\" so it \"carries no execution surface to restrict\" — true about execution and beside the point about `allowedTools`, which restricts nothing about execution and everything about *reach*. It is a **narrowing**: a list of already-registered tool names that removes tools from the set the model is offered and from the set the registry will dispatch. It cannot admit a tool the registry does not hold, cannot raise what one may do, and cannot pre-approve a call — a narrowed-to tool meets exactly the confirmation it would have met without any narrowing. Both halves are enforced, and that is the substance rather than defence in depth: narrowing the *offer* is not a constraint, because a model that saw a name in an earlier turn or guessed it reaches the registry anyway. The refusal is `POLICY_BLOCKED` and non-retryable — `TOOL_NOT_FOUND` would be a lie the model could waste a turn on, and the narrowing is fixed for the task's lifetime. The mechanism it uses already existed and had no caller: `toCanonicalSchemas(allowed)` was written with the comment \"a skill or shortcut can narrow the surface\" and the one production call site passed nothing. Absent and empty both mean no narrowing, matching §50's own `\"allowedTools\": []` example; a shortcut that may use no tools at all is therefore not expressible, which is stated rather than hidden. Ten mutants killed across both clauses.",
+          "evidence": [
+            "tests/security/shortcut-constraints.test.ts :: refuses a dispatch for a tool outside the set",
+            "tests/security/shortcut-constraints.test.ts :: says the tool exists rather than pretending it does not",
+            "tests/security/shortcut-constraints.test.ts :: cannot admit a tool the registry does not hold",
+            "tests/security/shortcut-constraints.test.ts :: does not pre-approve what it admits",
+            "tests/security/shortcut-constraints.test.ts :: treats an absent or empty list as no narrowing",
+            "tests/security/shortcut-constraints.test.ts :: narrows what the model is offered as well, so a restricted run wastes no turns",
+            "tests/security/shortcut-constraints.test.ts :: refuses a name that could not be a tool",
+            "tests/security/shortcut-constraints.test.ts :: is still refused a bare `tools` field, which is a definition",
+            "tests/e2e/shortcuts.spec.ts :: a shortcut’s allowedTools reaches the task it starts"
+          ]
         },
         {
           "id": "P-021-C6",
           "specRef": "§50",
           "requirement": "permissionProfile",
           "mandatory": true,
-          "status": "PARTIAL",
-          "note": "Not implemented, deliberately, and this one is a security position rather than a scoping one. A named permission profile attached to a shortcut is a **stored permission with a name on it**. The workflow and shortcut design turns on the opposite rule: a recording never becomes a standing grant, and replay re-earns every approval it needs at the risk the action actually carries. A profile would make the easiest path through the product the one that pre-approves. Recorded as a divergence, and left mandatory for the same reason as C5."
+          "status": "VERIFIED",
+          "note": "Implemented, and the previous note here was the one that most needed re-deriving. It read: \"a named permission profile attached to a shortcut is a **stored permission with a name on it**\", and the workflow and shortcut design turns on the opposite rule. That is true of exactly one reading — the *authority* reading — and three others were never evaluated. The reading adopted is **tightening only**. A profile resolves to a permission mode, and the effective mode for a dispatch is `strictestMode(ambient, floor)` — so a profile can make a run stricter than the current setting and can never make one looser, whichever direction the setting later moves. It grants nothing, and there is no value it could hold that grants anything. `SHORTCUT_PERMISSION_PROFILES` has one member because `manual` is the strictest mode this build has, so there is exactly one tightening to express. A user-defined profile store was rejected as a second authorization surface with nothing to add. An unrecognised name — including §50's own `\"qa-default\"` example — is **refused rather than ignored**, because ignoring one would leave a shortcut that reads as stricter than it is. The floor is on the durable task record and is read on every dispatch by `loadPolicyContext`, so it survives a worker eviction rather than being a fact about one worker generation. `strictestMode`'s ordering is declared as data rather than taken from `PERMISSION_MODES`, whose order is a declaration order — relying on it would let a reordering for display silently change what a profile does. The commutativity, idempotence and never-looser properties are asserted over every mode pair rather than the pairs somebody thought of.",
+          "evidence": [
+            "tests/security/shortcut-constraints.test.ts :: orders the modes by strictness rather than by declaration",
+            "tests/security/shortcut-constraints.test.ts :: is idempotent and commutative, so the floor cannot depend on argument order",
+            "tests/security/shortcut-constraints.test.ts :: can never return something looser than either input",
+            "tests/security/shortcut-constraints.test.ts :: names only profiles that tighten, and every one maps to a real mode",
+            "tests/security/shortcut-constraints.test.ts :: refuses a profile name it does not implement",
+            "tests/security/shortcut-constraints.test.ts :: stores both narrowings on a shortcut",
+            "tests/security/shortcut-constraints.test.ts :: classifies both as security sensitive",
+            "tests/e2e/shortcuts.spec.ts :: a shortcut’s permission profile makes a run stricter than the mode setting",
+            "tests/e2e/shortcuts.spec.ts :: a shortcut with no profile leaves the mode setting alone",
+            "tests/e2e/shortcuts.spec.ts :: the worker refuses a profile it does not implement, and a name that cannot be a tool"
+          ]
         },
         {
           "id": "P-021-C7",
