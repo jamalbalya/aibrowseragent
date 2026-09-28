@@ -89,6 +89,34 @@ Nothing is missing and nothing is blocked. Somebody has to decide.
 
 ---
 
+### Does any of C-1…C-5 block a public release?
+
+Asked because a decision nobody has taken looks exactly like a blocker until
+somebody checks, and four of these five turn out not to be one. Each row says
+what a release does **today**, without the decision, and what the decision
+would change.
+
+| #   | Blocks a public release? | What ships without the decision                                                                                                                                                                                                                                      |
+| --- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| C-1 | **No**                   | P-025 stays NOT-STARTED and off the parity critical path, which the adjudication settled. A release without a plugin system is a release without a capability the comparison extension is not documented to host                                                     |
+| C-2 | **No**                   | No in-product deletion, bounded retention, a compaction marker. The privacy policy now states the design and the reason — an append-only trail with an integrity check is what makes it answerable — so a user is told rather than left to discover it               |
+| C-3 | **No**                   | The loopback predicate covers `127.0.0.1`, `localhost` and `[::1]`, has one definition and one place to change. A user whose local model server listens elsewhere is refused, which is the safe direction and a stated limit                                         |
+| C-4 | **No**, and answered     | Local-first is locked and the backend must never be a runtime dependency, so **not** operating one is the default the locks already imply. There is no decision to take before a release; operating one later changes nothing about the browser agent                |
+| C-5 | **No**, once disclosed   | The boundary is the Chrome profile, and that is now said plainly in `PRIVACY.md` under "Who your data belongs to". Building per-user isolation remains a decision; **disclosing the boundary that exists was not one**, and shipping without the disclosure would be |
+
+C-5 is the one that had a release obligation hiding inside it. Whether to build
+the isolation is a product decision and stays open. Whether to _tell people what
+the current boundary is_ never was: a person sharing a Chrome profile would
+reasonably read "sign out" as "my work is now hidden", and it is not. That
+sentence is engineering work, it is done, and it would have been wrong to ship
+without it whichever way C-5 is eventually answered.
+
+C-4 deserves separating for the opposite reason. It is listed as an owner
+decision and the locked architecture already answers it: the backend is optional
+by design and must not become a runtime dependency for normal operation, so the
+release position is fixed regardless. It stays in this table as a record, not as
+something anybody is waiting on.
+
 ## D. Engineering work still possible now
 
 The category this audit existed to populate, and the reason the rule at the top

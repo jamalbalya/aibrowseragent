@@ -143,3 +143,34 @@ do.
 
 Uninstalling the extension removes its storage, including tasks, evidence and
 any API key you entered.
+
+There is no "delete this record" button inside the extension, and that is
+deliberate rather than unfinished. The activity trail is append-only and carries
+its own integrity check, which is what lets it answer "what did this agent
+actually do on my behalf" — a trail somebody can edit answers nothing. It is
+bounded instead: old entries are compacted away on a fixed retention, and the
+compaction leaves a marker so a gap is visible as a gap rather than passing for
+a quiet period.
+
+You can read the whole trail, and export it, from the Activity view at any time.
+
+## Who your data belongs to: the Chrome profile
+
+**Everything this extension stores belongs to the Chrome profile it is
+installed in, not to whoever is signed in to the extension.**
+
+That distinction matters if two people share one Chrome profile. Signing out of
+the extension and signing in as somebody else hides the _AI provider accounts_
+of the first person — those are scoped to the signed-in user — and it does not
+hide their tasks, activity trail, workflows, shortcuts or evidence. The second
+person sees them in the Activity view, and an export writes them to a file.
+
+This is stated plainly because it is the kind of thing a person would otherwise
+assume the other way round. No boundary is being crossed to reach that data:
+both people have the Chrome profile, and a Chrome profile is already the
+operating system's own per-person boundary — two people sharing one already
+share cookies, history and saved passwords.
+
+**If you do not want somebody else to see your work here, use your own Chrome
+profile**, which is the boundary this extension inherits and does not try to
+replace. The full analysis is in this repository's threat model as T-19.
