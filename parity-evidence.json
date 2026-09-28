@@ -1098,6 +1098,19 @@
           "evidence": [
             "tests/security/debugger-allowlist.test.ts :: refuses to inspect a non-automatable page"
           ]
+        },
+        {
+          "id": "P-014-C6",
+          "specRef": "§11",
+          "requirement": "An attachment does not outlive the task that made it.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/debugger-allowlist.test.ts :: releases a tab when the task that attached it ends",
+            "tests/security/debugger-allowlist.test.ts :: keeps a shared tab until the last task holding it ends",
+            "tests/security/debugger-allowlist.test.ts :: leaves an unowned attachment alone when a task ends"
+          ],
+          "notes": "Found by the Part 7 failure-cleanup census. Nothing detached when a task ended: the only two paths were the tab closing and the worker shutting down, so a cancelled task left Chrome’s debugging banner over a page the person went on browsing. Not an authorization hole — every debugger.* call is policy-evaluated on its own — but the banner is the user’s one signal that deep inspection is active. An attachment is now made in the task’s name and released at its terminal state; a shared tab waits for the last holder, an unowned attachment is left alone, and pausing releases nothing."
         }
       ]
     },
@@ -3156,9 +3169,14 @@
       "security": [
         "tests/security/audit-trail-security.test.ts",
         "tests/security/audit-log.test.ts",
-        "tests/security/route-trust-security.test.ts"
+        "tests/security/route-trust-security.test.ts",
+        "tests/security/audit-coverage-census.test.ts"
       ],
-      "e2e": ["tests/e2e/audit.spec.ts", "tests/e2e/route-trust.spec.ts"],
+      "e2e": [
+        "tests/e2e/audit.spec.ts",
+        "tests/e2e/route-trust.spec.ts",
+        "tests/e2e/audit-coverage.spec.ts"
+      ],
       "clauses": [
         {
           "id": "P-038-C1",
@@ -3260,6 +3278,20 @@
           "mandatory": false,
           "status": "PARTIAL",
           "note": "Non-mandatory because §38 does not specify the query surface. Stated rather than implied: the route filters on task and site, while a record also carries workflow, shortcut, schedule, run, connector and skill correlations. A reader of the export can use them; a route caller cannot yet."
+        },
+        {
+          "id": "P-038-C11",
+          "specRef": "§38",
+          "requirement": "Every action that changes what the agent may later do reaches the trail, and the guard runs in both directions.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/audit-coverage-census.test.ts :: 01 — every control-plane route either records in its handler or is exempt with a reason",
+            "tests/security/audit-coverage-census.test.ts :: 02 — the exemption table holds no stale entry",
+            "tests/e2e/audit-coverage.spec.ts :: switching the permission mode is recorded, and says which way it went",
+            "tests/e2e/audit-coverage.spec.ts :: local encryption records being switched on, locked, unlocked and switched off"
+          ],
+          "notes": "The declared-type guard ran one way only — every type has a producer — and twelve authority-changing actions had no type at all. The permission-mode switch wrote nothing while revoking one site rule wrote a record; shortcut configuration wrote nothing while all three schedule lifecycle events existed; and K1 enable, disable, unlock, lock and passphrase change wrote nothing, including a failed unlock, which is the one observable sign of the scenario K1’s threat model names. The census now requires every CLASS_B route to record or to be exempt with one of two stated reasons, and rejects a stale exemption."
         }
       ]
     },

@@ -595,6 +595,13 @@ describe('the type list describes the trail rather than an intention', () => {
       );
     const selfWritten = new Set(['retention.compacted']);
 
+    // Both populations asserted before either is judged. An empty `elsewhere`
+    // already fails loudly — every type would read as an orphan — but an empty
+    // type list would agree with everything, and a census that agrees with
+    // everything is the failure mode these censuses exist to avoid.
+    expect(AUDIT_EVENT_TYPES.length).toBeGreaterThan(30);
+    expect(elsewhere.length).toBeGreaterThan(100);
+
     const orphans = AUDIT_EVENT_TYPES.filter(
       (type) => !selfWritten.has(type) && !elsewhere.some((text) => text.includes(`'${type}'`)),
     );

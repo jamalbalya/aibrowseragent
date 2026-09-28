@@ -47,6 +47,11 @@ export const AUDIT_EVENT_TYPES = [
   'skill.step',
   'skill.finished',
   'workflow.recorded',
+  // The counterpart to `workflow.recorded`, and for a long time absent while
+  // `schedule.deleted` existed. A recording going away is what makes a shortcut
+  // pointing at it stop resolving, so without this the trail could show the
+  // failure and not its cause.
+  'workflow.removed',
   // A user switching a skill on or off (P-024). Recorded because it changes
   // what the agent can reach, which is the same class of fact as a site grant
   // being given or revoked.
@@ -122,6 +127,68 @@ export const AUDIT_EVENT_TYPES = [
    */
   'mcp.server.added',
   'mcp.server.removed',
+  /*
+   * Authority-changing panel actions (Part 7 census).
+   *
+   * These five were found by asking the reverse of the question this file
+   * already answered. `AUDIT_EVENT_TYPES` was guarded one way — every declared
+   * type has a producer — and nothing asked the other way: that every action
+   * which changes what the agent may later do has a type. Five did not.
+   *
+   * `session.permission_mode` is the most consequential of them. Switching to
+   * `skip` removes the confirmation step from every subsequent action for as
+   * long as it stays there, which is a broader grant than any single
+   * `policy.site_rule` — and it wrote nothing, while revoking one site rule
+   * wrote a record.
+   *
+   * `shortcut.configured` covers creation, retargeting and removal. A schedule
+   * already recorded all three (`schedule.created`, `updated`, `deleted`) and a
+   * shortcut recorded only its runs, which left the trail able to say a
+   * shortcut launched and unable to say what it had been pointed at, or by
+   * whom, or when that changed. Retargeting is the case that matters: a person
+   * confirms a launch by the name they gave it, and the name is the only thing
+   * they see.
+   *
+   * `storage.preference` is where records live, which decides what leaves the
+   * device at all.
+   *
+   * `data.exported` and `data.imported` are the boundary itself. Import writes
+   * workflows and shortcuts — standing-authority objects — from a file this
+   * device did not author.
+   *
+   * All five carry counts and modes, never names: a shortcut's display name is
+   * text a user typed and a workflow's steps are what it does, and neither has
+   * ever been allowed into this trail.
+   */
+  /*
+   * Local encryption's lifecycle (K1).
+   *
+   * The largest omission the census found, and the one furthest from a scope
+   * decision: K1 is what protects the provider API keys and connector
+   * credentials in this profile, and none of switching it on, switching it off,
+   * changing its passphrase, locking or unlocking wrote anything at all.
+   *
+   * `k1.disable` is the action this type most exists for. It takes the
+   * protection off the only SECRET_LOCAL_ONLY material this extension holds,
+   * and it left no trace — so a profile found later with plaintext keys could
+   * not be distinguished from one where protection was never switched on.
+   *
+   * A *failed* unlock is recorded too, with the closed `UnlockFailure` reason as
+   * its code. Repeated `WRONG_PASSPHRASE` records against a profile are the one
+   * observable sign of somebody working through passphrases, which is precisely
+   * the scenario K1's own threat model names — a stolen laptop, a synced backup,
+   * a shared machine. A trail that held only the successes would be silent
+   * exactly when it was most worth reading.
+   *
+   * Never the passphrase, never its length, and never a digest of it: a record
+   * that narrowed the guessing space would weaken the thing it reports on.
+   */
+  'k1.protection',
+  'session.permission_mode',
+  'shortcut.configured',
+  'storage.preference',
+  'data.exported',
+  'data.imported',
   // Written only by the log itself, when eviction removes records. It exists
   // so a reader can tell a quiet period from a truncated one.
   'retention.compacted',
@@ -278,6 +345,20 @@ export interface AuditEvent {
    * `taintKind` exists to avoid for taint sources.
    */
   readonly senderClass?: string;
+  /**
+   * Where records are kept, on `storage.preference` records.
+   *
+   * The mode name from the closed set the preference itself allows — never a
+   * device id, an account id or an endpoint.
+   */
+  readonly storageMode?: string;
+  /**
+   * How many records an export or an import moved.
+   *
+   * A count, which is what a later reader needs to tell a whole library
+   * leaving from a single entry. Never which records, and never their names.
+   */
+  readonly recordCount?: number;
   /** Retention bookkeeping, on `retention.compacted` records only. */
   readonly removedCount?: number;
   readonly removedFromSeq?: number;

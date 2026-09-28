@@ -220,6 +220,42 @@ also has open. Keeping them PARTIAL for that while thirty other rows read PASS
 with the same manual gate outstanding was an inconsistency in this file, not a
 stricter standard.
 
+No status moves in this revision, and the reason is worth stating: the audit
+census found twelve authority-changing actions that recorded nothing, and closing
+them strengthens a row (P-038) that already read PASS rather than moving any row.
+A count that only ever rises when a gap is found would be measuring the finding,
+not the product. P-038 gains a mandatory clause — **P-038-C11** — taking the
+inventory from 262 clauses to 263.
+
+What it found: `AUDIT_EVENT_TYPES` was guarded in one direction only. Every
+declared type must have a producer, which stops a capability announcing its
+lifecycle events before it can emit them, and nothing asked the reverse — whether
+every action that changes what the agent may later do has a type at all. Twelve
+did not, each with an audited counterpart beside it. Switching the permission
+mode to `skip` wrote nothing while revoking a single site rule wrote a record.
+Creating, retargeting and removing a shortcut wrote nothing while all three
+schedule lifecycle events existed. And K1 — enable, disable, unlock, lock,
+passphrase change — wrote nothing at all, including a failed unlock, which is the
+one observable sign of the scenario K1's own threat model names. `docs/audit.md`
+carries the full table and the reasoning; the guard is a census over every
+control-plane route, which now has to record or to be exempt with one of two
+stated reasons.
+
+The same census's failure-cleanup pass found a thirteenth, in a different
+place: a debugger attachment outlived the task that made it. Nothing detached
+when a task ended — the only two paths were the tab closing and the worker
+shutting down — so a cancelled task left Chrome's debugging banner standing over
+a page the person went on browsing. It was never an authorization hole, because
+every `debugger.*` call is policy-evaluated on its own, but the banner is the
+user's one signal that deep inspection is active and it was saying something
+untrue. P-014 gains **P-014-C6**, taking the inventory to 264 clauses. Its row
+does not move either: it already read PASS.
+
+Five of those twelve were missed by the manual sweep that found the first seven,
+because that sweep matched route names with a pattern that excluded a digit and
+`k1.*` never appeared in its results. The census imports the real route table
+instead, which is the whole reason it imports rather than matches.
+
 ### The clause gate, and the two rows it moved
 
 `parity-evidence.json` carries a **clause inventory for all forty capabilities** — 256 clauses — and

@@ -117,6 +117,25 @@ const MAX_NETWORK_ENTRIES = 200;
 
 export class DebuggerManager {
   private readonly buffers = new Map<number, TabBuffers>();
+  /**
+   * Which tasks hold each attached tab.
+   *
+   * An attachment used to outlive the task that made it. `debugger.network`
+   * attaches and returns, nothing detached on the way out, and the only two
+   * things that ever detached were the tab closing and the worker shutting
+   * down — so cancelling a task left Chrome's debugging banner up over a page
+   * the person went on browsing, with no task running behind it. It was never
+   * an authorization hole, because every `debugger.*` call is policy-evaluated
+   * on its own, but the banner is the user's one signal that deep inspection is
+   * active and it was saying something untrue.
+   *
+   * A set rather than a single owner, because two tasks may legitimately want
+   * the same tab and the attachment is shared: the last one to let go is what
+   * releases it. A tab attached with no owner — `browser.screenshot` does this
+   * around its own capture — is deliberately absent from this map and is never
+   * released by a task ending.
+   */
+  private readonly owners = new Map<number, Set<string>>();
   private listening = false;
 
   constructor(private readonly port: DebuggerPort = chromeDebuggerPort) {}
@@ -135,8 +154,23 @@ export class DebuggerManager {
    * Attachment shows Chrome's "is debugging this browser" banner, which is
    * intentional: the user must be able to see that deep inspection is active.
    */
-  async attach(tabId: number): Promise<void> {
-    if (this.buffers.has(tabId)) return;
+  async attach(tabId: number, owner?: string): Promise<void> {
+    // Claimed only once the tab is genuinely attached, and claimed on the early
+    // return too so that joining an attachment somebody else made still
+    // registers this task's hold on it. Claiming up front instead would leave a
+    // claim on a tab a competing debugger stopped us attaching to, and
+    // `releaseTask` would later detach something this manager never held.
+    const claim = (): void => {
+      if (owner === undefined) return;
+      const holders = this.owners.get(tabId) ?? new Set<string>();
+      holders.add(owner);
+      this.owners.set(tabId, holders);
+    };
+
+    if (this.buffers.has(tabId)) {
+      claim();
+      return;
+    }
 
     this.ensureListening();
 
@@ -169,11 +203,30 @@ export class DebuggerManager {
       await this.detach(tabId);
       throw error;
     }
+    claim();
     log.info('Debugger attached.', { tabId });
+  }
+
+  /**
+   * Releases one task's claim on every tab it attached, detaching the tabs no
+   * other task still holds.
+   *
+   * Called when a task reaches a terminal state — cancelled, completed or
+   * failed — which is one fact hooked in one place, for the reason the worker's
+   * lifecycle observer already states about the staged files beside it.
+   */
+  async releaseTask(taskId: string): Promise<void> {
+    for (const [tabId, holders] of [...this.owners]) {
+      if (!holders.delete(taskId)) continue;
+      if (holders.size > 0) continue;
+      this.owners.delete(tabId);
+      await this.detach(tabId);
+    }
   }
 
   async detach(tabId: number): Promise<void> {
     this.buffers.delete(tabId);
+    this.owners.delete(tabId);
     try {
       await this.port.detach({ tabId });
     } catch {

@@ -459,6 +459,22 @@ The debugger is the most powerful capability in the extension.
   The model cannot name a protocol method at all.
 - Attaching shows Chrome's debugging banner. That is intentional: the user must
   be able to see that deep inspection is active.
+- **The banner goes when the task does.** An attachment is made in the task's
+  name, and the manager releases it when the task reaches a terminal state —
+  cancelled, completed or failed. It used to outlive the task: `debugger.*`
+  attached and returned, nothing detached on the way out, and the only two
+  things that ever detached were the tab closing and the worker shutting down,
+  so a cancelled task left the banner standing over a page the person went on
+  browsing with nothing running behind it. That was never an authorization hole
+  — every `debugger.*` call is policy-evaluated on its own, so a later task
+  inherits nothing from a stale attachment — but the banner is the user's one
+  signal, and it was saying something untrue.
+
+  Two tasks may hold the same tab and the last to let go releases it, so one
+  task finishing cannot pull the buffers out from under another. A tab attached
+  with no owner — `browser.screenshot` does this around its own capture and
+  detaches itself in a `finally` — is never released by a task ending. Pausing
+  is not a terminal state and releases nothing.
 
 ---
 
@@ -1292,6 +1308,47 @@ added, the evaluator added, the permission added, and each one caught.
 What this does not do is establish that the components _are_ correct. It
 establishes that there are no others. The rest of this document is the first
 claim; this section is the second, and neither substitutes for the other.
+
+## Counting the other way round
+
+Most of the guards above answer "does this thing that exists behave correctly".
+Two waves of audit have now found defects that no such guard could see, because
+the thing that should have existed did not, and the recurring shape is precise
+enough to be worth naming: **the decision is right and the record or the release
+of it is blank.**
+
+- `AUDIT_EVENT_TYPES` required every declared type to have a producer, and
+  nothing required every authority-changing action to have a type. Twelve had
+  none — the permission-mode switch, shortcut configuration, the storage-mode
+  choice, local export and import, workflow deletion, the trail's own export,
+  and all five of K1's lifecycle actions.
+- A debugger attachment was authorised correctly on every call and released by
+  nothing when the task ended.
+- `toCanonicalSchemas(allowed)` was written, documented for the case it was
+  meant to serve, and called from nowhere.
+
+A guard over what exists cannot find any of these. What finds them is a census:
+enumerate the real table — the route classes, the declared types, the tool
+registry — and require every row to be accounted for, either by the behaviour or
+by a named exemption with a stated reason. Three of these censuses now run in
+CI:
+
+| Census                                         | Enumerates                                | Requires of every row                                                  |
+| ---------------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------- |
+| `tests/security/audit-coverage-census.test.ts` | `PANEL_ROUTE_CLASSES`, control-plane rows | records in its handler, or an exemption with one of two stated reasons |
+| `tests/security/audit-trail-security.test.ts`  | `AUDIT_EVENT_TYPES`                       | a producer somewhere in `src/`, outside the audit module               |
+| the security-invariants section above          | files holding each primitive              | an exact count, argued in the test                                     |
+
+Two lessons about writing one, because each cost a cycle:
+
+1. **Import the real table; do not match the source for it.** The sweep that
+   preceded the audit census matched route names with `[a-zA-Z.]`, and every
+   `k1.*` route was silently absent from its results — five of the twelve
+   omissions, including the most consequential.
+2. **An empty result is not a pass.** A census whose enumeration returns nothing
+   agrees with everything. Each of these asserts the population is non-empty, or
+   names its rows individually, so a broken enumeration fails rather than
+   passing quietly.
 
 ## Reporting a vulnerability
 

@@ -217,6 +217,85 @@ itself, and it is named in the test rather than pattern-matched away.
 This matters beyond tidiness: it is what stops a future capability declaring
 its lifecycle events before it can emit them.
 
+## Every authority-changing action is one something records
+
+The section above guards one direction: a declared type must have a producer.
+Nothing asked the other way round, and the other way round is the one that
+matters more — does every action which changes what the agent may later do have
+a type at all?
+
+Twelve did not, and the census that found them is
+`tests/security/audit-coverage-census.test.ts`. What makes each an omission
+rather than a scope decision is that each had an audited counterpart sitting
+beside it:
+
+| Action                                                           | Recorded nothing      | Its counterpart, already recorded          |
+| ---------------------------------------------------------------- | --------------------- | ------------------------------------------ |
+| `session.setPermissionMode`                                      | the mode change       | `policy.site_rule`, for one site           |
+| `shortcut.create` / `retarget` / `remove`                        | the configuration     | `schedule.created` / `updated` / `deleted` |
+| `storage.setPreference`                                          | where records live    | —                                          |
+| `data.export` / `data.import`                                    | the boundary crossing | —                                          |
+| `workflow.remove`                                                | the deletion          | `workflow.recorded`                        |
+| `audit.export`                                                   | the trail leaving     | —                                          |
+| `k1.enable` / `disable` / `unlock` / `lock` / `changePassphrase` | all of it             | —                                          |
+
+Two of these are worth stating plainly.
+
+**Switching to `skip`** removes the confirmation step from every subsequent
+action for as long as it stands. It is a broader grant than any single site rule
+by a wide margin, and revoking one site rule wrote a record while this wrote
+nothing. `session.permission_mode` now carries the new mode and the one it came
+from, and its `outcome` is the _direction_ — `allowed` for a tightening,
+`denied` for a loosening, the same sense `policy.site_rule` uses for a grant and
+a revocation. A reader should not have to find the previous record, which
+retention may already have evicted, to learn which way the authority went.
+
+**K1** is the larger one. Local encryption is what protects the provider API
+keys and connector credentials in this profile, and none of switching it on,
+switching it off, changing its passphrase, locking or unlocking wrote anything.
+`k1.disable` is the action `k1.protection` most exists for: it takes the
+protection off the only `SECRET_LOCAL_ONLY` material here, and without a record
+a profile found later with plaintext keys cannot be distinguished from one where
+protection was never switched on. A _failed_ unlock is recorded too, with the
+closed `UnlockFailure` reason as its code, because repeated `WRONG_PASSPHRASE`
+records are the one observable sign of somebody working through passphrases —
+which is precisely the scenario [K1's own threat
+model](architecture/K1_LOCAL_ENCRYPTION.md) names. Never the passphrase, never
+its length and never a digest of it: a record that narrowed the guessing space
+would weaken the thing it reports on.
+
+### How the census stays honest
+
+Every `CLASS_B_PANEL_CONTROL_PLANE` route either records in its own handler or
+is named in the census's `EXEMPT` table with one of exactly two reasons: **a
+downstream producer**, which the test then checks is a declared type, or
+**nothing to record**. A third test rejects a stale entry, so a route that
+starts recording has to leave the table. The next control-plane route added
+therefore has to choose, in review rather than in a later audit.
+
+The table also holds two _settled_ decisions rather than gaps, so that a future
+reader does not reopen them: `provider.connect` records nothing because
+`provider.state` was declared-and-never-written and was deleted on the stated
+grounds that `provider.selected` covers which brain is in use; and `mcp.refresh`
+records nothing because a tool set is a fresh reading on every registration
+rather than a state that changes.
+
+Three details of the census are worth keeping, because each cost a cycle:
+
+- It **imports `PANEL_ROUTE_CLASSES`** rather than matching route names out of
+  the source. The manual sweep that preceded it used `[a-zA-Z.]` for a route
+  name, and every `k1.*` route — five of the twelve, and the most consequential
+  of them — was silently absent from its results.
+- It splits handlers **by brace balance**, not by a line window, so a record
+  belonging to the following route cannot satisfy this one.
+- It matches **whitespace-collapsed**, because asserting the literal text of a
+  call the formatter may reflow is a test that fails on formatting.
+
+The Activity view renders the record's `code` for the same reason the code is
+recorded: locking and switching protection off are both `k1.protection` with a
+`denied` outcome, and a row showing only the type and the outcome could not tell
+a safety action from the removal of the safety.
+
 ## What is still missing for P-038
 
 Stated so the PARTIAL is a description rather than a shrug:

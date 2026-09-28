@@ -201,6 +201,22 @@ export function AuditView({ activeTaskId, onClose }: AuditViewProps): React.JSX.
                   {event.type === 'retention.compacted' ? (
                     <> — {event.removedCount} older records removed</>
                   ) : null}
+                  {/*
+                   * The decision code, which for several types is the only thing
+                   * separating two records that read identically without it:
+                   * locking and switching local encryption off are both
+                   * `k1.protection` with a `denied` outcome, and a reader of
+                   * this list could not tell them apart. It is extension-authored
+                   * vocabulary — the same closed set the export already carries —
+                   * never text from a page, a model or a server.
+                   */}
+                  {event.code ? (
+                    <>
+                      {' '}
+                      — <code>{event.code}</code>
+                    </>
+                  ) : null}
+                  {event.recordCount === undefined ? null : <> — {event.recordCount} records</>}
                   {event.site ? <> — {event.site}</> : null}
                 </span>
                 <span className={`badge badge--${event.outcome}`}>{event.outcome}</span>

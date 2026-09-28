@@ -34,7 +34,10 @@ async function requireAttachedTab(
     throw new ToolError('POLICY_BLOCKED', check.detail ?? 'This page cannot be inspected.');
   }
 
-  await deps.manager.attach(tabId);
+  // Attached in the task's name, so the attachment — and Chrome's debugging
+  // banner with it — is released when the task reaches a terminal state rather
+  // than surviving until the tab closes or the worker is evicted.
+  await deps.manager.attach(tabId, context.taskId);
   return tab;
 }
 

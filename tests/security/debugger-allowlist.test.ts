@@ -21,6 +21,8 @@ type EventListener = (source: { tabId?: number }, method: string, params?: unkno
 class FakeDebuggerPort implements DebuggerPort {
   readonly sent: { method: string; params?: Record<string, unknown> }[] = [];
   readonly attached = new Set<number>();
+  /** Every detach, in order — `attached` alone cannot show one that happened. */
+  readonly detached: number[] = [];
   private eventListeners: EventListener[] = [];
   private detachListeners: ((source: { tabId?: number }, reason: string) => void)[] = [];
   attachError: Error | null = null;
@@ -33,6 +35,7 @@ class FakeDebuggerPort implements DebuggerPort {
   }
   detach(target: { tabId: number }): Promise<void> {
     this.attached.delete(target.tabId);
+    this.detached.push(target.tabId);
     return Promise.resolve();
   }
   sendCommand(
@@ -174,6 +177,83 @@ describe('attach lifecycle', () => {
     await manager.attach(2);
     await manager.detachAll();
     expect(manager.attachedTabs()).toEqual([]);
+  });
+
+  /*
+   * An attachment used to outlive the task that made it. `debugger.*` attached
+   * and returned, nothing detached on the way out, and the only two things that
+   * ever detached were the tab closing and the worker shutting down — so a
+   * cancelled task left Chrome's debugging banner standing over a page the
+   * person went on browsing, with nothing running behind it.
+   *
+   * It was never an authorization hole: every `debugger.*` call is
+   * policy-evaluated on its own, so a later task inherits no permission from a
+   * stale attachment. What it was is the user's one signal that deep inspection
+   * is active, saying something untrue.
+   */
+  it('releases a tab when the task that attached it ends', async () => {
+    await manager.attach(1, 'task-a');
+    expect(manager.isAttached(1)).toBe(true);
+
+    await manager.releaseTask('task-a');
+    expect(manager.isAttached(1)).toBe(false);
+    expect(port.detached).toContain(1);
+  });
+
+  it('keeps a shared tab until the last task holding it ends', async () => {
+    // Two tasks may legitimately want the same tab, and the attachment is
+    // shared: releasing on the first one to finish would pull the buffers out
+    // from under the other.
+    await manager.attach(1, 'task-a');
+    await manager.attach(1, 'task-b');
+
+    await manager.releaseTask('task-a');
+    expect(manager.isAttached(1)).toBe(true);
+
+    await manager.releaseTask('task-b');
+    expect(manager.isAttached(1)).toBe(false);
+  });
+
+  it('leaves an unowned attachment alone when a task ends', async () => {
+    // `browser.screenshot` attaches around its own capture with no owner and
+    // detaches itself in a `finally`. A task ending must not reach in and
+    // detach mid-capture.
+    await manager.attach(1);
+    await manager.attach(2, 'task-a');
+
+    await manager.releaseTask('task-a');
+    expect(manager.isAttached(1)).toBe(true);
+    expect(manager.isAttached(2)).toBe(false);
+  });
+
+  it('releasing a task that attached nothing detaches nothing', async () => {
+    await manager.attach(1, 'task-a');
+    const before = port.detached.length;
+    await manager.releaseTask('task-unrelated');
+    expect(port.detached.length).toBe(before);
+    expect(manager.isAttached(1)).toBe(true);
+  });
+
+  it('claims nothing when the attach itself fails', async () => {
+    // Otherwise a competing debugger leaves a claim on a tab this manager never
+    // held, and the task ending would detach something that was never ours.
+    port.attachError = new Error('Another debugger is already attached to the tab');
+    await expect(manager.attach(1, 'task-a')).rejects.toThrow();
+    port.attachError = null;
+
+    const before = port.detached.length;
+    await manager.releaseTask('task-a');
+    expect(port.detached.length).toBe(before);
+  });
+
+  it('forgets an owner when the tab detaches on its own', async () => {
+    // Otherwise a tab id Chrome has already reused would carry a claim from a
+    // task that has nothing to do with it.
+    await manager.attach(1, 'task-a');
+    await manager.detach(1);
+    await manager.attach(1, 'task-b');
+    await manager.releaseTask('task-a');
+    expect(manager.isAttached(1)).toBe(true);
   });
 });
 

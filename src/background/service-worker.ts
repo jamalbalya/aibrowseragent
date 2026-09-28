@@ -1518,6 +1518,38 @@ function targetIdOf(target: ShortcutRecord['target']): string {
 }
 
 /** A shortcut as the panel sees it, with its target looked up now. */
+/**
+ * Records a shortcut's configuration changing.
+ *
+ * Three actions share one event because a later reader is asking one question:
+ * what was this shortcut pointed at, and when did that change. `outcome` is the
+ * direction — a shortcut coming into existence or being re-aimed is `allowed`
+ * and one going away is `denied` — the same sense `policy.site_rule` uses.
+ *
+ * What is deliberately absent: the display name, which is text a user typed;
+ * the target's identity, which for a saved prompt *is* the objective; and the
+ * narrowed tool list. `permissionMode` carries the floor a permission profile
+ * imposes, because that is the only part of the configuration that changes what
+ * a later run may do without asking. Everything else is in the shortcut record,
+ * which this event points at by id.
+ */
+async function recordShortcutConfigured(
+  shortcutId: string,
+  code: 'CREATED' | 'RETARGETED' | 'REMOVED',
+  record?: ShortcutRecord,
+): Promise<void> {
+  const profile = record?.permissionProfile;
+  await auditLog
+    .record({
+      type: 'shortcut.configured',
+      shortcutId,
+      code,
+      outcome: code === 'REMOVED' ? 'denied' : 'allowed',
+      ...(profile === undefined ? {} : { permissionMode: SHORTCUT_PROFILE_MODE[profile] }),
+    })
+    .catch(() => undefined);
+}
+
 async function summariseShortcut(record: ShortcutRecord): Promise<ShortcutSummary> {
   const verdict = await shortcutResolver.resolveRecord(record);
   return {
@@ -2020,6 +2052,16 @@ const taskManager = new TaskManager({
       );
       stagedFiles.clearTask(event.taskId);
 
+      // And the debugger, for the same reason and in the same place. An
+      // attachment made by `debugger.*` used to outlive the task that made it:
+      // nothing detached on the way out, and the only two things that ever
+      // detached were the tab closing and the worker shutting down. Chrome's
+      // banner is the person's one signal that deep inspection is active, and a
+      // banner standing over a page with no task behind it says something
+      // untrue. Never awaited and never fatal: a task that finished stays
+      // finished whether or not a detach succeeded.
+      void debuggerManager.releaseTask(event.taskId);
+
       // Specification section 53, "task completed" and "task failed". Hooked
       // to the same one fact the line above is, and for the same reason:
       // "the task reached a terminal state" happens in one place, and
@@ -2230,6 +2272,11 @@ router.on('task.cancel', async ({ taskId }) => {
   fileSelectionBroker.cancelForTask(taskId, 'The task was cancelled.');
   // A cancelled task must not leave the user's file sitting in memory.
   stagedFiles.clearTask(taskId);
+  // Nor its debugging banner over a page the person goes on browsing. The
+  // lifecycle observer covers completing and failing; cancelling from the panel
+  // does not reach it until the manager reports the state, and the banner should
+  // go the moment the person said stop.
+  void debuggerManager.releaseTask(taskId);
   return { state: await taskManager.cancel(taskId) };
 });
 
@@ -2238,8 +2285,27 @@ router.on('task.retry', async ({ taskId }) => ({ task: await taskManager.retry(t
 router.on('session.get', async () => ({ session: await getOrCreateSession() }));
 
 router.on('session.setPermissionMode', async ({ mode }) => {
+  const before = (await settingsStore.get()).permissionMode;
   await settingsStore.update({ permissionMode: mode });
-  return { session: await updateSession({ permissionMode: mode }) };
+  const session = await updateSession({ permissionMode: mode });
+
+  // Recorded after the write, so the trail never claims a mode that did not
+  // take. `outcome` is the direction rather than a verdict: moving to a
+  // stricter mode is `allowed` and moving to a looser one is `denied`, in the
+  // same sense `policy.site_rule` uses those words for a grant and a
+  // revocation — the record says which way the authority went.
+  if (before !== mode) {
+    await auditLog
+      .record({
+        type: 'session.permission_mode',
+        permissionMode: mode,
+        outcome: strictestMode(before, mode) === mode ? 'allowed' : 'denied',
+        code: `FROM_${before.toUpperCase()}`,
+      })
+      .catch(() => undefined);
+  }
+
+  return { session };
 });
 
 router.on('settings.getNotificationsEnabled', async () => ({
@@ -3334,6 +3400,19 @@ router.on('accounts.declineAssociation', async () => {
  * passphrase protects into somebody else's hands.
  * ------------------------------------------------------------------ */
 
+/**
+ * Records a change to local encryption.
+ *
+ * One type for all five actions, because a reader is asking one question of
+ * them: was the material in this profile protected, and when did that change.
+ * `outcome` is the direction — switching on, unlocking and changing the
+ * passphrase are `allowed`; switching off and locking are `denied`; a refused
+ * unlock is `failed` — and the code says which action it was.
+ */
+async function recordK1(code: string, outcome: 'allowed' | 'denied' | 'failed'): Promise<void> {
+  await auditLog.record({ type: 'k1.protection', code, outcome }).catch(() => undefined);
+}
+
 router.on('k1.status', async () => await k1.status());
 
 router.on('k1.enable', async ({ passphrase }) => {
@@ -3350,8 +3429,10 @@ router.on('k1.enable', async ({ passphrase }) => {
         'some stored keys could not be encrypted',
       );
     }
+    await recordK1('ENABLED', 'allowed');
     return { ok: true as const, state: status.state, encrypted: outcome.encrypted };
   } catch (error) {
+    await recordK1('ENABLE_FAILED', 'failed');
     return {
       ok: false as const,
       reason: 'ENABLE_FAILED',
@@ -3363,8 +3444,12 @@ router.on('k1.enable', async ({ passphrase }) => {
 router.on('k1.unlock', async ({ passphrase }) => {
   try {
     const status = await k1.unlock(passphrase);
+    await recordK1('UNLOCKED', 'allowed');
     return { ok: true as const, state: status.state };
   } catch (error) {
+    // The reason is the closed `UnlockFailure` vocabulary, never anything
+    // derived from what was typed.
+    await recordK1(error instanceof UnlockError ? error.failure : 'UNLOCK_FAILED', 'failed');
     return {
       ok: false as const,
       reason: error instanceof UnlockError ? error.failure : 'UNLOCK_FAILED',
@@ -3376,6 +3461,7 @@ router.on('k1.unlock', async ({ passphrase }) => {
 router.on('k1.lock', async () => {
   await k1.lock();
   await dropConnectedAdapters();
+  await recordK1('LOCKED', 'denied');
   return await k1.status();
 });
 
@@ -3413,8 +3499,13 @@ router.on('k1.changePassphrase', async ({ current, next }) => {
     // either the old wrapping is still there or the new one is, and both
     // open the same key.
     await k1.changePassphrase(current, next);
+    await recordK1('PASSPHRASE_CHANGED', 'allowed');
     return { ok: true as const };
   } catch (error) {
+    await recordK1(
+      error instanceof UnlockError ? `CHANGE_${error.failure}` : 'CHANGE_FAILED',
+      'failed',
+    );
     return {
       ok: false as const,
       reason: error instanceof UnlockError ? error.failure : 'CHANGE_FAILED',
@@ -3441,8 +3532,15 @@ router.on('k1.disable', async ({ passphrase }) => {
     }
     await k1.disable();
     await dropConnectedAdapters();
+    // The action this type most exists for. Recorded after the protection is
+    // actually off, so the trail never claims a state that did not take.
+    await recordK1('DISABLED', 'denied');
     return { ok: true as const, state: 'OFF' as const };
   } catch (error) {
+    await recordK1(
+      error instanceof UnlockError ? `DISABLE_${error.failure}` : 'DISABLE_FAILED',
+      'failed',
+    );
     return {
       ok: false as const,
       reason: error instanceof UnlockError ? error.failure : 'DISABLE_FAILED',
@@ -3520,7 +3618,13 @@ router.on('storage.getPreference', async () => {
 // acts on it.
 router.on('storage.setPreference', async ({ mode }) => {
   await dataStoragePreference.choose(mode, Date.now());
-  return { mode: await dataStoragePreference.mode() };
+  // Read back rather than echoed: the preference decides what it accepted, and
+  // the trail records where records are actually kept.
+  const chosen = await dataStoragePreference.mode();
+  await auditLog
+    .record({ type: 'storage.preference', storageMode: chosen, outcome: 'info' })
+    .catch(() => undefined);
+  return { mode: chosen };
 });
 
 /**
@@ -3530,8 +3634,8 @@ router.on('storage.setPreference', async ({ mode }) => {
  * read here — not the provider key, not a connector token, not the ABA
  * refresh token — because none of them is reachable from these four calls.
  */
-router.on('data.export', async () => ({
-  export: await buildLocalExport(
+router.on('data.export', async () => {
+  const document = await buildLocalExport(
     {
       listWorkflows: () => workflowStore.list(),
       listShortcuts: () => shortcutStore.list(),
@@ -3553,8 +3657,22 @@ router.on('data.export', async () => ({
       readSettings: async () => ({ ...(await settingsStore.get()) }),
     },
     Date.now(),
-  ),
-}));
+  );
+
+  // Counted from the document that was actually built, not from the stores it
+  // read: the export's own allowlist decides what survives, and the number a
+  // later reader cares about is how much left.
+  await auditLog
+    .record({
+      type: 'data.exported',
+      code: 'LOCAL_RECORDS',
+      recordCount: document.workflows.length + document.shortcuts.length,
+      outcome: 'info',
+    })
+    .catch(() => undefined);
+
+  return { export: document };
+});
 
 /**
  * Applies a file the user chose. Untrusted input, validated in full.
@@ -3620,6 +3738,21 @@ router.on('data.import', async ({ document }) => {
   if (outcome.failed > 0) {
     await persistenceHealth.report('storage', 'DEGRADED', 'import writes did not complete');
   }
+
+  // One record for the whole import rather than one per record: an import is a
+  // single decision a person took about a single file, and a per-record trail
+  // would be a copy of the file's table of contents. `outcome` is `failed` when
+  // any write did not land, so a partially applied import is visible as one
+  // even though the route returns `ok` with counts.
+  const imported = outcome.workflowsImported + outcome.shortcutsImported;
+  await auditLog
+    .record({
+      type: 'data.imported',
+      code: `REFUSED_${outcome.workflowsRefused + outcome.shortcutsRefused}`,
+      recordCount: imported,
+      outcome: outcome.failed > 0 ? 'failed' : 'allowed',
+    })
+    .catch(() => undefined);
 
   return { ok: true as const, outcome };
 });
@@ -3730,9 +3863,27 @@ router.on('audit.export', async ({ scope, limit }) => {
     ...(chosen.kind === 'task' ? { taskId: chosen.taskId } : {}),
     limit: Math.min(limit ?? 2000, 5000),
   });
-  return {
-    export: buildAuditExport(page.events, Date.now(), chosen, await auditLog.verifyIntegrity()),
-  };
+  const document = buildAuditExport(
+    page.events,
+    Date.now(),
+    chosen,
+    await auditLog.verifyIntegrity(),
+  );
+
+  // The trail records its own export. The record is appended after the document
+  // is built, so it is never inside the page it describes — an export that
+  // contained the record of itself would be reporting a count that includes a
+  // record written by the act of counting.
+  await auditLog
+    .record({
+      type: 'data.exported',
+      code: 'AUDIT_TRAIL',
+      recordCount: page.events.length,
+      outcome: 'info',
+    })
+    .catch(() => undefined);
+
+  return { export: document };
 });
 
 router.on('evidence.listForTask', async ({ taskId }) => ({
@@ -3864,6 +4015,12 @@ router.on('workflow.get', async ({ workflowId }) => {
 
 router.on('workflow.remove', async ({ workflowId }) => {
   await workflowStore.remove(workflowId);
+  // The counterpart to `workflow.recorded`. A schedule already recorded its own
+  // deletion and a workflow did not, which left a shortcut that stopped
+  // resolving with nothing in the trail to explain why.
+  await auditLog
+    .record({ type: 'workflow.removed', workflowId, outcome: 'denied', code: 'REMOVED' })
+    .catch(() => undefined);
   return { ok: true } as const;
 });
 
@@ -3952,14 +4109,12 @@ router.on('shortcut.create', async ({ name, target, allowedTools, permissionProf
   }
 
   try {
-    return {
-      shortcut: await summariseShortcut(
-        await shortcutStore.create(name, target, {
-          allowedTools: narrowing.tools,
-          ...(permissionProfile === undefined ? {} : { permissionProfile }),
-        }),
-      ),
-    };
+    const created = await shortcutStore.create(name, target, {
+      allowedTools: narrowing.tools,
+      ...(permissionProfile === undefined ? {} : { permissionProfile }),
+    });
+    await recordShortcutConfigured(created.shortcutId, 'CREATED', created);
+    return { shortcut: await summariseShortcut(created) };
   } catch (error) {
     // A collision comes back as data rather than an exception, because the
     // panel has to tell the user which existing name they clashed with.
@@ -3978,7 +4133,11 @@ router.on('shortcut.retarget', async ({ shortcutId, target }) => {
     };
   }
   try {
-    return { shortcut: await summariseShortcut(await shortcutStore.retarget(shortcutId, target)) };
+    const retargeted = await shortcutStore.retarget(shortcutId, target);
+    // The case this event exists for. A person confirms a launch by the name
+    // they gave it, and the name does not change when the target does.
+    await recordShortcutConfigured(shortcutId, 'RETARGETED', retargeted);
+    return { shortcut: await summariseShortcut(retargeted) };
   } catch (error) {
     if (error instanceof ShortcutError) {
       return { shortcut: null, error: { reason: error.reason, detail: error.message } };
@@ -3989,6 +4148,7 @@ router.on('shortcut.retarget', async ({ shortcutId, target }) => {
 
 router.on('shortcut.remove', async ({ shortcutId }) => {
   await shortcutStore.remove(shortcutId);
+  await recordShortcutConfigured(shortcutId, 'REMOVED');
   return { ok: true } as const;
 });
 
