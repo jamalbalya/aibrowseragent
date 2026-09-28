@@ -108,6 +108,7 @@ recorded so that the table is a history rather than a promise.
 | A threat-model row claiming a control it did not have                    | Not classified at all | Found by asking what the audit trail does in a profile two people share                         |
 | Acceptance packages unchecked against the specification's own item lists | Not classified at all | Found by asking whether §81's failure mode repeats one level down                               |
 | §84 condition 3 never answered per capability, for thirty-nine of forty  | Not classified at all | Found by reading the specification's own three words rather than the repository's gloss on them |
+| §84 conditions 4 and 5 never answered per capability either              | Not classified at all | Found by running the same question over the other five conditions once condition 3 had fallen   |
 
 The last of those is worth separating, because only half of it was mine to fix.
 `IDENTITY_AND_SYNC.md` listed "Cross-user data access" against a control that only

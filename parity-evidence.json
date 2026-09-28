@@ -65,7 +65,15 @@
             "tests/e2e/standalone-ux.spec.ts :: connecting an AI account needs no extension identity and changes none"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "exempt": "A panel has no operation to fail. What can fail is what runs inside it, and each of those capabilities carries its own failure clause."
+        },
+        "securityPath": {
+          "clauses": ["P-001-C2", "P-001-C3"]
+        }
+      }
     },
     "P-002": {
       "unit": [
@@ -175,7 +183,15 @@
             "tests/unit/semantic-tree.test.ts :: never includes a password field value in the page model"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-002-C7"]
+        },
+        "securityPath": {
+          "clauses": ["P-002-C8"]
+        }
+      }
     },
     "P-003": {
       "unit": [
@@ -236,7 +252,15 @@
             "tests/unit/browser-tools.test.ts :: escalates risk when it also submits a form"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-003-C2"]
+        },
+        "securityPath": {
+          "clauses": ["P-003-C3", "P-003-C4"]
+        }
+      }
     },
     "P-004": {
       "unit": ["tests/unit/interaction-engine.test.ts", "tests/unit/browser-tools.test.ts"],
@@ -286,7 +310,15 @@
             "tests/unit/interaction-engine.test.ts :: submits the containing form via requestSubmit when asked"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-003-C2"]
+        },
+        "securityPath": {
+          "clauses": ["P-004-C3", "P-004-C4"]
+        }
+      }
     },
     "P-005": {
       "unit": ["tests/unit/browser-tools.test.ts"],
@@ -393,7 +425,15 @@
           ],
           "notes": "Found by the Part 8 release-artifact audit, which turned up four copies of the predicate in the shipped bundle. Six places in source asked whether a host is the local machine, each in order to relax the https rule. Five were character-identical under three different names; the sixth, in checkNavigable, tested for ‘::1’ while URL.hostname produces ‘[::1]’, so its IPv6 case never matched and an IPv6 loopback page was treated as insecure. It failed closed, which is why nothing caught it. One isLoopbackHostname now, with a census asserting one definition and that the body appears nowhere else under any name. Consolidating loosens that one check — http://[::1] is now secure, as http://127.0.0.1 already was — and the predicate stays narrow of 127.0.0.0/8 and 0.0.0.0 on purpose, since a narrower answer refuses what a broader one would allow."
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-005-C6"]
+        },
+        "securityPath": {
+          "clauses": ["P-005-C5", "P-005-C7", "P-005-C8"]
+        }
+      }
     },
     "P-006": {
       "unit": [
@@ -516,7 +556,15 @@
           "status": "PARTIAL",
           "note": "Recorded as non-mandatory because §5.2 does not name it, and stated rather than hidden: neither is walked by the page model. It bounds what the agent can do as much as what it can see — an element it cannot find is an element it cannot write to — and the classifier fails closed by reporting UNKNOWN, which costs a confirmation rather than running silently."
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-006-C7"]
+        },
+        "securityPath": {
+          "clauses": ["P-006-C8"]
+        }
+      }
     },
     "P-007": {
       "unit": ["tests/unit/interaction-engine.test.ts", "tests/unit/browser-tools.test.ts"],
@@ -551,7 +599,15 @@
             "tests/unit/semantic-tree.test.ts :: captures interactive elements with roles and names"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "exempt": "A scroll past the end of a document clamps rather than failing, and a scroll changes nothing that a later step depends on. There is no failing outcome to test."
+        },
+        "securityPath": {
+          "clauses": ["P-007-C2"]
+        }
+      }
     },
     "P-008": {
       "unit": ["tests/unit/browser-tools.test.ts"],
@@ -634,7 +690,15 @@
           ],
           "note": "An image in the context would cost tokens on every later turn and put page pixels in front of the model repeatedly; a reference costs nothing and is auditable."
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-008-C5"]
+        },
+        "securityPath": {
+          "clauses": ["P-008-C2", "P-008-C3", "P-008-C6"]
+        }
+      }
     },
     "P-009": {
       "unit": [
@@ -678,7 +742,15 @@
             "tests/unit/evidence-store.test.ts :: does not corrupt a base64 payload by redacting it"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-009-C2"]
+        },
+        "securityPath": {
+          "clauses": ["P-009-C3"]
+        }
+      }
     },
     "P-010": {
       "unit": [
@@ -761,7 +833,15 @@
             "tests/e2e/file-transfer.spec.ts :: the audit trail and the worker log record the selection without the file"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-010-C5"]
+        },
+        "securityPath": {
+          "clauses": ["P-010-C2", "P-010-C4", "P-010-C6"]
+        }
+      }
     },
     "P-011": {
       "unit": ["tests/unit/file-model.test.ts"],
@@ -843,7 +923,15 @@
           "acceptance": "§91 procedure D-3-1 — grant the optional downloads permission through Chrome’s own dialog, on a real profile, and record the result.",
           "notes": "The specRef was §91 until the Part 10 project-level audit read it. Every other clause in this file names a specification section; §91 there is \"Current Reference Product Differences That Must NOT Be Missed\", which is about execution surfaces and says nothing about a permission dialog. The §91 in question was this project’s own acceptance package docs/testing/acceptance/91-downloads.md, whose first line already says it is not a specification section. §7 is where the specification puts the optional downloads permission, and P-011-C2 cites it for the same reason. The package is named in this note instead, where it cannot be read as a specification reference."
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-011-C4", "P-011-C6"]
+        },
+        "securityPath": {
+          "clauses": ["P-011-C3", "P-011-C5"]
+        }
+      }
     },
     "P-012": {
       "unit": ["tests/unit/tab-tools.test.ts"],
@@ -996,7 +1084,15 @@
             "tests/unit/tab-tools.test.ts :: tracks tabs per task and does not leak between tasks"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-036-C2", "P-036-C3"]
+        },
+        "securityPath": {
+          "clauses": ["P-012-C11"]
+        }
+      }
     },
     "P-013": {
       "unit": ["tests/unit/tab-tools.test.ts"],
@@ -1050,7 +1146,15 @@
             "tests/e2e/workspace.spec.ts :: dragging a tab in makes it eligible; dragging it out revokes it"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "exempt": "Grouping is a rearrangement of tabs that already exist; a group that cannot be formed leaves every tab exactly where it was, and C4 pins the call to the real Chrome API rather than a simulation that could not fail."
+        },
+        "securityPath": {
+          "clauses": ["P-013-C3"]
+        }
+      }
     },
     "P-014": {
       "unit": ["tests/unit/browser-tools.test.ts"],
@@ -1130,7 +1234,15 @@
           ],
           "notes": "Found by the Part 7 failure-cleanup census. Nothing detached when a task ended: the only two paths were the tab closing and the worker shutting down, so a cancelled task left Chrome’s debugging banner over a page the person went on browsing. Not an authorization hole — every debugger.* call is policy-evaluated on its own — but the banner is the user’s one signal that deep inspection is active. An attachment is now made in the task’s name and released at its terminal state; a shared tab waits for the last holder, an unowned attachment is left alone, and pausing releases nothing."
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-014-C4"]
+        },
+        "securityPath": {
+          "clauses": ["P-014-C5", "P-014-C6"]
+        }
+      }
     },
     "P-015": {
       "unit": ["tests/unit/browser-tools.test.ts"],
@@ -1180,7 +1292,15 @@
             "tests/security/debugger-allowlist.test.ts :: removes listeners and clears buffers"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-015-C4"]
+        },
+        "securityPath": {
+          "clauses": ["P-015-C2", "P-015-C3"]
+        }
+      }
     },
     "P-016": {
       "unit": ["tests/unit/browser-tools.test.ts"],
@@ -1248,7 +1368,15 @@
             "tests/security/debugger-allowlist.test.ts :: ignores events for a tab it is not attached to"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-016-C5"]
+        },
+        "securityPath": {
+          "clauses": ["P-016-C2", "P-016-C3", "P-016-C4"]
+        }
+      }
     },
     "P-017": {
       "integration": [
@@ -1329,7 +1457,15 @@
             "tests/e2e/mv3-lifecycle.spec.ts :: a task can still run after the worker has restarted"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-017-C5", "P-017-C6"]
+        },
+        "securityPath": {
+          "exempt": "Stop, Pause, Resume and Retry are panel controls over a task that is already authorized. They grant nothing: every action inside the task passes the same single policy call site whether the task was resumed or never interrupted."
+        }
+      }
     },
     "P-018": {
       "integration": ["tests/integration/task-persistence.test.ts"],
@@ -1377,7 +1513,15 @@
             "tests/e2e/schedules.spec.ts :: the schedules screen is in the shipped panel and says what a run will not do"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-018-C3"]
+        },
+        "securityPath": {
+          "exempt": "Running with the panel closed adds no authority — it is the same task under the same policy — and what survives the eviction is guarded by P-031-C2 and P-038-C5."
+        }
+      }
     },
     "P-019": {
       "unit": ["tests/unit/notifier.test.ts"],
@@ -1466,7 +1610,15 @@
           ]
         }
       ],
-      "integration": ["tests/integration/task-manager.test.ts"]
+      "integration": ["tests/integration/task-manager.test.ts"],
+      "conditions": {
+        "failurePath": {
+          "exempt": "A notification that does not arrive changes nothing the agent may do; the task it reports on carries its own failure clause. C3 is a notification *of* a failure, which is not the same thing as this capability failing."
+        },
+        "securityPath": {
+          "clauses": ["P-019-C7"]
+        }
+      }
     },
     "P-020": {
       "security": ["tests/security/scheduled-execution.test.ts"],
@@ -1572,7 +1724,15 @@
             "tests/security/scheduled-execution.test.ts :: 21 follows a shortcut that was retargeted after the schedule was made"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "exempt": "A schedule's failure path belongs to its target — a shortcut, a workflow or a skill (C9) — and each of those carries one. What is specific to scheduling is what an unattended run must not do, which is condition 5."
+        },
+        "securityPath": {
+          "clauses": ["P-020-C7", "P-020-C8"]
+        }
+      }
     },
     "P-021": {
       "unit": ["tests/unit/shortcut-name.test.ts"],
@@ -1706,7 +1866,15 @@
           ],
           "notes": "Found by the Part 6 cross-capability pass, between P-021 and the local export boundary. Shortcuts export whole, including allowedTools and permissionProfile, and the importer called create(name, target) with no options — so a shortcut restricted to one read-only tool under confirm-each-action came back able to use every tool at the ambient mode, under the name the person trusted. The direction is why it survived: every other rule on this boundary stops something privileged travelling, and such a suite cannot see a restriction that fails to travel. Both fields are now carried and re-validated with the same checks the create route runs; a file naming an unknown tool or an unimplemented profile refuses the record. Verified by mutation — restoring the option-less create kills the round-trip case."
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "exempt": "A shortcut is a stored narrowing, not an operation: what runs is the skill or workflow it names, and that target carries the failure clause. What is specific to a shortcut is that the narrowing cannot be widened, which is condition 5."
+        },
+        "securityPath": {
+          "clauses": ["P-021-C7", "P-021-C9"]
+        }
+      }
     },
     "P-022": {
       "unit": ["tests/unit/workflow-recording.test.ts"],
@@ -1810,7 +1978,15 @@
           ],
           "note": "Recording and replay are complete and evidenced for browser actions; what cannot be recorded is a workflow that spans services none of which can be connected. The gap is in the connectors, not in the recorder."
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-022-C4", "P-022-C5"]
+        },
+        "securityPath": {
+          "clauses": ["P-022-C6", "P-022-C7"]
+        }
+      }
     },
     "P-023": {
       "unit": [
@@ -1936,7 +2112,15 @@
             "tests/e2e/connector.spec.ts :: chrome.identity is genuinely unavailable, not merely unused"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "exempt": "The framework refuses what it cannot authorize, but auth expiry, revocation, a rate limit and a permission denial are §88 procedures against a service nobody here operates. The row is PARTIAL on exactly that (A-1), so this condition is unanswered rather than exempt, and saying so is why the row is not PASS."
+        },
+        "securityPath": {
+          "clauses": ["P-023-C6", "P-023-C10"]
+        }
+      }
     },
     "P-024": {
       "unit": ["tests/unit/skill-model.test.ts", "tests/unit/skill-registry.test.ts"],
@@ -2048,7 +2232,15 @@
           ],
           "note": "The skill engine is complete and evidenced, including the clause that matters most — approving a run does not approve the actions inside it. What is missing is the four services §44's reference skill spans."
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-024-C7"]
+        },
+        "securityPath": {
+          "clauses": ["P-024-C4", "P-024-C5", "P-024-C8"]
+        }
+      }
     },
     "P-025": {
       "clauses": [
@@ -2117,7 +2309,15 @@
           "note": "Install, review, enable, disable, revoke and update are designed and unbuilt. Revocation is the part that depends on the authenticity problem above: there is no channel to learn that a package should stop being trusted. The final audit re-derived which clause the authenticity problem actually reaches, and it is **C7 alone** — see `PLUGIN_TRUST_MODEL.md` §9b, which compares six delivery models against all eight clauses. Executable packages are unreachable by construction (CSP `script-src 'self'`, no `unsafe-eval`, no native messaging, and an invariant test asserting no code-execution primitive exists). A declarative package over already-registered tools satisfies this clause's own shape; what it cannot do is authenticate itself. **Parity adjudication (`CLAUDE_BENCHMARK.md` §4b).** Plugin availability in the Chrome side panel is documented (Class A) for the **Cowork-session** mode only, where the panel runs as a cloud session and plugins are built and configured outside the browser; plugins are absent from the documented **classic**-mode capability list, which is the mode this project reproduces. No Claude-in-Chrome source documents this clause as extension behaviour — recorded as documented silence, never as a denial. **Classification: INTERNAL_SPEC_ONLY.** §7 architecture test: install, enable, disable and update are control-plane operations already subject to confirmation; a widening update landing DISABLED (`PLUGIN_TRUST_MODEL.md` §7) is what keeps them from becoming a silent authority grant. Revocation remains bound to C7's authenticity problem: there is no channel to learn that a package should stop being trusted."
         }
       ],
-      "unit": []
+      "unit": [],
+      "conditions": {
+        "failurePath": {
+          "exempt": "Nothing is implemented, so there is no path of any kind to test. The row is NOT-STARTED."
+        },
+        "securityPath": {
+          "exempt": "Nothing is implemented, so there is no path of any kind to test. The row is NOT-STARTED."
+        }
+      }
     },
     "P-026": {
       "clauses": [
@@ -2367,7 +2567,15 @@
         "tests/security/egress-gate.test.ts"
       ],
       "e2e": ["tests/e2e/mcp.spec.ts"],
-      "integration": ["tests/integration/mcp-interop.test.ts"]
+      "integration": ["tests/integration/mcp-interop.test.ts"],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-026-C11"]
+        },
+        "securityPath": {
+          "clauses": ["P-026-C7", "P-026-C8", "P-026-C9", "P-026-C10"]
+        }
+      }
     },
     "P-027": {
       "unit": [
@@ -2448,7 +2656,15 @@
           "evidence": ["tests/unit/settings-defaults.test.ts :: defaults to auto permission mode"],
           "note": "The default had no test until this inventory asked for one and found nothing to cite. It is a security posture rather than a preference: `skip` would mean no prompt and no safety review at all."
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "exempt": "A mode is a setting, not an operation, so it has no failing outcome. What a mode must never do — unlock a hard prohibition — is condition 5."
+        },
+        "securityPath": {
+          "clauses": ["P-027-C3", "P-027-C4"]
+        }
+      }
     },
     "P-028": {
       "unit": ["tests/unit/policy-engine.test.ts"],
@@ -2532,7 +2748,15 @@
             "tests/unit/policy-engine.test.ts :: requires confirmation when the page moved after planning"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "exempt": "A grant is a stored decision rather than an operation. A grant that cannot be stored leaves the action needing approval, which is the safe outcome and is the default path already tested."
+        },
+        "securityPath": {
+          "clauses": ["P-028-C6", "P-028-C7"]
+        }
+      }
     },
     "P-029": {
       "unit": ["tests/unit/permission-engine.test.ts"],
@@ -2586,7 +2810,15 @@
             "tests/security/authorization-site-record.test.ts :: 06 — a page action whose tab URL cannot be read records no site"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-029-C4"]
+        },
+        "securityPath": {
+          "clauses": ["P-029-C2", "P-029-C3"]
+        }
+      }
     },
     "P-030": {
       "unit": ["tests/unit/context-builder.test.ts"],
@@ -2734,7 +2966,15 @@
             "tests/security/prompt-injection.test.ts :: truncates oversized content rather than passing it through"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-030-C13"]
+        },
+        "securityPath": {
+          "clauses": ["P-030-C2", "P-030-C3", "P-030-C11", "P-030-C12"]
+        }
+      }
     },
     "P-031": {
       "unit": ["tests/unit/storage.test.ts"],
@@ -2777,7 +3017,15 @@
             "tests/e2e/persisted-state.spec.ts :: an audit record edited in storage is reported by the integrity check"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-031-C2"]
+        },
+        "securityPath": {
+          "clauses": ["P-031-C3"]
+        }
+      }
     },
     "P-032": {
       "unit": ["tests/unit/task-model.test.ts"],
@@ -2847,7 +3095,15 @@
           "status": "PARTIAL",
           "note": "The specification gives this as an \"Example:\" rather than a requirement, so it is recorded as non-mandatory. Retry and the page-model refresh exist; a screenshot fallback and an alternate-locator strategy do not. Stated rather than claimed."
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-032-C1", "P-032-C4", "P-032-C5"]
+        },
+        "securityPath": {
+          "exempt": "Resuming grants nothing. A resumed task re-earns every approval its actions need, because approval is decided at the one policy call site on each action rather than held by the task."
+        }
+      }
     },
     "P-033": {
       "unit": [
@@ -2920,7 +3176,15 @@
           "note": "All three adapters pass one shared conformance suite and switch cleanly in real Chromium against local servers speaking each provider's real wire protocol. What has not happened is a request to a commercial endpoint.",
           "blocker": "No project-owned provider credentials are configured in this environment, and none can be issued from this repository. A user's own key works; validating against the vendor's live endpoint needs a key this project does not have."
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-033-C3"]
+        },
+        "securityPath": {
+          "clauses": ["P-033-C2", "P-033-C4"]
+        }
+      }
     },
     "P-034": {
       "unit": ["tests/unit/tool-registry.test.ts"],
@@ -2997,7 +3261,15 @@
             "tests/unit/tool-registry.test.ts :: narrows the exposed surface when an allowlist is supplied"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-034-C2", "P-034-C5"]
+        },
+        "securityPath": {
+          "clauses": ["P-034-C1", "P-034-C4", "P-034-C6"]
+        }
+      }
     },
     "P-035": {
       "unit": ["tests/unit/capability-doctor.test.ts"],
@@ -3120,7 +3392,15 @@
             "tests/unit/capability-doctor.test.ts :: never puts credential material in a report"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-035-C10"]
+        },
+        "securityPath": {
+          "clauses": ["P-035-C11"]
+        }
+      }
     },
     "P-036": {
       "unit": ["tests/unit/budget-retry.test.ts"],
@@ -3172,7 +3452,15 @@
             "tests/integration/agent-runtime.test.ts :: puts the next step to the user rather than dead-ending"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-036-C1", "P-036-C2", "P-036-C3"]
+        },
+        "securityPath": {
+          "exempt": "Error recovery is the failure path. It adds no authority of its own: a recovery attempt is an ordinary tool call through the same policy gate as the call it is recovering from."
+        }
+      }
     },
     "P-037": {
       "unit": ["tests/unit/loop-detection.test.ts"],
@@ -3211,7 +3499,15 @@
             "tests/integration/agent-runtime.test.ts :: puts the next step to the user rather than dead-ending"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-037-C3"]
+        },
+        "securityPath": {
+          "exempt": "Loop detection only ever stops work. It can refuse to continue and can never permit anything, so there is no authority path to test."
+        }
+      }
     },
     "P-038": {
       "unit": ["tests/unit/dispatch-observers.test.ts"],
@@ -3343,7 +3639,15 @@
           ],
           "notes": "The declared-type guard ran one way only — every type has a producer — and twelve authority-changing actions had no type at all. The permission-mode switch wrote nothing while revoking one site rule wrote a record; shortcut configuration wrote nothing while all three schedule lifecycle events existed; and K1 enable, disable, unlock, lock and passphrase change wrote nothing, including a failed unlock, which is the one observable sign of the scenario K1’s threat model names. The census now requires every CLASS_B route to record or to be exempt with one of two stated reasons, and rejects a stale exemption."
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-038-C5"]
+        },
+        "securityPath": {
+          "clauses": ["P-038-C7", "P-038-C8", "P-038-C9", "P-038-C11"]
+        }
+      }
     },
     "P-039": {
       "unit": ["tests/unit/evidence-store.test.ts"],
@@ -3406,7 +3710,15 @@
             "tests/unit/evidence-store.test.ts :: differs for different content"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-039-C3"]
+        },
+        "securityPath": {
+          "clauses": ["P-039-C1", "P-039-C2", "P-039-C4"]
+        }
+      }
     },
     "P-040": {
       "unit": ["tests/unit/capability-doctor.test.ts", "tests/unit/openai-compatible.test.ts"],
@@ -3466,7 +3778,15 @@
             "tests/security/provider-switching-state.test.ts :: is the function the route actually calls"
           ]
         }
-      ]
+      ],
+      "conditions": {
+        "failurePath": {
+          "clauses": ["P-040-C2", "P-040-C5"]
+        },
+        "securityPath": {
+          "clauses": ["P-040-C3", "P-040-C4"]
+        }
+      }
     }
   }
 }

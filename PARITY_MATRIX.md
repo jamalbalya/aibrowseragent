@@ -353,6 +353,45 @@ What it is **not** is parity certification. §84 condition 3 requires manual
 acceptance, none of which has been executed, and the six clauses below are
 waiting on a person, a credential or a service.
 
+### §84 conditions 4 and 5, answered per capability
+
+§84 defines PASS as six conditions, and three of them had no per-capability
+answer anywhere in this repository. Condition 3 — "manual acceptance test
+exists" — is now answered forty times in
+[`84-capabilities.md`](docs/testing/acceptance/84-capabilities.md). Conditions 4
+and 5 — "failure path is tested" and "security path is tested" — are answered in
+`parity-evidence.json`, beside the clause inventory they point at, and
+`check-parity.mjs` enforces the answers.
+
+**The question that forced it is in the table below.** Eleven rows read PASS
+with their Security column at `—`: P-001, P-007, P-013, P-017, P-018, P-031,
+P-032, P-035, P-036, P-037 and P-040. A dash was carrying two opposite meanings
+— "this capability has no security path" and "it has one and nothing tests it" —
+and nothing distinguished them. Six of the eleven turn out to be the first, and
+each now says so in a sentence somebody had to write. The other five had a
+security clause all along and the dash was simply not where it was recorded.
+
+Two shapes are allowed and only two. A condition **names clauses**, which must
+exist and, on a PASS row, must be `VERIFIED` — a PASS resting on an unproven
+clause is exactly what this gate refuses. Or it **states an exemption in prose**,
+which no script can check and is not meant to be: it exists so a reviewer reads
+a claim and can disagree with it. Fifteen capabilities carry one, ten for
+condition 4 and six for condition 5, and they fall into recognisable kinds — a
+setting rather than an operation (P-027, P-028), a wrapper whose failure belongs
+to its target (P-020, P-021), a control that can only ever stop work and never
+permit it (P-036, P-037), and a capability that adds no authority to the task it
+runs inside (P-017, P-018, P-032).
+
+Silence is the one answer that is not allowed. Five mutations confirm it: a
+capability answering neither condition, a one-word exemption, a named clause
+that does not exist, a PASS row resting on a `PARTIAL` clause, and an answer
+given both ways at once.
+
+What this does **not** do is move a row. Every one of these answers was already
+true of the tests that already ran; what was missing was the mapping from §84's
+words to them, and a mapping is not evidence. Conditions 1, 2 and 6 remain
+answered by the table's own columns and by the clause inventory respectively.
+
 ### P-025 Plugins — an internal specification requirement, not a parity gap
 
 The row stays **NOT-STARTED**, and nothing below moves it. What changed is what

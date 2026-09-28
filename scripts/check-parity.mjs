@@ -258,6 +258,82 @@ for (const file of [
   }
 }
 
+// --- §84 conditions 4 and 5, capability by capability ----------------------
+//
+// §84 defines PASS as six conditions, and until this check three of them had no
+// per-capability answer anywhere. Condition 3 — "manual acceptance test exists"
+// — is answered in `docs/testing/acceptance/84-capabilities.md`. Conditions 4
+// and 5 — "failure path is tested" and "security path is tested" — are answered
+// here, in the file that already holds the clause inventory, so that the answer
+// and the evidence it points at cannot drift apart.
+//
+// The question this was built to force is one the matrix could not previously
+// be asked: eleven rows read PASS with their Security column at `—`, and
+// nothing said whether that meant "no security path exists for this capability"
+// or "one exists and nothing tests it". Those are opposite answers and the dash
+// was carrying both.
+//
+// Two shapes are allowed and only two. A condition names clauses, which must
+// exist and — on a PASS row — must be VERIFIED, because a PASS resting on an
+// unproven clause is the claim this whole gate exists to refuse. Or it states
+// an exemption in prose, which is not checkable and is not meant to be: it is
+// there so a reviewer reads a sentence somebody had to write and can disagree
+// with it. Silence is the one thing that is not allowed.
+{
+  const clauseIds = new Set();
+  const clauseStatus = new Map();
+  for (const capability of Object.values(evidence)) {
+    for (const clause of capability.clauses ?? []) {
+      clauseIds.add(clause.id);
+      clauseStatus.set(clause.id, clause.status);
+    }
+  }
+  const CONDITIONS = { failurePath: '§84 condition 4', securityPath: '§84 condition 5' };
+  // An empty enumeration would agree with everything, so the population is the
+  // matrix's own rows rather than the evidence file's keys.
+  for (const row of rows) {
+    const conditions = evidence[row.id]?.conditions;
+    if (conditions === undefined) {
+      errors.push(`${row.id} answers neither §84 condition 4 nor condition 5.`);
+      continue;
+    }
+    for (const [key, label] of Object.entries(CONDITIONS)) {
+      const answer = conditions[key];
+      if (answer === undefined) {
+        errors.push(`${row.id} does not answer ${label}.`);
+        continue;
+      }
+      const cited = answer.clauses ?? [];
+      const exempt = typeof answer.exempt === 'string' ? answer.exempt.trim() : '';
+      if (cited.length === 0 && exempt === '') {
+        errors.push(`${row.id} answers ${label} with neither a clause nor a stated exemption.`);
+        continue;
+      }
+      if (cited.length > 0 && exempt !== '') {
+        errors.push(`${row.id} answers ${label} both ways — a clause and an exemption.`);
+      }
+      // A one-word exemption is a shrug. A reviewer needs a claim to disagree with.
+      if (cited.length === 0 && exempt.split(/\s+/).length < 12) {
+        errors.push(
+          `${row.id} exempts itself from ${label} in ${exempt.split(/\s+/).length} words.`,
+        );
+      }
+      for (const id of cited) {
+        if (!clauseIds.has(id)) {
+          errors.push(`${row.id} answers ${label} with ${id}, which is not a clause that exists.`);
+          continue;
+        }
+        if (row.cells[7] === 'PASS' && clauseStatus.get(id) !== 'VERIFIED') {
+          errors.push(
+            `${row.id} is PASS and answers ${label} with ${id}, which is ` +
+              `${clauseStatus.get(id)} rather than VERIFIED.`,
+          );
+        }
+      }
+    }
+  }
+}
+
 // --- clause-level evidence, where an inventory exists ----------------------
 const statusById = Object.fromEntries(rows.map((row) => [row.id, row.cells[7]]));
 const clauseCheck = checkClauses({
