@@ -493,15 +493,43 @@ thinks they have authorised something is a person who stops reading prompts. The
 is no "connected" indicator, because a green dot would be describing the last time
 somebody looked.
 
-**Not built.** Resource discovery — `resources/list` and `resources/read`. That is
-the one unmet clause holding the row below PASS, and it is implementation rather
-than design: the trust model for a resource is already settled (page-class,
-`NEVER_PERSISTED`, tainting its task, and a resource URI never becoming an audit
-field because it is page-derived text).
+**`src/mcp/tools/mcp-resource-tools.ts` — resources, as tools.** A resource is
+data a server offers rather than an action, and in the protocol it is attached as
+context. This architecture has one way for a model to reach anything, so resources
+arrive as two tools per server: one that lists what is available, one that reads a
+named entry. Any other shape would be a second path into the model's context that
+the policy engine does not see, which is what §35 forbids.
+
+Both are R3, **including the listing**. The absence of a read-only exception is
+the point: the call itself tells the server this browser is asking, when, and
+inside which task — "less" is not "none" — and a read-only exception is exactly the
+shape the withdrawn per-server ceiling had.
+
+The read may only name a URI the server offered. Without that the model could name
+any string; nothing here would fetch it, but the **server** would be asked to,
+which is a request the user never saw offered and which this build would have
+originated. Restricting it to the admitted set means the model can only ask for
+what the person could also see in the panel.
+
+A resource's content is page-class, bounded, `NEVER_PERSISTED`, and it taints the
+task — the same treatment page text gets, because a resource is the injection
+channel `PLUGIN_TRUST_MODEL.md` names. Binary is named rather than decoded. And a
+resource **URI** reaches neither an audit field nor a prompt summary: it is
+page-derived text, and a cross-task trail holding one is the browsing-history
+problem `taintKind` exists to avoid. The read's confirmation quotes the server's
+_label_ instead.
+
+Discovery asks for resources only when the server declared the capability, which
+is the opposite of how the tool listing behaves. The asymmetry is deliberate: a
+server that omits the `tools` capability and offers tools anyway is inconsistent in
+a way that would cost the user tools they can see in their own client, while asking
+a server with no resources produces a `-32601` that has to be told apart from a
+real refusal. A failing resource listing is likewise not an error — it is
+supplementary, and losing it must not cost the user the server's tools.
 
 **The MCP layer now ships**, which is the point of the wiring: the built service
 worker contains `jsonrpc`, `tools/list` and the `mcp-servers` namespace. The
-release artifact grew from 257,021 bytes to 263,178 — about 6.2 KB, which is what
+release artifact grew from 257,021 bytes to 264,427 — about 7.2 KB, which is what
 P-026 costs.
 
 For the record of how it got there, the three waves before the wiring added only
@@ -569,8 +597,9 @@ were caught.
 
 ## 9. What is still open, and who owns it
 
-- **Resource discovery.** `resources/list` and `resources/read`, the one unmet
-  clause. Engineering, with the trust model already settled.
+- **A real server.** Every mandatory clause is now VERIFIED except the two
+  recorded as external. The row stays PARTIAL because nothing has met a real
+  third party — the same standard P-023 and P-033 are held to.
 - **Validation against a real server.** Needs a real remote MCP endpoint and its
   credentials, which this project does not hold. An owner or external
   prerequisite, recorded the way every other external blocker is.

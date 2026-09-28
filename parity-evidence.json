@@ -2070,7 +2070,7 @@
           "requirement": "remote MCP",
           "mandatory": true,
           "status": "EXTERNAL_REQUIRED",
-          "note": "Remote MCP over HTTPS is the settled and only transport, and the whole path is exercised against a local server over real sockets — real JSON-RPC, the real egress gate, a real browser. What has never happened is a connection to a server somebody else operates, and it cannot happen from here. Loopback is permitted for that test double only, and a plain-http server is refused by the policy engine's origin check at call time, which the real-Chromium suite observes rather than asserts.",
+          "note": "Remote MCP over HTTPS is the settled and only transport, and the whole path is exercised against a local server over real sockets — real JSON-RPC, the real egress gate, a real browser. What has never happened is a connection to a server somebody else operates, and it cannot happen from here. Loopback is permitted for that test double only, and a plain-http server is refused by the policy engine's origin check at call time, which the real-Chromium suite observes rather than asserts. This is now the only thing standing between the row and PASS, alongside the same limit P-023 and P-033 carry: a capability never exercised against a real external service is PARTIAL here, whatever its clauses say.",
           "blocker": "A real remote MCP server, and any credential it requires. This repository holds neither."
         },
         {
@@ -2102,8 +2102,24 @@
           "specRef": "§5.11",
           "requirement": "resource discovery where applicable",
           "mandatory": true,
-          "status": "EVIDENCE_MISSING",
-          "note": "Unbuilt, and this is the clause that keeps the row short of PASS rather than an external blocker. The specification hedges it \"where applicable\", and the honest reading is that it does apply: `resources/list` and `resources/read` are part of what an MCP client is, and a resource is data a server offers rather than an action. The trust model for it is already settled — a resource is page-class content, `NEVER_PERSISTED`, tainting its task, and a resource **URI** must never become an audit field because it is page-derived text — so what is missing is implementation rather than design."
+          "status": "VERIFIED",
+          "note": "Built. A resource is data a server offers rather than an action, and in the protocol it is attached as context — this architecture has one way for a model to reach anything, so resources arrive as two tools per server: one that lists what is available, one that reads a named entry. Any other shape would be a second path into the model's context that the policy engine does not see, which is what §35 forbids. Both are R3, including the listing, and the absence of a read-only exception is deliberate: the call itself tells the server this browser is asking, and a read-only exception is exactly the shape the withdrawn per-server ceiling had. The read may only name a URI the server offered — without that the model could ask the server to fetch anything, a request the user never saw offered and that this build would have originated. Content is page-class, bounded, `NEVER_PERSISTED`, and taints the task; binary is named rather than decoded; a resource **URI** never becomes an audit field or a prompt summary, because it is page-derived text. Discovery only asks when the server declared the capability, and a failing resource listing does not cost the user the server's tools — a resource listing is supplementary, unlike `tools/list`. Eleven mutants killed: the read accepting any URI, the listing made R0, the summary quoting the URI, the taint dropped, a blob decoded, the content unbounded, control characters allowed in a URI, the listing unbounded, a repeated URI replacing the first, a failing listing aborting discovery, and resources asked for when undeclared.",
+          "evidence": [
+            "tests/security/mcp-resources.test.ts :: refuses a URI holding control characters, which would break a log line",
+            "tests/security/mcp-resources.test.ts :: bounds a listing and names every refusal",
+            "tests/security/mcp-resources.test.ts :: keeps the first of a repeated URI and says the second was refused",
+            "tests/security/mcp-resources.test.ts :: does not ask when the server declared none",
+            "tests/security/mcp-resources.test.ts :: keeps the server’s tools when the resource listing fails",
+            "tests/security/mcp-resources.test.ts :: are both R3, with no read-only exception for the listing",
+            "tests/security/mcp-resources.test.ts :: refuses a URI the server never offered, before any request",
+            "tests/security/mcp-resources.test.ts :: summarises a read by the label, never by the URI",
+            "tests/security/mcp-resources.test.ts :: taints the task, so a later write meets the exfiltration gate",
+            "tests/security/mcp-resources.test.ts :: bounds the content, whose length the server chose",
+            "tests/security/mcp-resources.test.ts :: names binary content rather than decoding it",
+            "tests/e2e/mcp.spec.ts :: a server offering resources gets the two resource tools, and no others do",
+            "tests/e2e/mcp.spec.ts :: a resource the server would not describe properly is left out and named",
+            "tests/e2e/mcp.spec.ts :: the resource tools appear at R3, like every other MCP tool"
+          ]
         },
         {
           "id": "P-026-C6",
@@ -2261,7 +2277,8 @@
         "tests/security/mcp-discovery.test.ts",
         "tests/security/mcp-schema.test.ts",
         "tests/security/mcp-tool-dispatch.test.ts",
-        "tests/security/mcp-registration.test.ts"
+        "tests/security/mcp-registration.test.ts",
+        "tests/security/mcp-resources.test.ts"
       ],
       "e2e": ["tests/e2e/mcp.spec.ts"]
     },

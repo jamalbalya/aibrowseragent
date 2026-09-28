@@ -93,6 +93,127 @@ export interface McpServerDescriptor {
   readonly url: string;
 }
 
+/** How many resources one server may contribute. */
+const MAX_RESOURCES = 64;
+/** How long a resource URI may be before it is refused. */
+const MAX_URI = 512;
+
+/** A resource as the server described it: untrusted input. */
+export interface DiscoveredResource {
+  readonly uri: string;
+  readonly name?: string;
+  readonly description?: string;
+  readonly mimeType?: string;
+}
+
+/**
+ * A resource this build is willing to name.
+ *
+ * The URI is kept because the model has to be able to ask for one, and it is the
+ * server's own identifier for its own content — but it is deliberately never
+ * recorded in the audit trail. A resource URI is page-derived text, and putting
+ * it in a cross-task trail is the browsing-history problem `taintKind` exists to
+ * avoid for taint sources.
+ */
+export interface AdmittedResource {
+  readonly uri: string;
+  /** Always present: falls back to the URI when the server named nothing. */
+  readonly label: string;
+  readonly description?: string;
+  readonly mimeType?: string;
+}
+
+/**
+ * Decides whether a discovered resource may be offered at all.
+ *
+ * The URI is checked as a *string*, not resolved: nothing in this build fetches
+ * it. It travels back to the server as a parameter, and the server decides what
+ * it means. So the rules here are about what may reach the model's context and a
+ * log line, which is why length and control characters matter and scheme does
+ * not — a server is entitled to its own URI space.
+ */
+export function admitDiscoveredResource(
+  resource: DiscoveredResource,
+):
+  | { readonly ok: true; readonly resource: AdmittedResource }
+  | { readonly ok: false; readonly reason: string } {
+  const uri = typeof resource.uri === 'string' ? resource.uri.trim() : '';
+  if (uri.length === 0) return { ok: false, reason: 'the resource has no URI' };
+  if (uri.length > MAX_URI) {
+    return { ok: false, reason: `a URI longer than ${MAX_URI} characters` };
+  }
+  // Control characters would break a log line and a prompt envelope alike.
+  // eslint-disable-next-line no-control-regex -- matching them is the point
+  if (/[\u0000-\u001f\u007f]/.test(uri)) {
+    return { ok: false, reason: 'a URI holding control characters' };
+  }
+  const name = typeof resource.name === 'string' ? resource.name.trim() : '';
+  if (name.length > MAX_DESCRIPTION) {
+    return { ok: false, reason: `a name longer than ${MAX_DESCRIPTION} characters` };
+  }
+  if (resource.description !== undefined && typeof resource.description !== 'string') {
+    return { ok: false, reason: 'a description that is not text' };
+  }
+  if ((resource.description ?? '').length > MAX_DESCRIPTION) {
+    return { ok: false, reason: `a description longer than ${MAX_DESCRIPTION} characters` };
+  }
+  const mimeType = typeof resource.mimeType === 'string' ? resource.mimeType.trim() : '';
+  if (mimeType.length > 128 || /[^A-Za-z0-9/+.;= -]/.test(mimeType)) {
+    return { ok: false, reason: 'a media type that is not usable' };
+  }
+  return {
+    ok: true,
+    resource: {
+      uri,
+      // The URI is the fallback rather than an invented name: a resource with no
+      // label is still something the user can recognise by its own identifier.
+      label: name.length > 0 ? name : uri,
+      ...(resource.description === undefined || resource.description.length === 0
+        ? {}
+        : { description: resource.description }),
+      ...(mimeType.length === 0 ? {} : { mimeType }),
+    },
+  };
+}
+
+/**
+ * Admits a whole resource listing, bounded and deduplicated.
+ *
+ * Bounded for the reason the tool listing is: the count comes from the server,
+ * and a listing of ten thousand resources would be a context-exhaustion channel.
+ * A repeated URI keeps the first, because the second would otherwise silently
+ * describe the same identifier differently.
+ */
+export function admitResourceListing(resources: readonly DiscoveredResource[]): {
+  readonly admitted: readonly AdmittedResource[];
+  readonly refused: readonly { readonly uri: string; readonly reason: string }[];
+} {
+  const admitted: AdmittedResource[] = [];
+  const refused: { uri: string; reason: string }[] = [];
+  const seen = new Set<string>();
+
+  for (const [index, resource] of resources.entries()) {
+    const label = typeof resource?.uri === 'string' ? resource.uri.slice(0, MAX_URI) : `#${index}`;
+    if (index >= MAX_RESOURCES) {
+      refused.push({ uri: label, reason: `more than ${MAX_RESOURCES} resources were offered` });
+      continue;
+    }
+    const verdict = admitDiscoveredResource(resource ?? { uri: '' });
+    if (!verdict.ok) {
+      refused.push({ uri: label, reason: verdict.reason });
+      continue;
+    }
+    if (seen.has(verdict.resource.uri)) {
+      refused.push({ uri: label, reason: 'that URI was offered more than once' });
+      continue;
+    }
+    seen.add(verdict.resource.uri);
+    admitted.push(verdict.resource);
+  }
+
+  return { admitted, refused };
+}
+
 /** A tool as the server described it: untrusted input, not yet a tool. */
 export interface DiscoveredTool {
   readonly name: string;

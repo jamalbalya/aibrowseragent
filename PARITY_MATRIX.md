@@ -338,23 +338,38 @@ the part worth recording:
 
 Forty-one mutants across the seven clauses, each killed.
 
-**And it is PARTIAL rather than PASS, for one unmet clause and two blockers.**
+**Resources came next, and they are tools too.** A resource is data a server
+offers rather than an action, and in the protocol it is attached as context. This
+architecture has one way for a model to reach anything, so resources arrive as two
+tools per server — one listing what is available, one reading a named entry.
+Anything else would be a second path into the model's context that the policy
+engine does not see, which is what §35 forbids.
 
-`P-026-C5` — **resource discovery** — is `EVIDENCE_MISSING`, and it is what holds
-the row. The specification hedges it "where applicable" and the honest reading is
-that it does apply: `resources/list` and `resources/read` are part of what an MCP
-client is. Its trust model is already settled — a resource is page-class content,
-`NEVER_PERSISTED`, tainting its task, and a resource **URI** must never become an
-audit field because it is page-derived text — so what is missing is
-implementation, not design.
+Both are R3, **including the listing**, and the absence of a read-only exception
+is the point rather than an oversight: the call itself tells the server this
+browser is asking, and a read-only exception is exactly the shape the withdrawn
+ceiling had. The read may only name a URI the server offered — otherwise the model
+could ask the server to fetch anything, a request the user never saw offered and
+that this build would have originated. Content is bounded, taints the task, and
+binary is named rather than decoded; a URI never reaches an audit field or a
+prompt summary, because it is page-derived text.
 
-`P-026-C2` and `P-026-C3` are `EXTERNAL_REQUIRED` and do not block. Remote MCP
-has never been exercised against a server somebody else operates, because this
-repository holds no such server and no credential for one; local MCP needs §66's
-desktop bridge, which the specification itself defers and which would need native
-messaging.
+**And it is PARTIAL rather than PASS, for the reason P-023 and P-033 are.**
 
-And §84 condition 3 — manual acceptance — is unmet repository-wide, which every
+Every mandatory clause is VERIFIED except two, and both are `EXTERNAL_REQUIRED`:
+remote MCP has never been exercised against a server somebody else operates,
+because this repository holds no such server and no credential for one, and local
+MCP needs §66's desktop bridge, which the specification itself defers and which
+would need native messaging.
+
+That combination would let the clause gate permit a PASS. It does not get one,
+and the precedent is the point: P-023 Connector framework and P-033 Provider
+switching are both PARTIAL on exactly this basis — everything is built and tested
+against a local mock, and nothing has met a real third party. Holding P-026 to a
+looser standard than the two rows beside it would make the matrix inconsistent in
+the one direction that flatters it.
+
+§84 condition 3 — manual acceptance — is also unmet repository-wide, which every
 PASS row already carries.
 
 ### What is waiting on somebody else, and where to see it

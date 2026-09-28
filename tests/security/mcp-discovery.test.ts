@@ -307,7 +307,13 @@ describe('04 what discovery does not decide', () => {
     // Discovery returns data. Making a tool out of it is a separate step, and
     // keeping the two apart is what lets the admission rules be the gate.
     const found = await discover(transport0(), SERVER, context);
-    expect(Object.keys(found).sort()).toEqual(['admitted', 'handshake', 'refused']);
+    expect(Object.keys(found).sort()).toEqual([
+      'admitted',
+      'handshake',
+      'refused',
+      'refusedResources',
+      'resources',
+    ]);
   });
 });
 

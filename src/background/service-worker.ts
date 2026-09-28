@@ -2378,6 +2378,11 @@ router.on('mcp.list', async () => {
                   name: entry.name,
                   reason: entry.reason,
                 })),
+                resourceCount: outcome.resourceCount,
+                refusedResources: outcome.refusedResources.map((entry) => ({
+                  uri: entry.uri,
+                  reason: entry.reason,
+                })),
                 ...(outcome.failure === undefined ? {} : { failure: outcome.failure }),
               },
             }),
@@ -2405,6 +2410,7 @@ router.on('mcp.add', async (request) => {
       added: true as const,
       registered: mine?.registered ?? [],
       refused: mine?.refused.map((entry) => ({ name: entry.name, reason: entry.reason })) ?? [],
+      resourceCount: mine?.resourceCount ?? 0,
     };
   } catch (caught) {
     // The validator's own sentences, so the panel can say which part was wrong.

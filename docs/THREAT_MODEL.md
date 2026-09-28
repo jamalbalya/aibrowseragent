@@ -144,7 +144,8 @@ would have to cross.
 ## T-5 — Malicious MCP
 
 An external MCP server this build connects to declares a harmless-looking tool,
-names it to impersonate a built-in, or floods the tool list.
+names it to impersonate a built-in, floods the tool list, or offers a resource
+whose content is an instruction.
 
 This item said "there is no MCP transport, so the threat is not currently
 reachable" and that is no longer true: a person can add a server and the agent can
@@ -181,11 +182,24 @@ clauses were each killed.
 - EVIDENCE: tests/security/mcp-registration.test.ts :: removes its tools, and there is no residual grant to revoke
 - EVIDENCE: tests/e2e/mcp.spec.ts :: a refused address never reaches the network
 
-**Not covered.** No real third-party server has been used — remote MCP is
-evidenced against a local server over real sockets, which is a different fact.
-And resource discovery is unbuilt, so the injection channel an MCP _resource_
-would open does not exist yet; when it is built it is T-1's problem as much as
-this one.
+Resources are the sharper half of this threat, because a resource is content
+rather than an action — the injection channel `PLUGIN_TRUST_MODEL.md` names. They
+are held by treating them exactly as page text: bounded, `NEVER_PERSISTED`,
+tainting the task, wrapped in T-1's envelope, with binary named rather than
+decoded. Two rules are specific to them. The model may only read a URI the server
+**offered**, so it cannot induce the server to fetch something the user never saw
+listed. And a URI reaches neither an audit field nor a confirmation prompt: it is
+page-derived text, so the prompt quotes the server's label instead.
+
+- EVIDENCE: tests/security/mcp-resources.test.ts :: refuses a URI the server never offered, before any request
+- EVIDENCE: tests/security/mcp-resources.test.ts :: summarises a read by the label, never by the URI
+- EVIDENCE: tests/security/mcp-resources.test.ts :: taints the task, so a later write meets the exfiltration gate
+- EVIDENCE: tests/security/mcp-resources.test.ts :: names binary content rather than decoding it
+- EVIDENCE: tests/security/mcp-resources.test.ts :: are both R3, with no read-only exception for the listing
+
+**Not covered.** No real third-party server has been used — the whole path is
+evidenced against a local server over real sockets, which is a different fact, and
+it is why P-026 is PARTIAL rather than PASS.
 
 The inverse threat — something outside driving this extension over MCP — is not
 in this list because it is not possible: this build is not an MCP server and

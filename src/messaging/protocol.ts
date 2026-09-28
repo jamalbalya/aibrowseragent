@@ -652,6 +652,10 @@ export interface PanelRequestMap {
         outcome?: {
           registered: readonly string[];
           refused: readonly { name: string; reason: string }[];
+          /** How many of its resources are reachable. */
+          resourceCount: number;
+          /** Resources turned away, by URI, so none disappears silently. */
+          refusedResources: readonly { uri: string; reason: string }[];
           failure?: string;
         };
       }[];

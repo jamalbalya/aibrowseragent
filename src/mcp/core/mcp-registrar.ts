@@ -31,6 +31,7 @@ import { isMcpToolName, mcpToolName, type McpServerDescriptor } from './mcp-mode
 import { discover, McpDiscoveryError } from './mcp-discovery';
 import type { McpServerStore } from './mcp-server-store';
 import { createMcpTool, type McpSecurityContextFor } from '@/mcp/tools/mcp-tool';
+import { createMcpResourceTools } from '@/mcp/tools/mcp-resource-tools';
 import type { McpTransport } from '@/mcp/transport/mcp-transport';
 
 const log = getLogger('security');
@@ -41,6 +42,9 @@ export interface McpServerOutcome {
   readonly registered: readonly string[];
   /** Tools the server offered that this build will not expose, with reasons. */
   readonly refused: readonly { readonly name: string; readonly reason: string }[];
+  /** How many of its resources are reachable, and what was turned away. */
+  readonly resourceCount: number;
+  readonly refusedResources: readonly { readonly uri: string; readonly reason: string }[];
   /** Why the server contributed nothing at all, when that is the case. */
   readonly failure?: string;
 }
@@ -103,7 +107,26 @@ export async function registerMcpServers(
         registered.push(built.tool.name);
       }
 
-      outcomes.push({ serverId: server.id, registered, refused });
+      // Two more tools when the server offered resources, or none at all: a
+      // `resources.list` that always answers empty would be a tool in the
+      // model's context earning nothing.
+      for (const tool of createMcpResourceTools({
+        server,
+        transport,
+        resources: found.resources,
+        securityContextFor: options.securityContextFor,
+      })) {
+        options.registry.register(tool);
+        registered.push(tool.name);
+      }
+
+      outcomes.push({
+        serverId: server.id,
+        registered,
+        refused,
+        resourceCount: found.resources.length,
+        refusedResources: found.refusedResources,
+      });
     } catch (caught) {
       // Independent on purpose: one unreachable endpoint must not cost the user
       // the tools from the servers that answered, and must not stop startup.
@@ -112,7 +135,14 @@ export async function registerMcpServers(
           ? caught.message
           : 'The server could not be reached.';
       log.warn('An MCP server contributed no tools.', { serverId: server.id });
-      outcomes.push({ serverId: server.id, registered: [], refused: [], failure });
+      outcomes.push({
+        serverId: server.id,
+        registered: [],
+        refused: [],
+        resourceCount: 0,
+        refusedResources: [],
+        failure,
+      });
     }
   }
 

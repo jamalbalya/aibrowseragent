@@ -25,6 +25,8 @@ export interface MockMcpServer {
   readonly calls: McpCall[];
   /** Tools `tools/list` will offer. Assignable, so a test can change them. */
   tools: readonly unknown[];
+  /** Resources `resources/list` will offer. Empty means the capability is not declared. */
+  resources: readonly unknown[];
   /** What `tools/call` answers with. */
   result: unknown;
   /** Set to refuse the handshake, for the failing-server case. */
@@ -49,6 +51,7 @@ export async function startMockMcpServer(): Promise<MockMcpServer> {
       },
     ] as readonly unknown[],
     result: { content: [{ type: 'text', text: 'the answer' }] } as unknown,
+    resources: [] as readonly unknown[],
     refuseHandshake: false,
     protocolVersion: '2025-06-18',
   };
@@ -84,7 +87,12 @@ export async function startMockMcpServer(): Promise<MockMcpServer> {
         send({
           result: {
             protocolVersion: state.protocolVersion,
-            capabilities: { tools: {} },
+            // Declared only when there is something to declare, so a test can
+            // exercise both the asked and the not-asked path.
+            capabilities: {
+              tools: {},
+              ...(state.resources.length > 0 ? { resources: {} } : {}),
+            },
             serverInfo: { name: 'Mock MCP', version: '1' },
           },
         });
@@ -92,6 +100,15 @@ export async function startMockMcpServer(): Promise<MockMcpServer> {
       }
       if (method === 'tools/list') {
         send({ result: { tools: state.tools } });
+        return;
+      }
+      if (method === 'resources/list') {
+        send({ result: { resources: state.resources } });
+        return;
+      }
+      if (method === 'resources/read') {
+        const uri = (request.params as { uri?: string } | undefined)?.uri ?? '';
+        send({ result: { contents: [{ uri, text: `contents of ${uri}` }] } });
         return;
       }
       if (method === 'tools/call') {
@@ -113,6 +130,12 @@ export async function startMockMcpServer(): Promise<MockMcpServer> {
     },
     set tools(next: readonly unknown[]) {
       state.tools = next;
+    },
+    get resources() {
+      return state.resources;
+    },
+    set resources(next: readonly unknown[]) {
+      state.resources = next;
     },
     get result() {
       return state.result;

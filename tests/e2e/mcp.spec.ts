@@ -158,6 +158,63 @@ test('asking again picks up a tool the server has stopped offering', async ({ se
   );
 });
 
+test('a server offering resources gets the two resource tools, and no others do', async ({
+  send,
+}) => {
+  // The two tools exist only when there is something to read: a resources.list
+  // that always answers empty would be a tool in the model's context earning
+  // nothing.
+  const bare = await startMockMcpServer();
+  try {
+    server.resources = [{ uri: 'docs://guide', name: 'Guide', mimeType: 'text/markdown' }];
+    const added = await send('mcp.add', { id: 'docs', displayName: 'Docs', url: server.baseUrl });
+    expect(added).toMatchObject({ added: true, resourceCount: 1 });
+    expect(server.calls.map((call) => call.method)).toEqual([
+      'initialize',
+      'tools/list',
+      'resources/list',
+    ]);
+
+    await send('mcp.add', { id: 'bare', displayName: 'Bare', url: bare.baseUrl });
+    // The server that declared no resources was never asked for any.
+    expect(bare.calls.map((call) => call.method)).toEqual(['initialize', 'tools/list']);
+
+    const names = (await send('tools.list', {})).tools.map((tool) => tool.name);
+    expect(names).toContain('mcp__docs__resources.list');
+    expect(names).toContain('mcp__docs__resources.read');
+    expect(names).not.toContain('mcp__bare__resources.list');
+  } finally {
+    await bare.close();
+  }
+});
+
+test('a resource the server would not describe properly is left out and named', async ({
+  send,
+}) => {
+  server.resources = [
+    { uri: 'docs://good', name: 'Good' },
+    // A URI with a control character in it: it would break a log line and a
+    // prompt envelope alike.
+    { uri: 'docs://bad\u0001', name: 'Bad' },
+  ];
+  await send('mcp.add', { id: 'docs', displayName: 'Docs', url: server.baseUrl });
+  const listed = await send('mcp.list', {});
+  expect(listed.servers[0]?.outcome?.resourceCount).toBe(1);
+  expect(listed.servers[0]?.outcome?.refusedResources[0]?.reason).toContain('control characters');
+});
+
+test('the resource tools appear at R3, like every other MCP tool', async ({ send }) => {
+  server.resources = [{ uri: 'docs://guide', name: 'Guide' }];
+  await send('mcp.add', { id: 'docs', displayName: 'Docs', url: server.baseUrl });
+  const tools = (await send('tools.list', {})).tools.filter((tool) =>
+    tool.name.startsWith('mcp__docs__resources.'),
+  );
+  expect(tools).toHaveLength(2);
+  // Including the listing. A read-only exception is the shape the withdrawn
+  // per-server ceiling had.
+  for (const tool of tools) expect(tool.risk, tool.name).toBe('R3');
+});
+
 test('a server on another protocol revision is declined', async ({ send }) => {
   server.protocolVersion = '1999-01-01';
   const added = await send('mcp.add', {

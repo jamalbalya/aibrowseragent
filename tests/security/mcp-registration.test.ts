@@ -160,7 +160,13 @@ describe('03 registering what a server offers', () => {
       securityContextFor: security,
     });
     expect(outcomes).toEqual([
-      { serverId: 'docs', registered: ['mcp__docs__search'], refused: [] },
+      {
+        serverId: 'docs',
+        registered: ['mcp__docs__search'],
+        refused: [],
+        resourceCount: 0,
+        refusedResources: [],
+      },
     ]);
     expect(harness.registry.has('mcp__docs__search')).toBe(true);
   });

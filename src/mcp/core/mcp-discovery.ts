@@ -26,7 +26,14 @@
  */
 
 import { getLogger } from '@/logging/logger';
-import { admitListing, type DiscoveredTool, type McpServerDescriptor } from '@/mcp/core/mcp-model';
+import {
+  admitListing,
+  admitResourceListing,
+  type AdmittedResource,
+  type DiscoveredResource,
+  type DiscoveredTool,
+  type McpServerDescriptor,
+} from '@/mcp/core/mcp-model';
 import type { McpEgressContext, McpTransport } from '@/mcp/transport/mcp-transport';
 
 const log = getLogger('security');
@@ -72,6 +79,19 @@ export interface McpHandshake {
   /** The revision the server said it speaks. Recorded, never trusted. */
   readonly protocolVersion: string;
   /**
+   * Whether the server declared a `resources` capability.
+   *
+   * Unlike `declaresTools`, this one is **acted on**: `resources/list` is only
+   * attempted when the server says it has resources. The asymmetry is
+   * deliberate. A server that omits the `tools` capability and offers tools
+   * anyway is inconsistent in a way that would cost the user tools they can see
+   * in their own client, so the listing runs regardless. Resources are the other
+   * way round: asking a server with no resources produces a `-32601` that has to
+   * be told apart from a real refusal, and there is nothing to lose by not
+   * asking.
+   */
+  readonly declaresResources: boolean;
+  /**
    * Whether the server declared a `tools` capability.
    *
    * Not used to skip the listing — a server that omits the capability and
@@ -88,6 +108,10 @@ export interface McpDiscovery {
   readonly admitted: readonly { readonly name: string; readonly source: DiscoveredTool }[];
   /** Everything refused, with the reason, so nothing disappears silently. */
   readonly refused: readonly { readonly name: string; readonly reason: string }[];
+  /** Resources the server offered that passed admission. */
+  readonly resources: readonly AdmittedResource[];
+  /** Resources refused, by URI. */
+  readonly refusedResources: readonly { readonly uri: string; readonly reason: string }[];
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -147,7 +171,75 @@ export async function initialize(
   return {
     protocolVersion,
     declaresTools: capabilities !== null && asRecord(capabilities.tools) !== null,
+    declaresResources: capabilities !== null && asRecord(capabilities.resources) !== null,
   };
+}
+
+/**
+ * Lists a server's resources.
+ *
+ * Same pagination rules as the tool listing, and the same reason for each: a
+ * page cap, an end on a repeated cursor, and admission applied to the
+ * accumulated set so splitting a listing does not evade the resource cap.
+ *
+ * A refusal to list is **not** an error here, unlike `tools/list`. A server may
+ * declare the capability and then decline, and a resource listing is
+ * supplementary — losing it should not cost the user the server's tools. So it
+ * comes back as an empty listing with the refusal named.
+ */
+export async function listResources(
+  transport: McpTransport,
+  server: McpServerDescriptor,
+  context: McpEgressContext,
+): Promise<{
+  readonly admitted: readonly AdmittedResource[];
+  readonly refused: readonly { readonly uri: string; readonly reason: string }[];
+}> {
+  const collected: DiscoveredResource[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+
+  for (let page = 0; ; page += 1) {
+    if (page >= MAX_PAGES) {
+      return {
+        admitted: admitResourceListing(collected).admitted,
+        refused: [
+          { uri: '(listing)', reason: `more than ${MAX_PAGES} pages of resources were offered` },
+        ],
+      };
+    }
+
+    const outcome = await transport.call('resources/list', cursor === undefined ? {} : { cursor }, {
+      ...context,
+      method: 'resources/list',
+    });
+    if (!outcome.ok) {
+      return { admitted: [], refused: [{ uri: '(listing)', reason: outcome.message }] };
+    }
+
+    const result = asRecord(outcome.result);
+    const resources = result === null ? null : result.resources;
+    if (!Array.isArray(resources)) {
+      return {
+        admitted: [],
+        refused: [{ uri: '(listing)', reason: 'the server did not answer with a list' }],
+      };
+    }
+    for (const entry of resources) collected.push((entry ?? {}) as DiscoveredResource);
+
+    const next = result === null ? undefined : result.nextCursor;
+    if (typeof next !== 'string' || next.length === 0) break;
+    if (seenCursors.has(next)) {
+      log.warn('An MCP server repeated a resource cursor; the listing was ended.', {
+        serverId: server.id,
+      });
+      break;
+    }
+    seenCursors.add(next);
+    cursor = next;
+  }
+
+  return admitResourceListing(collected);
 }
 
 /**
@@ -161,7 +253,7 @@ export async function listTools(
   transport: McpTransport,
   server: McpServerDescriptor,
   context: McpEgressContext,
-): Promise<Omit<McpDiscovery, 'handshake'>> {
+): Promise<Pick<McpDiscovery, 'admitted' | 'refused'>> {
   const collected: DiscoveredTool[] = [];
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
@@ -213,7 +305,7 @@ export async function listTools(
   return admitListing(server, collected);
 }
 
-/** The handshake and the listing, in the order they have to happen. */
+/** The handshake and the listings, in the order they have to happen. */
 export async function discover(
   transport: McpTransport,
   server: McpServerDescriptor,
@@ -221,5 +313,15 @@ export async function discover(
 ): Promise<McpDiscovery> {
   const handshake = await initialize(transport, server, context);
   const listing = await listTools(transport, server, context);
-  return { handshake, admitted: listing.admitted, refused: listing.refused };
+  // Only when the server said it has resources; see `declaresResources`.
+  const resources = handshake.declaresResources
+    ? await listResources(transport, server, context)
+    : { admitted: [], refused: [] };
+  return {
+    handshake,
+    admitted: listing.admitted,
+    refused: listing.refused,
+    resources: resources.admitted,
+    refusedResources: resources.refused,
+  };
 }

@@ -150,11 +150,21 @@ export function McpServers({ onMessage }: McpServersProps): React.JSX.Element {
             <>
               <p className="field__hint">
                 {server.outcome.registered.length} tool
-                {server.outcome.registered.length === 1 ? '' : 's'} available.
+                {server.outcome.registered.length === 1 ? '' : 's'} available
+                {server.outcome.resourceCount > 0
+                  ? `, and ${server.outcome.resourceCount} resource${
+                      server.outcome.resourceCount === 1 ? '' : 's'
+                    } the agent can ask for.`
+                  : '.'}
               </p>
               {server.outcome.refused.map((entry) => (
                 <p key={entry.name} className="field__hint">
                   <code>{entry.name}</code> is not usable by this extension, because {entry.reason}.
+                </p>
+              ))}
+              {server.outcome.refusedResources.map((entry) => (
+                <p key={entry.uri} className="field__hint">
+                  A resource was left out, because {entry.reason}.
                 </p>
               ))}
             </>
