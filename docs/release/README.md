@@ -206,8 +206,20 @@ else.
   can redirect to the OAuth callback; `build.mjs` removes those for a release
   and this is where that removal stops being a convention. An entry matching
   nothing, or matching every site, fails too.
-- **No `<all_urls>`**, no host pattern hiding in `permissions`, and a CSP that
-  allows neither `unsafe-eval` nor `unsafe-inline`.
+- **No `<all_urls>`**, no host pattern hiding in `permissions` **or in
+  `optional_permissions`**, and a CSP that allows neither `unsafe-eval` nor
+  `unsafe-inline`. A host pattern in `optional_permissions` is the same
+  escalation as one in `permissions`, reachable one dialog away rather than not
+  at all.
+- **The locked architectural prohibitions, on the manifest that actually
+  ships** — no `externally_connectable`, no `nativeMessaging`, no
+  `devtools_page`, no `chrome_url_overrides`. These are also asserted in
+  `security-invariants.test.ts`, and that is a different artifact:
+  `build.mjs` transforms the manifest on the way out — it is what strips the
+  loopback `web_accessible_resources` entry described above — so a transform
+  that _added_ one of these keys would pass every test in the repository and
+  ship anyway. This file is the last thing between a build and a store, so it
+  re-checks them on the bytes in the package.
 
 What it deliberately does not check is Chrome Web Store policy. Policy is
 published by Google, changes independently of this repository, and is not

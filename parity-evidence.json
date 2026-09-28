@@ -291,7 +291,10 @@
     "P-005": {
       "unit": ["tests/unit/browser-tools.test.ts"],
       "integration": ["tests/integration/agent-runtime.test.ts"],
-      "security": ["tests/security/origin-validation.test.ts"],
+      "security": [
+        "tests/security/origin-validation.test.ts",
+        "tests/security/security-invariants.test.ts"
+      ],
       "e2e": [
         "tests/e2e/agent-task.spec.ts",
         "tests/e2e/security.spec.ts",
@@ -375,6 +378,20 @@
             "tests/unit/browser-tools.test.ts :: allows an action when the page stayed on the same origin",
             "tests/unit/policy-engine.test.ts :: does not treat a navigation as the page moving"
           ]
+        },
+        {
+          "id": "P-005-C8",
+          "specRef": "§5.1",
+          "requirement": "The loopback exception to the https rule has one definition, and it agrees with what URL.hostname produces.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/security/security-invariants.test.ts :: is defined in exactly one file",
+            "tests/security/security-invariants.test.ts :: is spelled out nowhere else, under any name",
+            "tests/security/security-invariants.test.ts :: answers the same for both spellings of IPv6 loopback",
+            "tests/security/security-invariants.test.ts :: stays narrow, because every use of it relaxes an https requirement"
+          ],
+          "notes": "Found by the Part 8 release-artifact audit, which turned up four copies of the predicate in the shipped bundle. Six places in source asked whether a host is the local machine, each in order to relax the https rule. Five were character-identical under three different names; the sixth, in checkNavigable, tested for ‘::1’ while URL.hostname produces ‘[::1]’, so its IPv6 case never matched and an IPv6 loopback page was treated as insecure. It failed closed, which is why nothing caught it. One isLoopbackHostname now, with a census asserting one definition and that the body appears nowhere else under any name. Consolidating loosens that one check — http://[::1] is now secure, as http://127.0.0.1 already was — and the predicate stays narrow of 127.0.0.0/8 and 0.0.0.0 on purpose, since a narrower answer refuses what a broader one would allow."
         }
       ]
     },

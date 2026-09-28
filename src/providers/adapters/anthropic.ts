@@ -30,6 +30,7 @@
  *    retry — passes the egress gate.
  */
 import { getLogger } from '@/logging/logger';
+import { isLoopbackHostname } from '@/security/origin/origin-validator';
 import { createError } from '@/types/result';
 import { providerFailure, type ProviderFailure } from '@/providers/core/provider-error';
 import {
@@ -196,7 +197,7 @@ export class AnthropicAdapter implements AIProviderAdapter {
         error: createError('INVALID_ARGUMENT', 'The base URL is not a valid URL.'),
       });
     }
-    if (parsed.protocol !== 'https:' && !isLoopback(parsed.hostname)) {
+    if (parsed.protocol !== 'https:' && !isLoopbackHostname(parsed.hostname)) {
       return Promise.resolve({
         authenticated: false,
         error: createError('INVALID_ARGUMENT', 'The base URL must use https.', {
@@ -779,9 +780,6 @@ function parseStreamedToolCall(fragment: {
  * this protocol is a real deployment — so loopback is the one exception, and
  * it is spelled out rather than approximated by a prefix match.
  */
-function isLoopback(hostname: string): boolean {
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
-}
 
 export function supportsVision(model: string): boolean {
   const lower = model.toLowerCase();

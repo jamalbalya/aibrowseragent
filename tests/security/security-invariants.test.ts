@@ -21,6 +21,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { PANEL_ROUTE_CLASSES } from '@/messaging/route-trust';
+import { isLoopbackHostname } from '@/security/origin/origin-validator';
 import { HEALTH_DOMAINS, PersistenceHealthStore } from '@/storage/persistence-health';
 import { MemoryStorageArea, SerializedStorageArea } from '@/storage/storage-area';
 import { ALLOWED_CDP_METHODS } from '@/tools/debugger/debugger-manager';
@@ -361,6 +362,145 @@ describe('what a model can reach is a closed set', () => {
     );
     for (const route of Object.keys(PANEL_ROUTE_CLASSES)) {
       expect(toolNames.has(route), `${route} is both a route and a tool`).toBe(false);
+    }
+  });
+});
+
+describe('the census table in docs/security.md is the census', () => {
+  /*
+   * The table says of itself: "A number here changing is either a deliberate
+   * architectural decision — in which case the test is updated in the same
+   * commit that makes it, and the reviewer sees both — or it is the thing this
+   * file exists to catch."
+   *
+   * Nothing checked that. The Part 8 pass found the table saying nine manifest
+   * permissions while the assertion below has listed ten for some time: a
+   * permission arrived, the test was updated, and the prose was not — which is
+   * precisely the drift the table claims to prevent. It is the same failure as
+   * the README carrying a stale PASS fraction until the parity gate started
+   * cross-checking it.
+   *
+   * So the numbers are read out of the document and compared against what this
+   * file actually asserts. A row that drifts now fails here, in the suite the
+   * row points at.
+   */
+  const DOC = readFileSync(resolve(root, 'docs/security.md'), 'utf8');
+
+  function stated(fact: string): number {
+    // The row is `| <fact> | <n> | <why> |`, and the fact contains backticks and
+    // slashes, so it is matched literally rather than as a pattern.
+    const row = DOC.split('\n').find((line) => line.startsWith('|') && line.includes(fact));
+    expect(row, `docs/security.md has no census row for "${fact}"`).toBeDefined();
+    const cells = (row as string).split('|').map((cell) => cell.trim());
+    const value = Number(cells[2]);
+    expect(Number.isInteger(value), `the count cell for "${fact}" is not a number`).toBe(true);
+    return value;
+  }
+
+  it('states the same number of message receivers the suite asserts', () => {
+    expect(stated('`chrome.runtime.onMessage` receivers')).toBe(
+      filesWith(/chrome\.runtime\.onMessage\.addListener/).length,
+    );
+  });
+
+  it('states the same number of manifest permissions the suite asserts', () => {
+    const manifest = JSON.parse(readFileSync(resolve(root, 'public/manifest.json'), 'utf8')) as {
+      permissions: string[];
+    };
+    expect(stated('Permissions in the manifest')).toBe(manifest.permissions.length);
+  });
+
+  it('states the same number of files holding a network primitive', () => {
+    // This row was stale too — the table said three while the census below has
+    // asserted four since the MCP transport arrived. Two of six rows drifted,
+    // which is why every row is bound here rather than the one that was noticed.
+    expect(stated('Files holding a network primitive')).toBe(
+      filesWith(
+        /globalThis\.fetch|typeof fetch|fetchImpl|new WebSocket|XMLHttpRequest|sendBeacon|EventSource/,
+      ).length,
+    );
+  });
+
+  it('states the same number of dispatch, egress and unregister callers', () => {
+    const excluding = (pattern: RegExp, self: string) =>
+      filesWith(pattern).filter((path) => path !== self).length;
+
+    expect(stated('Callers of `ToolRegistry.dispatch`')).toBe(
+      excluding(/\.dispatch\(\{/, 'src/tools/registry/tool-registry.ts'),
+    );
+    expect(stated('Callers of `authorizeEgress`')).toBe(
+      excluding(/authorizeEgress\(/, 'src/security/egress/egress-gate.ts'),
+    );
+    expect(stated('Callers of `ToolRegistry.unregister`')).toBe(
+      excluding(/\.unregister\(/, 'src/tools/registry/tool-registry.ts'),
+    );
+  });
+
+  it('states zero code-execution primitives, which is the one number that may not move', () => {
+    // Every other row is a fact about this build. This one is a prohibition, so
+    // a non-zero value in the document would be a claim the product does not
+    // make rather than a stale count.
+    expect(stated('Code-execution primitives anywhere in src/')).toBe(0);
+  });
+});
+
+describe('the loopback predicate has one definition', () => {
+  /*
+   * There were six. Five were character-identical under three different names —
+   * both provider adapters, the connector types, the MCP transport and the MCP
+   * model — and the sixth, in `origin-validator.ts`, tested for `'::1'` where
+   * the others tested for `'[::1]'`.
+   *
+   * That sixth is why this census exists rather than a note about tidiness.
+   * `new URL('http://[::1]:8080').hostname` is `'[::1]'`, so the origin
+   * validator's IPv6 case never matched and an IPv6 loopback page was treated as
+   * insecure. It failed closed, which is why nothing caught it for as long as it
+   * stood — and a duplicated security predicate that has already diverged once
+   * will diverge again.
+   *
+   * Every use relaxes an https requirement, so the hazard is a future widening
+   * applied to one copy and not the rest.
+   */
+  it('is defined in exactly one file', () => {
+    const definitions = filesWith(/function isLoopback[A-Za-z]*\(/);
+    expect(definitions).toEqual(['src/security/origin/origin-validator.ts']);
+  });
+
+  it('is spelled out nowhere else, under any name', () => {
+    // The body rather than the name, because the next copy will be called
+    // something else — as three of the six already were.
+    const inline = filesWith(/hostname === '127\.0\.0\.1'/).filter(
+      (path) => path !== 'src/security/origin/origin-validator.ts',
+    );
+    expect(inline).toEqual([]);
+  });
+
+  it('answers the same for both spellings of IPv6 loopback', () => {
+    // The bug, as a test. A caller reading `URL.hostname` gets the bracketed
+    // form and a caller holding a bare host does not, and a predicate that
+    // disagreed with itself depending on where the string came from is how the
+    // divergence happened.
+    expect(isLoopbackHostname('[::1]')).toBe(true);
+    expect(isLoopbackHostname('::1')).toBe(true);
+    expect(isLoopbackHostname(new URL('http://[::1]:8080/x').hostname)).toBe(true);
+    expect(isLoopbackHostname('localhost')).toBe(true);
+    expect(isLoopbackHostname('127.0.0.1')).toBe(true);
+  });
+
+  it('stays narrow, because every use of it relaxes an https requirement', () => {
+    // Widening this is a product decision about local model servers, and it
+    // would be made here. Until it is, these are refusals rather than gaps.
+    for (const host of [
+      '127.0.0.2',
+      '127.1.1.1',
+      '0.0.0.0',
+      'localhost.evil.test',
+      'notlocalhost',
+      'my-localhost',
+      '2130706433',
+      '',
+    ]) {
+      expect(isLoopbackHostname(host), host).toBe(false);
     }
   });
 });

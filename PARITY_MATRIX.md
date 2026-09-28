@@ -251,6 +251,28 @@ user's one signal that deep inspection is active and it was saying something
 untrue. P-014 gains **P-014-C6**, taking the inventory to 264 clauses. Its row
 does not move either: it already read PASS.
 
+The Part 8 release audit then found a fifteenth, by reading the shipped bundle
+rather than the source: four copies of the same loopback predicate. Six places in
+source asked whether a host is the local machine, each in order to relax the
+https rule that keeps an API key off a network in the clear. Five were
+character-identical under three different names, and the sixth — in
+`checkNavigable` — tested for `'::1'` where `URL.hostname` produces `'[::1]'`, so
+its IPv6 case never matched and an IPv6 loopback page was treated as insecure. It
+failed closed, which is why nothing caught it, and a duplicated security
+predicate that has already diverged once will diverge again. There is one
+`isLoopbackHostname` now, with a census asserting one definition and that the
+body appears nowhere else under any name. P-005 gains **P-005-C8** and the
+inventory reaches 266.
+
+The same pass found the census table in `docs/security.md` had itself drifted:
+two of its six rows disagreed with the suite they point at — nine manifest
+permissions against ten asserted, three network-primitive files against four —
+while the table's own text says a number changing there "is either a deliberate
+architectural decision … or it is the thing this file exists to catch". Nothing
+checked it. Every row is now read out of the document and compared against what
+the suite asserts, and a seventh row was added for the assertion the table
+omitted.
+
 The Part 6 cross-capability pass then found a fourteenth, between shortcuts and
 the local export boundary and going the other way from every other rule there.
 Shortcuts export whole, including the two narrowings §50 names, and the importer

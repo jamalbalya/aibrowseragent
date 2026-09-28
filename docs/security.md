@@ -1287,14 +1287,16 @@ So the shape of the tree is asserted directly, in
 `tests/security/security-invariants.test.ts`, as a standing fact rather than
 as a property of any one feature:
 
-| Fact                                       | Now | Why it is a security fact                                  |
-| ------------------------------------------ | --- | ---------------------------------------------------------- |
-| `chrome.runtime.onMessage` receivers       | 3   | Each is a boundary, and each must classify its sender      |
-| Callers of `ToolRegistry.dispatch`         | 2   | The one execution path; a third is a second one            |
-| Callers of `authorizeEgress`               | 2   | The one egress decision; a third decides without the gate  |
-| Files holding a network primitive          | 3   | Anything else reaches the network outside the interceptor  |
-| Code-execution primitives anywhere in src/ | 0   | `eval`, `new Function`, `innerHTML` and the rest           |
-| Permissions in the manifest                | 9   | Asserted by exact contents, so one cannot arrive unnoticed |
+| Fact                                       | Now | Why it is a security fact                                        |
+| ------------------------------------------ | --- | ---------------------------------------------------------------- |
+| `chrome.runtime.onMessage` receivers       | 3   | Each is a boundary, and each must classify its sender            |
+| Callers of `ToolRegistry.dispatch`         | 2   | The one execution path; a third is a second one                  |
+| Callers of `authorizeEgress`               | 2   | The one egress decision; a third decides without the gate        |
+| Callers of `ToolRegistry.unregister`       | 1   | Only MCP re-registration removes a tool; anything else hides one |
+| Definitions of the loopback predicate      | 1   | Six had already diverged once; every use relaxes an https rule   |
+| Files holding a network primitive          | 4   | Anything else reaches the network outside the interceptor        |
+| Code-execution primitives anywhere in src/ | 0   | `eval`, `new Function`, `innerHTML` and the rest                 |
+| Permissions in the manifest                | 10  | Asserted by exact contents, so one cannot arrive unnoticed       |
 
 These are not lines of coverage and they are not style rules. A number here
 changing is either a deliberate architectural decision — in which case the
@@ -1308,6 +1310,32 @@ added, the evaluator added, the permission added, and each one caught.
 What this does not do is establish that the components _are_ correct. It
 establishes that there are no others. The rest of this document is the first
 claim; this section is the second, and neither substitutes for the other.
+
+## One loopback predicate, because six had already diverged
+
+Six places asked "is this host the local machine", and every one of them asked
+it in order to **relax the https requirement** — an API key may go to a local
+model server in the clear because loopback traffic reaches no network.
+
+Five were character-identical under three different names: both provider
+adapters, the connector types, the MCP transport and the MCP model. The sixth,
+in `origin-validator.ts`, tested for `'::1'` where the others tested for
+`'[::1]'`. `new URL('http://[::1]:8080').hostname` is `'[::1]'`, brackets
+included, so that case never matched: an IPv6 loopback page was treated as
+insecure and required the allow-insecure setting. It failed closed, which is why
+nothing caught it, and it was still not doing what it was written to do.
+
+There is now one `isLoopbackHostname`, in `origin-validator.ts`, and a census
+asserts there is exactly one definition and that the body appears nowhere else
+under any name — because three of the six were already called something
+different. Consolidating restored the IPv6 case, which is a **loosening** of that
+one check: an `http://[::1]` page is now treated as secure, exactly as
+`http://127.0.0.1` already was, and for the reason the product already gives.
+
+It stays narrow on purpose. It is not the whole of 127.0.0.0/8 and it is not
+`0.0.0.0`, so a request a broader predicate would allow is refused instead.
+Widening it is a product decision about which local addresses a model server may
+listen on, and it now has one place to be made rather than six.
 
 ## Counting the other way round
 

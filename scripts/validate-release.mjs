@@ -160,6 +160,45 @@ for (const permission of manifest.permissions ?? []) {
 
 for (const failure of checkWebAccessibleResources(manifest)) fail(failure);
 
+// The locked architectural prohibitions, asserted on the manifest that actually
+// ships.
+//
+// `security-invariants.test.ts` already asserts these against
+// `public/manifest.json`, and that is a different artifact: `build.mjs`
+// transforms the manifest on the way out — it is what strips the loopback
+// `web_accessible_resources` entry a few lines above — so a transform that
+// *added* one of these keys would pass every test in the repository and ship.
+// The point of this file is to be the last thing between a build and a store, so
+// the prohibitions are re-checked here on the bytes in the package.
+//
+// Each is locked by the product's architecture rather than by taste:
+// `externally_connectable` would let a web page message the extension directly,
+// `nativeMessaging` would let it run a local process, and neither exists in any
+// design this project has approved.
+for (const key of [
+  'externally_connectable',
+  'nativeMessaging',
+  'devtools_page',
+  'chrome_url_overrides',
+]) {
+  if (key in manifest) {
+    fail(`manifest declares ${key}, which no approved design for this extension uses.`);
+  }
+}
+for (const permission of manifest.permissions ?? []) {
+  if (permission === 'nativeMessaging' || permission === 'debugger.attach') {
+    fail(`permissions contains ${permission}, which no approved design uses.`);
+  }
+}
+// `optional_permissions` is a grant the user can give later, so a host pattern
+// hiding there would be the same escalation the loop above refuses in
+// `permissions` — reachable one dialog away rather than not at all.
+for (const permission of manifest.optional_permissions ?? []) {
+  if (permission.includes('://') || permission === '<all_urls>') {
+    fail(`optional_permissions contains a host pattern: ${permission}`);
+  }
+}
+
 const csp = manifest.content_security_policy?.extension_pages ?? '';
 if (!csp) fail('The extension declares no content_security_policy.');
 if (/unsafe-eval|unsafe-inline/.test(csp)) fail('CSP allows unsafe-eval or unsafe-inline.');

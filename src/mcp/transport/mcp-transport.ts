@@ -33,6 +33,7 @@
  */
 
 import { getLogger } from '@/logging/logger';
+import { isLoopbackHostname } from '@/security/origin/origin-validator';
 import { mcpDestination } from '@/security/egress/destination';
 import { guardedSend, type GuardedSendOptions } from '@/security/egress/provider-transport';
 import type { EgressDecision } from '@/security/egress/egress-gate';
@@ -108,10 +109,6 @@ export interface McpTransportOptions {
   ) => Promise<void>;
 }
 
-function isLoopbackHost(hostname: string): boolean {
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
-}
-
 /**
  * Re-checks the stored URL at use time.
  *
@@ -130,7 +127,7 @@ function assertUsable(url: string, displayName: string): void {
       `${displayName} has an address that is no longer usable.`,
     );
   }
-  if (parsed.protocol !== 'https:' && !isLoopbackHost(parsed.hostname)) {
+  if (parsed.protocol !== 'https:' && !isLoopbackHostname(parsed.hostname)) {
     throw new McpTransportError(
       'DESTINATION_REFUSED',
       `${displayName} is not reachable over https, so the request was not sent.`,

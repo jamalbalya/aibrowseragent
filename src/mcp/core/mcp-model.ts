@@ -68,6 +68,7 @@
  */
 
 import type { RiskLevel } from '@/policy/risk-classifier';
+import { isLoopbackHostname } from '@/security/origin/origin-validator';
 
 /** How long a discovered description may be before it is refused. */
 const MAX_DESCRIPTION = 400;
@@ -261,10 +262,6 @@ export function mcpToolRisk(): RiskLevel {
   return MCP_TOOL_RISK;
 }
 
-function isLoopback(hostname: string): boolean {
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
-}
-
 /**
  * Checks a server before it can be added.
  *
@@ -302,7 +299,7 @@ export function validateServerDescriptor(input: {
     } catch {
       problems.push(`"${rawUrl}" is not a usable URL`);
     }
-    if (parsed !== null && parsed.protocol !== 'https:' && !isLoopback(parsed.hostname)) {
+    if (parsed !== null && parsed.protocol !== 'https:' && !isLoopbackHostname(parsed.hostname)) {
       // Every call carries whatever credential the server needs, so plaintext
       // is refused. Loopback is allowed so a local mock can be driven over
       // real sockets, which is how the connectors are tested.

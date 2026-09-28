@@ -13,6 +13,7 @@
  * model.
  */
 import type { AgentTool } from '@/tools/core/tool-types';
+import { isLoopbackHostname } from '@/security/origin/origin-validator';
 import type { DataSensitivity } from '@/security/exfiltration/exfiltration-guard';
 import type { RiskLevel } from '@/policy/risk-classifier';
 
@@ -167,7 +168,7 @@ export function validateConnectorDescriptor(descriptor: ConnectorDescriptor): st
     // Loopback is allowed so a local mock service can be driven over real
     // sockets; everything else must be https, because a bearer token is
     // attached to every one of these requests.
-    if (parsed.protocol !== 'https:' && !isLoopbackHost(parsed.hostname)) {
+    if (parsed.protocol !== 'https:' && !isLoopbackHostname(parsed.hostname)) {
       problems.push(`"${origin}" is not https`);
     }
     if (parsed.pathname !== '/' || parsed.search !== '' || parsed.hash !== '') {
@@ -188,7 +189,7 @@ export function validateConnectorDescriptor(descriptor: ConnectorDescriptor): st
       ] as const) {
         try {
           const parsed = new URL(value);
-          if (parsed.protocol !== 'https:' && !isLoopbackHost(parsed.hostname)) {
+          if (parsed.protocol !== 'https:' && !isLoopbackHostname(parsed.hostname)) {
             problems.push(`${field} must be https`);
           }
         } catch {
@@ -207,7 +208,7 @@ export function validateConnectorDescriptor(descriptor: ConnectorDescriptor): st
         const acceptable =
           parsed.protocol === 'https:' ||
           parsed.protocol === 'chrome-extension:' ||
-          isLoopbackHost(parsed.hostname);
+          isLoopbackHostname(parsed.hostname);
         if (!acceptable) {
           problems.push('redirectUri must be https, loopback, or this extension');
         }
@@ -225,10 +226,6 @@ export function validateConnectorDescriptor(descriptor: ConnectorDescriptor): st
   }
 
   return problems;
-}
-
-export function isLoopbackHost(hostname: string): boolean {
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
 }
 
 /** The operation with this id, or `undefined`. */
