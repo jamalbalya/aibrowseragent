@@ -46,6 +46,12 @@ sends the conversation — which can include text it read from a page — to the
 provider you configured. That is the provider you chose and connected; it is
 not a third party of ours.
 
+**Your provider's terms govern what happens next.** Once data reaches the
+provider you chose, this document stops describing it and that provider's own
+terms and privacy policy apply. The extension decides whether data may leave
+and to where; it cannot govern what is done with it afterwards. Choosing a
+provider is choosing those terms.
+
 Every outbound transfer passes a single authorization gate before it happens.
 The gate refuses when it cannot establish what the task has read, when the
 destination cannot be identified, and when the payload looks like a credential.
@@ -159,6 +165,12 @@ You can read the whole trail, and export it, from the Activity view at any time.
 **Everything this extension stores belongs to the Chrome profile it is
 installed in, not to whoever is signed in to the extension.**
 
+**In the published build there is no sign-in at all.** Signing in needs an
+authentication backend whose origin is fixed when the extension is built, and
+this build has none configured, so the panel offers no sign-in and there is no
+account to be signed in as. Everything below describes what the distinction
+would mean in a build that had one.
+
 That distinction matters if two people share one Chrome profile. Signing out of
 the extension and signing in as somebody else hides the _AI provider accounts_
 of the first person — those are scoped to the signed-in user — and it does not
@@ -174,3 +186,30 @@ share cookies, history and saved passwords.
 **If you do not want somebody else to see your work here, use your own Chrome
 profile**, which is the boundary this extension inherits and does not try to
 replace. The full analysis is in this repository's threat model as T-19.
+
+## Children
+
+The extension is not directed at children, and nothing here is knowingly
+collected from them.
+
+## Who this policy is from
+
+**[OWNER_PUBLISHER_IDENTITY_REQUIRED]**
+
+This must match the Chrome Web Store developer account that publishes the
+listing, or review will query the mismatch. It is deliberately not filled in
+here: a repository cannot know which account will own the listing, and guessing
+would put a wrong legal identity into a document people are entitled to rely on.
+
+## Changes and contact
+
+Material changes to this document are published in this repository, and the
+date of the last change is the commit that made it.
+
+Questions about anything here, including a request to know what is stored or to
+have it removed: **[OWNER_CONTACT_EMAIL_REQUIRED]**
+
+A working address is required before the listing is submitted — store review
+checks that it reaches somebody. No address is asserted here, because none has
+been approved for this purpose; a commit address or an account address is not
+the same thing as a published contact.

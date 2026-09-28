@@ -127,7 +127,12 @@ is worse:
 
 • Only one connector exists: GitHub. There is no Jira, Confluence, Figma or
   Google Sheets integration.
-• Plugins and MCP are not implemented.
+• Plugins are not implemented.
+• MCP works as a client only. You can add a server in Settings and its tools
+  and resources are offered to the model, confirmed on every call. It has been
+  verified against the MCP project's own reference server; no server that
+  somebody else operates has been reached from here, and the extension is never
+  itself an MCP server.
 • Scheduled tasks run only while Chrome is running. There is no cloud
   scheduler, so a schedule due while the browser is closed is skipped rather
   than caught up, and a scheduled run stops instead of approving anything on
@@ -229,7 +234,9 @@ Already in the detailed description above. Repeated here as a checklist so
 none is quietly dropped when the copy is edited:
 
 - One connector only (GitHub).
-- No plugins or MCP. Scheduled tasks exist, but only while Chrome is running.
+- No plugins. MCP is client-side only, and has been verified against the MCP
+  project's own reference server, not against a server somebody else operates.
+- Scheduled tasks exist, but only while Chrome is running.
 - No cross-origin iframe support.
 - Requires a tool-calling model and the user's own API key.
 - Four of forty specification capabilities are partial; one is not started.
@@ -240,6 +247,8 @@ none is quietly dropped when the copy is edited:
 - Any connector that does not exist.
 - Any provider validated against its live endpoint — all three are tested
   against local servers implementing their documented wire formats.
-- Any manual acceptance procedure having passed. Fifteen are written; none has
-  been executed.
+- Any acceptance procedure that is still blocked having passed. The matrix
+  records forty-five PASS and no FAIL; thirty-two remain blocked on a
+  credential, an OAuth application or a person at a browser, and four name
+  capabilities that do not exist here.
 - Chrome Web Store approval or publication.

@@ -196,6 +196,28 @@ _Why not here:_ uploading requires the account from item 1.
 
 ---
 
+### 6. Dashboard declarations
+
+The dashboard asks these separately from the listing copy, and none of them is
+answerable from a repository: each is a statement the publisher makes, not a
+property of the code. What the repository can state as fact is in the middle
+column; the answer is still yours.
+
+| Declaration           | What this repository can state as fact                                                                                                                        | Owner |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| Ads                   | No advertising code, no ad network and no ad identifier exists in the artifact                                                                                | ✓     |
+| Affiliate content     | The package carries exactly one outbound link, to the LinkedIn profile, and no referral or tracking parameter                                                 | ✓     |
+| Pricing               | Nothing in the extension charges, meters or gates a feature behind payment                                                                                    | ✓     |
+| Distribution regions  | Nothing in the code is region-specific, and no region is preferred or excluded                                                                                | ✓     |
+| Age / target audience | Not directed at children; `docs/PRIVACY.md` says so under "Children"                                                                                          | ✓     |
+| Account or login      | **No account is required.** Sign-in needs a backend origin fixed at build time and this build has none. What a user must supply is their own provider API key | ✓     |
+| Encryption / export   | Only the platform's own primitives are used — WebCrypto and TLS. No cryptography is implemented here                                                          | ✓     |
+| Trader / non-trader   | Nothing in a repository determines this. It is a legal status under the EU Digital Services Act                                                               | ✓     |
+
+The trader declaration is the one to read carefully rather than tick: it is
+about whether the listing is published in the course of a trade or profession,
+and the store asks for a name, address and contact if it is.
+
 ## The account-owner procedure, in order
 
 Everything above, as a sequence, with what each step needs. Steps 1–3 can be
@@ -243,10 +265,11 @@ state to publish _silently_. The detailed description should say what the
 extension does not yet do, because a user who discovers it after installing
 leaves a review about it.
 
-**Fifteen acceptance procedures are written and none executed.** See
-[`docs/testing/acceptance/RESULTS.md`](../testing/acceptance/RESULTS.md). Five need nothing but
-a person and a browser — popup handling, SPA navigation, modal dialogs,
-browser restart and extension reload — and they cover behaviour no automated
-test exercises. Running those five before a public release is the single
-highest-value hour available, because a modal dialog reported as successfully
-clicked is exactly the kind of failure a first-week user hits.
+**Thirty-two acceptance procedures are still blocked.** See
+[`docs/testing/acceptance/MATRIX.md`](../testing/acceptance/MATRIX.md), which records
+forty-five PASS, no FAIL and nothing unexecuted. What remains needs a
+credential, an OAuth application, or a person at a browser, and
+[`OWNER-CHECKLIST.md`](OWNER-CHECKLIST.md) orders them so one sitting covers as
+much as your credentials allow. Running them before a public release is the
+single highest-value hour available: two of the procedures executed so far
+failed, and both were real product defects rather than bad tests.
