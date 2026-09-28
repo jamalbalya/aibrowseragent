@@ -490,6 +490,52 @@ an optional permission the user grants through Chrome's dialog.
 
 ---
 
+## T-19 — A second person on the same Chrome profile
+
+Two people share one Chrome profile, signing in and out of this extension. One
+reads what the other did.
+
+**Not held, and the threat is real rather than hypothetical, because this product
+contemplates it in as many words.** `visibleTo()` hides another user's provider
+accounts — "hidden, never deleted, and still there when that user signs back in"
+— and the sync protocol contemplates "a second user signing in on the same
+installation" registering a separate device row. So the product's own model has
+two people at one installation.
+
+What is actually scoped to `abaUserId` is provider accounts and identity state,
+and nothing else. The task store, the audit trail, workflows, shortcuts and
+evidence are namespaced per _kind_ and not per user, so after a sign-out and a
+sign-in the Activity view shows the previous person's sites, tools and task
+history, and `audit.export` writes them to a file.
+
+The found error was in the record rather than in the code:
+`IDENTITY_AND_SYNC.md` listed the threat as "Cross-user data access" against a
+control that only ever covered accounts, so the document claimed more isolation
+than exists. That row now says what it actually holds, and this item is the
+honest statement of the rest.
+
+**What it is not.** No boundary is broken to get at this. Both people have the
+Chrome profile, and a Chrome profile is the operating system's own per-person
+boundary — two people sharing one already share cookies, history and saved
+passwords. This is a product asking whether it wants to be stricter than the
+browser it lives in, which is why the answer is not obvious and not an
+engineering call: scoping five stores by user means a storage migration that
+touches K1 and sync, and it would be the wrong work if the intended boundary is
+the profile.
+
+**Verdict: `NOT POSSIBLE HERE`**
+
+- REASON: There is no control to evidence. Isolating two people on one Chrome
+  profile means scoping the task store, the audit trail, workflows, shortcuts and
+  evidence by `abaUserId`, which is a storage migration touching K1 and sync — and
+  it is the wrong work if the intended boundary is the Chrome profile, which is
+  the operating system's own per-person boundary. That is a product decision, and
+  it is recorded as C-5 in `docs/release/BLOCKER-CERTIFICATION.md`. Claiming any
+  stronger verdict here would repeat the overstatement this item exists to
+  correct.
+
+---
+
 ## What this document does not cover
 
 Four things, named so their absence is not read as coverage:

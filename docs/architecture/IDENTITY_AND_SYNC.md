@@ -311,20 +311,20 @@ Neither layer gains anything from the other existing.
 
 ## T. Security threat model
 
-| Threat                                   | Control                                                                                                                                          |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Identity path leaks page data            | new `identity` egress channel pinned to one backend origin; no task context parameter; not in `ToolRegistry`; narrow payload schema              |
-| New unguarded network primitive          | the identity transport calls `guardedSend` and takes an injected port, **not** a `fetchImpl`, so the three-holder invariant stays three          |
-| Cross-account consent                    | `connectionId` compared first in `matchesPin`                                                                                                    |
-| Cross-user data access                   | `visibleTo()` filters by `abaUserId`; `setBrain` refuses another user's connection                                                               |
-| Silent account merge                     | refused; explicit linking with fresh proof only                                                                                                  |
-| Pre-hijack via unverified email          | no `auth_method` is ever created with `email_verified: false`                                                                                    |
-| Google `email_verified: false`           | never links, never matches on email                                                                                                              |
-| OTP brute force                          | Argon2id hash, 5 attempts, 10-min TTL, rate limits, constant-time compare                                                                        |
-| Backend reads user work                  | K1 end-to-end encryption; backend holds ciphertext                                                                                               |
-| Sync overwrites work                     | per-record revisions; workflows/shortcuts fork rather than overwrite                                                                             |
-| Credential in the cloud                  | API keys are `SECRET_LOCAL_ONLY`; never uploaded                                                                                                 |
-| **Extension id change on reinstall (I)** | any `chrome-extension://` redirect URI breaks. The §4 design redirects to **our own https origin** instead, so reinstall does not break sign-in. |
+| Threat                                   | Control                                                                                                                                                                                                                              |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Identity path leaks page data            | new `identity` egress channel pinned to one backend origin; no task context parameter; not in `ToolRegistry`; narrow payload schema                                                                                                  |
+| New unguarded network primitive          | the identity transport calls `guardedSend` and takes an injected port, **not** a `fetchImpl`, so the three-holder invariant stays three                                                                                              |
+| Cross-account consent                    | `connectionId` compared first in `matchesPin`                                                                                                                                                                                        |
+| Cross-user **account** access            | `visibleTo()` filters by `abaUserId`; `setBrain` refuses another user's connection. **Accounts and identity state only** — tasks, the audit trail, workflows, shortcuts and evidence are not user-scoped; see `THREAT_MODEL.md` T-19 |
+| Silent account merge                     | refused; explicit linking with fresh proof only                                                                                                                                                                                      |
+| Pre-hijack via unverified email          | no `auth_method` is ever created with `email_verified: false`                                                                                                                                                                        |
+| Google `email_verified: false`           | never links, never matches on email                                                                                                                                                                                                  |
+| OTP brute force                          | Argon2id hash, 5 attempts, 10-min TTL, rate limits, constant-time compare                                                                                                                                                            |
+| Backend reads user work                  | K1 end-to-end encryption; backend holds ciphertext                                                                                                                                                                                   |
+| Sync overwrites work                     | per-record revisions; workflows/shortcuts fork rather than overwrite                                                                                                                                                                 |
+| Credential in the cloud                  | API keys are `SECRET_LOCAL_ONLY`; never uploaded                                                                                                                                                                                     |
+| **Extension id change on reinstall (I)** | any `chrome-extension://` redirect URI breaks. The §4 design redirects to **our own https origin** instead, so reinstall does not break sign-in.                                                                                     |
 
 Consumer AI website automation, cookie extraction, and reading browser session
 state are **out of scope and prohibited**. Provider authorization uses the
