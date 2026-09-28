@@ -64,25 +64,86 @@ manual half. Not needed to publish.
 ## Testing you must do yourself
 
 **8. Execute the remaining manual acceptance — YOU**
-Twelve procedures remain, listed with exact steps in
-[`../testing/acceptance/MATRIX.md`](../testing/acceptance/MATRIX.md).
 
-Three of them cannot be automated at all, and they are the highest value per
-minute. **They still need a provider key from step 6** — each starts by
-running a task, and there is no task to interrupt without one. (An earlier
-draft of this file said they were credential-free. They are not.)
+**Thirty-one procedures need a person.** That is the whole list, and it is
+ordered below so that one sitting covers as much of it as your credentials
+allow. Every one has written steps; follow the reference in its row.
 
-| Procedure                   | What it catches                                                                                                     |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| §90-08 browser restart      | whether a parked task and the settings survive a full quit, and that the connector correctly needs re-authorization |
-| §90-09 extension reload     | whether a torn-down content script is reported clearly rather than failing obscurely                                |
-| §90-10 network interruption | whether a dropped connection retries and then stops cleanly rather than hanging                                     |
+This number moved twice and both moves are recorded rather than smoothed over.
+The §84 condition-3 census added twenty-two procedures, because condition 3 had
+never been answered per capability. Sixteen of those were then **executed** as
+real-Chromium tests and are gone from your list; six remain here. Executing one
+of them found a defect that stranded every looping task, which is the reason the
+distinction between _written_ and _executed_ is worth this much fuss.
 
-The other nine need a credential from step 6 or 7.
+### A. With one API key — twenty-five of the thirty-one
+
+Any one of OpenAI-compatible, Anthropic or Gemini. Do these first: they are the
+bulk of the list and they share one browsing session.
+
+| Order | Procedure         | What it establishes                                                                                                   |
+| ----- | ----------------- | --------------------------------------------------------------------------------------------------------------------- |
+| 1     | `84-P-001`        | The panel opens beside the page and never obscures or reflows it — the one claim about Chrome's own side-panel chrome |
+| 2     | `85-A-1`          | Whether the summary of a real page is accurate and useful                                                             |
+| 3     | `85-B-1`          | A genuine three-tab comparison, with one tab closed mid-task                                                          |
+| 4     | `85-C-1`          | Whether the diagnosis of a staged broken Save is correct                                                              |
+| 5     | `84-P-008`        | Whether an answer really depended on the screenshot                                                                   |
+| 6     | `87-01` … `87-12` | The twelve provider items against the vendor's own endpoint rather than a local server                                |
+| 7     | `84-P-019`        | Clicking the notification brings you to the panel at the right place                                                  |
+| 8     | `84-P-020`        | A schedule survives a full browser restart                                                                            |
+| 9     | `91-D-3`          | Granting the optional `downloads` permission through Chrome's own dialog                                              |
+| 10    | `90-10`           | A dropped connection retries and then stops cleanly rather than hanging                                               |
+| 11    | `90-09`           | An extension reload: a torn-down content script is reported clearly                                                   |
+| 12    | `90-08`           | A full browser quit and reopen — and the connector correctly needing re-authorization                                 |
+
+Leave 8, 11 and 12 until last in the session: each one ends the browser state
+the earlier items are using.
+
+### B. With three API keys — one more
+
+| Procedure | What it establishes                                                                                                            |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `85-F-1`  | The same prompt on three _different adapters_ produces the same tools, prompts and answer. Two keys cannot test three adapters |
+
+### C. With a key for a model that advertises vision — one more
+
+| Procedure  | What it establishes                                                                              |
+| ---------- | ------------------------------------------------------------------------------------------------ |
+| `84-P-009` | An image is answered _from_, and a model without vision refuses before sending rather than after |
+
+`87-08` is in group A and is the same prerequisite: on a text-only model it
+exercises the unsupported-capability path instead, which is already covered.
+
+### D. With a registered OAuth application — five more
+
+| Procedure       | What it establishes                                                |
+| --------------- | ------------------------------------------------------------------ |
+| `88-connect`    | A connector authorizes against a real service                      |
+| `88-read`       | A real read, with no scope required                                |
+| `88-write`      | A real write, with a scope required                                |
+| `88-revocation` | Revoking at the service is noticed here                            |
+| `86-5-manual`   | A write killed mid-flight leaves exactly one record on the service |
+
+### E. Not executable by anybody, and not waiting on you
+
+| Procedure      | Why                                                                                                              |
+| -------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `84-P-025`     | P-025 Plugins is not implemented, and is off the parity critical path                                            |
+| `85-D`, `85-E` | They name Jira, Confluence, Figma and Sheets; those connectors do not exist here, and no credential changes that |
+| `89-06`        | The iframe exclusion is behaviour, not a gap: the agent has no handle inside a cross-origin frame                |
+
+### One more that is separate, and unavoidable
+
+`84-P-026` — every MCP call prompts, on every call. It needs an **MCP server on
+https at an origin somebody else operates**: the policy engine refuses a
+plain-http destination, so a loopback server's tools discover here and can never
+be run. This is blocker A-6, and it is the same thing `P-026-C2` asks for.
 
 Record each outcome in
 [`../testing/acceptance/RESULTS.md`](../testing/acceptance/RESULTS.md) — date,
-build, what you observed, and `EXECUTED — MET`, `NOT MET` or `BLOCKED`.
+build, what you observed, and `EXECUTED — MET`, `NOT MET` or `BLOCKED`. A `NOT
+MET` is the valuable one: two of the five procedures executed so far failed, and
+both were real defects.
 
 **9. Screenshots — YOU**
 Follow [`screenshot-plan.md`](screenshot-plan.md). Capture them **during**

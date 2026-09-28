@@ -236,6 +236,14 @@ invent. Stated per item rather than as one excuse.
 The first nine need a credential. A session that fabricated one would produce
 a green result describing nothing.
 
+**This table is the §85–§90 remainder and is no longer the whole of it.** The
+§84 condition-3 census added six further procedures that need a person, listed
+in [`MATRIX.md`](MATRIX.md) under "Still needing a person". The complete and
+current list — thirty-one procedures, ordered for one sitting and grouped by
+what unlocks each — is
+[`OWNER-CHECKLIST.md`](../../release/OWNER-CHECKLIST.md) step 8, which is the
+one place to work from.
+
 The last three need a person at a machine **and a provider key**: each starts
 by running a task, so there is nothing to interrupt without one. Playwright drives the browser it
 launched: it cannot quit that browser and reattach to the same profile, and it

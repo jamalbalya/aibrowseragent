@@ -446,6 +446,103 @@ for (const { name, path } of documents) {
   }
 }
 
+// 6. The count of procedures still needing a person, wherever it is stated.
+//
+//    Step 8 of the owner checklist is the one list a person works from, and it
+//    opens with a number. A number in prose drifts the moment a row moves — and
+//    this one has already moved twice in one wave, once when the census added
+//    twenty-two procedures and once when sixteen of them were executed. So it
+//    is derived from MATRIX.md's own rows rather than trusted.
+//
+//    "Needing a person" means exactly the three blocked classifications: an
+//    environment nothing here can produce, a credential nobody here holds, and
+//    an OAuth application nobody here has registered. `NOT IMPLEMENTED` is not
+//    in the count, because no person unblocks it.
+{
+  const checklistPath = join(root, 'docs/release/OWNER-CHECKLIST.md');
+  const matrixPath = join(dir, 'MATRIX.md');
+  if (existsSync(checklistPath) && existsSync(matrixPath)) {
+    const matrix = readFileSync(matrixPath, 'utf8');
+    const blocked = new Set();
+    for (const line of matrix.split('\n')) {
+      if (!line.startsWith('| ')) continue;
+      const cells = line.split('|').map((cell) => cell.trim());
+      const id = cells[1]?.replace(/`/g, '');
+      if (!/^\d{2}-/.test(id ?? '')) continue;
+      const needsPerson = cells.some(
+        (cell) =>
+          cell.startsWith('`BLOCKED — CREDENTIAL`') ||
+          cell.startsWith('`BLOCKED — OAUTH`') ||
+          cell.startsWith('`BLOCKED — HUMAN/ENVIRONMENT`'),
+      );
+      if (needsPerson) blocked.add(id);
+    }
+    // An empty enumeration would agree with any number at all.
+    if (blocked.size < 10) {
+      problems.push(
+        `MATRIX.md yielded only ${blocked.size} procedures needing a person, which is fewer ` +
+          `than this repository documents — the count below would be checked against nothing`,
+      );
+    } else {
+      const checklist = readFileSync(checklistPath, 'utf8');
+      const stated =
+        /\*\*([A-Z][a-z]+(?:-[a-z]+)?(?: [a-z-]+)?) procedures need a person\.\*\*/.exec(checklist);
+      if (!stated) {
+        problems.push(
+          'OWNER-CHECKLIST.md no longer states how many procedures need a person, which is the ' +
+            'one number somebody plans their day around',
+        );
+      } else {
+        const WORDS = {
+          ten: 10,
+          eleven: 11,
+          twelve: 12,
+          thirteen: 13,
+          fourteen: 14,
+          fifteen: 15,
+          sixteen: 16,
+          seventeen: 17,
+          eighteen: 18,
+          nineteen: 19,
+          twenty: 20,
+          'twenty-one': 21,
+          'twenty-two': 22,
+          'twenty-three': 23,
+          'twenty-four': 24,
+          'twenty-five': 25,
+          'twenty-six': 26,
+          'twenty-seven': 27,
+          'twenty-eight': 28,
+          'twenty-nine': 29,
+          thirty: 30,
+          'thirty-one': 31,
+          'thirty-two': 32,
+          'thirty-three': 33,
+          'thirty-four': 34,
+          'thirty-five': 35,
+          'thirty-six': 36,
+          'thirty-seven': 37,
+          'thirty-eight': 38,
+          'thirty-nine': 39,
+          forty: 40,
+        };
+        const said = WORDS[stated[1].toLowerCase()];
+        if (said === undefined) {
+          problems.push(
+            `OWNER-CHECKLIST.md says "${stated[1]} procedures need a person" and that is not a ` +
+              `number this check can read`,
+          );
+        } else if (said !== blocked.size) {
+          problems.push(
+            `OWNER-CHECKLIST.md says ${said} procedures need a person; MATRIX.md has ` +
+              `${blocked.size}`,
+          );
+        }
+      }
+    }
+  }
+}
+
 if (problems.length > 0) {
   console.error('✗ Acceptance package check failed:\n');
   for (const problem of problems) console.error(`  - ${problem}`);
