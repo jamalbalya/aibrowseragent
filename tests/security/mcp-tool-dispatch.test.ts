@@ -282,7 +282,14 @@ describe('04 what the result is treated as', () => {
     expect(result.envelope.result).toEqual({ text: 'the answer' });
   });
 
-  it('records the server as a taint source, so a later write meets the gate', async () => {
+  it('records the server as a taint source, at the same shape a page read uses', async () => {
+    // The title used to end "so a later write meets the gate", which claimed
+    // more than the assertion below shows: this proves the source is recorded,
+    // not what the gate then does with it. The consequence is tested where the
+    // gate is — `egress-gate.test.ts :: makes a later write to an unrelated
+    // service need consent rather than allowing it` — and a first attempt at
+    // that case passed against a navigation, which is `NOT_AN_EGRESS` and would
+    // have proved nothing.
     const { tool } = build();
     const executed = await tool.execute({ query: 'x' }, {
       taskId: TASK,

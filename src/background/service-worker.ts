@@ -3720,10 +3720,34 @@ router.on('data.import', async ({ document }) => {
       if (typeof candidate.displayName !== 'string' || candidate.target === undefined) {
         return 'REFUSED';
       }
+
+      // Both narrowings are carried across, and both are re-validated rather
+      // than trusted. Dropping them — which is what happened until this was
+      // audited — silently widened a shortcut on a round trip: a person exports
+      // one restricted to `browser.read_page` under `confirm-each-action`,
+      // imports it on another machine, and gets one that may use every tool at
+      // whatever mode is in force, under the same name they had learned to
+      // trust. A narrowing can only ever make a run stricter, so carrying it
+      // from an untrusted file cannot raise privilege; dropping it could, and
+      // did.
+      //
+      // Re-validated because a file can name a tool that does not exist or a
+      // profile this build does not implement, and a stored profile nobody
+      // implements would leave a shortcut reading as stricter than it is.
+      // Either is a refusal of the record, exactly as it is on the create
+      // route — never a quiet fall back to no constraint.
+      const narrowing = normaliseAllowedTools(candidate.allowedTools);
+      if (!narrowing.ok) return 'REFUSED';
+      const profile = candidate.permissionProfile;
+      if (profile !== undefined && !isShortcutPermissionProfile(profile)) return 'REFUSED';
+
       try {
         // `create` re-runs name normalisation and both collision checks, so an
         // imported shortcut cannot take a name that already means something.
-        await shortcutStore.create(candidate.displayName, candidate.target);
+        await shortcutStore.create(candidate.displayName, candidate.target, {
+          allowedTools: narrowing.tools,
+          ...(profile === undefined ? {} : { permissionProfile: profile }),
+        });
         return 'IMPORTED';
       } catch (error) {
         return error instanceof ShortcutError ? 'REFUSED' : 'FAILED';

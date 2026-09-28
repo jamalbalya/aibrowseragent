@@ -147,6 +147,52 @@ step dispatches through the one `ToolRegistry.dispatch`. What differs is only
 who asked. It takes an id and a pinned version, never a definition, and being
 a panel route rather than a tool is what keeps it out of a model's reach.
 
+## Two narrowings, and neither is a grant
+
+§50 names two optional fields, and both only ever make a run **stricter**:
+
+- **`allowedTools`** — the tools this shortcut's run may use. Enforced in the
+  tool registry before any policy stage runs, by task id, so it covers every
+  dispatch in the run including the steps of a skill or a workflow replay. At
+  most 64 names, each matching the charset both built-in (`family.verb`) and
+  MCP (`mcp__server__tool`) names live in; a name outside it could only narrow
+  to nothing while looking like a constraint, so it is refused.
+- **`permissionProfile`** — currently only `confirm-each-action`, which floors
+  the run's permission mode. Resolved through `strictestMode` against the mode
+  in force, so a profile can tighten a run and can never loosen one. A profile
+  this build does not implement is **refused, never stored**: a stored profile
+  nobody implements would leave a shortcut reading as stricter than it is.
+
+Neither field is in `PROHIBITED_FIELDS`, and neither needs to be. That list bans
+`tools` because naming tools there would be handing a shortcut authority; naming
+them in `allowedTools` takes authority away.
+
+### Across an export and an import
+
+Both fields travel, and both are re-validated on the way in rather than trusted.
+This was audited because the first implementation dropped them: shortcuts export
+whole, and the importer called `create(name, target)` with no options, so
+exporting a shortcut restricted to one read-only tool under
+`confirm-each-action` and importing it on another machine produced one that
+might use every tool at whatever mode was in force — under the same name the
+person had learned to trust.
+
+The direction is what made it hard to see. Every other rule on this boundary
+stops something privileged travelling, and a suite full of those cases cannot
+see a restriction that fails to travel. Carrying a narrowing from an untrusted
+file cannot raise privilege, because a narrowing is a restriction; _dropping_
+one can, and did. A file naming a tool that does not exist or a profile this
+build does not implement refuses the record, exactly as the create route does.
+
+This sits beside a rule that looks like its opposite and is not: the
+installation's `permissionMode` is deliberately **excluded** from the file, as a
+policy-injection vector. The two are consistent because they point in opposite
+directions. `permissionMode` in settings is the ambient posture, and a file that
+set it could loosen the whole installation. A shortcut's `permissionProfile`
+resolves through `strictestMode` against whatever mode is in force, so the worst
+a file can do with it is make one run stricter than the person asked for. Carry
+what can only restrict; refuse what could grant.
+
 ## Scope
 
 P-021 added no Chrome permission, no host permission and no execution

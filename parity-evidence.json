@@ -1564,7 +1564,11 @@
         "tests/security/scheduled-execution.test.ts",
         "tests/security/shortcut-constraints.test.ts"
       ],
-      "e2e": ["tests/e2e/shortcut-prompt-and-skills.spec.ts", "tests/e2e/shortcuts.spec.ts"],
+      "e2e": [
+        "tests/e2e/shortcut-prompt-and-skills.spec.ts",
+        "tests/e2e/shortcuts.spec.ts",
+        "tests/e2e/export-import.spec.ts"
+      ],
       "clauses": [
         {
           "id": "P-021-C1",
@@ -1671,6 +1675,18 @@
           "evidence": [
             "tests/security/scheduled-execution.test.ts :: 20 fires through a shortcut, resolved at the moment it fires"
           ]
+        },
+        {
+          "id": "P-021-C9",
+          "specRef": "§50",
+          "requirement": "Both narrowings survive an export and an import, and neither can be widened by a file.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/e2e/export-import.spec.ts :: a shortcut round trip keeps its narrowing instead of widening it",
+            "tests/e2e/export-import.spec.ts :: an imported shortcut naming a profile this build does not implement is refused"
+          ],
+          "notes": "Found by the Part 6 cross-capability pass, between P-021 and the local export boundary. Shortcuts export whole, including allowedTools and permissionProfile, and the importer called create(name, target) with no options — so a shortcut restricted to one read-only tool under confirm-each-action came back able to use every tool at the ambient mode, under the name the person trusted. The direction is why it survived: every other rule on this boundary stops something privileged travelling, and such a suite cannot see a restriction that fails to travel. Both fields are now carried and re-validated with the same checks the create route runs; a file naming an unknown tool or an unimplemented profile refuses the record. Verified by mutation — restoring the option-less create kills the round-trip case."
         }
       ]
     },
@@ -2279,10 +2295,13 @@
             "tests/security/mcp-tool-dispatch.test.ts :: is refused outright when the server’s site is blocked",
             "tests/security/mcp-tool-dispatch.test.ts :: takes its destination from the descriptor, so the model cannot name one",
             "tests/security/mcp-tool-dispatch.test.ts :: sends the server’s own name for the tool, not the namespaced one",
-            "tests/security/mcp-tool-dispatch.test.ts :: records the server as a taint source, so a later write meets the gate",
+            "tests/security/mcp-tool-dispatch.test.ts :: records the server as a taint source, at the same shape a page read uses",
             "tests/security/mcp-tool-dispatch.test.ts :: treats isError as a failure, not as a success whose text says \"error\"",
-            "tests/security/mcp-tool-dispatch.test.ts :: bounds the result, whose length the server chose"
-          ]
+            "tests/security/mcp-tool-dispatch.test.ts :: bounds the result, whose length the server chose",
+            "tests/security/egress-gate.test.ts :: makes a later write to an unrelated service need consent rather than allowing it",
+            "tests/security/egress-gate.test.ts :: is indistinguishable from a page read at the same sensitivity"
+          ],
+          "notes": "The Part 6 pass found the original citation’s title claiming more than its assertion showed — it ended \"so a later write meets the gate\" and asserted only that the source was recorded. The consequence is now tested at the gate, where a first attempt passed against a navigation, which is NOT_AN_EGRESS and proved nothing; the case that stands drives a connector write and is paired with a page-read control, since the gate never branches on sourceType."
         },
         {
           "id": "P-026-C13",
@@ -2315,7 +2334,8 @@
         "tests/security/mcp-schema.test.ts",
         "tests/security/mcp-tool-dispatch.test.ts",
         "tests/security/mcp-registration.test.ts",
-        "tests/security/mcp-resources.test.ts"
+        "tests/security/mcp-resources.test.ts",
+        "tests/security/egress-gate.test.ts"
       ],
       "e2e": ["tests/e2e/mcp.spec.ts"]
     },

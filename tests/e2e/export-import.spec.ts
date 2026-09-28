@@ -353,6 +353,72 @@ test('importing the same archive twice does not silently merge records', async (
   expect((await send('shortcut.list', {})).shortcuts.length).toBe(1);
 });
 
+test('a shortcut round trip keeps its narrowing instead of widening it', async ({
+  send,
+  serviceWorker,
+}) => {
+  // The defect this covers went the *loose* way, which is why it survived a
+  // suite full of "nothing privileged travels" cases. Shortcuts export whole,
+  // including `allowedTools` and `permissionProfile`, and the importer called
+  // `create(name, target)` with no options — so a person could export a
+  // shortcut restricted to one read-only tool under `confirm-each-action`,
+  // import it on another machine, and get one that may use every tool at
+  // whatever mode is in force, under the same name they had learned to trust.
+  const created = await send('shortcut.create', {
+    name: 'Narrowed round trip',
+    target: { kind: 'prompt', objective: 'Read this page and stop.' },
+    allowedTools: ['browser.read_page'],
+    permissionProfile: 'confirm-each-action',
+  });
+  expect(created.shortcut, created.error?.detail).toBeTruthy();
+
+  const { export: document } = await send('data.export', {});
+  // The narrowing is in the file. If it were not, there would be nothing for
+  // the import to preserve and this test would be proving nothing.
+  expect(JSON.stringify(document.shortcuts)).toContain('browser.read_page');
+  expect(JSON.stringify(document.shortcuts)).toContain('confirm-each-action');
+
+  await send('shortcut.remove', { shortcutId: created.shortcut!.shortcutId });
+  const result = await send('data.import', { document });
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error('unreachable');
+  expect(result.outcome.shortcutsImported).toBe(1);
+
+  // Read from real extension storage, because the panel's summary deliberately
+  // does not carry either field and the question is what was stored.
+  const stored = await serviceWorker.evaluate(async () =>
+    JSON.stringify(await chrome.storage.local.get(null)),
+  );
+  expect(stored).toContain('browser.read_page');
+  expect(stored).toContain('confirm-each-action');
+});
+
+test('an imported shortcut naming a profile this build does not implement is refused', async ({
+  send,
+}) => {
+  // Refused, never quietly imported without the profile. A shortcut stored with
+  // no profile reads as *less* restricted than the file said, which is the same
+  // widening the case above covers, arrived at by a different route.
+  const result = await send('data.import', {
+    document: archive({
+      shortcuts: [
+        {
+          displayName: 'Unimplemented profile',
+          target: { kind: 'prompt', objective: 'Do a thing.' },
+          permissionProfile: 'trust-everything',
+        },
+      ],
+    }),
+  });
+
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error('unreachable');
+  expect(result.outcome.shortcutsImported).toBe(0);
+  expect(result.outcome.shortcutsRefused).toBe(1);
+  // Refused, not failed: the record is the problem, not this device.
+  expect(result.outcome.failed).toBe(0);
+});
+
 test('an imported workflow is re-validated and carries no privilege from the file', async ({
   send,
 }) => {

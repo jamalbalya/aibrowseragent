@@ -595,6 +595,47 @@ were caught.
   success; the result left unbounded; the taint dropped; a non-text part decoded;
   the payload declaration dropped.
 
+## 8b. A recorded MCP step, and the id that could point somewhere else
+
+The Part 6 cross-capability pass asked whether recording an MCP call into a
+workflow creates a confused deputy. It does not, and the reasoning is written
+here so it is not re-derived as an open question.
+
+`NOT_RECORDABLE` in the recorder is a denylist, so an MCP call **is** recordable.
+A recorded step stores the wire name — `mcp__<serverId>__<tool>` — which is
+stable across registrations. So in principle: record a step against server S,
+remove S, register a different server under the same id, replay the workflow, and
+the step reaches a different third party under the name that was recorded.
+
+What makes that not an attack anybody else can mount:
+
+- **Only the person can cause it.** `mcp.add` and `mcp.remove` are CLASS_B,
+  reachable from the side panel and from nothing else. No page, no model, no
+  server and no recorded workflow can register or replace a server. The
+  substitution requires the person to type or paste the replacement URL
+  themselves.
+- **Every MCP call still asks.** `MCP_TOOL_RISK` is R3, the risk floor returns
+  `ALLOW_WITH_CONFIRMATION` at R3 before the unattended, plan and mode-switch
+  stages, and a replay does not change that — a replayed step at R3 confirms in
+  `skip` as much as in `manual`. There is no "the workflow was approved once"
+  that carries an MCP step past the prompt.
+- **The prompt names where it is going.** An MCP tool declares
+  `siteAuthorization: 'destination'` and its `classify` returns the server's URL
+  from the closure, never the model's arguments, so the confirmation's `site` is
+  the server's site rather than the page's. A replacement on a different host is
+  visible in the prompt before anything runs.
+- **The trail names it too.** `mcp.server.added` carries the URL as its
+  `destination`, and every call's egress record carries
+  `mcp:<serverId>@<origin>`. A substitution is reconstructable after the fact
+  even if it was approved.
+
+The one residual case the prompt cannot distinguish is two servers on the **same
+site** at different paths, because `site` is a registrable domain and both
+resolve to the same one. That is a limit of site-granularity rather than a
+defect in this capability — it is the same granularity every site grant in the
+product uses — and closing it would mean making MCP authorization path-scoped
+while nothing else is. Recorded here as a known limit, not fixed.
+
 ## 9. What is still open, and who owns it
 
 - **A real server.** Every mandatory clause is now VERIFIED except the two

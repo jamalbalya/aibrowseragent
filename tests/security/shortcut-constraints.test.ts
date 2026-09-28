@@ -122,6 +122,70 @@ describe('01 the narrowing removes, and can do nothing else', () => {
     expect(prompter.seen).toHaveLength(1);
   });
 
+  it('narrows a dispatch made under a composed tool call id, not only a top-level one', async () => {
+    // The composition question. A skill step, and a workflow replay step, reach
+    // the registry through the same dispatch as a model's own call, carrying the
+    // run's `taskId` and a `toolCallId` composed from the parent's. The
+    // narrowing is keyed on the task, so it has to hold for a step however deep
+    // it is — otherwise a shortcut restricted to one tool could launch a skill
+    // that used every tool, which is the restriction being bypassed by the very
+    // mechanism it was set on.
+    //
+    // Asserted through a composed call id rather than by driving the runner,
+    // because what would break this is the runner minting an id or a task of its
+    // own, and this is the shape that would then arrive here.
+    const harness = createHarness(ALL, {
+      resolveAllowedTools: () => Promise.resolve(['alpha.one']),
+    });
+
+    const nested = await harness.registry.dispatch({
+      taskId: TASK,
+      sessionId: 's',
+      toolCallId: 'c1.step-2.c9',
+      name: 'beta.two',
+      arguments: {},
+      signal: new AbortController().signal,
+    });
+    expect(nested.envelope.status).toBe('error');
+    expect(nested.envelope.error?.code).toBe('POLICY_BLOCKED');
+    expect(nested.executed).toBe(false);
+
+    // And the positive half, so this is not passing because every nested
+    // dispatch fails.
+    const allowed = await harness.registry.dispatch({
+      taskId: TASK,
+      sessionId: 's',
+      toolCallId: 'c1.step-2.c10',
+      name: 'alpha.one',
+      arguments: {},
+      signal: new AbortController().signal,
+    });
+    expect(allowed.executed).toBe(true);
+  });
+
+  it('is keyed on the task, so another task in the same session is unaffected', async () => {
+    // A narrowing is one run's constraint. If it leaked across tasks it would be
+    // a standing restriction nobody asked for; if the lookup ignored the task it
+    // would be no restriction at all.
+    const harness = createHarness(ALL, {
+      mode: 'skip',
+      resolveAllowedTools: (taskId) => Promise.resolve(taskId === TASK ? ['alpha.one'] : undefined),
+    });
+
+    const refused = await dispatch(harness, 'beta.two');
+    expect(refused.executed).toBe(false);
+
+    const other = await harness.registry.dispatch({
+      taskId: 'task-2',
+      sessionId: 's',
+      toolCallId: 'c2',
+      name: 'beta.two',
+      arguments: {},
+      signal: new AbortController().signal,
+    });
+    expect(other.executed).toBe(true);
+  });
+
   it('treats an absent or empty list as no narrowing', async () => {
     for (const allowed of [undefined, []] as const) {
       const harness = createHarness(ALL, {

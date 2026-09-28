@@ -251,6 +251,19 @@ user's one signal that deep inspection is active and it was saying something
 untrue. P-014 gains **P-014-C6**, taking the inventory to 264 clauses. Its row
 does not move either: it already read PASS.
 
+The Part 6 cross-capability pass then found a fourteenth, between shortcuts and
+the local export boundary and going the other way from every other rule there.
+Shortcuts export whole, including the two narrowings §50 names, and the importer
+called `create(name, target)` with no options — so a shortcut restricted to one
+read-only tool under `confirm-each-action` came back able to use every tool at
+the ambient mode, under the name the person had learned to trust. The direction
+is why it survived a suite full of boundary cases: every other rule there stops
+something privileged travelling, and such a suite cannot see a _restriction_ that
+fails to travel. Both fields are now carried and re-validated with the create
+route's own checks, and the round-trip case is verified by mutation — restoring
+the option-less `create` kills it. P-021 gains **P-021-C9**, taking the inventory
+to 265. Its row does not move: it reached PASS in the previous revision.
+
 Five of those twelve were missed by the manual sweep that found the first seven,
 because that sweep matched route names with a pattern that excluded a digit and
 `k1.*` never appeared in its results. The census imports the real route table

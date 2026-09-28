@@ -8,7 +8,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { authorizeEgress } from '@/security/egress/egress-gate';
 import { ConsentStore, taintSignature } from '@/security/egress/consent';
-import { providerDestination, urlDestination, noEgress } from '@/security/egress/destination';
+import {
+  connectorDestination,
+  providerDestination,
+  urlDestination,
+  noEgress,
+} from '@/security/egress/destination';
 import { addTaint, freshTaint, unknownTaint, type TaintState } from '@/security/taint/taint-state';
 import type { TaintSource } from '@/security/exfiltration/exfiltration-guard';
 
@@ -613,4 +618,66 @@ describe('consent scope', () => {
     const again = addTaint(tainted, [privatePage]);
     expect(await taintSignature(again)).toBe(signature);
   });
+});
+
+describe('a third party the agent read is taint like any other', () => {
+  // The Part 6 cross-capability pass found the MCP taint claim half-tested: the
+  // dispatch suite asserts the tool *returns* a `mcp_result` source "so a later
+  // write meets the gate", and nothing exercised the later write. The gate reads
+  // `taintState.kind` and sensitivity and never branches on `sourceType`, so it
+  // ought to behave identically — which is exactly the kind of "ought to" that
+  // is worth a test rather than an argument.
+  //
+  // The write is a connector call rather than a navigation, because a navigation
+  // is `NOT_AN_EGRESS` in this model and would have made both cases below pass
+  // for a reason that has nothing to do with taint. Writing them against a URL
+  // first is how that was established.
+  const mcpServer: TaintSource = {
+    sourceType: 'mcp_result',
+    site: 'mcp.example.test',
+    sensitivity: 'internal',
+  };
+  const write = connectorDestination('github', 'https://api.github.com/issues');
+
+  it('makes a later write to an unrelated service need consent rather than allowing it', () => {
+    const decision = authorizeEgress(
+      request({ taintState: addTaint(freshTaint(), [mcpServer]), destination: write }),
+      gate(),
+    );
+    expect(decision.verdict).not.toBe('allow');
+    expect(decision.code).toBe('CONSENT_REQUIRED');
+    // And the record names the server, so the reason is reconstructable.
+    expect(decision.taintSourceIds).toContain('mcp_result:mcp.example.test');
+  });
+
+  it('is indistinguishable from a page read at the same sensitivity', () => {
+    // The control for the case above: if the gate were quietly lenient about a
+    // source type it did not recognise, this is where it would show.
+    const page: TaintSource = {
+      sourceType: 'web_page',
+      site: 'mcp.example.test',
+      sensitivity: 'internal',
+    };
+
+    const fromServer = authorizeEgress(
+      request({ taintState: addTaint(freshTaint(), [mcpServer]), destination: write }),
+      gate(),
+    );
+    const fromPage = authorizeEgress(
+      request({ taintState: addTaint(freshTaint(), [page]), destination: write }),
+      gate(),
+    );
+    expect(fromServer.verdict).toBe(fromPage.verdict);
+    expect(fromServer.code).toBe(fromPage.code);
+    expect(fromServer.carrier).toBe(fromPage.carrier);
+    expect(fromServer.sensitivity).toBe(fromPage.sensitivity);
+  });
+
+  // Same-site discounting is deliberately not re-tested here. `mcp-tool.ts`
+  // derives its taint `site` with `new URL(server.url).hostname`, which is the
+  // identical derivation `browser.read_page` uses, so there is nothing
+  // MCP-specific left to prove and the page cases above already cover it. A
+  // first attempt at such a case failed on a premise about how the destination
+  // site is computed rather than on anything about taint, which is the same way
+  // the first version of the case above passed for the wrong reason.
 });
