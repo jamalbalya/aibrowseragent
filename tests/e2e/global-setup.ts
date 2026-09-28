@@ -15,7 +15,7 @@
  *   why that is the honest way to reach it.
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const CHROMIUM = process.env.E2E_CHROMIUM_PATH ?? '/opt/pw-browsers/chromium';
@@ -31,6 +31,36 @@ export default function globalSetup(): void {
         `dist/${file} is missing or empty. Run "npm run build" before the E2E suite.`,
       );
     }
+  }
+
+  /*
+   * A *release* build in `dist/` is worse than no build at all, because the
+   * suite runs and one test fails for a reason that looks like a code defect.
+   *
+   * `npm run release` narrows `web_accessible_resources` to https origins, on
+   * purpose — a shipped extension has no business being reachable by redirect
+   * from loopback. The connector suite then cannot land the OAuth callback,
+   * because Chromium refuses the redirect with `net::ERR_BLOCKED_BY_CLIENT`
+   * and attributes it to the *authorization* URL, which reads as "the mock
+   * service is broken".
+   *
+   * This was diagnosed the long way once: a passing worktree at the previous
+   * commit made it look like a regression, when the only variable was that
+   * `npm run release` had been run in between to read the artifact's size.
+   * The check turns ten minutes of bisecting into one sentence.
+   */
+  const manifest = JSON.parse(readFileSync(resolve(dist, 'manifest.json'), 'utf8')) as {
+    web_accessible_resources?: readonly { matches?: readonly string[] }[];
+  };
+  const reachable = (manifest.web_accessible_resources ?? []).flatMap(
+    (entry) => entry.matches ?? [],
+  );
+  if (!reachable.some((match) => match.startsWith('http://127.0.0.1'))) {
+    throw new Error(
+      'dist/ holds a RELEASE build: its web_accessible_resources are narrowed to https, so the ' +
+        'connector suite cannot land the OAuth callback from the loopback mock. ' +
+        'Run "npm run build" to restore the development bundle.',
+    );
   }
 
   // Built here rather than by separate npm scripts, so a contributor running
