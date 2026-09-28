@@ -139,6 +139,15 @@ https at an origin somebody else operates**: the policy engine refuses a
 plain-http destination, so a loopback server's tools discover here and can never
 be run. This is blocker A-6, and it is the same thing `P-026-C2` asks for.
 
+A lead rather than an instruction, because nothing here has verified it: public
+unauthenticated MCP endpoints are advertised — `https://mcpplaygroundonline.com/mcp-complex-server`
+was the candidate found — and this environment's proxy refuses the host, so no
+handshake has been seen. If it answers for you, pasting it into Settings turns
+this item from "find a remote MCP server" into two minutes. If it does not, any
+remote MCP server you can reach settles the same clause. See
+[`BLOCKER-CERTIFICATION.md`](BLOCKER-CERTIFICATION.md) A-6 for why it is not
+wired into the build.
+
 Record each outcome in
 [`../testing/acceptance/RESULTS.md`](../testing/acceptance/RESULTS.md) — date,
 build, what you observed, and `EXECUTED — MET`, `NOT MET` or `BLOCKED`. A `NOT

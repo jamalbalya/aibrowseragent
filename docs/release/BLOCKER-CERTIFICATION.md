@@ -36,6 +36,31 @@ inventing production connectors, both of which are on this project's locked
 prohibition list. Even with credentials in hand, a connector written against a
 service nobody has exercised is not evidence.
 
+**A-6 was re-examined for a public server, and it stays external.** The question
+asked was whether a free, unauthenticated, publicly operated MCP endpoint would
+satisfy `P-026-C2` — an origin somebody else runs. One candidate turned up,
+`https://mcpplaygroundonline.com/mcp-complex-server`, described as four tools
+with no authentication. It is recorded here as a **lead for the account owner,
+not as evidence**, for three reasons that are worth separating:
+
+1. **It could not be verified from here.** This environment's egress proxy
+   refuses the host (`CONNECT tunnel failed, 403`), so nothing in this
+   repository has seen it answer an `initialize`. An unverified URL is not a
+   finding.
+2. **It would be the wrong shape for a clause gate even if it worked.** Basing a
+   mandatory clause on a third party's free endpoint means CI breaks when the
+   endpoint goes away and, worse, the recorded evidence quietly becomes
+   unreproducible. This project already rejected the same trade once, for an
+   independent OpenAI-compatible server.
+3. **Unauthenticated-by-default is what it is advertising**, which makes it a
+   reasonable thing to point a client at once by hand and a poor thing to make a
+   build depend on.
+
+What it _is_ good for is the account owner's own execution of `84-P-026`: a
+public endpoint turns "find a remote MCP server" into one paste into Settings.
+That is a real shortening of the human list, and it is why the lead is written
+down rather than discarded.
+
 **A-6 is narrower than it was.** Until this audit, `P-026-C3` — _local_ MCP —
 sat beside it in this category. It should not have: the MCP project's own
 reference server is an npm package speaking Streamable HTTP over loopback, and
