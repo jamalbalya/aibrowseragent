@@ -35,10 +35,10 @@ Accept both. A person who can be bound by them must do this.
 
 ## Content you need to host or hold
 
-**5. Privacy policy at a public URL — YOU, content REPOSITORY COMPLETE**
-The required content is in
-[`privacy-policy-outline.md`](privacy-policy-outline.md), written from the
-real data flows. What is missing is only a URL.
+**5. Privacy policy at a public URL — DONE**
+Published and verified reachable on 2026-09-29:
+<https://about.jamal-balya.workers.dev/en/privacy>
+Paste it into the dashboard exactly as written.
 **Do not claim the extension collects no data** — website content is
 transmitted to the user's chosen provider, and that must be disclosed. The
 accurate strong claim is no telemetry, no analytics, nothing to the developer.

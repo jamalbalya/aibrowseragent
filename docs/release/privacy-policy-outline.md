@@ -4,8 +4,8 @@ The minimum a hosted privacy policy must state for this extension, drawn
 entirely from [`data-flows.md`](data-flows.md), which was written against what
 the code does rather than what a policy would like to say.
 
-This is an outline of required content, not the policy itself. The policy
-needs a URL, and a URL needs a host — an account-owner action.
+This is an outline of required content, not the policy itself. The published
+policy it was written for is at <https://about.jamal-balya.workers.dev/en/privacy>.
 
 ## The one thing that must not be claimed
 

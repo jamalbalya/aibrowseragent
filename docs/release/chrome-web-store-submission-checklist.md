@@ -123,13 +123,20 @@ rather than automation.
 
 ### 2. Privacy policy at a public URL
 
-The store requires a **hosted** privacy policy the listing can link to.
-`docs/PRIVACY.md` is the content, complete and current; what is missing is a
-URL. Publishing the repository's docs, or the GitHub blob URL of that file,
-both satisfy it.
+The store requires a **hosted** privacy policy the listing can link to, and
+there now is one:
 
-_Why not here:_ hosting is an account action, and the URL is not knowable
-until a host is chosen.
+```text
+https://about.jamal-balya.workers.dev/en/privacy
+```
+
+Verified reachable over HTTPS on 2026-09-29: `200`, no redirect, served as
+`text/html`, titled "Privacy Policy — AI Browser Agent · Jamal Balya". It
+names the publisher and carries a contact address. Paste that URL into the
+dashboard's privacy policy field exactly as written above.
+
+`docs/PRIVACY.md` remains the repository's own account of the same behaviour.
+The hosted page is what the listing links to; if one changes, change both.
 
 ### 3. Listing assets
 
@@ -228,7 +235,7 @@ done in any order; 4 onward are strictly sequential.
 | 1   | Register at the [Developer Dashboard](https://chrome.google.com/webstore/devconsole) | A Google account                                                          | —                                                                                |
 | 2   | Pay the one-time registration fee                                                    | A payment method. US$5 at the time of writing — verify the current figure | —                                                                                |
 | 3   | Accept the Developer Agreement and Program Policies                                  | A person who can agree to them                                            | —                                                                                |
-| 4   | Publish the privacy policy at a URL                                                  | Somewhere to host it                                                      | The content: [`docs/PRIVACY.md`](../PRIVACY.md)                                  |
+| 4   | ~~Publish the privacy policy at a URL~~ **DONE**                                     | —                                                                         | Live at <https://about.jamal-balya.workers.dev/en/privacy>                       |
 | 5   | Run the five browser-only acceptance procedures                                      | An hour, a browser, an API key                                            | The procedures: [`RESULTS.md`](../testing/acceptance/RESULTS.md)                 |
 | 6   | Capture screenshots while running step 5                                             | The same session                                                          | —                                                                                |
 | 7   | Build the artifact                                                                   | `npm ci && npm run release`                                               | The whole pipeline                                                               |

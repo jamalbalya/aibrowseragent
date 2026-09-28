@@ -1,5 +1,10 @@
 # Data handling
 
+> The policy the Chrome Web Store listing links to is published at
+> <https://about.jamal-balya.workers.dev/en/privacy>. This document is the repository's
+> own account of the same behaviour, written against the code; where the two
+> are read together, the hosted page is the one the listing points at.
+
 What this extension does with data, described against what the code actually
 does rather than against an intention. Where a statement is enforced by a
 specific mechanism, the mechanism is named so the claim can be checked.
@@ -194,12 +199,10 @@ collected from them.
 
 ## Who this policy is from
 
-**[OWNER_PUBLISHER_IDENTITY_REQUIRED]**
+**Jamal Balya**
 
 This must match the Chrome Web Store developer account that publishes the
-listing, or review will query the mismatch. It is deliberately not filled in
-here: a repository cannot know which account will own the listing, and guessing
-would put a wrong legal identity into a document people are entitled to rely on.
+listing, or review will query the mismatch.
 
 ## Changes and contact
 
@@ -207,9 +210,4 @@ Material changes to this document are published in this repository, and the
 date of the last change is the commit that made it.
 
 Questions about anything here, including a request to know what is stored or to
-have it removed: **[OWNER_CONTACT_EMAIL_REQUIRED]**
-
-A working address is required before the listing is submitted — store review
-checks that it reaches somebody. No address is asserted here, because none has
-been approved for this purpose; a commit address or an account address is not
-the same thing as a published contact.
+have it removed: **jamal.balya@gmail.com**
