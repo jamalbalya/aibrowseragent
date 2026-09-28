@@ -284,6 +284,34 @@ conventions to follow when adding a tool, a provider, or a connector.
 
 ## Documentation
 
+Specification §81 names twelve mandatory documents. Eight of them live here
+under a different filename, and the mapping below is checked on every CI run by
+`scripts/check-acceptance.mjs` — including a minimum length, so a file that
+exists and says nothing does not satisfy the requirement by filename alone.
+Renaming them to match §81 would break every inbound link in a heavily
+cross-referenced tree in order to satisfy a filename; a reviewer who needs to
+find the twelve needs a map, which a rename does not give them.
+
+| §81 requires         | This project keeps it at                                                           |
+| -------------------- | ---------------------------------------------------------------------------------- |
+| `README.md`          | [README.md](README.md)                                                             |
+| `ARCHITECTURE.md`    | [docs/architecture.md](docs/architecture.md)                                       |
+| `SECURITY.md`        | [docs/security.md](docs/security.md)                                               |
+| `THREAT_MODEL.md`    | [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)                                       |
+| `PROVIDER_GUIDE.md`  | [docs/provider-architecture.md](docs/provider-architecture.md)                     |
+| `CONNECTOR_GUIDE.md` | [docs/connectors.md](docs/connectors.md)                                           |
+| `SKILL_GUIDE.md`     | [docs/skills.md](docs/skills.md)                                                   |
+| `PLUGIN_GUIDE.md`    | [docs/architecture/PLUGIN_TRUST_MODEL.md](docs/architecture/PLUGIN_TRUST_MODEL.md) |
+| `MCP_GUIDE.md`       | [docs/MCP_GUIDE.md](docs/MCP_GUIDE.md)                                             |
+| `WORKFLOW_GUIDE.md`  | [docs/workflows.md](docs/workflows.md)                                             |
+| `PARITY_MATRIX.md`   | [PARITY_MATRIX.md](PARITY_MATRIX.md)                                               |
+| `TESTING.md`         | [docs/testing.md](docs/testing.md)                                                 |
+
+Two of those did not exist at all until this wave — `MCP_GUIDE.md` and
+`THREAT_MODEL.md` — and nothing noticed, because no parity clause covers §81:
+the clause inventory runs over P-001…P-040, and §81 is a project-structure
+requirement. That is the argument for the check rather than the table.
+
 | Document                                                                                                       | Contents                                               |
 | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
 | [docs/architecture.md](docs/architecture.md)                                                                   | Runtime boundaries, data flow, module map              |

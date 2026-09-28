@@ -44,6 +44,41 @@ const dir = join(root, 'docs/testing/acceptance');
 const EXTRA_DOCUMENTS = ['docs/THREAT_MODEL.md'];
 
 /**
+ * Specification §81's twelve mandatory documents, and where each one lives.
+ *
+ * Eight of them are **not** at the name §81 gives, and this table is the
+ * answer rather than a rename. Renaming would break every inbound link in a
+ * heavily cross-referenced docs tree to satisfy a filename, and a reviewer
+ * checking §81 needs to be able to find the twelve — which is what a mapping
+ * provides and a rename does not.
+ *
+ * Two of them genuinely did not exist until Wave 29: `MCP_GUIDE.md`, which is
+ * why P-026's design had accumulated two unreviewed answers with nowhere to
+ * record them, and `THREAT_MODEL.md`, which is why §82's eighteen threats had
+ * never been written down as a set. That is the argument for checking this
+ * rather than trusting it: nothing here noticed either absence, because no
+ * clause covers §81 — the clause inventory runs over P-001…P-040 and §81 is a
+ * project-structure requirement.
+ */
+const SPEC_81_DOCUMENTS = {
+  'README.md': 'README.md',
+  'ARCHITECTURE.md': 'docs/architecture.md',
+  'SECURITY.md': 'docs/security.md',
+  'THREAT_MODEL.md': 'docs/THREAT_MODEL.md',
+  'PROVIDER_GUIDE.md': 'docs/provider-architecture.md',
+  'CONNECTOR_GUIDE.md': 'docs/connectors.md',
+  'SKILL_GUIDE.md': 'docs/skills.md',
+  'PLUGIN_GUIDE.md': 'docs/architecture/PLUGIN_TRUST_MODEL.md',
+  'MCP_GUIDE.md': 'docs/MCP_GUIDE.md',
+  'WORKFLOW_GUIDE.md': 'docs/workflows.md',
+  'PARITY_MATRIX.md': 'PARITY_MATRIX.md',
+  'TESTING.md': 'docs/testing.md',
+};
+
+/** How short a §81 document may be before it counts as a placeholder. */
+const MIN_DOCUMENT_LINES = 40;
+
+/**
  * Which `## ` headings in a document are items that owe a verdict.
  *
  * The acceptance packages are all items, so their default is "every heading".
@@ -90,8 +125,24 @@ if (!existsSync(dir)) {
 const packages = readdirSync(dir).filter((name) => name.endsWith('.md'));
 if (packages.length === 0) problems.push('the acceptance directory holds no documents');
 
-for (const missing of EXTRA_DOCUMENTS.filter((rel) => !existsSync(join(root, rel)))) {
-  problems.push(`${missing} is required by specification §81 and does not exist`);
+for (const [mandated, actual] of Object.entries(SPEC_81_DOCUMENTS)) {
+  const path = join(root, actual);
+  if (!existsSync(path)) {
+    problems.push(
+      `specification §81 requires ${mandated}; this project keeps it at ${actual}, ` +
+        `which does not exist`,
+    );
+    continue;
+  }
+  // A file that exists and says nothing satisfies the filename and not the
+  // requirement, which is the failure a bare existence check invites.
+  const lines = readFileSync(path, 'utf8').split('\n').length;
+  if (lines < MIN_DOCUMENT_LINES) {
+    problems.push(
+      `${actual} stands in for §81's ${mandated} and holds only ${lines} lines, ` +
+        `which reads as a placeholder rather than the document`,
+    );
+  }
 }
 
 const documents = [
