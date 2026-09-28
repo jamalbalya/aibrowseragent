@@ -18,6 +18,7 @@ repository and what only an account owner can do.
 | [privacy-policy-outline.md](privacy-policy-outline.md)                               | What a hosted policy must say, from those flows                                          |
 | [screenshot-plan.md](screenshot-plan.md)                                             | What to capture, and what must never appear in a published image                         |
 | [../testing/acceptance/MATRIX.md](../testing/acceptance/MATRIX.md)                   | Every §85–§90 procedure, one classification each                                         |
+| [BLOCKER-CERTIFICATION.md](BLOCKER-CERTIFICATION.md)                                 | What is genuinely blocked, what is a decision, and what was merely unclassified          |
 
 ## Producing the artifact
 

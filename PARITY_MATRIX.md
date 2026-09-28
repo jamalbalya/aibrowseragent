@@ -496,6 +496,14 @@ had never been asked.
 
 ### What is waiting on somebody else, and where to see it
 
+The full certification is
+[`docs/release/BLOCKER-CERTIFICATION.md`](docs/release/BLOCKER-CERTIFICATION.md),
+which separates four things this file used to run together: a true external
+blocker, a scenario needing a person at a browser, a decision nobody has taken,
+and work that was merely unclassified. The last category is the one that
+mattered — it held eight items when the audit started, including a clause filed
+as external that turned out to be an npm install away.
+
 Three clause statuses exist so that a blocker stays visible rather than being
 absorbed into a verdict: `MANUAL_REQUIRED` needs a person, `EXTERNAL_REQUIRED`
 needs something this repository cannot issue itself, and `AMBIGUOUS` marks a

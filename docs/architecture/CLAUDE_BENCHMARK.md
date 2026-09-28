@@ -337,6 +337,41 @@ specification's forty rows nor this matrix:
 Listed so that "forty rows at PASS" is not mistaken for "everything the
 benchmark does". It would not be.
 
+## Every divergence, classified
+
+The final audit's ninth part asked for each divergence from the benchmark to be
+put in a category rather than left as prose: documented, tested, intentional,
+security-mandated, external, or unresolved. Two rules governed it. **Do not
+invent parity** — a divergence is not closed by describing it well. And **do not
+downgrade a capability because the benchmark's behaviour is undocumented** —
+absence of evidence about Claude is a gap in what is known, not a deficiency
+here.
+
+| #   | Divergence                                                               | Category                                           | Where it is settled                                                                                                |
+| --- | ------------------------------------------------------------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| 1   | Sessions live with the account vs local-first                            | **Intentional** — locked product decision          | `LOCAL_FIRST_ARCHITECTURE.md`; tested by the local-first suite                                                     |
+| 2   | Claude can spawn a local MCP process; this build cannot                  | **Security-mandated**                              | Native messaging is on the locked prohibition list. Local MCP itself is _not_ divergent — see the note under Gap-6 |
+| 3   | MCP client in a cloud session vs in the extension                        | **Intentional** — there is no session to host it   | `MCP_GUIDE.md` §1, and tested against a real server                                                                |
+| 4   | Claude models vs an interchangeable provider                             | **Intentional** — the locked product goal          | Provider conformance suite across three adapters                                                                   |
+| 5   | User-driven reconnect vs automatic reconciliation on startup             | **Intentional**, and stricter here                 | MV3 lifecycle suite                                                                                                |
+| 6   | Claude has a plan → approve → execute step (Gap-3)                       | **Documented and built**                           | The Classic plan; nineteen real-Chromium cases                                                                     |
+| 7   | Claude's declared prohibitions (purchases, account creation, card entry) | **Documented and built** (Gap-1, partially closed) | Nine hard prohibitions, refused in every mode including Skip                                                       |
+| 8   | Chrome's scheduled-run semantics have no Claude answer (Gap-2)           | **Unresolved — and not this project's to resolve** | Three questions with no published Chrome answer. Answered here by decision, and the decisions are written down     |
+| 9   | Credential-manager boundary (Gap-4)                                      | **Half intentional, half unresolved**              | The open half is stated as open rather than argued closed                                                          |
+| 10  | No action-by-action trail in Claude (§12, E1 absence)                    | **Divergence in this project's favour**            | The audit trail exists here. Not a gap to close                                                                    |
+
+**On category "external".** No divergence in this table is external in the sense
+Part 11 uses — none is waiting on a credential or an account. The external
+blockers are about _evidence for capabilities_, not about differences from the
+benchmark, and conflating the two would let an unresolved divergence hide behind
+a blocker that has nothing to do with it.
+
+**On category "unresolved".** Two entries are unresolved and both are unresolved
+_about Claude_, not about this build: Chrome's scheduled-run semantics, and half
+of the credential-manager boundary. Neither can be closed by work here, and
+neither is recorded as a deficiency — the evidence classes exist precisely so
+that "we do not know what Claude does" reads differently from "this is missing".
+
 ## Gaps this benchmark opened
 
 ### Gap-1 — declared prohibitions with no producer (partially closed)
@@ -462,13 +497,32 @@ reason the earlier per-server ceiling was withdrawn.
 
 Not gaps to close:
 
-| Behaviour                  | Claude                              | This project                             |
-| -------------------------- | ----------------------------------- | ---------------------------------------- |
-| Session storage            | _"sessions live with your account"_ | Local-first, by locked decision          |
-| Local MCP / native process | Supported                           | Refused — extension-only, no native host |
-| MCP client                 | In the cloud session (E1)           | In the extension — no session to host it |
-| Provider                   | Claude models                       | Interchangeable brain, by locked goal    |
-| Worker-eviction recovery   | User-driven reconnect (E2)          | Automatic reconciliation on startup      |
+| Behaviour                    | Claude                              | This project                             |
+| ---------------------------- | ----------------------------------- | ---------------------------------------- |
+| Session storage              | _"sessions live with your account"_ | Local-first, by locked decision          |
+| Spawning a local MCP process | Supported (E1)                      | Refused — extension-only, no native host |
+| MCP client                   | In the cloud session (E1)           | In the extension — no session to host it |
+| Provider                     | Claude models                       | Interchangeable brain, by locked goal    |
+| Worker-eviction recovery     | User-driven reconnect (E2)          | Automatic reconciliation on startup      |
+
+That first row said "Local MCP / native process … Refused" until the final
+audit's parity pass read it against what the product now does. It conflated two
+things, and the conflation had already cost something: it is the same reading
+that kept `P-026-C3` classified as external.
+
+**Local MCP is not refused and is not a divergence.** This build connects to an
+MCP server on loopback over Streamable HTTP, and
+`tests/integration/mcp-interop.test.ts` does exactly that against the MCP
+project's reference server on every run. What is refused is _spawning_ one —
+launching a local process and speaking stdio to it, which needs native messaging
+and is on this project's locked prohibition list. A person who runs a server
+themselves can point this extension at it today.
+
+So the divergence is narrower than the row claimed: Claude can start a local MCP
+process for you; this extension requires you to start it yourself. That is a
+convenience difference, not a capability one, and it is security-mandated rather
+than merely chosen — native messaging would give the extension arbitrary local
+process execution, which no approved design here has.
 
 ---
 
