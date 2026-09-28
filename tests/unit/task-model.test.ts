@@ -46,6 +46,41 @@ describe('task state machine', () => {
     }
   });
 
+  it('allows every live state but PAUSED to reach every way of stopping', () => {
+    // The invariant the docstring always claimed and the table did not hold.
+    // Checking CANCELLED and FAILED alone let PARTIAL go missing from QUEUED
+    // and from all three waiting states, and three production paths — the loop
+    // detector, an unrecoverable taint salt, and a taint that could not be
+    // persisted — each stranded the task in its pre-terminal state as a
+    // result. The runtime picks between the two with one ternary
+    // (`completed.length > 0 ? 'PARTIAL' : 'FAILED'`), so a state permitting
+    // one and refusing the other strands precisely the tasks that had got
+    // something done.
+    //
+    // PAUSED is the stated exception, and its reason is enforced elsewhere:
+    // `TaskManager.onComplete` refuses a terminal outcome for a paused task,
+    // so the table does not have to.
+    const stopping = ['CANCELLED', 'FAILED', 'BLOCKED', 'PARTIAL'] as const;
+    const live = LIVE_STATES.filter((state) => state !== 'PAUSED');
+    // An empty enumeration would agree with everything.
+    expect(live.length).toBeGreaterThan(5);
+    for (const state of live) {
+      for (const target of stopping) {
+        expect(canTransition(state, target), `${state} -> ${target}`).toBe(true);
+      }
+    }
+  });
+
+  it('does not let a task complete from a state where work is outstanding', () => {
+    // The other half, and the reason the invariant above names four terminal
+    // states rather than all five. Stopping is always available; succeeding is
+    // not, because a task cannot be complete while a tool call is still
+    // outstanding or before it has planned anything.
+    for (const state of ['QUEUED', 'WAITING_FOR_TOOL', 'WAITING_FOR_PERMISSION'] as const) {
+      expect(canTransition(state, 'COMPLETED'), `${state} -> COMPLETED`).toBe(false);
+    }
+  });
+
   it('makes terminal states absorbing', () => {
     for (const state of TERMINAL_STATES) {
       for (const target of TASK_STATES) {

@@ -42,23 +42,48 @@ export function isTerminal(state: TaskState): boolean {
 /**
  * Allowed transitions.
  *
- * Two invariants hold across this table, both enforced by tests:
+ * Three invariants hold across this table, all enforced by tests:
  *
- *  - Every terminal state is reachable from every live state, so a task can
- *    always be cancelled or failed cleanly. This is the specification's
- *    "never leave a task permanently stuck in RUNNING" requirement.
+ *  - Every way of *stopping* — CANCELLED, FAILED, BLOCKED and PARTIAL — is
+ *    reachable from every live state except PAUSED. This is the
+ *    specification's "never leave a task permanently stuck in RUNNING"
+ *    requirement, and PARTIAL belongs in it for a reason the table did not
+ *    originally reflect: every place the runtime decides between the two
+ *    writes `completed.length > 0 ? 'PARTIAL' : 'FAILED'`, one ternary at one
+ *    call site. A state that permits FAILED and forbids PARTIAL therefore
+ *    strands exactly those tasks that had got something done before they
+ *    stopped, which is the opposite of the intended severity ordering.
+ *  - COMPLETED is deliberately **not** in that set. Succeeding has a path
+ *    through RUNNING; stopping does not, and a task cannot be complete while
+ *    a tool call is still outstanding or before it has planned anything.
  *  - PAUSED is reachable from every live state. Pausing aborts the runner, so
  *    a state that could not record the pause would be left with nothing
  *    executing it and no way back.
+ *
+ * PAUSED is the stated exception to the first invariant, and the reason lives
+ * one layer up rather than here: `TaskManager.onComplete` refuses a terminal
+ * outcome for a paused task outright, because a runtime that has been stopped
+ * does not get to decide the task is finished. Only the user leaves PAUSED.
+ *
+ * The first invariant was previously written as "every terminal state is
+ * reachable from every live state" and was not true of this table: PARTIAL
+ * was missing from QUEUED and from all three waiting states, and the tests
+ * checked only CANCELLED and FAILED, so the gap sat under a claim that read
+ * as though it were guarded. Three production paths ran straight into it —
+ * the loop detector, an unrecoverable taint salt, and a taint that could not
+ * be persisted — and each left the task in its pre-terminal state for good:
+ * no terminal write, no completion notification, and no Retry, because the
+ * panel offers Retry for a task that has finished.
  */
 export const TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = {
-  QUEUED: ['PLANNING', 'PAUSED', 'CANCELLED', 'FAILED', 'BLOCKED'],
+  QUEUED: ['PLANNING', 'PAUSED', 'CANCELLED', 'FAILED', 'BLOCKED', 'PARTIAL'],
   PLANNING: [
     'RUNNING',
     'WAITING_FOR_USER',
     'PAUSED',
     'COMPLETED',
     'FAILED',
+    'PARTIAL',
     'CANCELLED',
     'BLOCKED',
   ],
@@ -84,11 +109,12 @@ export const TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = {
     'RECOVERING',
     'PAUSED',
     'FAILED',
+    'PARTIAL',
     'CANCELLED',
     'BLOCKED',
   ],
-  WAITING_FOR_PERMISSION: ['RUNNING', 'BLOCKED', 'PAUSED', 'FAILED', 'CANCELLED'],
-  WAITING_FOR_USER: ['RUNNING', 'PLANNING', 'PAUSED', 'CANCELLED', 'FAILED', 'BLOCKED'],
+  WAITING_FOR_PERMISSION: ['RUNNING', 'BLOCKED', 'PAUSED', 'FAILED', 'PARTIAL', 'CANCELLED'],
+  WAITING_FOR_USER: ['RUNNING', 'PLANNING', 'PAUSED', 'CANCELLED', 'FAILED', 'PARTIAL', 'BLOCKED'],
   PAUSED: ['RUNNING', 'PLANNING', 'CANCELLED', 'FAILED'],
   RECOVERING: ['RUNNING', 'PLANNING', 'PAUSED', 'PARTIAL', 'FAILED', 'CANCELLED', 'BLOCKED'],
   COMPLETED: [],

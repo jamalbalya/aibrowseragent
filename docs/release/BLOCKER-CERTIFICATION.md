@@ -50,10 +50,10 @@ with any conformant server. What A-6 still needs is an **operator**, not an
 Not blocked by a missing thing. Blocked by needing a person at a browser, doing
 something no harness can drive.
 
-| #   | What                                          | Why no automation reaches it                                                                                                                                                                                                                                                                                               |
-| --- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| B-1 | The manual acceptance tests, executed by hand | §84 condition 3; unmet for **every** row, including the thirty-five that read PASS. Its written half has since been done — see D below — so what remains is execution: eighty-six procedures, of which sixty-three existed before and twenty-three were written because condition 3 had never been answered per capability |
-| B-2 | Granting the optional `downloads` permission  | Chrome's own dialog is drawn by the browser and is not in any page's DOM (§91 procedure D-3-1, clause `P-011-C7`)                                                                                                                                                                                                          |
+| #   | What                                          | Why no automation reaches it                                                                                                                                                                                                                                                                                                                                                                                     |
+| --- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| B-1 | The manual acceptance tests, executed by hand | §84 condition 3; unmet for **every** row, including the thirty-five that read PASS. Two rounds of D-column work have since cut it: the procedures were written, and then sixteen of the twenty-two new ones were **executed** as real-Chromium tests. What is left needing a person is six §84 procedures, four §90/§91 environment procedures, and the credential-blocked and OAuth-blocked items in category A |
+| B-2 | Granting the optional `downloads` permission  | Chrome's own dialog is drawn by the browser and is not in any page's DOM (§91 procedure D-3-1, clause `P-011-C7`)                                                                                                                                                                                                                                                                                                |
 
 B-1 is the single largest thing standing between this repository and a claim of
 parity, and it is worth being exact about what it does and does not mean. Every
@@ -95,20 +95,22 @@ The category this audit existed to populate, and the reason the rule at the top
 was written. Everything listed here **has been done during the audit** — it is
 recorded so that the table is a history rather than a promise.
 
-| Found                                                                    | Was classified as     | Actually                                                                                        |
-| ------------------------------------------------------------------------ | --------------------- | ----------------------------------------------------------------------------------------------- |
-| Local MCP interop                                                        | External (`P-026-C3`) | An npm package. Done, and it found two handshake-breaking defects                               |
-| Twelve authority-changing actions recording nothing                      | Not classified at all | Nobody had asked the question in that direction                                                 |
-| A debugger attachment outliving its task                                 | Not classified at all | Found by asking what a terminal state releases                                                  |
-| An export/import widening a shortcut                                     | Not classified at all | Found by asking what crosses a boundary in the _safe_ direction                                 |
-| Six copies of the loopback predicate, one already diverged               | Not classified at all | Found by reading the shipped bundle rather than the source                                      |
-| Two stale rows in the security census table                              | Not classified at all | Found by checking prose against the suite it points at                                          |
-| `siteAuthorization: 'destination'` pinned by nothing                     | Not classified at all | Found by mutation                                                                               |
-| A clause citing `§91` for a permission dialog                            | Not classified at all | Found by reading project-level clauses rather than capability clauses                           |
-| A threat-model row claiming a control it did not have                    | Not classified at all | Found by asking what the audit trail does in a profile two people share                         |
-| Acceptance packages unchecked against the specification's own item lists | Not classified at all | Found by asking whether §81's failure mode repeats one level down                               |
-| §84 condition 3 never answered per capability, for thirty-nine of forty  | Not classified at all | Found by reading the specification's own three words rather than the repository's gloss on them |
-| §84 conditions 4 and 5 never answered per capability either              | Not classified at all | Found by running the same question over the other five conditions once condition 3 had fallen   |
+| Found                                                                     | Was classified as             | Actually                                                                                          |
+| ------------------------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------- |
+| Local MCP interop                                                         | External (`P-026-C3`)         | An npm package. Done, and it found two handshake-breaking defects                                 |
+| Twelve authority-changing actions recording nothing                       | Not classified at all         | Nobody had asked the question in that direction                                                   |
+| A debugger attachment outliving its task                                  | Not classified at all         | Found by asking what a terminal state releases                                                    |
+| An export/import widening a shortcut                                      | Not classified at all         | Found by asking what crosses a boundary in the _safe_ direction                                   |
+| Six copies of the loopback predicate, one already diverged                | Not classified at all         | Found by reading the shipped bundle rather than the source                                        |
+| Two stale rows in the security census table                               | Not classified at all         | Found by checking prose against the suite it points at                                            |
+| `siteAuthorization: 'destination'` pinned by nothing                      | Not classified at all         | Found by mutation                                                                                 |
+| A clause citing `§91` for a permission dialog                             | Not classified at all         | Found by reading project-level clauses rather than capability clauses                             |
+| A threat-model row claiming a control it did not have                     | Not classified at all         | Found by asking what the audit trail does in a profile two people share                           |
+| Acceptance packages unchecked against the specification's own item lists  | Not classified at all         | Found by asking whether §81's failure mode repeats one level down                                 |
+| §84 condition 3 never answered per capability, for thirty-nine of forty   | Not classified at all         | Found by reading the specification's own three words rather than the repository's gloss on them   |
+| §84 conditions 4 and 5 never answered per capability either               | Not classified at all         | Found by running the same question over the other five conditions once condition 3 had fallen     |
+| Sixteen of the twenty-two new §84 procedures were executable all along    | `BLOCKED — HUMAN/ENVIRONMENT` | Found by asking, of each written procedure, whether a real-Chromium test could meet its criterion |
+| **A looping task never finished**, and two fail-closed stops did the same | Not classified at all         | Found by _executing_ a procedure rather than writing one — 84-P-037, on its first run             |
 
 The last of those is worth separating, because only half of it was mine to fix.
 `IDENTITY_AND_SYNC.md` listed "Cross-user data access" against a control that only
@@ -118,8 +120,8 @@ code has. Narrowing that claim to what it holds, and writing the rest down as
 not: it is C-5 above, because the right answer depends on whether this product
 means to be stricter than the browser it lives in.
 
-**That last row was added after this table declared itself closed**, and the
-sentence it replaces said "the remaining D row is empty". It was not empty, and
+**Three rows have now been added after this table declared itself closed**, and the
+sentence they replace said "the remaining D row is empty". It was not empty, and
 the reason is worth more than the correction: every sweep this audit ran took
 the repository's own framing as given, and condition 3 had been glossed as
 execution so consistently that nothing ever read the three words. The finding
@@ -132,8 +134,19 @@ control-plane route, every capability's citations, eighteen mutations, a clean
 release build, a cross-capability pass and a project-level clause pass — turned
 up nothing further **within the framings they used**. A sweep that re-derives a
 requirement from the specification instead of from this repository's summary of
-it is a different sweep, and it has now found one thing. Whether it would find
-more is an open question, and this table no longer claims otherwise.
+it is a different sweep, and it has now found three things. Whether it would
+find more is an open question, and this table no longer claims otherwise.
+
+The third of them came from a different kind of sweep again, and is the one
+worth generalising from. Writing a manual acceptance procedure and executing it
+are not the same act, and only the second one can find a bug: 84-P-037 was
+written, looked correct, cited a clause reading `VERIFIED`, and failed the first
+time anybody ran it — the loop detector stopped the task and the task then never
+finished. No automated evidence here could have caught it, because every
+existing test asserted on what the detector decided rather than on what the task
+did next. **A procedure that has not been executed is not evidence, and the rows
+below that still need a person should be read as though any of them might do the
+same.**
 
 ---
 

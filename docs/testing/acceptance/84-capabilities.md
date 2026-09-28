@@ -77,6 +77,8 @@ not a procedure.
   page underneath is never obscured or reflowed.
 - FAILS IF: the panel opens as a popup, the conversation is empty after
   reopening, or the page layout shifts when the panel opens.
+- HUMAN_EXECUTION_REQUIRED: the panel opens beside the page and never obscures or reflows it.
+- WHY AUTOMATION IS INSUFFICIENT: Playwright loads the side panel document as an ordinary page. Chrome's own side-panel chrome — where it sits, and what it does to the page beside it — is browser UI that no page-level assertion can reach. The mount, the message bus and survival across a close and reopen are automated (`extension-load.spec.ts`, `agent-task.spec.ts :: tasks survive the side panel closing and reopening`); the layout claim is not.
 
 ## P-002 — Read page
 
@@ -106,7 +108,7 @@ not a procedure.
 
 ## P-006 — Forms
 
-**Verdict: `MANUAL`**
+**Verdict: `AUTOMATED`**
 
 - PROCEDURE:
   1. Open a page carrying a form with a text input, a `<select>`, a checkbox, a
@@ -118,10 +120,11 @@ not a procedure.
   carried all five.
 - FAILS IF: any field is left at its default, a value lands in the wrong field,
   or the agent reports success without the submission having happened.
+- EVIDENCE: tests/e2e/acceptance-84.spec.ts :: 84-P-006 — five control kinds are filled and submitted, and the server got all five
 
 ## P-007 — Scroll
 
-**Verdict: `MANUAL`**
+**Verdict: `AUTOMATED`**
 
 - PROCEDURE:
   1. Open a page whose content is several screens tall, with a target element
@@ -132,6 +135,8 @@ not a procedure.
 - CRITERION: the target is reached in both cases.
 - FAILS IF: the agent reports the element missing on either page, or scrolls the
   document when the content lives in a nested container.
+- EVIDENCE: tests/e2e/acceptance-84.spec.ts :: 84-P-007a — a target far below the fold is reached, and the model is told where the page is
+- EVIDENCE: tests/e2e/acceptance-84.spec.ts :: 84-P-007b — a target inside a nested scrolling container is reached too
 
 ## P-008 — Screenshot
 
@@ -146,6 +151,8 @@ not a procedure.
   legible, and the answer depends on it.
 - FAILS IF: the capture is blank, is of a different tab, or the answer could have
   been produced from the DOM alone.
+- HUMAN_EXECUTION_REQUIRED: a question only the rendered appearance can answer is answered from the capture.
+- WHY AUTOMATION IS INSUFFICIENT: The mechanism is automated — `agent-task.spec.ts :: a screenshot is captured, stored and never inlined into model context` proves a real capture of the real tab reaches evidence. Whether an answer _depended_ on it is a judgement about a real model's output, and the mock provider answers from a script.
 
 ## P-009 — Image upload
 
@@ -160,10 +167,12 @@ not a procedure.
   refuses before sending rather than sending an image it cannot read.
 - FAILS IF: the image is silently dropped, or the refusal arrives as a provider
   error rather than as a capability refusal.
+- HUMAN_EXECUTION_REQUIRED: an image is answered from on a vision model, and refused before sending on one without.
+- WHY AUTOMATION IS INSUFFICIENT: Needs a commercial model that advertises vision. The encoding and the capability gate are automated; a local server can claim vision but cannot read a picture, so the half of the criterion that matters — the answer came from the image — has nowhere to come from here.
 
 ## P-010 — File upload
 
-**Verdict: `MANUAL`**
+**Verdict: `AUTOMATED`**
 
 - PROCEDURE:
   1. Open a page with `<input type="file">`.
@@ -175,6 +184,8 @@ not a procedure.
   confirmation; declining leaves the input empty and the task reports a refusal.
 - FAILS IF: any file reaches a page without a selection you made, or a decline
   still attaches.
+- EVIDENCE: tests/e2e/file-transfer.spec.ts :: a chosen file reaches a real file input and the page’s own listener sees it
+- EVIDENCE: tests/e2e/file-transfer.spec.ts :: the attachment is refused when the user declines to send it
 
 ## P-011 — Download
 
@@ -191,7 +202,7 @@ not a procedure.
 
 ## P-013 — Tab grouping
 
-**Verdict: `MANUAL`**
+**Verdict: `AUTOMATED`**
 
 - PROCEDURE:
   1. Open four unrelated tabs.
@@ -201,6 +212,8 @@ not a procedure.
   tabs named, and tabs outside it are untouched.
 - FAILS IF: the group is reported but not present in the strip, or unrelated
   tabs are swept into it.
+- EVIDENCE: tests/e2e/agent-task.spec.ts :: groups real tabs through the Chrome tab-group API
+- EVIDENCE: tests/e2e/tab-scope.spec.ts :: no tab tool will read, focus or reload a tab outside the workspace
 
 ## P-014 — DOM inspection
 
@@ -223,7 +236,7 @@ not a procedure.
 
 ## P-017 — Long-running task
 
-**Verdict: `MANUAL`**
+**Verdict: `AUTOMATED`**
 
 - PROCEDURE:
   1. Start a task that needs many turns — a multi-page extraction across at
@@ -235,10 +248,12 @@ not a procedure.
   repeated after a worker eviction.
 - FAILS IF: the task stalls silently, restarts from the beginning, or performs
   any action twice.
+- EVIDENCE: tests/e2e/task-pause.spec.ts :: a paused task survives worker eviction and still resumes
+- EVIDENCE: tests/e2e/mv3-lifecycle.spec.ts :: a task can still run after the worker has restarted
 
 ## P-018 — Background task while Chrome is open
 
-**Verdict: `MANUAL`**
+**Verdict: `AUTOMATED`**
 
 - PROCEDURE:
   1. Start a long task.
@@ -248,6 +263,8 @@ not a procedure.
 - CRITERION: the task ran while the panel was closed and its progress is there
   on reopening.
 - FAILS IF: the task paused when the panel closed, or its progress is lost.
+- EVIDENCE: tests/e2e/agent-task.spec.ts :: tasks survive the side panel closing and reopening
+- EVIDENCE: tests/e2e/mv3-lifecycle.spec.ts :: a task interrupted by a real worker restart is parked, not resumed blind
 
 ## P-019 — Notifications
 
@@ -263,6 +280,8 @@ not a procedure.
   notification text names no page content.
 - FAILS IF: no notification appears, clicking one does nothing, or the text
   carries anything read off a page.
+- HUMAN_EXECUTION_REQUIRED: clicking the notification brings you to the panel at the right place.
+- WHY AUTOMATION IS INSUFFICIENT: Emission, content and the off switch are automated (`notifications.spec.ts`). A click on a system notification is delivered by the operating system's notification centre, which is outside the browser Playwright drives.
 
 ## P-020 — Scheduled tasks
 
@@ -277,10 +296,12 @@ not a procedure.
   paused, and the run history records each outcome including the missed one.
 - FAILS IF: it fires twice, silently stops after the restart, or runs while
   paused.
+- HUMAN_EXECUTION_REQUIRED: the schedule survives a full browser restart.
+- WHY AUTOMATION IS INSUFFICIENT: Arming, the unattended run, the confirmation boundary and pausing are automated (`schedules.spec.ts`). Quitting Chrome and reopening the same profile is 90-08's reason for existing: Playwright cannot quit the browser it launched and reattach.
 
 ## P-021 — Shortcuts
 
-**Verdict: `MANUAL`**
+**Verdict: `AUTOMATED`**
 
 - PROCEDURE:
   1. Create a shortcut with a parameter.
@@ -291,10 +312,12 @@ not a procedure.
   the same scope as the original.
 - FAILS IF: the imported shortcut runs anywhere the original could not, or the
   parameter is ignored.
+- EVIDENCE: tests/e2e/shortcuts.spec.ts :: confirming a shortcut runs its target through the normal pipeline
+- EVIDENCE: tests/e2e/export-import.spec.ts :: a shortcut round trip keeps its narrowing instead of widening it
 
 ## P-022 — Workflow recording
 
-**Verdict: `MANUAL`**
+**Verdict: `AUTOMATED`**
 
 - PROCEDURE:
   1. Start recording. Sign in to a test site, navigate two pages, fill a form
@@ -306,6 +329,9 @@ not a procedure.
   replay refuses rather than silently skipping it.
 - FAILS IF: a secret appears in the saved workflow, or an incomplete recording
   replays as though complete.
+- EVIDENCE: tests/e2e/workflows.spec.ts :: recording a real task captures its steps, and saving them runs nothing
+- EVIDENCE: tests/e2e/workflows.spec.ts :: a secret-shaped accessible name is never stored, and the recording says so
+- EVIDENCE: tests/e2e/workflows.spec.ts :: an incomplete recording cannot be replayed at all
 
 ## P-023 — Connector framework
 
@@ -316,7 +342,7 @@ not a procedure.
 
 ## P-024 — Skills
 
-**Verdict: `MANUAL`**
+**Verdict: `AUTOMATED`**
 
 - PROCEDURE:
   1. Run a bundled skill from the panel.
@@ -325,6 +351,9 @@ not a procedure.
 - CRITERION: the skill runs and resumes; the untrusted definition is inert and
   says why.
 - FAILS IF: a definition the build did not ship executes.
+- EVIDENCE: tests/e2e/skills.spec.ts :: a skill drives the real browser through several steps
+- EVIDENCE: tests/e2e/skills.spec.ts :: a skill run interrupted by a worker restart is not silently resumed
+- EVIDENCE: tests/e2e/skills.spec.ts :: a skill the model invented is refused, not created
 
 ## P-025 — Plugins
 
@@ -352,36 +381,57 @@ not a procedure.
   the scheduled task refuses outright because it cannot confirm.
 - FAILS IF: a second call runs without prompting, or an unattended run reaches
   an MCP tool.
+- HUMAN_EXECUTION_REQUIRED: every MCP call prompts, on every call, and a decline performs nothing.
+- WHY AUTOMATION IS INSUFFICIENT: Adding a server, discovery, registration, the R3 classification and removal are automated (`mcp.spec.ts`). A tool _call_ is not: the policy engine's origin check refuses a plain-http destination, so a loopback server's tools can be discovered here and never run. Executing this needs an MCP server on https at an origin somebody else operates, which is `P-026-C2` and blocker A-6.
 
 ## P-027 — Permission modes
 
-**Verdict: `MANUAL`**
+**Verdict: `AUTOMATED`**
 
 - PROCEDURE:
-  1. In `manual`, run a task that clicks and then submits a form. Approve each.
+  1. In `manual`, run a task that clicks an ordinary element on a page.
   2. Switch to `auto` and repeat.
-  3. Switch to `skip` and repeat.
-- CRITERION: `manual` asks for everything; `auto` stops asking for low-risk
-  actions; **all three still stop at R3** — the submission is confirmed in every
-  mode, including `skip`.
+  3. In each of `manual`, `auto` and `skip`, run a task that attaches a file to
+     a page — a declared **R3** action.
+- CRITERION: `manual` asks about the click; `auto` does not; and **all three
+  modes confirm the attachment**, `skip` included.
 - FAILS IF: any mode carries an R3 action through without a confirmation.
+- CORRECTED ON EXECUTION: this procedure originally named a **form submission**
+  as its R3 action, and a same-site submission is R2. R2 is confirmed in
+  `manual` and `auto` and not in `skip`, which is the mode switch working as
+  designed — so the original criterion would have failed a correct product.
+  `browser.attach_file` is R3 by declaration, so it tests what the clause
+  actually says. Recorded rather than quietly rewritten, because a procedure
+  that was wrong about the product is worth knowing about.
+- EVIDENCE: tests/e2e/acceptance-84.spec.ts :: 84-P-027a — manual asks about an ordinary page action and auto does not
+- EVIDENCE: tests/e2e/acceptance-84.spec.ts :: 84-P-027b — every mode still stops at R3, skip included
 
 ## P-028 — Site permissions
 
-**Verdict: `MANUAL`**
+**Verdict: `AUTOMATED`**
 
 - PROCEDURE:
   1. Grant a standing permission for one site.
   2. Run the same action on that site — it should not ask again.
-  3. Run it on a different site, and on a subdomain of the granted one.
+  3. Run it on a different site, and watch the page move to another origin
+     mid-task.
   4. Attempt an R3 action on the granted site.
-- CRITERION: the grant covers exactly the site it names and neither the
-  subdomain nor the other site, and it never covers R3.
+- CRITERION: the grant covers exactly the site it names and not the other one,
+  it does not survive the page moving, and it never covers R3.
 - FAILS IF: a grant spreads to another origin, or raises what it can approve.
+- CORRECTED ON EXECUTION: the original step 3 also asked for **a subdomain of
+  the granted site**, which cannot be exercised against this suite's fixture:
+  it serves from `127.0.0.1` and `localhost`, and neither has a subdomain. The
+  step is replaced by the origin-move case, which is the same claim about grant
+  scope and is executable. A genuine subdomain case needs a host that resolves
+  one, and is recorded here as a limit rather than dropped.
+- EVIDENCE: tests/e2e/site-authorization.spec.ts :: a grant taken from a page action is written against that page’s site
+- EVIDENCE: tests/e2e/site-authorization.spec.ts :: a site the user has not granted still asks
+- EVIDENCE: tests/e2e/site-authorization.spec.ts :: a grant does not survive the page moving to another origin
 
 ## P-029 — Permission history
 
-**Verdict: `MANUAL`**
+**Verdict: `AUTOMATED`**
 
 - PROCEDURE:
   1. Approve one action and decline another.
@@ -391,6 +441,8 @@ not a procedure.
   when; the revocation is recorded as its own entry rather than by the grant
   disappearing.
 - FAILS IF: a decision is absent, or revoking erases the grant's record.
+- EVIDENCE: tests/e2e/audit.spec.ts :: granting a site and revoking it are both in the trail
+- EVIDENCE: tests/e2e/security.spec.ts :: permission history records what was decided
 
 ## P-030 — Prompt injection defence
 
@@ -430,7 +482,7 @@ not a procedure.
 
 ## P-035 — Capability doctor
 
-**Verdict: `MANUAL`**
+**Verdict: `AUTOMATED`**
 
 - PROCEDURE:
   1. Configure a model that cannot call tools, and start a task needing one.
@@ -440,6 +492,9 @@ not a procedure.
   to change; the refusal is a capability refusal, not a provider error relayed.
 - FAILS IF: the task starts and fails partway, or the message is a raw vendor
   error.
+- EVIDENCE: tests/e2e/provider-integration.spec.ts :: the doctor reports CHAT_ONLY when the endpoint cannot call tools
+- EVIDENCE: tests/e2e/provider-integration.spec.ts :: a task is refused outright when the model cannot call tools
+- EVIDENCE: tests/e2e/provider-integration.spec.ts :: an invalid API key surfaces as an auth failure rather than a generic error
 
 ## P-036 — Error recovery
 
@@ -450,7 +505,7 @@ not a procedure.
 
 ## P-037 — Loop detection
 
-**Verdict: `MANUAL`**
+**Verdict: `AUTOMATED`**
 
 - PROCEDURE:
   1. Stage a page whose button never changes anything.
@@ -459,10 +514,11 @@ not a procedure.
 - CRITERION: the agent stops, says it is repeating itself without progress, and
   does not consume turns indefinitely.
 - FAILS IF: it keeps going until a budget runs out, or reports success.
+- EVIDENCE: tests/e2e/acceptance-84.spec.ts :: 84-P-037 — the agent stops rather than repeating an action that changes nothing
 
 ## P-038 — Audit trail
 
-**Verdict: `MANUAL`**
+**Verdict: `AUTOMATED`**
 
 - PROCEDURE:
   1. Run a task involving a confirmation, a denial and a site grant.
@@ -474,10 +530,13 @@ not a procedure.
   set; no page-derived text and no secret is in it.
 - FAILS IF: an approval or a grant is missing, or the export carries content read
   off a page.
+- EVIDENCE: tests/e2e/audit.spec.ts :: the panel exports a file holding decisions and nothing forbidden
+- EVIDENCE: tests/e2e/audit.spec.ts :: a permission refusal is recorded, and nothing ran
+- EVIDENCE: tests/e2e/audit.spec.ts :: granting a site and revoking it are both in the trail
 
 ## P-039 — Evidence model
 
-**Verdict: `MANUAL`**
+**Verdict: `AUTOMATED`**
 
 - PROCEDURE:
   1. Run a task that reaches a conclusion from a page.
@@ -486,6 +545,8 @@ not a procedure.
   its source and time; nothing is attributed to a page that did not say it.
 - FAILS IF: a claim has no evidence, or evidence names a page the task never
   read.
+- EVIDENCE: tests/e2e/agent-task.spec.ts :: reads a real page and reports a summary with evidence
+- EVIDENCE: tests/e2e/agent-task.spec.ts :: a screenshot is captured, stored and never inlined into model context
 
 ## P-040 — Provider/model capability detection
 

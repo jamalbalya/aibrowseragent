@@ -189,11 +189,25 @@ test('the task can be cancelled while it is running', async ({ context, send, pr
   await page.bringToFront();
 
   await connectProvider(send, provider);
-  // A long trajectory, so there is something to interrupt.
+  // A long trajectory, so there is something to interrupt — and a *varied*
+  // one, which this deliberately is.
+  //
+  // It used to script thirty identical scrolls, and that is a loop: the
+  // detector's identical-repetition threshold is three, so the run was stopped
+  // long before the cancellation arrived. The case passed anyway, for a reason
+  // that was a defect rather than a design — the detector's terminal write was
+  // being rejected by the task transition table, leaving the task in
+  // `WAITING_FOR_TOOL` with nothing terminal written, so the later cancel found
+  // a live task to cancel. Fixing that table (see `84-P-037`) made this case
+  // fail, correctly: the task now really does stop on its own at the third
+  // scroll, and there is nothing left running to interrupt.
+  //
+  // Each amount differs, so no two calls share a signature and the trajectory
+  // is genuinely long rather than merely repetitive.
   provider.script(
-    Array.from({ length: 30 }, () => ({
+    Array.from({ length: 30 }, (_unused, index) => ({
       kind: 'tool_calls' as const,
-      calls: [{ name: 'browser_scroll', arguments: { direction: 'down' } }],
+      calls: [{ name: 'browser_scroll', arguments: { direction: 'down', amount: 100 + index } }],
     })),
   );
 

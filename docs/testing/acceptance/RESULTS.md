@@ -46,10 +46,59 @@ were not on the list. Twelve remain blocked.**
 
 **That count is dated and is not updated in place.** The §84 condition 3
 census added twenty-two further written procedures, one per capability that had
-none, and every one of them is `NOT YET EXECUTED`. They are listed in
+none. **Sixteen of the twenty-two have since been executed** and are recorded
+below; six still need a person and say exactly why. They are listed in
 [`84-capabilities.md`](84-capabilities.md) and carried in
-[`MATRIX.md`](MATRIX.md); nothing below records a result for any of them,
-because nobody has run one.
+[`MATRIX.md`](MATRIX.md).
+
+### §84 condition 3 — 2026-09-28 — sixteen procedures EXECUTED — MET (now automated)
+
+- Commit: `0607ba9` plus this change · real Chromium · `./scripts/verify.sh --e2e`
+- Route: the one already recorded for §89's P-1, S-1 and M-1 — execute the
+  procedure, turn it into a test, and it runs on every build rather than waiting
+  for somebody to remember.
+- Executed: 84-P-006, 84-P-007, 84-P-010, 84-P-013, 84-P-017, 84-P-018,
+  84-P-021, 84-P-022, 84-P-024, 84-P-027, 84-P-028, 84-P-029, 84-P-035,
+  84-P-037, 84-P-038, 84-P-039.
+- Of those, eleven were met by tests that already ran and were cited rather than
+  rewritten; five needed a test written, and those are in
+  `tests/e2e/acceptance-84.spec.ts`.
+
+### §84 84-P-037 — Loop detection — 2026-09-28 — **EXECUTED — NOT MET**, defect fixed, re-executed MET
+
+The one that justifies the whole exercise, and the reason a written procedure is
+not a passed acceptance.
+
+- Steps: a page whose button changes nothing; a provider scripted to press it
+  twelve times and never conclude; nobody intervening.
+- Expected: the agent stops, says it is repeating itself, and does not consume
+  turns indefinitely.
+- **Actual on first execution: FAIL.** The detector fired correctly and the
+  worker logged "Loop detected; stopping the task" — and the task then sat in
+  `WAITING_FOR_TOOL` for good. `WAITING_FOR_TOOL -> PARTIAL` was not in the task
+  transition table, so `TaskManager.onComplete` rejected the terminal write with
+  "Rejected an invalid terminal transition" and the task never finished. No
+  terminal state means no §53 task-failed notification and no Retry, which are
+  the two things the runtime's own comment says this path relies on.
+- Scope: three production paths ran into the same gap, all of them deliberate
+  fail-closed stops — the loop detector, a taint salt that could not be
+  recovered, and a taint that could not be persisted. The last two are the
+  security-critical ones: the product stops because it cannot record what a task
+  has read, and then never reports that it stopped.
+- Root cause: the table's own docstring claimed "every terminal state is
+  reachable from every live state" and the tests checked `CANCELLED` and
+  `FAILED` only, so `PARTIAL` was missing from `QUEUED`, `PLANNING` and all
+  three waiting states under a claim that read as though it were guarded. The
+  runtime picks between the two with one ternary —
+  `completed.length > 0 ? 'PARTIAL' : 'FAILED'` — so the gap stranded precisely
+  those tasks that had got something done before they stopped.
+- Fix: `PARTIAL` added wherever `FAILED` is reachable, `COMPLETED` deliberately
+  not; the docstring narrowed to what holds; and the unit invariant rewritten to
+  check all four ways of stopping, with `PAUSED`'s exemption named and its real
+  guard pointed at.
+- Re-executed: **MET.** The task now reaches `PARTIAL` with the detector's own
+  diagnosis as its summary. Reverting the table entry alone fails the case, so
+  the fix is load-bearing.
 
 Executed on 2026-09-22 against the built extension in real Chromium: §89's
 P-1 (popup), S-1 (SPA navigation) and M-1 (modal) from the list of fifteen,

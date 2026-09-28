@@ -52,6 +52,47 @@ const PAGES: Record<string, string> = {
   <button id="disabled" disabled>Unavailable</button>
 </body></html>`,
 
+  // §84 condition 3, P-007. A document tall enough that the target is well
+  // below the fold, plus a nested `overflow:auto` container with its own
+  // target — because scrolling the document and scrolling a container inside
+  // it are different operations and only the second one catches a tool that
+  // assumes the document is always the scroller.
+  '/tall': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Tall</title>
+<style>#box{height:160px;overflow:auto;border:1px solid #000}#filler{height:4000px}#inner-filler{height:1200px}</style></head>
+<body>
+  <h1>Tall Page</h1>
+  <p id="log">nothing clicked</p>
+  <div id="box">
+    <div id="inner-filler"></div>
+    <button id="inner" onclick="document.getElementById('log').textContent='inner clicked'">Inner target</button>
+  </div>
+  <div id="filler"></div>
+  <button id="far" onclick="document.getElementById('log').textContent='far clicked'">Far target</button>
+</body></html>`,
+
+  // §84 condition 3, P-006. Five control kinds in one form, posting to a
+  // route that echoes what it received, so "the submission carried all five"
+  // is read off the server rather than off the page.
+  '/five-field': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Five Fields</title></head>
+<body>
+  <h1>Booking</h1>
+  <form id="f" method="POST" action="/collect-local">
+    <label for="who">Full name</label>
+    <input id="who" name="who" type="text">
+    <label for="tier">Tier</label>
+    <select id="tier" name="tier"><option value="">Choose</option><option value="std">Standard</option><option value="pro">Pro</option></select>
+    <label for="agree">Accept terms</label>
+    <input id="agree" name="agree" type="checkbox">
+    <label for="post">Post</label>
+    <input id="post" name="delivery" type="radio" value="post">
+    <label for="pickup">Pickup</label>
+    <input id="pickup" name="delivery" type="radio" value="pickup">
+    <label for="notes">Notes</label>
+    <textarea id="notes" name="notes"></textarea>
+    <button id="save" type="submit">Save</button>
+  </form>
+</body></html>`,
+
   '/details': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Widget Details</title></head>
 <body><h1>Widget Details</h1><p>The medium widget weighs 400 grams.</p></body></html>`,
 
@@ -372,8 +413,21 @@ export async function startTestSite(options: TestSiteOptions = {}): Promise<Test
     }
 
     if (path === '/collect-local') {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end('<!doctype html><title>Local</title><h1>Received locally</h1>');
+      // The body is echoed into the response so a test can assert on what the
+      // form actually submitted, read off the receiving side rather than off
+      // the page that sent it. A page can hold a value it never sent.
+      let received = '';
+      req.on('data', (chunk) => {
+        received += String(chunk);
+      });
+      req.on('end', () => {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(
+          `<!doctype html><title>Local</title><h1>Received locally</h1><pre id="body">${received
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')}</pre>`,
+        );
+      });
       return;
     }
 
