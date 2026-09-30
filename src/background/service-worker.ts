@@ -53,6 +53,7 @@ import {
 } from '@/providers/adapters/openai-compatible';
 import { anthropicFactory, ANTHROPIC_PROVIDER_ID } from '@/providers/adapters/anthropic';
 import { geminiFactory, GEMINI_PROVIDER_ID } from '@/providers/adapters/gemini';
+import { nineRouterFactory, NineRouterAdapter } from '@/providers/adapters/nine-router';
 import { UNKNOWN_CAPABILITIES } from '@/providers/core/types';
 import { ToolRegistry } from '@/tools/registry/tool-registry';
 import { ChromeBrowserAdapter } from '@/tools/browser/chrome-adapter';
@@ -447,6 +448,7 @@ const providerRegistry = new ProviderRegistry({ transport: providerTransport });
 providerRegistry.register(openAICompatibleFactory);
 providerRegistry.register(anthropicFactory);
 providerRegistry.register(geminiFactory);
+providerRegistry.register(nineRouterFactory);
 const capabilityDoctor = new CapabilityDoctor();
 
 // ---------------------------------------------------------------------------
@@ -2389,7 +2391,36 @@ router.on('provider.getConnection', async () => ({
 router.on('provider.listModels', async ({ providerId }) => {
   const adapter = providerRegistry.get(providerId);
   const models = await adapter.listModels();
-  return { models: models.map((model) => ({ id: model.id, displayName: model.displayName })) };
+  // The id is passed through untouched. A gateway model id contains `/` in the
+  // ordinary case, and this is the first of several stages that must not read it
+  // as structured data.
+  const listed = models.map((model) => ({
+    id: model.id,
+    displayName: model.displayName,
+    ...(model.upstreamKey === undefined ? {} : { upstreamKey: model.upstreamKey }),
+  }));
+  // A provider whose catalogue is a hierarchy reports its levels; one without
+  // groups reports none, and the panel shows a flat list as before.
+  const hierarchy = adapter instanceof NineRouterAdapter ? adapter : null;
+  if (hierarchy === null) return { models: listed };
+  const groups = hierarchy.groups().map((group) => ({
+    key: group.key,
+    displayName: group.displayName,
+    kind: group.kind,
+    modelCount: group.modelCount,
+  }));
+  const refused = hierarchy.refusedCount();
+  await auditLog.record({
+    type: 'provider.selected',
+    outcome: 'info',
+    providerId,
+    code: 'catalogue_discovered',
+    // Counts, never names: an upstream alias is provider-authored text and the
+    // trail records decisions rather than catalogues.
+    recordCount: listed.length,
+    ...(refused === 0 ? {} : { removedCount: refused }),
+  });
+  return { models: listed, groups, ...(refused === 0 ? {} : { refused }) };
 });
 
 router.on('provider.runDoctor', async ({ providerId, modelId, quick }) => {
@@ -2420,7 +2451,7 @@ router.on('provider.runDoctor', async ({ providerId, modelId, quick }) => {
   return { report };
 });
 
-router.on('provider.setActive', async ({ providerId, modelId }) => {
+router.on('provider.setActive', async ({ providerId, modelId, upstreamKey }) => {
   providerRegistry.setActive(providerId);
   await settingsStore.update({ activeProviderId: providerId, activeModelId: modelId });
   await updateSession({ providerId, modelId });
@@ -2430,13 +2461,23 @@ router.on('provider.setActive', async ({ providerId, modelId }) => {
 
   // A capability measurement belongs to the pair it was measured on. See
   // `provider-switch.ts` for why this is a function rather than a spread.
-  const connection = connectionAfterSwitch(existing, providerId, modelId, () => ({
+  const base = connectionAfterSwitch(existing, providerId, modelId, () => ({
     providerId,
     modelId,
     authKind: providerRegistry.get(providerId).authKind,
     createdAt: Date.now(),
     status: 'connected',
   }));
+  // The group is remembered so the three-level selection restores, and dropped
+  // when the caller names none — a stale group from a previous provider would
+  // point the UI at a level that no longer exists. It never affects which model
+  // is sent: that is `modelId`, exactly as the catalogue gave it.
+  const connection =
+    upstreamKey === undefined
+      ? (Object.fromEntries(
+          Object.entries(base).filter(([field]) => field !== 'upstreamKey'),
+        ) as typeof base)
+      : { ...base, upstreamKey };
   await settingsStore.setConnection(connection);
   if (switched) {
     await auditLog.record({
@@ -2729,6 +2770,7 @@ function accountView(account: ConnectedAccount, brainId: string | null): Connect
     authKind: account.authKind,
     ...(account.baseUrl === undefined ? {} : { baseUrl: account.baseUrl }),
     modelId: account.modelId,
+    ...(account.upstreamKey === undefined ? {} : { upstreamKey: account.upstreamKey }),
     capabilities: account.capabilities,
     status: account.status,
     ...(account.statusReason === undefined ? {} : { statusReason: account.statusReason }),
@@ -3293,7 +3335,33 @@ router.on('accounts.listModels', async ({ connectionId }) => {
   if (!account) throw new Error('That connection no longer exists.');
   const resolved = await resolveFromAccount({ ...account, modelId: account.modelId ?? 'probe' });
   const models = await resolved.adapter.listModels();
-  return { models: models.map((model) => ({ id: model.id, displayName: model.displayName })) };
+  // Ids pass through untouched; see `provider.listModels` for why.
+  const listed = models.map((model) => ({
+    id: model.id,
+    displayName: model.displayName,
+    ...(model.upstreamKey === undefined ? {} : { upstreamKey: model.upstreamKey }),
+  }));
+  const hierarchy = resolved.adapter instanceof NineRouterAdapter ? resolved.adapter : null;
+  if (hierarchy === null) return { models: listed };
+  const refused = hierarchy.refusedCount();
+  await auditLog.record({
+    type: 'provider.selected',
+    outcome: 'info',
+    providerId: account.providerId,
+    code: 'catalogue_discovered',
+    recordCount: listed.length,
+    ...(refused === 0 ? {} : { removedCount: refused }),
+  });
+  return {
+    models: listed,
+    groups: hierarchy.groups().map((group) => ({
+      key: group.key,
+      displayName: group.displayName,
+      kind: group.kind,
+      modelCount: group.modelCount,
+    })),
+    ...(refused === 0 ? {} : { refused }),
+  };
 });
 
 router.on('accounts.runDoctor', async ({ connectionId, modelId, quick }) => {
@@ -3328,7 +3396,7 @@ router.on('accounts.runDoctor', async ({ connectionId, modelId, quick }) => {
   return { report };
 });
 
-router.on('accounts.setBrain', async ({ connectionId, modelId }) => {
+router.on('accounts.setBrain', async ({ connectionId, modelId, upstreamKey }) => {
   const abaUserId = await currentAbaUserId();
   const existing = await accountStore.get(connectionId);
   if (!existing) {
@@ -3338,7 +3406,16 @@ router.on('accounts.setBrain', async ({ connectionId, modelId }) => {
   // A measurement survives only when both the account and the model are the
   // ones it was taken on — the same rule `connectionAfterSwitch` established
   // for the single-slot world, extended to the account dimension.
-  const updated = accountAfterSelection(existing, modelId);
+  const selected = accountAfterSelection(existing, modelId);
+  // The group is remembered for the selection UI and dropped when none is named,
+  // so a stale group cannot outlive the provider it belonged to. It is never an
+  // input to which model is sent.
+  const updated: typeof selected =
+    upstreamKey === undefined
+      ? (Object.fromEntries(
+          Object.entries(selected).filter(([field]) => field !== 'upstreamKey'),
+        ) as typeof selected)
+      : { ...selected, upstreamKey };
   const switched = updated.capabilities === null && existing.capabilities !== null;
   await accountStore.put(updated);
   await accountStore.setBrain(abaUserId, connectionId, modelId);

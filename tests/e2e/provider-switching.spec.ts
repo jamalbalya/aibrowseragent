@@ -17,11 +17,13 @@ import { expect, test, waitForTask } from './fixtures/extension';
 
 const KEY = 'test-key-abcdefghijklmnop';
 
-test('the registry offers all three API providers and no web provider', async ({ send }) => {
+test('the registry offers every API provider and no web provider', async ({ send }) => {
   const { providers } = await send('provider.list', {});
   const ids = providers.map((provider) => provider.id).sort();
 
-  expect(ids).toEqual(['anthropic', 'gemini', 'openai-compatible']);
+  // Enumerated, so a provider added to the registry has to be added here too —
+  // which is how `nine-router` arrived in this list rather than slipping in.
+  expect(ids).toEqual(['anthropic', 'gemini', 'nine-router', 'openai-compatible']);
   // Web providers are foundation only. None is registered, so none is
   // selectable, so no inference against an authenticated web session can be
   // started from the panel.
@@ -40,6 +42,16 @@ test('a provider with its own endpoint does not demand one, and one without it d
   expect(byId.anthropic!.baseUrlRequired).toBe(false);
   expect(byId.anthropic!.defaultBaseUrl).toContain('https://');
   expect(byId.gemini!.defaultBaseUrl).toContain('https://');
+
+  // 9Router runs on the user's own machine, so it defaults rather than demanding
+  // a URL — and it is the one default that is not https, because it is loopback.
+  // `connect` permits plaintext for localhost only; anywhere else it refuses, so
+  // the key is never sent unencrypted to a remote host.
+  const gateway = byId['nine-router']!;
+  expect(gateway.baseUrlRequired).toBe(false);
+  expect(gateway.defaultBaseUrl).toBe('http://localhost:20128/v1');
+  expect(gateway.kind).toBe('api');
+  expect(gateway.authKind).toBe('api_key');
 });
 
 test('the Anthropic adapter completes a real round trip over sockets', async ({

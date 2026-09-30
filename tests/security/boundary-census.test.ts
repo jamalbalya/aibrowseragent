@@ -50,6 +50,7 @@ import { managementTaskId } from '@/security/egress/provider-transport';
 import { runIdFor, unattendedSessionIdFor } from '@/schedules/schedule-model';
 import { newId } from '@/utils/ids';
 import { isRecordableModelId } from '@/providers/core/provider-http';
+import { parseModelCatalogue } from '@/providers/adapters/nine-router-catalog';
 import { validateSkillDefinition } from '@/skills/core/skill-model';
 import { RECORDED_PROVENANCE } from '@/workflows/workflow-model';
 
@@ -75,7 +76,7 @@ describe('TEST-BOUNDARY-001 — every census entry holds', () => {
   it('01 — the table is not empty and has not shrunk', () => {
     // The population assertion. An enumeration that lost its entries would
     // otherwise pass every case below by describing nothing.
-    expect(BOUNDARY_CONTRACTS.length).toBe(15);
+    expect(BOUNDARY_CONTRACTS.length).toBe(16);
     expect(new Set(BOUNDARY_CONTRACTS.map((c) => `${c.field}/${c.producer}`)).size).toBe(
       BOUNDARY_CONTRACTS.length,
     );
@@ -253,6 +254,39 @@ describe('TEST-BOUNDARY-001 — each producer at its maximum is recordable', () 
         modelId,
       }),
     ).toBe(true);
+  });
+
+  it('11b — modelId: the widest id a 9Router catalogue can offer', async () => {
+    // A second producer for the same field, and the most hostile one: a gateway
+    // model id contains `/` in the ordinary case. The parser is the admitting
+    // stage, so it is run rather than described.
+    const widest = 'z'.repeat(MAX_MODEL_ID - 9);
+    const id = `upstream/${widest}`;
+    expect(id.length).toBe(MAX_MODEL_ID);
+    const { models, refused } = parseModelCatalogue({
+      object: 'list',
+      data: [{ id, object: 'model', owned_by: 'upstream' }],
+    });
+    expect(refused).toEqual([]);
+    // Carried, not parsed.
+    expect(models[0]!.id).toBe(id);
+    expect(
+      await accepted({
+        type: 'egress.decided',
+        taskId: 'task_abc',
+        tool: 'provider.request',
+        outcome: 'allowed',
+        code: 'PROVIDER_PINNED',
+        modelId: models[0]!.id,
+      }),
+    ).toBe(true);
+    // One character over and the parser refuses it rather than shortening it.
+    expect(
+      parseModelCatalogue({
+        object: 'list',
+        data: [{ id: `${id}x`, object: 'model', owned_by: 'upstream' }],
+      }).models,
+    ).toEqual([]);
   });
 
   it('12 — mimeType: the widest media type the RFC allows', async () => {

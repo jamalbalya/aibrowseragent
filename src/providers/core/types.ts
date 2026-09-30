@@ -146,6 +146,17 @@ export interface ModelInfo {
   readonly id: string;
   readonly displayName: string;
   /**
+   * Which group this model belongs to, for a provider that has groups.
+   *
+   * A gateway fronts several upstream providers at once, so its catalogue is a
+   * hierarchy rather than a list, and this is the opaque key of the level above
+   * the model. Optional because a single-upstream provider has no such level —
+   * and it is a *key*, never a label: two upstreams can present the same label,
+   * and a UI that keyed on the label would merge them and send a request to
+   * whichever won.
+   */
+  readonly upstreamKey?: string;
+  /**
    * Capabilities as *advertised*. These are a starting point only — the
    * capability doctor verifies them before the UI reports Agent Ready.
    */

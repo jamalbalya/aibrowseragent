@@ -28,7 +28,24 @@ export interface ProviderConnection {
    */
   readonly connectionId?: string;
   readonly providerId: string;
+  /**
+   * The model, exactly as the provider named it.
+   *
+   * For a gateway this routinely contains `/` — `openai/gpt-5.x` — and the `/`
+   * belongs to the identifier. It is never split, normalised or shortened on the
+   * way in or out of this record.
+   */
   readonly modelId: string;
+  /**
+   * The upstream group the model was chosen from, for a provider that has groups.
+   *
+   * Persisted so the three-level selection restores without re-deriving it from
+   * the id — which is the one thing that must not be done, since a combo id has
+   * no prefix and a prefix can disagree with `owned_by`. Recomputed from a fresh
+   * catalogue when one is available; a stale value only affects which group the
+   * UI opens on, never which model is sent.
+   */
+  readonly upstreamKey?: string;
   readonly authKind: string;
   readonly accountLabel?: string;
   readonly capabilities?: ModelCapabilities;

@@ -52,12 +52,56 @@ export function SettingsView({
   // switches to the user's choice once they pick one. Deriving it avoids an
   // effect that would fight the user's typing.
   const [modelOverride, setModelOverride] = useState<string | null>(null);
-  const [models, setModels] = useState<readonly { id: string; displayName: string }[]>([]);
+  const [models, setModels] = useState<
+    readonly { id: string; displayName: string; upstreamKey?: string }[]
+  >([]);
+  /**
+   * The upstream levels, when the connected provider has any.
+   *
+   * A gateway fronts several upstream providers at once, so choosing a model is
+   * two choices. Empty for every provider that is not a gateway, and the model
+   * field then behaves exactly as it did before.
+   */
+  const [groups, setGroups] = useState<
+    readonly { key: string; displayName: string; kind: string; modelCount: number }[]
+  >([]);
+  /** How many catalogue entries the gateway offered that could not be used. */
+  const [refusedModels, setRefusedModels] = useState(0);
+  /**
+   * The chosen upstream, by **key**.
+   *
+   * Never by display label: two upstreams can present the same label, and keying
+   * on it would merge them and send the request to whichever won.
+   */
+  const [upstreamOverride, setUpstreamOverride] = useState<string | null>(null);
   // The account this form just created. The capability check and the model
   // selection that follows both belong to *that* account: running them
   // against the provider id instead was how a measurement ended up on the
   // pre-account settings slot while the account it was taken for kept none.
   const [connectionId, setConnectionId] = useState<string | null>(connection?.connectionId ?? null);
+
+  /**
+   * The upstream in effect: the user's choice, else the one that was persisted,
+   * else the first group discovered.
+   *
+   * Derived rather than stored in an effect, for the same reason the model field
+   * is: an effect would fight the user's selection.
+   */
+  const upstreamKey =
+    upstreamOverride ?? connection?.upstreamKey ?? (groups.length > 0 ? groups[0]!.key : null);
+
+  /**
+   * The models under the chosen upstream.
+   *
+   * Filtered by `upstreamKey`, which each model carries. Nothing here reads the
+   * model id: a gateway id contains `/` in the ordinary case and none at all for
+   * a combination, so grouping by anything derived from the id would put a
+   * combination nowhere and split a renamed alias in two.
+   */
+  const visibleModels =
+    groups.length === 0 || upstreamKey === null
+      ? models
+      : models.filter((option) => option.upstreamKey === upstreamKey);
   const [report, setReport] = useState<CapabilityReport | null>(null);
   const [sitePolicy, setSitePolicy] = useState<SitePolicyState | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -121,6 +165,11 @@ export function SettingsView({
           connectionId: result.account.connectionId,
         });
         setModels(modelList.models);
+        setGroups(modelList.groups ?? []);
+        setRefusedModels(modelList.refused ?? 0);
+        // A fresh catalogue may not contain the upstream a previous selection
+        // used, so the derived default takes over rather than a stale override.
+        setUpstreamOverride(null);
       }
       onChanged();
     } catch (error) {
@@ -214,7 +263,12 @@ export function SettingsView({
       );
       setReport(result.report);
       if (result.report.readiness === 'AGENT_READY') {
-        await sendToBackground('accounts.setBrain', { connectionId, modelId: model });
+        await sendToBackground('accounts.setBrain', {
+          connectionId,
+          // Exactly what was selected. Not a prefix, not a suffix, not trimmed.
+          modelId: model,
+          ...(upstreamKey === null ? {} : { upstreamKey }),
+        });
       }
       onChanged();
     } catch (error) {
@@ -222,7 +276,7 @@ export function SettingsView({
     } finally {
       setBusy(null);
     }
-  }, [connectionId, model, onChanged]);
+  }, [connectionId, model, upstreamKey, onChanged]);
 
   const removeSite = useCallback(async (site: string) => {
     try {
@@ -317,13 +371,47 @@ export function SettingsView({
           The key is stored by the extension and sent only to the base URL above. It is never
           included in logs, evidence or model prompts.
         </p>
+        {refusedModels > 0 ? (
+          <p className="field__hint" data-testid="catalogue-refused">
+            {refusedModels} entr{refusedModels === 1 ? 'y' : 'ies'} in this catalogue could not be
+            used and {refusedModels === 1 ? 'is' : 'are'} not listed.
+          </p>
+        ) : null}
+
+        {groups.length > 0 ? (
+          <label className="field">
+            <span>Upstream provider</span>
+            <select
+              value={upstreamKey ?? ''}
+              data-testid="upstream-select"
+              onChange={(event) => {
+                setUpstreamOverride(event.target.value);
+                // The model belonged to the previous upstream, so the choice is
+                // cleared rather than carried across — silently keeping it would
+                // show one upstream while sending a model from another.
+                setModelOverride('');
+              }}
+            >
+              {groups.map((group) => (
+                // Keyed and valued by `key`, never by the label.
+                <option key={group.key} value={group.key}>
+                  {group.displayName} ({group.modelCount})
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
 
         <label className="field">
           <span>Model</span>
-          {models.length > 0 ? (
-            <select value={model} onChange={(event) => setModelOverride(event.target.value)}>
+          {visibleModels.length > 0 ? (
+            <select
+              value={model}
+              data-testid="model-select"
+              onChange={(event) => setModelOverride(event.target.value)}
+            >
               <option value="">Choose a model…</option>
-              {models.map((option) => (
+              {visibleModels.map((option) => (
                 <option key={option.id} value={option.id}>
                   {option.displayName}
                 </option>

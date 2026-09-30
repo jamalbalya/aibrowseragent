@@ -91,13 +91,17 @@ const RECORDS = /auditLog\s*\.\s*record|recordShortcutConfigured\(|recordK1\(/;
 const EXEMPT: Readonly<Record<string, { readonly why: string; readonly producer?: string }>> = {
   // Reads and diagnostics. A control-plane class here is about who may ask,
   // not about a change being made — none of these writes anything.
+  //
+  // `provider.listModels` and `accounts.listModels` used to be here and are not
+  // any more. Discovering a gateway's catalogue reaches an external endpoint with
+  // the account's credential and decides what the user may then select, so it is
+  // an event rather than a read, and both routes now record one. Case 02 is what
+  // noticed the entries had gone stale.
   'session.get': { why: 'read' },
   'debug.getLogs': { why: 'read' },
   'evidence.getPayload': { why: 'read' },
   'file.listPendingSelections': { why: 'read' },
   'permission.listPending': { why: 'read' },
-  'accounts.listModels': { why: 'read' },
-  'provider.listModels': { why: 'read' },
   'accounts.runDoctor': { why: 'read' },
   'provider.runDoctor': { why: 'read' },
 

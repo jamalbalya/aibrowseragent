@@ -89,7 +89,7 @@ interface WireCompletion {
   id?: string;
 }
 
-interface WireModelList {
+export interface WireModelList {
   data?: { id?: string }[];
 }
 
@@ -97,12 +97,23 @@ interface WireModelList {
 const VISION_MODEL_HINTS = ['gpt-4o', 'gpt-4.1', 'gpt-5', 'o3', 'o4', 'vision', 'llava', 'qwen-vl'];
 
 export class OpenAICompatibleAdapter implements AIProviderAdapter {
-  readonly id = OPENAI_COMPATIBLE_PROVIDER_ID;
-  readonly displayName = 'OpenAI-compatible endpoint';
+  // `string` rather than the literal type, so a gateway subclass can name
+  // itself. The adapter contract declares both as `string` already.
+  readonly id: string = OPENAI_COMPATIBLE_PROVIDER_ID;
+  readonly displayName: string = 'OpenAI-compatible endpoint';
   readonly kind = 'api' as const;
   readonly authKind = 'api_key' as const;
 
-  private config: ProviderConfig | null = null;
+  /**
+   * `protected` so a gateway adapter can extend this one.
+   *
+   * 9Router speaks exactly this wire format and differs only in how its model
+   * catalogue is shaped, so `NineRouterAdapter` subclasses this class rather than
+   * copying six hundred lines of request building, streaming and tool-call
+   * parsing. Widening these four members is the whole cost of that reuse, and it
+   * is a compile-time visibility change with no runtime effect.
+   */
+  protected config: ProviderConfig | null = null;
 
   /**
    * A transport, not a `fetch`.
@@ -112,9 +123,9 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
    * "every provider request passes the gate" a property of construction
    * rather than of remembering.
    */
-  private readonly managementSalt = generateTaintSalt();
+  protected readonly managementSalt = generateTaintSalt();
 
-  constructor(private readonly transport: ProviderTransport = refusingTransport()) {}
+  constructor(protected readonly transport: ProviderTransport = refusingTransport()) {}
 
   connect(config: ProviderConfig): Promise<AuthResult> {
     if (!config.baseUrl || config.baseUrl.trim().length === 0) {
@@ -170,14 +181,14 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
     return Promise.resolve();
   }
 
-  private require(): ProviderConfig {
+  protected require(): ProviderConfig {
     if (!this.config) {
       throw new Error('This provider is not connected. Call connect() first.');
     }
     return this.config;
   }
 
-  private headers(): Record<string, string> {
+  protected headers(): Record<string, string> {
     const config = this.require();
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',

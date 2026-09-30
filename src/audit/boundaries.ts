@@ -464,6 +464,15 @@ export const BOUNDARY_CONTRACTS: readonly BoundaryContract[] = [
     consumerMax: MAX_STRING,
   },
   {
+    field: 'modelId',
+    producer: 'parseModelCatalogue of a 9Router /models response',
+    producerMax: MAX_MODEL_ID,
+    transformation: 'carried verbatim — never split on "/", never normalised',
+    transformedMax: MAX_MODEL_ID,
+    consumer: 'AuditLog modelId',
+    consumerMax: MAX_STRING,
+  },
+  {
     field: 'mimeType',
     producer: 'safeMediaType of a Content-Type or a picked file',
     producerMax: MAX_MEDIA_TYPE,

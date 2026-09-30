@@ -50,7 +50,14 @@ export function connectionForBrain(account: ConnectedAccount | null): ProviderCo
   return {
     connectionId: account.connectionId,
     providerId: account.providerId,
+    // The exact model the account holds. A gateway id contains `/`, and the
+    // projection is one more stage that carries it rather than reading it.
     modelId: account.modelId ?? '',
+    // The upstream the model was chosen from, so the three-level selection
+    // restores after a reload. Grouping metadata only: it never decides which
+    // model is sent, and it is omitted rather than defaulted when the account
+    // has none, because a provider without groups has no such level.
+    ...(account.upstreamKey === undefined ? {} : { upstreamKey: account.upstreamKey }),
     authKind: account.authKind,
     ...(scoped && account.capabilities ? { capabilities: account.capabilities } : {}),
     createdAt: account.createdAt,

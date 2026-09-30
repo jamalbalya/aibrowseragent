@@ -71,7 +71,24 @@ export interface ConnectedAccount {
   readonly accountLabel: string;
   readonly authKind: AuthKind;
   readonly baseUrl?: string;
+  /**
+   * The model, exactly as the provider named it.
+   *
+   * For a gateway account this routinely contains `/` — `openai/gpt-5.x` — and
+   * the `/` belongs to the identifier. Never split, normalised or shortened.
+   */
   readonly modelId: string | null;
+  /**
+   * The upstream group the model was chosen from, for a provider that has groups.
+   *
+   * A gateway fronts several upstream providers at once, so a selection is two
+   * choices rather than one, and this is the second. Persisted so the selection
+   * restores without re-deriving it from the id — which is the one thing that
+   * must not be done, because a combination's id has no prefix to read and a
+   * prefix can disagree with the catalogue's own `owned_by`. It never decides
+   * which model is sent.
+   */
+  readonly upstreamKey?: string;
   readonly capabilities: ModelCapabilities | null;
   readonly capabilityScope: CapabilityScope | null;
   readonly status: AccountStatus;

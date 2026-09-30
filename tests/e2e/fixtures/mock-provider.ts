@@ -38,6 +38,15 @@ export interface MockProvider {
   /** Models returned by /models. Empty simulates a gateway without the route. */
   setModels(ids: readonly string[]): void;
   /**
+   * Serves `/models` entries verbatim, for a gateway catalogue.
+   *
+   * `setModels` builds `{ id }` entries, which is all a single-upstream endpoint
+   * needs. A gateway's catalogue is a hierarchy — `owned_by` names the upstream,
+   * and an entry may be deliberately malformed — so a test needs to put exact
+   * objects on the wire, including ones this build must refuse.
+   */
+  setCatalogue(entries: readonly unknown[]): void;
+  /**
    * Makes the endpoint behave as if it cannot call tools, so a test can
    * exercise the doctor's CHAT_ONLY path.
    */
@@ -285,6 +294,8 @@ export async function startMockProvider(): Promise<MockProvider> {
   let replies: ScriptedReply[] = [];
   let cursor = 0;
   let models: string[] = ['mock-model'];
+  /** Verbatim `/models` entries, when a test set them. `null` uses `models`. */
+  let catalogue: unknown[] | null = null;
   let toolCallingSupported = true;
   let replyDelayMs = 0;
 
@@ -318,6 +329,13 @@ export async function startMockProvider(): Promise<MockProvider> {
     }
 
     if (path.endsWith('/models')) {
+      if (catalogue !== null) {
+        // Verbatim, so a test can put a malformed entry on the wire and see the
+        // extension refuse that entry rather than the whole catalogue.
+        res.writeHead(200, { 'Content-Type': 'application/json', ...cors });
+        res.end(JSON.stringify({ object: 'list', data: catalogue }));
+        return;
+      }
       res.writeHead(models.length === 0 ? 404 : 200, {
         'Content-Type': 'application/json',
         ...cors,
@@ -397,6 +415,10 @@ export async function startMockProvider(): Promise<MockProvider> {
     },
     setModels(ids) {
       models = [...ids];
+      catalogue = null;
+    },
+    setCatalogue(entries) {
+      catalogue = [...entries];
     },
     setToolCallingSupported(supported) {
       toolCallingSupported = supported;

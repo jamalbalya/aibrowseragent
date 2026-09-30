@@ -274,14 +274,30 @@ export interface PanelRequestMap {
   };
   'provider.listModels': {
     request: { providerId: string };
-    response: { models: { id: string; displayName: string }[] };
+    response: {
+      models: { id: string; displayName: string; upstreamKey?: string }[];
+      /**
+       * The upstream levels, for a provider whose catalogue is a hierarchy.
+       *
+       * Empty for a provider that has none. `key` is the identity and
+       * `displayName` is for reading — see `ModelInfo.upstreamKey`.
+       */
+      groups?: {
+        key: string;
+        displayName: string;
+        kind: 'provider' | 'combo' | 'other';
+        modelCount: number;
+      }[];
+      /** How many catalogue entries were unusable, so the panel can say so. */
+      refused?: number;
+    };
   };
   'provider.runDoctor': {
     request: { providerId: string; modelId: string; quick?: boolean };
     response: { report: CapabilityReport };
   };
   'provider.setActive': {
-    request: { providerId: string; modelId: string };
+    request: { providerId: string; modelId: string; upstreamKey?: string };
     response: { connection: ProviderConnection };
   };
 
@@ -452,14 +468,25 @@ export interface PanelRequestMap {
   'accounts.disconnect': { request: { connectionId: string }; response: { ok: true } };
   'accounts.listModels': {
     request: { connectionId: string };
-    response: { models: { id: string; displayName: string }[] };
+    response: {
+      models: { id: string; displayName: string; upstreamKey?: string }[];
+      /** The upstream levels, for an account whose catalogue is a hierarchy. */
+      groups?: {
+        key: string;
+        displayName: string;
+        kind: 'provider' | 'combo' | 'other';
+        modelCount: number;
+      }[];
+      /** How many catalogue entries were unusable, so the panel can say so. */
+      refused?: number;
+    };
   };
   'accounts.runDoctor': {
     request: { connectionId: string; modelId: string; quick?: boolean };
     response: { report: CapabilityReport };
   };
   'accounts.setBrain': {
-    request: { connectionId: string; modelId: string };
+    request: { connectionId: string; modelId: string; upstreamKey?: string };
     response: { account: ConnectedAccountView; error?: AgentError };
   };
   'accounts.associationOffer': {
@@ -1190,6 +1217,8 @@ export interface ConnectedAccountView {
   readonly authKind: string;
   readonly baseUrl?: string;
   readonly modelId: string | null;
+  /** The upstream group the model was chosen from, when the provider has groups. */
+  readonly upstreamKey?: string;
   readonly capabilities: ModelCapabilities | null;
   readonly status: string;
   readonly statusReason?: string;
