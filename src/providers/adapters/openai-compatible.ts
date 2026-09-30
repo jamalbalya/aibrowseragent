@@ -197,7 +197,11 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
           headers: this.headers(),
           signal: AbortSignal.timeout(20_000),
         },
-        managementContext(OPENAI_COMPATIBLE_PROVIDER_ID, config.model ?? '', this.managementSalt),
+        await managementContext(
+          OPENAI_COMPATIBLE_PROVIDER_ID,
+          config.model ?? '',
+          this.managementSalt,
+        ),
       );
       if (!response.ok) {
         // Many compatible servers do not implement /models. That is not fatal.
@@ -250,7 +254,11 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
           }),
           signal: AbortSignal.timeout(30_000),
         },
-        managementContext(OPENAI_COMPATIBLE_PROVIDER_ID, config.model ?? '', this.managementSalt),
+        await managementContext(
+          OPENAI_COMPATIBLE_PROVIDER_ID,
+          config.model ?? '',
+          this.managementSalt,
+        ),
       );
       if (!response.ok) {
         return {

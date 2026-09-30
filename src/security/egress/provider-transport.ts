@@ -29,6 +29,10 @@ import type { TaintState } from '@/security/taint/taint-state';
 import { authorizeEgress, type EgressDecision } from './egress-gate';
 import { providerDestination, type EgressDestination } from './destination';
 import type { ConsentStore } from './consent';
+// Type-only elsewhere in this module's neighbours; this is the one runtime
+// import, and `evidence-model` has no runtime imports of its own, so it adds
+// no cycle.
+import { hashContent } from '@/evidence/evidence-model';
 
 const log = getLogger('security');
 
@@ -275,6 +279,26 @@ export function createGuardedTransport(options: GuardedTransportOptions): Provid
 }
 
 /**
+ * How many hex characters of the digest identify the provider/model pair.
+ *
+ * Sixteen, which is 64 bits. The population being separated is the set of
+ * (provider, model) pairs one installation has configured — tens at most, and
+ * drawn from the user's own Settings rather than from a page or a model, so it
+ * is not attacker-chosen. At that size a collision is far below any rate worth
+ * designing against, and a collision's only effect would be two probes for the
+ * same provider sharing one consent pin, never a task's data reaching a
+ * destination it was not pinned to.
+ *
+ * Truncated rather than full-length because the whole id must stay inside the
+ * audit log's 80-character identifier bound, and the readable prefix is worth
+ * more to someone reading the trail than the remaining 48 hex characters.
+ */
+const MANAGEMENT_DIGEST_CHARS = 16;
+
+/** The readable discriminator every management id carries. */
+export const MANAGEMENT_ID_PREFIX = 'provider-management';
+
+/**
  * Pseudo-task id for a provider probe.
  *
  * Scoped to the provider and model rather than shared. The gate pins a task
@@ -287,9 +311,25 @@ export function createGuardedTransport(options: GuardedTransportOptions): Provid
  * reaching a second destination, and a probe has no task behind it and a
  * fixed body with nothing in it — there is no provenance for the pin to
  * protect here. Every other check still runs on every probe.
+ *
+ * **The model id is digested, not interpolated.** It used to be appended
+ * verbatim, and a model id is a string this project does not choose: it comes
+ * from whatever the user's endpoint calls its models. `cx/gpt-5.6-terra` — a
+ * routed model behind an OpenAI-compatible endpoint — contains a `/`, which
+ * `isOpaqueId` in the audit log rejects, so every probe's `egress.decided`
+ * record was refused before it could be appended and the audit trail reported
+ * itself corrupt. Namespaced model ids are the norm rather than the exception
+ * (`vendor/model`), so the fix is to stop putting an arbitrary external string
+ * where an opaque identifier is required, not to widen what counts as one.
+ *
+ * Both components go into the digest even though the provider is also in the
+ * plaintext, so the digest alone separates pairs and the prefix is presentation
+ * rather than load-bearing.
  */
-export function managementTaskId(providerId: string, modelId: string): string {
-  return `provider-management:${providerId}:${modelId}`;
+export async function managementTaskId(providerId: string, modelId: string): Promise<string> {
+  // NUL-separated so ("a", "b:c") and ("a:b", "c") cannot digest alike.
+  const digest = await hashContent(`${providerId}\u0000${modelId}`);
+  return `${MANAGEMENT_ID_PREFIX}:${providerId}:${digest.slice(0, MANAGEMENT_DIGEST_CHARS)}`;
 }
 
 /**
@@ -299,13 +339,13 @@ export function managementTaskId(providerId: string, modelId: string): string {
  * can reach them. The salt is transport-scoped because there is no task to
  * own one, and it still keeps probe digests unlinkable from task digests.
  */
-export function managementContext(
+export async function managementContext(
   providerId: string,
   modelId: string,
   salt: string,
-): EgressContext {
+): Promise<EgressContext> {
   return {
-    taskId: managementTaskId(providerId, modelId),
+    taskId: await managementTaskId(providerId, modelId),
     taintState: { kind: 'KNOWN_UNTAINTED' },
     taintSalt: salt,
     saltEpoch: 1,

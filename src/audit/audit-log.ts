@@ -703,6 +703,35 @@ export interface IntegrityReport {
 /** Recorded in place of a tool name this build does not recognise. */
 export const UNKNOWN_TOOL = '(unknown)';
 
+/**
+ * Names this build itself originates, and the record types they belong to.
+ *
+ * A provider request is a real, auditable action with a destination and a
+ * decision, and it is deliberately *not* a registered tool: registering it
+ * would put it in the set the model is offered, which is the opposite of what
+ * it is. So `knownTool` correctly said no, and the trail recorded every
+ * provider request as `(unknown)` — losing the one thing the record was for.
+ *
+ * **Keyed by record type, not just by name, and that pairing is the control.**
+ * A bare name exemption was the first attempt and it opened a hole: a model
+ * emits whatever tool name it likes, `fromWireName` passes a name containing a
+ * dot straight through, and the registry observes the refusal — so a model
+ * calling `provider.request` would have had its refused call recorded under the
+ * build's own reserved name instead of as `(unknown)`. Requiring the type as
+ * well closes it. `egress.decided` with this source is written only by the
+ * guarded transport; a model-driven call is `tool.invoked` or `tool.refused`,
+ * where the name stays unverified.
+ *
+ * A closed table here rather than a widening of `knownTool`, because these
+ * names are written in the build where nothing a model or a page reaches. A
+ * prefix or pattern would not have that property — an MCP method name is
+ * authored by the server, so `mcp.<server>.<method>` stays unverified and keeps
+ * becoming `(unknown)`, which is that control working rather than failing.
+ */
+export const INTERNAL_AUDIT_SOURCES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ['provider.request', new Set(['egress.decided'])],
+]);
+
 /** Bumped when the stored record shape changes. Written on every record. */
 export const AUDIT_EVENT_VERSION = 1;
 
@@ -909,7 +938,10 @@ export class AuditLog {
     // string was kept — which quietly contradicted what this control is for
     // and what the documentation says it does. A caller that cannot say
     // whether a name is real should not have the trail assert that it is.
-    const verified = (name: string): boolean => this.options.knownTool?.(name) ?? false;
+    const internal = (name: string): boolean =>
+      INTERNAL_AUDIT_SOURCES.get(name)?.has(String(supplied['type'])) ?? false;
+    const verified = (name: string): boolean =>
+      internal(name) || (this.options.knownTool?.(name) ?? false);
     if (typeof supplied['tool'] === 'string' && !verified(supplied['tool'])) {
       supplied['tool'] = UNKNOWN_TOOL;
     }

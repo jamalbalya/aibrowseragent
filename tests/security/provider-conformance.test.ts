@@ -778,14 +778,16 @@ describe('connecting a second provider does not lock out the first', () => {
    * that followed reported "this model does not support tool calling" — a
    * wrong answer to a question that was never asked.
    */
-  it('gives each provider and model its own probe identity', () => {
+  it('gives each provider and model its own probe identity', async () => {
     const ids = new Set<string>();
     for (const pack of API_PROVIDER_PACKS) {
-      ids.add(managementTaskId(pack.factory.id, pack.config.model ?? ''));
+      ids.add(await managementTaskId(pack.factory.id, pack.config.model ?? ''));
     }
     expect(ids.size).toBe(API_PROVIDER_PACKS.length);
     // And a model change within one provider is a separate identity too.
-    expect(managementTaskId('anthropic', 'a')).not.toBe(managementTaskId('anthropic', 'b'));
+    expect(await managementTaskId('anthropic', 'a')).not.toBe(
+      await managementTaskId('anthropic', 'b'),
+    );
   });
 
   it('probes every provider in turn through one shared gate', async () => {

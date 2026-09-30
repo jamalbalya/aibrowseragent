@@ -270,7 +270,7 @@ export class AnthropicAdapter implements AIProviderAdapter {
           headers: this.headers(),
           signal: AbortSignal.timeout(20_000),
         },
-        managementContext(ANTHROPIC_PROVIDER_ID, config.model ?? '', this.managementSalt),
+        await managementContext(ANTHROPIC_PROVIDER_ID, config.model ?? '', this.managementSalt),
       );
       if (!response.ok) {
         log.debug('Model list request was refused.', { status: response.status });
@@ -325,7 +325,7 @@ export class AnthropicAdapter implements AIProviderAdapter {
           }),
           signal: AbortSignal.timeout(30_000),
         },
-        managementContext(ANTHROPIC_PROVIDER_ID, config.model ?? '', this.managementSalt),
+        await managementContext(ANTHROPIC_PROVIDER_ID, config.model ?? '', this.managementSalt),
       );
       if (!response.ok) {
         return {

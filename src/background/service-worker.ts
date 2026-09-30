@@ -38,11 +38,13 @@ import {
   buildAuditExport,
   describeScopeProblem,
   parseAuditExportScope,
+  type RecordableAuditEvent,
 } from '@/audit/audit-log';
 import { createDispatchAuditObserver } from '@/audit/dispatch-audit';
+import { recordWithEvidence as writeDecision } from '@/audit/record-with-evidence';
 import { createGuardedTransport, guardedSend } from '@/security/egress/provider-transport';
 import { installNetworkInterceptor } from '@/security/egress/network-interceptor';
-import { buildEgressEvidence } from '@/security/egress/egress-evidence';
+import { buildEgressEvidence, type BuiltEgressEvidence } from '@/security/egress/egress-evidence';
 import { connectorDestination, providerDestination } from '@/security/egress/destination';
 import { CapabilityDoctor } from '@/providers/capability-doctor/capability-doctor';
 import {
@@ -320,6 +322,19 @@ const auditLog = new AuditLog(new NamespacedStorageArea(local, 'audit'), {
   // an execution that already happened.
   health: persistenceHealth,
 });
+/**
+ * The decision/evidence pair, bound once.
+ *
+ * Bound here rather than passed at each of the four call sites, so none of
+ * them can be wired to a different audit log or evidence store than the rest.
+ * The ordering rule itself lives in `record-with-evidence.ts`, where it is
+ * testable without loading this worker.
+ */
+const recordWithEvidence = (
+  built: BuiltEgressEvidence,
+  event: (evidenceId: string) => RecordableAuditEvent,
+): Promise<void> => writeDecision({ audit: auditLog, evidence: evidenceStore }, built, event);
+
 const policyArea = new NamespacedStorageArea(local, 'policy');
 const connectorTokens = new TokenVault(new NamespacedStorageArea(session, 'connector-tokens'));
 const connectorWrites = new WriteGuard(new NamespacedStorageArea(local, 'connector-writes'));
@@ -403,12 +418,7 @@ const providerTransport = createGuardedTransport({
       saltEpoch: context.saltEpoch,
       now: Date.now(),
     });
-    const stored = await evidenceStore.put(built.reference, {
-      content: JSON.stringify(built.detail),
-      encoding: 'utf8',
-      mimeType: 'application/json',
-    });
-    await auditLog.record({
+    await recordWithEvidence(built, (evidenceId) => ({
       type: 'egress.decided',
       taskId: context.taskId,
       tool: 'provider.request',
@@ -424,8 +434,8 @@ const providerTransport = createGuardedTransport({
             ? 'denied'
             : 'confirmed',
       code: decision.code,
-      evidenceIds: [stored.id],
-    });
+      evidenceIds: [evidenceId],
+    }));
   },
 });
 
@@ -757,12 +767,7 @@ const toolRegistry = new ToolRegistry({
     consent: consentStore,
     record: async (input) => {
       const built = await buildEgressEvidence(input);
-      const stored = await evidenceStore.put(built.reference, {
-        content: JSON.stringify(built.detail),
-        encoding: 'utf8',
-        mimeType: 'application/json',
-      });
-      await auditLog.record({
+      await recordWithEvidence(built, (evidenceId) => ({
         type: 'egress.decided',
         taskId: input.taskId,
         tool: input.sourceTool,
@@ -783,8 +788,8 @@ const toolRegistry = new ToolRegistry({
         code: input.decision.code,
         // The digest lives in evidence; the trail points at it rather than
         // holding a second copy of anything.
-        evidenceIds: [stored.id],
-      });
+        evidenceIds: [evidenceId],
+      }));
     },
   },
   permissionEngine,
@@ -954,12 +959,7 @@ const githubConnector = new GitHubConnector({
         saltEpoch: context.saltEpoch,
         now: Date.now(),
       });
-      const stored = await evidenceStore.put(built.reference, {
-        content: JSON.stringify(built.detail),
-        encoding: 'utf8',
-        mimeType: 'application/json',
-      });
-      await auditLog.record({
+      await recordWithEvidence(built, (evidenceId) => ({
         type: 'connector.operation',
         taskId: context.taskId,
         connectorId: context.connectorId,
@@ -974,8 +974,8 @@ const githubConnector = new GitHubConnector({
               ? 'denied'
               : 'confirmed',
         code: decision.code,
-        evidenceIds: [stored.id],
-      });
+        evidenceIds: [evidenceId],
+      }));
     },
   }),
   writes: connectorWrites,
@@ -1142,12 +1142,7 @@ const mcpTransportFor = (server: { id: string; displayName: string; url: string 
         saltEpoch: context.saltEpoch,
         now: Date.now(),
       });
-      const stored = await evidenceStore.put(built.reference, {
-        content: JSON.stringify(built.detail),
-        encoding: 'utf8',
-        mimeType: 'application/json',
-      });
-      await auditLog.record({
+      await recordWithEvidence(built, (evidenceId) => ({
         type: 'egress.decided',
         taskId: context.taskId,
         // This build's own vocabulary throughout. `method` is a JSON-RPC method
@@ -1164,8 +1159,8 @@ const mcpTransportFor = (server: { id: string; displayName: string; url: string 
               ? 'denied'
               : 'confirmed',
         code: decision.code,
-        evidenceIds: [stored.id],
-      });
+        evidenceIds: [evidenceId],
+      }));
     },
   });
 

@@ -261,7 +261,7 @@ export class GeminiAdapter implements AIProviderAdapter {
           headers: this.headers(),
           signal: AbortSignal.timeout(20_000),
         },
-        managementContext(GEMINI_PROVIDER_ID, config.model ?? '', this.managementSalt),
+        await managementContext(GEMINI_PROVIDER_ID, config.model ?? '', this.managementSalt),
       );
       if (!response.ok) {
         log.debug('Model list request was refused.', { status: response.status });
@@ -316,7 +316,7 @@ export class GeminiAdapter implements AIProviderAdapter {
           headers: this.headers(),
           signal: AbortSignal.timeout(20_000),
         },
-        managementContext(GEMINI_PROVIDER_ID, id, this.managementSalt),
+        await managementContext(GEMINI_PROVIDER_ID, id, this.managementSalt),
       );
       if (!response.ok) return fallback;
       const body = await parseJsonBody<WireModel>(GEMINI_PROVIDER_ID, response);
@@ -347,7 +347,7 @@ export class GeminiAdapter implements AIProviderAdapter {
           }),
           signal: AbortSignal.timeout(30_000),
         },
-        managementContext(GEMINI_PROVIDER_ID, model, this.managementSalt),
+        await managementContext(GEMINI_PROVIDER_ID, model, this.managementSalt),
       );
       if (!response.ok) {
         return {

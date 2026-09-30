@@ -189,3 +189,54 @@ test('the canonical tool schemas reach the provider in its native format', async
   expect(names).toContain('tabs_wait_for_navigation');
   expect(names.some((name) => name?.includes('.'))).toBe(false);
 });
+
+test('a namespaced model id keeps its probe records and leaves the trail healthy', async ({
+  send,
+  provider,
+}) => {
+  // The production report, reproduced in the real extension. An
+  // OpenAI-compatible endpoint configured with `cx/gpt-5.6-terra` — a routed
+  // model, so the id carries a namespace — made every capability probe's
+  // `egress.decided` record unwritable: the probe's pseudo-task id interpolated
+  // the model id verbatim, a `/` is not an opaque identifier, and the audit log
+  // refused the record before appending it. The panel then said
+  // "Some stored records were lost" with `audit — corrupt`.
+  //
+  // Nothing about 9Router is needed to show it: the trigger is the model
+  // identifier, which the mock endpoint carries exactly as a real one would.
+  const model = 'cx/gpt-5.6-terra';
+  provider.setModels([model]);
+
+  await send('provider.connect', {
+    providerId: 'openai-compatible',
+    baseUrl: provider.baseUrl,
+    apiKey: 'test-key-abcdefghijklmnop',
+    model,
+  });
+  const { report } = await send('provider.runDoctor', {
+    providerId: 'openai-compatible',
+    modelId: model,
+  });
+  expect(report.readiness).toBe('AGENT_READY');
+
+  // The audit domain is the one that used to go CORRUPT, and it is durable —
+  // a health record survives worker eviction, which is why the banner kept
+  // coming back across separate tasks.
+  const { snapshot } = await send('health.get', {});
+  const audit = snapshot.records.find((record) => record.domain === 'audit');
+  expect(audit?.state ?? 'HEALTHY').toBe('HEALTHY');
+  expect(snapshot.blocked).toBe(false);
+
+  // And the records the probes produced are actually in the trail, under the
+  // name this build originates rather than as `(unknown)`.
+  const { events } = await send('audit.list', { limit: 200 });
+  const probes = events.filter(
+    (event) => event.type === 'egress.decided' && event.tool === 'provider.request',
+  );
+  expect(probes.length).toBeGreaterThan(0);
+  for (const probe of probes) {
+    expect(probe.taskId).toMatch(/^[A-Za-z0-9_.:-]{1,80}$/);
+    // The raw model id is not what identifies the probe.
+    expect(probe.taskId).not.toContain('/');
+  }
+});

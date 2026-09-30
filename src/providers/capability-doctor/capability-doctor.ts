@@ -192,6 +192,10 @@ export class CapabilityDoctor {
     options: DoctorOptions = {},
   ): Promise<CapabilityReport> {
     const checks: CapabilityCheck[] = [];
+    // Built once, before the probes, and reused by every one of them. One
+    // value, so the id the consent pin is created under is the id every later
+    // lookup and every audit record uses.
+    const egress = await managementContext(adapter.id, modelId, this.managementSalt);
     const base = {
       systemInstruction: 'You are a diagnostic probe. Answer exactly as instructed.',
       maxOutputTokens: 64,
@@ -201,7 +205,7 @@ export class CapabilityDoctor {
       // strings written here, so no task data can reach them — the context
       // says the state is clean because there is no task, not because one was
       // inspected.
-      egress: managementContext(adapter.id, modelId, this.managementSalt),
+      egress,
     } satisfies Partial<CanonicalRequest>;
 
     // 1. One probe, three findings: reachable, authorised to leave, accepted.
