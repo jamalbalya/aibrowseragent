@@ -65,7 +65,7 @@ import { createFileTools } from '@/tools/files/file-tools';
 import { StagedFileStore } from '@/files/file-store';
 import { ChromeDownloadPort } from '@/files/download-port';
 import { FileSelectionBroker } from './file-broker';
-import { safeDisplayName } from '@/files/file-model';
+import { safeDisplayName, safeMediaType } from '@/files/file-model';
 import { ConnectorRegistry, scopesFor, type Connector } from '@/connectors/core/types';
 import { ConnectorSession } from '@/connectors/core/connector-session';
 import { TokenVault } from '@/connectors/oauth/token-vault';
@@ -2667,12 +2667,13 @@ router.on('file.respondSelection', async ({ requestId, response }) => {
 
   if (accepted && response.kind === 'selected') {
     for (const file of response.files) {
+      const mediaType = safeMediaType(file.mimeType);
       await auditLog.record({
         type: 'file.selected',
         outcome: 'allowed',
         origin: 'local',
         fileName: safeDisplayName(file.name),
-        mimeType: file.mimeType,
+        ...(mediaType === undefined ? {} : { mimeType: mediaType }),
         byteLength: file.byteLength,
       });
     }

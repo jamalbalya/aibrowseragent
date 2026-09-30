@@ -18,6 +18,7 @@ import { getLogger } from '@/logging/logger';
 import { createError } from '@/types/result';
 import { providerFailure, type ProviderFailure } from '@/providers/core/provider-error';
 import {
+  admitModelIds,
   categoryForStatus,
   parseJsonBody,
   readErrorBody,
@@ -209,7 +210,7 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
         return [];
       }
       const body = (await response.json()) as WireModelList;
-      return (body.data ?? [])
+      const listed = (body.data ?? [])
         .map((entry) => entry.id)
         .filter((id): id is string => typeof id === 'string')
         .map((id) => ({
@@ -217,6 +218,7 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
           displayName: id,
           advertisedCapabilities: { vision: looksVisionCapable(id) },
         }));
+      return admitModelIds(OPENAI_COMPATIBLE_PROVIDER_ID, listed);
     } catch (error) {
       log.debug('Model list request failed.', {
         error: error instanceof Error ? error.message : String(error),

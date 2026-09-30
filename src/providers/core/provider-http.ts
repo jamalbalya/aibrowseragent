@@ -14,6 +14,8 @@
  * only way out remains the transport the registry injected.
  */
 import { redact, REDACTED } from '@/security/redaction/secret-redactor';
+import { MAX_MODEL_ID } from '@/audit/boundaries';
+import { getLogger } from '@/logging/logger';
 import { delayFromRetryAfter } from '@/agent/recovery/retry-policy';
 import {
   ProviderRequestError,
@@ -23,6 +25,8 @@ import {
 } from './provider-error';
 import type { CanonicalRequest } from './types';
 import { isTransportRefusal, type EgressContext } from '@/security/egress/provider-transport';
+
+const log = getLogger('provider');
 
 /**
  * Pulls the security context off a request, refusing when it is absent.
@@ -266,4 +270,49 @@ export async function parseJsonBody<T>(providerId: string, response: Response): 
       ),
     );
   }
+}
+
+/**
+ * Whether a model identifier can be carried by the records that mention it.
+ *
+ * A model id is an external string: it comes from whatever the endpoint's model
+ * list says, and routed endpoints name models freely. Nothing bounded it, and
+ * `egress.decided` carries it in a field bounded at `MAX_MODEL_ID` — so a model
+ * id past that limit meant every request made with that model produced a refused
+ * record. The request went out, the decision stood, and the trail lost it.
+ *
+ * Unlike a filename or an origin there is no external standard to derive a
+ * larger bound from, so the trail's limit is the authoritative one and a model
+ * that cannot fit it is not offered. `admitModelIds` drops such entries from a
+ * discovered list and says how many it dropped, which is the same shape
+ * `admitListing` uses for MCP tools.
+ */
+export function isRecordableModelId(id: unknown): id is string {
+  return typeof id === 'string' && id.length > 0 && id.length <= MAX_MODEL_ID;
+}
+
+/**
+ * Keeps the models a record can name, and reports the rest.
+ *
+ * Refused rather than truncated: two model ids sharing a truncated form would
+ * become one model, and the pin that decides whether a task's brain changed
+ * compares model ids.
+ */
+export function admitModelIds<T extends { readonly id: string }>(
+  providerId: string,
+  models: readonly T[],
+): T[] {
+  const admitted = models.filter((model) => isRecordableModelId(model.id));
+  const refused = models.length - admitted.length;
+  if (refused > 0) {
+    log.warn(
+      'Some models this endpoint offers cannot be named in a record, so they were left out.',
+      {
+        providerId,
+        refused,
+        limit: MAX_MODEL_ID,
+      },
+    );
+  }
+  return admitted;
 }

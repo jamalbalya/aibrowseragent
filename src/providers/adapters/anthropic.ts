@@ -34,6 +34,7 @@ import { isLoopbackHostname } from '@/security/origin/origin-validator';
 import { createError } from '@/types/result';
 import { providerFailure, type ProviderFailure } from '@/providers/core/provider-error';
 import {
+  admitModelIds,
   parseJsonBody,
   readErrorBody,
   readServerSentEvents,
@@ -277,7 +278,7 @@ export class AnthropicAdapter implements AIProviderAdapter {
         return [];
       }
       const body = await parseJsonBody<WireModelList>(ANTHROPIC_PROVIDER_ID, response);
-      return (body.data ?? [])
+      const listed = (body.data ?? [])
         .filter(
           (entry): entry is { id: string; display_name?: string } => typeof entry.id === 'string',
         )
@@ -286,6 +287,7 @@ export class AnthropicAdapter implements AIProviderAdapter {
           displayName: entry.display_name ?? entry.id,
           advertisedCapabilities: { vision: supportsVision(entry.id) },
         }));
+      return admitModelIds(ANTHROPIC_PROVIDER_ID, listed);
     } catch (error) {
       log.debug('Model list request failed.', {
         error: error instanceof Error ? error.message : String(error),

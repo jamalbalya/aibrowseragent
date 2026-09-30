@@ -66,16 +66,43 @@ request or response bodies, credentials of any kind, screenshots, file or
 clipboard contents, taint **sources** (which name sites the user visited) and
 the taint **signature** (a consent key).
 
-`detail` — a free-text field declared from the start and never written — has
-been removed rather than kept as the obvious place for a summary drawn from
-page or model text. It has no replacement.
+`detail` holds one sentence, written by the extension, about what happened —
+"Saved under a different name because a file of that name already existed."
+Its contract is the extension's **own vocabulary only**: never page text, never
+model output, never a tool result. A summary drawn from a page belongs in
+evidence, which is separate, digested, and not exported with the trail.
+
+It was previously described here as removed. It was not: `FileAuditEvent`
+carried it and reached `record()` as a variable rather than an object literal,
+so TypeScript's excess-property check never fired and the field was stored
+without being declared. It is declared now, and bounded, because a field the
+store keeps but the schema denies cannot be bounded or reviewed.
 
 ### The limits
 
+`src/audit/boundaries.ts` holds every limit, and is the only place that does.
+The numbers are not repeated here, because two copies of a limit is exactly how
+the last two of these bugs happened: a download filename was validated against
+200 and recorded into a field bounded at 128, and an MCP server descriptor
+bounded nothing while the tool name derived from it met a 256. Both times the
+operation succeeded and the record of it was refused.
+
+What is worth stating here is the _principle_ the file follows. A limit on a
+value with an authoritative external bound is **derived from that bound** — a
+filename from the filesystem's maximum, an origin from the longest name DNS
+permits — so an ordinary long value can still be recorded. A limit on a value
+with no external standard is the trail's to set, and the producer is then
+**refused at its boundary** rather than accepted and silently unrecordable: an
+over-long MCP server id is rejected when the server is added, and a model whose
+id will not fit is not offered.
+
 A record is flat: no nested objects, and lists only in `scopes` and
-`evidenceIds` (≤ 32 entries of ≤ 128 characters). A string is ≤ 256
-characters, an origin or site ≤ 128, a filename ≤ 128, and a whole record
-≤ 4 KiB.
+`evidenceIds`.
+
+`tests/security/boundary-census.test.ts` checks the relation by running each
+producer at its maximum and requiring this log to accept the result, so a limit
+edited on one side of a boundary fails a test rather than reaching a user as a
+lost record.
 
 Everything over a limit is **refused, not trimmed**. Silent trimming is the
 failure worth avoiding: a reader cannot tell a truncated field from a short

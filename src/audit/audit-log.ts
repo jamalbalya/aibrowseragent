@@ -23,6 +23,25 @@ import { update, type StorageArea } from '@/storage/storage-area';
 import { hashContent } from '@/evidence/evidence-model';
 import { REDACTED, redactValue } from '@/security/redaction/secret-redactor';
 import type { PersistenceHealthStore } from '@/storage/persistence-health';
+/**
+ * The limits live in `boundaries.ts` because the producers need them too.
+ *
+ * They used to be private constants here, which is how two of them drifted away
+ * from the code that fills the fields: a filename bounded at 200 by the download
+ * validator met a 128 here, and an unbounded MCP server id met a 256. Both times
+ * the operation succeeded and the record of it was refused. A limit only one side
+ * can see is a limit the other side will eventually cross.
+ */
+import {
+  MAX_ARRAY_ENTRIES,
+  MAX_ARRAY_STRING,
+  MAX_DESTINATION,
+  MAX_EVENT_BYTES,
+  MAX_FILENAME,
+  MAX_OPAQUE_ID,
+  MAX_ORIGIN,
+  MAX_STRING,
+} from './boundaries';
 
 const log = getLogger('storage');
 
@@ -266,6 +285,31 @@ export interface AuditEvent {
   readonly fileName?: string;
   readonly mimeType?: string;
   readonly byteLength?: number;
+  /**
+   * One sentence, written by this build, about what happened.
+   *
+   * Declared here because it was already being stored without being declared.
+   * `FileAuditEvent` carries it and is handed to `record()` as a variable rather
+   * than as a fresh object literal, so TypeScript's excess-property check never
+   * fired and the field reached storage through a typing gap — while
+   * `docs/audit.md` said it had been removed. A field the store keeps but the
+   * schema denies cannot be bounded, reviewed, or reasoned about, so it is
+   * declared.
+   *
+   * The constraint the earlier removal was protecting stands, and is the whole
+   * contract of this field: **the extension's own vocabulary only.** Never page
+   * text, never model output, never a tool result, never anything a caller
+   * received from elsewhere. It says which of several known things happened —
+   * "Saved under a different name because a file of that name already existed."
+   * — and a summary drawn from a page belongs in evidence, which is separate,
+   * digested and not exported with the trail.
+   *
+   * Bounded by `MAX_DETAIL`, and shortened with a visible ellipsis rather than
+   * refused, because the sentences interpolate hostnames that are not bounded at
+   * the source: a redirect between two 253-character domains produced a
+   * 545-character sentence and the whole record of the download was refused.
+   */
+  readonly detail?: string;
   readonly connectorId?: string;
   /** Connector operation id, e.g. `create_issue`. Never its arguments. */
   readonly operation?: string;
@@ -451,14 +495,6 @@ const PROHIBITED_FIELDS: ReadonlySet<string> = new Set(
 /** Fields allowed to hold a bounded array. Everything else must be scalar. */
 const ARRAY_FIELDS: ReadonlySet<string> = new Set(['scopes', 'evidenceIds']);
 
-/** The whole record, serialised. Beyond this it is not an audit record. */
-const MAX_EVENT_BYTES = 4096;
-const MAX_STRING = 256;
-const MAX_ORIGIN = 128;
-const MAX_FILENAME = 128;
-const MAX_ARRAY_ENTRIES = 32;
-const MAX_ARRAY_STRING = 128;
-
 export class AuditShapeError extends Error {
   constructor(
     readonly field: string,
@@ -537,6 +573,21 @@ export type RecordableAuditEvent = Omit<
 > & { readonly at?: number };
 
 /**
+ * The limit that applies to one field.
+ *
+ * A single function rather than a conditional at the one call site, because the
+ * producers ask the same question: `boundary-census.test.ts` uses it to check
+ * that what a producer can emit is something this will accept. Two copies of
+ * this decision is how the drift started.
+ */
+export function fieldLimit(key: string): number {
+  if (key === 'origin' || key === 'site') return MAX_ORIGIN;
+  if (key === 'fileName') return MAX_FILENAME;
+  if (key === 'destination') return MAX_DESTINATION;
+  return MAX_STRING;
+}
+
+/**
  * Refuses a record whose shape is wrong, rather than trimming it to fit.
  *
  * Silent trimming is the failure mode worth avoiding: a reader cannot tell a
@@ -574,12 +625,7 @@ export function assertAuditShape(event: Record<string, unknown>): void {
     }
 
     if (typeof value === 'string') {
-      const limit =
-        key === 'origin' || key === 'site'
-          ? MAX_ORIGIN
-          : key === 'fileName'
-            ? MAX_FILENAME
-            : MAX_STRING;
+      const limit = fieldLimit(key);
       if (value.length > limit) {
         throw new AuditShapeError(key, `is longer than ${limit} characters`);
       }
@@ -769,9 +815,12 @@ const TASK_SCOPED: ReadonlySet<string> = new Set([
   'shortcut.launched',
 ]);
 
+/** The bound comes from the contract, so a producer can be checked against it. */
+const OPAQUE_ID_PATTERN = new RegExp(`^[A-Za-z0-9_.:-]{1,${MAX_OPAQUE_ID}}$`);
+
 /** An identifier this extension minted, rather than a value from elsewhere. */
 function isOpaqueId(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0 && /^[A-Za-z0-9_.:-]{1,80}$/.test(value);
+  return typeof value === 'string' && value.length > 0 && OPAQUE_ID_PATTERN.test(value);
 }
 
 function mintId(at: number, seq: number): string {
@@ -876,10 +925,20 @@ export class AuditLog {
       // Refused, and the refusal is *not* itself an audit event: recording a
       // failure to record would be a recursion whose base case is the same
       // validator that just said no. It goes to the redacted worker log.
-      this.degraded = 'A record was refused because its shape was not usable.';
-      this.reportHealth('CORRUPT', 'a record could not be shaped');
+      //
+      // The field is named, in the reason and in the log, because it was not.
+      // "a record could not be shaped" was true of a filename over its limit, a
+      // model id over its limit and an MCP tool name over its limit, and told
+      // whoever read it none of that — which is why one of those reached a user
+      // before it reached a test. A field name is safe to surface: it is the
+      // schema's own vocabulary, never the value.
+      const field = error instanceof AuditShapeError ? error.field : null;
+      const because = field === null ? '' : `: ${field}`;
+      this.degraded = `A record was refused because its shape was not usable${because}.`;
+      this.reportHealth('CORRUPT', `a record could not be shaped${because}`);
       log.error('An audit record was refused.', {
         type: String(event.type),
+        ...(field === null ? {} : { field }),
         error: error instanceof Error ? error.name : 'unknown',
       });
       return null;

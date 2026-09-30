@@ -69,6 +69,12 @@
 
 import type { RiskLevel } from '@/policy/risk-classifier';
 import { isLoopbackHostname } from '@/security/origin/origin-validator';
+import {
+  MAX_ENDPOINT_URL,
+  MAX_MCP_DISPLAY_NAME,
+  MAX_MCP_SERVER_ID,
+  MAX_MCP_TOOL_NAME,
+} from '@/audit/boundaries';
 
 /** How long a discovered description may be before it is refused. */
 const MAX_DESCRIPTION = 400;
@@ -286,13 +292,28 @@ export function validateServerDescriptor(input: {
   else if (!/^[a-z0-9-]+$/.test(id)) {
     problems.push('a server id may hold only lower-case letters, digits and hyphens');
   }
+  // And it has to survive that *within the field the derived name is recorded
+  // in*. This bound did not exist, so a long id produced a tool name past the
+  // audit log's limit and every invocation of the server lost its record while
+  // the calls themselves went through. Registration-time is the only place to
+  // refuse it: by the time a name is derived the server is already configured.
+  else if (id.length > MAX_MCP_SERVER_ID) {
+    problems.push(`a server id may be at most ${MAX_MCP_SERVER_ID} characters`);
+  }
 
   const displayName = typeof input.displayName === 'string' ? input.displayName.trim() : '';
   if (displayName.length === 0) problems.push('a display name is required');
+  else if (displayName.length > MAX_MCP_DISPLAY_NAME) {
+    problems.push(`a display name may be at most ${MAX_MCP_DISPLAY_NAME} characters`);
+  }
 
   const rawUrl = typeof input.url === 'string' ? input.url.trim() : '';
   if (rawUrl.length === 0) problems.push('a server URL is required');
-  else {
+  else if (rawUrl.length > MAX_ENDPOINT_URL) {
+    // The URL is recorded verbatim when the server is added, so it has the same
+    // problem the id had.
+    problems.push(`a server URL may be at most ${MAX_ENDPOINT_URL} characters`);
+  } else {
     let parsed: URL | null = null;
     try {
       parsed = new URL(rawUrl);
@@ -332,6 +353,14 @@ export function admitDiscoveredTool(
   // own — `mcp__other-server__x` — and appear to come from somewhere else.
   if (name.includes(MCP_NAME_SEPARATOR)) {
     return { ok: false, reason: `"${name}" may not contain "${MCP_NAME_SEPARATOR}"` };
+  }
+  // The name is server-authored, and it is prefixed with the server id before it
+  // reaches the audit log's `tool` field. The count of tools was bounded and the
+  // description was bounded, but the name was not — so one long name was enough
+  // to make every invocation of that tool unrecordable. Refused rather than
+  // truncated: two names sharing a truncated form would become one tool.
+  if (name.length > MAX_MCP_TOOL_NAME) {
+    return { ok: false, reason: `"${name}" is longer than ${MAX_MCP_TOOL_NAME} characters` };
   }
   if (tool.description !== undefined && typeof tool.description !== 'string') {
     return { ok: false, reason: `"${name}" has a description that is not text` };

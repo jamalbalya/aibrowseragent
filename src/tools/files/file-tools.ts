@@ -35,9 +35,11 @@ import {
   formatBytes,
   localFileTaint,
   safeDisplayName,
+  safeMediaType,
   type FileRecord,
 } from '@/files/file-model';
 import { checkDownloadFilename, filenameFromUrl } from '@/files/download-safety';
+import { boundedDetail } from '@/audit/boundaries';
 import type { StagedFileStore } from '@/files/file-store';
 import type { FileSelectionBroker } from '@/background/file-broker';
 import type { DownloadPort } from '@/files/download-port';
@@ -100,7 +102,13 @@ function destinationField(url: string | undefined): { destination?: string } {
 async function audit(deps: FileToolDeps, event: FileAuditEvent): Promise<void> {
   if (!deps.recordFileEvent) return;
   try {
-    await deps.recordFileEvent(event);
+    // `detail` is prose, and the download note interpolates two registrable
+    // domains — which can be 253 characters each, so the sentence outgrew the
+    // field and the record of a perfectly ordinary redirected download was
+    // refused. Bounded here, once, rather than at each sentence.
+    await deps.recordFileEvent(
+      event.detail === undefined ? event : { ...event, detail: boundedDetail(event.detail) },
+    );
   } catch (error) {
     log.warn('Could not record a file audit event.', {
       type: event.type,
@@ -362,13 +370,17 @@ export function createAttachFileTool(deps: FileToolDeps): AgentTool<typeof attac
         });
 
         for (const file of staged) {
+          // Bounded for the record only. The staged value is what the page
+          // receives when the file is attached, so narrowing it there would
+          // change the attachment rather than the trail.
+          const mediaType = safeMediaType(file.record.mimeType);
           await audit(deps, {
             type: 'file.attached',
             taskId: context.taskId,
             tool: 'browser.attach_file',
             outcome: 'allowed',
             fileName: file.record.name,
-            mimeType: file.record.mimeType,
+            ...(mediaType === undefined ? {} : { mimeType: mediaType }),
             byteLength: file.record.byteLength,
             origin: 'local',
             ...destinationField(context.currentUrl),
@@ -507,6 +519,8 @@ export function createDownloadTool(deps: FileToolDeps): AgentTool<typeof downloa
       }
 
       const outcome = await downloads.awaitCompletion(id, context.signal);
+      // Bounded once, here, so both records below and the evidence agree.
+      const downloadMediaType = safeMediaType(outcome.mimeType);
 
       if (outcome.state !== 'complete') {
         await audit(deps, {
@@ -571,7 +585,7 @@ export function createDownloadTool(deps: FileToolDeps): AgentTool<typeof downloa
         {
           content: JSON.stringify({
             savedAs,
-            mimeType: outcome.mimeType,
+            mimeType: downloadMediaType,
             byteLength: outcome.byteLength,
             origin: servedBy,
             ...(redirected ? { requestedFrom: site } : {}),
@@ -597,7 +611,7 @@ export function createDownloadTool(deps: FileToolDeps): AgentTool<typeof downloa
         outcome: 'allowed',
         fileName: savedAs,
         origin: servedBy,
-        ...(outcome.mimeType === undefined ? {} : { mimeType: outcome.mimeType }),
+        ...(downloadMediaType === undefined ? {} : { mimeType: downloadMediaType }),
         ...(outcome.byteLength === undefined ? {} : { byteLength: outcome.byteLength }),
         ...(notes.length === 0 ? {} : { detail: notes.join(' ') }),
       });
@@ -607,7 +621,7 @@ export function createDownloadTool(deps: FileToolDeps): AgentTool<typeof downloa
         data: {
           savedAs,
           ...(outcome.byteLength === undefined ? {} : { byteLength: outcome.byteLength }),
-          ...(outcome.mimeType === undefined ? {} : { mimeType: outcome.mimeType }),
+          ...(downloadMediaType === undefined ? {} : { mimeType: downloadMediaType }),
           renamed: savedAs !== verdict.filename,
           ...(redirected ? { servedBy } : {}),
         },

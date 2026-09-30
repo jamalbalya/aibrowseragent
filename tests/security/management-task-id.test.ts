@@ -196,7 +196,10 @@ describe('TEST-MGMTID-001 — the audit log keeps the probe record', () => {
     });
 
     expect(written).toBeNull();
-    expect(reports).toEqual([{ state: 'CORRUPT', reason: 'a record could not be shaped' }]);
+    // The reason names the field now. It used to be the same sentence for a
+    // filename, a model id and a tool name over their limits, which is how one
+    // of those reached a user before it reached a test.
+    expect(reports).toEqual([{ state: 'CORRUPT', reason: 'a record could not be shaped: taskId' }]);
   });
 
   it('12 — still records an unregistered tool name as unknown', async () => {

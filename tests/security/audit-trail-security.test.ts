@@ -21,6 +21,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { MemoryStorageArea, SerializedStorageArea } from '@/storage/storage-area';
+import { MAX_ORIGIN } from '@/audit/boundaries';
 import {
   AUDIT_EVENT_TYPES,
   AUDIT_EVENT_VERSION,
@@ -202,7 +203,9 @@ describe('an audit record is a decision, not a payload', () => {
     for (const bad of [
       { type: 'not.a.type', outcome: 'info' },
       { type: 'task.state', outcome: 'maybe' },
-      { type: 'task.state', taskId: 'task_1', outcome: 'info', site: 'x'.repeat(200) },
+      // Over `MAX_ORIGIN`, which is now derived from the longest name DNS
+      // permits rather than a flat 128 that an ordinary long hostname exceeded.
+      { type: 'task.state', taskId: 'task_1', outcome: 'info', site: 'x'.repeat(MAX_ORIGIN + 1) },
       { type: 'task.state', taskId: 'task_1', outcome: 'info', code: 'y'.repeat(300) },
       { type: 'task.state', taskId: 'task_1', outcome: 'info', scopes: Array(40).fill('s') },
       { type: 'task.state', taskId: 'task_1', outcome: 'info', evidenceIds: [1, 2] },

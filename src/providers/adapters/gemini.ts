@@ -32,6 +32,7 @@ import { isLoopbackHostname } from '@/security/origin/origin-validator';
 import { createError } from '@/types/result';
 import { providerFailure, type ProviderFailure } from '@/providers/core/provider-error';
 import {
+  admitModelIds,
   parseJsonBody,
   readErrorBody,
   readServerSentEvents,
@@ -268,7 +269,7 @@ export class GeminiAdapter implements AIProviderAdapter {
         return [];
       }
       const body = await parseJsonBody<WireModelList>(GEMINI_PROVIDER_ID, response);
-      return (body.models ?? [])
+      const listed = (body.models ?? [])
         .filter((entry): entry is WireModel & { name: string } => typeof entry.name === 'string')
         .filter((entry) => (entry.supportedGenerationMethods ?? []).includes('generateContent'))
         .map((entry) => {
@@ -283,6 +284,7 @@ export class GeminiAdapter implements AIProviderAdapter {
             advertisedCapabilities: capabilities,
           };
         });
+      return admitModelIds(GEMINI_PROVIDER_ID, listed);
     } catch (error) {
       log.debug('Model list request failed.', {
         error: error instanceof Error ? error.message : String(error),

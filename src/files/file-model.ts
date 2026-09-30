@@ -22,6 +22,7 @@
  */
 
 import type { DataSensitivity, TaintSource } from '@/security/exfiltration/exfiltration-guard';
+import { MAX_FILENAME, MAX_MEDIA_TYPE } from '@/audit/boundaries';
 
 /**
  * Per-file and per-attachment ceilings.
@@ -87,12 +88,38 @@ export function basename(raw: string): string {
  * Control characters are removed rather than escaped: a name containing a
  * newline or an ANSI escape can misrepresent what a permission prompt is
  * asking about, and a filename has no legitimate use for either.
+ *
+ * The bound is `MAX_FILENAME`, the same constant the audit log's `fileName`
+ * field uses, and the reason it is imported rather than written here is that the
+ * two numbers were 255 and 128. A name between them passed this function and
+ * then had its record refused, so the file was picked, the record was not
+ * written, and the panel reported the trail as corrupt.
  */
 export function safeDisplayName(raw: string): string {
   // eslint-disable-next-line no-control-regex -- stripping control characters is the point.
   const stripped = basename(raw).replace(/[\u0000-\u001f\u007f]/g, '');
   const trimmed = stripped.trim();
-  return trimmed.length === 0 ? 'unnamed' : trimmed.slice(0, 255);
+  return trimmed.length === 0 ? 'unnamed' : trimmed.slice(0, MAX_FILENAME);
+}
+
+/**
+ * A media type that is safe to record.
+ *
+ * `Content-Type` is a header a server writes, and a picked file reports whatever
+ * the platform says, so neither is bounded at the source. RFC 6838 bounds the
+ * part that identifies the format — `type/subtype`, 127 characters each — and
+ * everything after the first `;` is parameters the trail has no use for. So the
+ * essential part is kept and the rest dropped, which is both shorter and more
+ * readable than the raw header.
+ *
+ * Returns `undefined` for a value with nothing usable in it, so a caller spreads
+ * nothing rather than recording an empty string.
+ */
+export function safeMediaType(raw: string | undefined): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const essential = raw.split(';')[0]?.trim().toLowerCase() ?? '';
+  if (essential.length === 0) return undefined;
+  return essential.slice(0, MAX_MEDIA_TYPE);
 }
 
 /**
