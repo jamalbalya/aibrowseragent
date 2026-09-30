@@ -97,7 +97,22 @@ over-long MCP server id is rejected when the server is added, and a model whose
 id will not fit is not offered.
 
 A record is flat: no nested objects, and lists only in `scopes` and
-`evidenceIds`.
+`evidenceIds`, each with its own cardinality.
+
+The whole-record budget is part of that contract, and it was the one part the
+field limits did not imply. A flat cardinality of 32 for both lists meant 32
+entries could serialise to more than the whole record was allowed to be, so
+`egress.decided`, `connector.operation` and `connector.auth` could each cross the
+budget while every field was inside its own limit. No producer reached it, but
+that is the same argument that was made — wrongly — about skill ids.
+`tests/security/audit-record-budget.test.ts` now enumerates every event type from
+the source, computes how wide each can get, and requires the log to accept a
+maximal one, so the implication is proved rather than assumed.
+
+One property of the limit is worth stating plainly: it counts UTF-16 code units,
+because that is what `JSON.stringify(event).length` returns. A record of
+multibyte text therefore occupies more _bytes_ on disk than the number the check
+compared. Nothing truncates, so no surrogate pair is ever split.
 
 `tests/security/boundary-census.test.ts` checks the relation by running each
 producer at its maximum and requiring this log to accept the result, so a limit

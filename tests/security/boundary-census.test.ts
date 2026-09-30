@@ -33,6 +33,8 @@ import {
   MAX_MCP_TOOL_NAME,
   MAX_MEDIA_TYPE,
   MAX_MODEL_ID,
+  MAX_SKILL_ID,
+  MAX_SKILL_VERSION,
   MAX_OPAQUE_ID,
   MAX_ORIGIN,
   MAX_STRING,
@@ -48,6 +50,8 @@ import { managementTaskId } from '@/security/egress/provider-transport';
 import { runIdFor, unattendedSessionIdFor } from '@/schedules/schedule-model';
 import { newId } from '@/utils/ids';
 import { isRecordableModelId } from '@/providers/core/provider-http';
+import { validateSkillDefinition } from '@/skills/core/skill-model';
+import { RECORDED_PROVENANCE } from '@/workflows/workflow-model';
 
 const area = (): SerializedStorageArea => new SerializedStorageArea(new MemoryStorageArea());
 
@@ -71,7 +75,7 @@ describe('TEST-BOUNDARY-001 — every census entry holds', () => {
   it('01 — the table is not empty and has not shrunk', () => {
     // The population assertion. An enumeration that lost its entries would
     // otherwise pass every case below by describing nothing.
-    expect(BOUNDARY_CONTRACTS.length).toBe(13);
+    expect(BOUNDARY_CONTRACTS.length).toBe(15);
     expect(new Set(BOUNDARY_CONTRACTS.map((c) => `${c.field}/${c.producer}`)).size).toBe(
       BOUNDARY_CONTRACTS.length,
     );
@@ -91,6 +95,8 @@ describe('TEST-BOUNDARY-001 — every census entry holds', () => {
         'modelId',
         'mimeType',
         'detail',
+        'skillId',
+        'skillVersion',
         'taskId',
         'sessionId',
         'evidenceIds[]',
@@ -292,6 +298,72 @@ describe('TEST-BOUNDARY-001 — each producer at its maximum is recordable', () 
     ).toBe(true);
     // And a sentence that already fits is untouched.
     expect(boundedDetail('Saved under a different name.')).toBe('Saved under a different name.');
+  });
+
+  it('12c — skillId and skillVersion at the validator\u2019s limits', async () => {
+    // The producer here is not only this build. An exported workflow can be
+    // edited and re-imported, and `importWorkflow` hands its definition to the
+    // same validator — which bounded the id\u2019s characters and not its length,
+    // while replay wrote that id into three audit records.
+    const definition = {
+      id: 'a'.repeat(MAX_SKILL_ID),
+      version: '1'.repeat(MAX_SKILL_VERSION - 4) + '.0.0',
+      name: 'X',
+      description: 'Y',
+      provenance: RECORDED_PROVENANCE,
+      risk: 'R0' as const,
+      inputs: [],
+      outputs: [],
+      requiredTools: ['browser.read_page'],
+      requiredConnectors: [],
+      steps: [{ id: 's1', kind: 'tool' as const, tool: 'browser.read_page', arguments: {} }],
+    };
+    expect(definition.version.length).toBe(MAX_SKILL_VERSION);
+    expect(
+      validateSkillDefinition(definition as never, {
+        hasTool: () => true,
+        allowProvenance: [RECORDED_PROVENANCE],
+      }),
+    ).toEqual([]);
+
+    // One character over either, and the definition is refused before it is
+    // stored — which is where it has to be refused, because by replay time the
+    // record is already on disk.
+    expect(
+      validateSkillDefinition({ ...definition, id: 'a'.repeat(MAX_SKILL_ID + 1) } as never, {
+        hasTool: () => true,
+        allowProvenance: [RECORDED_PROVENANCE],
+      }).join(' '),
+    ).toContain(String(MAX_SKILL_ID));
+    expect(
+      validateSkillDefinition(
+        { ...definition, version: `${'1'.repeat(MAX_SKILL_VERSION - 3)}.0.0` } as never,
+        { hasTool: () => true, allowProvenance: [RECORDED_PROVENANCE] },
+      ).join(' '),
+    ).toContain(String(MAX_SKILL_VERSION));
+
+    // And what the validator does admit, the trail records.
+    expect(
+      await accepted({
+        type: 'skill.started',
+        taskId: 'task_abc',
+        outcome: 'info',
+        skillId: definition.id,
+        skillVersion: definition.version,
+        skillHash: 'h'.repeat(64),
+      }),
+    ).toBe(true);
+    expect(
+      await accepted({
+        type: 'workflow.recorded',
+        taskId: 'task_abc',
+        outcome: 'info',
+        workflowId: 'workflow_abc',
+        skillVersion: definition.version,
+        skillHash: 'h'.repeat(64),
+        risk: 'R0',
+      }),
+    ).toBe(true);
   });
 
   it('13 — taskId: the provider probe identity', async () => {

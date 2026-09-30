@@ -20,6 +20,7 @@
  * one that shipped in the build. An unknown id is refused, never created.
  */
 import { z } from 'zod';
+import { MAX_SKILL_ID } from '@/audit/boundaries';
 import { ERROR_CODES, ToolError, type ErrorCode } from '@/types/result';
 import { getLogger } from '@/logging/logger';
 import { noEgress } from '@/security/egress/destination';
@@ -71,7 +72,10 @@ const runInput = z.object({
   skillId: z
     .string()
     .min(1)
-    .max(64)
+    // The shared bound, not a second copy of it. This schema capped the id at 64
+    // while `validateSkillDefinition` capped it at nothing, so a definition could
+    // carry an id this input would have refused.
+    .max(MAX_SKILL_ID)
     .describe('The id of a registered skill, exactly as skills.list reports it.'),
   skillVersion: z
     .string()

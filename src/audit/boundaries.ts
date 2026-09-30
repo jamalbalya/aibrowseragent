@@ -93,9 +93,146 @@ export const MAX_OPAQUE_ID = 80;
 /** The whole record, serialised. Beyond this it is not an audit record. */
 export const MAX_EVENT_BYTES = 4096;
 
-/** Bounds on the array-valued fields. */
-export const MAX_ARRAY_ENTRIES = 32;
+/** The longest string a list entry may hold. */
 export const MAX_ARRAY_STRING = 128;
+
+/**
+ * How many entries each list field may hold.
+ *
+ * A flat 32 applied to both, and 32 entries of `MAX_ARRAY_STRING` serialise to
+ * roughly 4190 characters — more than `MAX_EVENT_BYTES` on their own. The two
+ * limits had been chosen independently, so the field-level bounds did not
+ * *mathematically* guarantee that a record fits the record budget:
+ * `egress.decided`, `connector.operation` and `connector.auth` could each exceed
+ * 4096 while every one of their fields was inside its own limit. No producer
+ * reached it — an `evidenceIds` on an audit record is always exactly one entry,
+ * and the only OAuth scope this build asks for is `public_repo` — but "no
+ * producer does this today" is the argument that preceded every other defect in
+ * this file, and it was wrong about skill ids.
+ *
+ * Per field rather than one number, because the two have different neighbours.
+ * `evidenceIds` rides `egress.decided`, which is the widest record this build
+ * writes, so it gets the smaller share; `scopes` rides `connector.auth`, which is
+ * narrow, so it can afford a list long enough for a real OAuth consent — ten or
+ * so scopes is ordinary for a service with fine-grained permissions, and a flat
+ * 8 would have refused that record to buy margin the wide record needed.
+ *
+ * `tests/security/audit-record-budget.test.ts` proves the guarantee by
+ * enumerating the types from the source rather than from a list kept here, so a
+ * field added to a record fails a test rather than silently spending the margin.
+ */
+export const MAX_EVIDENCE_IDS = 4;
+export const MAX_SCOPES = 16;
+
+/** The widest list any field may hold, for the validator's generic path. */
+export const MAX_ARRAY_ENTRIES = Math.max(MAX_EVIDENCE_IDS, MAX_SCOPES);
+
+/** How many entries this particular field may hold. */
+export function arrayLimit(key: string): number {
+  if (key === 'evidenceIds') return MAX_EVIDENCE_IDS;
+  if (key === 'scopes') return MAX_SCOPES;
+  return MAX_ARRAY_ENTRIES;
+}
+
+// ---------------------------------------------------------------------------
+// Which limit applies to which field.
+//
+// This classification lives here, with the limits, because two things need it:
+// `audit-log.ts` to validate a record, and the budget proof to compute how wide
+// a record can get. A second copy of it is how `MAX_ARRAY_ENTRIES` and
+// `MAX_EVENT_BYTES` came to contradict each other.
+// ---------------------------------------------------------------------------
+
+/** Fields that must hold an identifier this build minted. */
+export const OPAQUE_ID_FIELDS: ReadonlySet<string> = new Set([
+  'taskId',
+  'sessionId',
+  'workflowId',
+  'shortcutId',
+  'scheduleId',
+  'runId',
+  'connectorId',
+  'route',
+  'senderClass',
+]);
+
+/** Fields allowed to hold a bounded list. Everything else must be scalar. */
+export const ARRAY_FIELDS: ReadonlySet<string> = new Set(['scopes', 'evidenceIds']);
+
+/** Fields that hold a number rather than a string. */
+export const NUMERIC_FIELDS: ReadonlySet<string> = new Set([
+  'at',
+  'byteLength',
+  'tabId',
+  'stepCount',
+  'stepIndex',
+  'workflowVersion',
+  'recordCount',
+  'removedCount',
+  'removedFromSeq',
+  'removedToSeq',
+]);
+
+/** Fields that hold a boolean. */
+export const BOOLEAN_FIELDS: ReadonlySet<string> = new Set(['executed', 'cancelled']);
+
+/**
+ * The limit that applies to one string field.
+ *
+ * A single function rather than a conditional at each call site, because the
+ * producers ask the same question the log answers.
+ */
+export function fieldLimit(key: string): number {
+  if (key === 'origin' || key === 'site') return MAX_ORIGIN;
+  if (key === 'fileName') return MAX_FILENAME;
+  if (key === 'destination') return MAX_DESTINATION;
+  if (OPAQUE_ID_FIELDS.has(key)) return MAX_OPAQUE_ID;
+  return MAX_STRING;
+}
+
+/**
+ * The widest JSON one field's *value* can occupy.
+ *
+ * Deliberately an over-estimate where it is not exact: a number is costed at 20
+ * characters, which is wider than any value this build writes. Over-estimating
+ * is the safe direction for a budget proof.
+ */
+export function fieldValueWidth(key: string): number {
+  if (ARRAY_FIELDS.has(key)) {
+    // `["…","…"]` — two quotes per entry, a comma between, and the brackets.
+    const entries = arrayLimit(key);
+    return 2 + entries * (MAX_ARRAY_STRING + 2) + (entries - 1);
+  }
+  if (NUMERIC_FIELDS.has(key)) return 20;
+  if (BOOLEAN_FIELDS.has(key)) return 5;
+  return fieldLimit(key) + 2;
+}
+
+/**
+ * The widest a record carrying exactly these fields can serialise to.
+ *
+ * Counts what `assertAuditShape` counts — `JSON.stringify(event).length`, which
+ * is UTF-16 code units rather than bytes — so the two agree about what "4096"
+ * means. It also adds the fields the log owns and writes itself, which the
+ * shape check does not see, so the figure describes the record that is actually
+ * stored rather than the one that was handed in.
+ */
+export function recordWidth(fields: Iterable<string>): number {
+  // `{"type":"…"}` — the longest declared type name, generously.
+  let total = 2 + '"type":'.length + 34;
+  for (const field of fields) {
+    if (field === 'type') continue;
+    total += 1 + field.length + 3 + fieldValueWidth(field);
+  }
+  // Written by `append`, after the shape check: an id, a timestamp, a sequence
+  // number, the previous digest and the schema version.
+  total += '"id":"aud_xxxxxxxxxx_xxxx",'.length;
+  total += '"at":1700000000000,'.length;
+  total += '"seq":999999,'.length;
+  total += `"prevDigest":"${'0'.repeat(64)}",`.length;
+  total += '"eventVersion":99'.length;
+  return total;
+}
 
 // ---------------------------------------------------------------------------
 // Producer limits. Each is either a product choice checked against its
@@ -147,6 +284,37 @@ const MCP_IDENTITY_MAX = 'mcp:'.length + MAX_MCP_SERVER_ID + '@'.length + MAX_OR
  * form, and the raw endpoint URL that `mcp.server.added` records.
  */
 export const MAX_DESTINATION = Math.max(MCP_IDENTITY_MAX, MAX_ENDPOINT_URL);
+
+/**
+ * A skill identifier.
+ *
+ * Aligned with, rather than invented alongside, the bound that already existed:
+ * the `skills.run` tool input has always capped `skillId` at 64 characters, and
+ * `validateSkillDefinition` capped it at nothing. So a model could not ask for a
+ * longer id, and a **definition could still carry one** — and definitions are
+ * not all written in this build. An exported file can be edited and re-imported,
+ * and `importWorkflow` hands `candidate.definition` straight to the workflow
+ * store, whose `validate` is that same validator. Replay then runs the stored
+ * definition and the runner writes `skillId: definition.id` into
+ * `skill.started`, `skill.step` and `skill.finished` — a field bounded at
+ * `MAX_STRING`, so all three records were refused while the replay itself ran.
+ *
+ * The previous phase recorded this as "no producer today". That was wrong: the
+ * producer is the import path, and it was already there.
+ *
+ * The real ids this build ships are 12 to 20 characters.
+ */
+export const MAX_SKILL_ID = 64;
+
+/**
+ * A skill version, as `major.minor.patch`.
+ *
+ * `VERSION_PATTERN` accepts any number of digits per component, so a version of
+ * 300 digits passed validation and then exceeded the `skillVersion` field on
+ * `workflow.recorded`. 32 leaves room for three ten-digit components and the two
+ * dots, which is far past anything meaningful.
+ */
+export const MAX_SKILL_VERSION = 32;
 
 /**
  * A provider's model identifier.
@@ -302,6 +470,24 @@ export const BOUNDARY_CONTRACTS: readonly BoundaryContract[] = [
     transformation: 'type/subtype only, parameters dropped',
     transformedMax: MAX_MEDIA_TYPE,
     consumer: 'AuditLog mimeType',
+    consumerMax: MAX_STRING,
+  },
+  {
+    field: 'skillId',
+    producer: 'validateSkillDefinition id (bundled, recorded or imported)',
+    producerMax: MAX_SKILL_ID,
+    transformation: 'recorded verbatim by skill.started, skill.step, skill.finished',
+    transformedMax: MAX_SKILL_ID,
+    consumer: 'AuditLog skillId',
+    consumerMax: MAX_STRING,
+  },
+  {
+    field: 'skillVersion',
+    producer: 'validateSkillDefinition version',
+    producerMax: MAX_SKILL_VERSION,
+    transformation: 'recorded verbatim',
+    transformedMax: MAX_SKILL_VERSION,
+    consumer: 'AuditLog skillVersion',
     consumerMax: MAX_STRING,
   },
   {

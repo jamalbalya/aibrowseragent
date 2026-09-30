@@ -33,14 +33,13 @@ import type { PersistenceHealthStore } from '@/storage/persistence-health';
  * can see is a limit the other side will eventually cross.
  */
 import {
-  MAX_ARRAY_ENTRIES,
+  ARRAY_FIELDS,
+  arrayLimit,
+  fieldLimit,
   MAX_ARRAY_STRING,
-  MAX_DESTINATION,
   MAX_EVENT_BYTES,
-  MAX_FILENAME,
   MAX_OPAQUE_ID,
-  MAX_ORIGIN,
-  MAX_STRING,
+  OPAQUE_ID_FIELDS,
 } from './boundaries';
 
 const log = getLogger('storage');
@@ -492,9 +491,6 @@ const PROHIBITED_FIELDS: ReadonlySet<string> = new Set(
   PROHIBITED_FIELD_NAMES.map((name) => name.toLowerCase()),
 );
 
-/** Fields allowed to hold a bounded array. Everything else must be scalar. */
-const ARRAY_FIELDS: ReadonlySet<string> = new Set(['scopes', 'evidenceIds']);
-
 export class AuditShapeError extends Error {
   constructor(
     readonly field: string,
@@ -573,19 +569,13 @@ export type RecordableAuditEvent = Omit<
 > & { readonly at?: number };
 
 /**
- * The limit that applies to one field.
+ * Re-exported from the contract, which owns it.
  *
- * A single function rather than a conditional at the one call site, because the
- * producers ask the same question: `boundary-census.test.ts` uses it to check
- * that what a producer can emit is something this will accept. Two copies of
- * this decision is how the drift started.
+ * It used to live here, and the budget proof needs the same answer, so keeping
+ * one copy was the point: `MAX_ARRAY_ENTRIES` and `MAX_EVENT_BYTES` contradicted
+ * each other precisely because two files each held part of the decision.
  */
-export function fieldLimit(key: string): number {
-  if (key === 'origin' || key === 'site') return MAX_ORIGIN;
-  if (key === 'fileName') return MAX_FILENAME;
-  if (key === 'destination') return MAX_DESTINATION;
-  return MAX_STRING;
-}
+export { fieldLimit };
 
 /**
  * Refuses a record whose shape is wrong, rather than trimming it to fit.
@@ -606,8 +596,9 @@ export function assertAuditShape(event: Record<string, unknown>): void {
       if (!ARRAY_FIELDS.has(key)) {
         throw new AuditShapeError(key, 'may not be a list');
       }
-      if (value.length > MAX_ARRAY_ENTRIES) {
-        throw new AuditShapeError(key, `holds more than ${MAX_ARRAY_ENTRIES} entries`);
+      const entries = arrayLimit(key);
+      if (value.length > entries) {
+        throw new AuditShapeError(key, `holds more than ${entries} entries`);
       }
       for (const entry of value) {
         if (typeof entry !== 'string') throw new AuditShapeError(key, 'holds a non-string entry');
@@ -1010,17 +1001,7 @@ export class AuditLog {
 
     // Identifiers are opaque handles this extension minted. Anything that is
     // not one is a value that arrived from somewhere it should not have.
-    for (const field of [
-      'taskId',
-      'sessionId',
-      'workflowId',
-      'shortcutId',
-      'scheduleId',
-      'runId',
-      'connectorId',
-      'route',
-      'senderClass',
-    ]) {
+    for (const field of OPAQUE_ID_FIELDS) {
       const value = supplied[field];
       if (value !== undefined && !isOpaqueId(value)) {
         throw new AuditShapeError(field, 'is not a usable identifier');

@@ -26,6 +26,7 @@
  */
 import { hashContent } from '@/evidence/evidence-model';
 import { RISK_LEVELS, maxRisk, type RiskLevel } from '@/policy/risk-classifier';
+import { MAX_SKILL_ID, MAX_SKILL_VERSION } from '@/audit/boundaries';
 
 /** Hard structural limits. A skill that exceeds one is unregistrable. */
 export const MAX_STEPS_PER_SKILL = 24;
@@ -313,9 +314,21 @@ export function validateSkillDefinition(
 
   if (!ID_PATTERN.test(definition.id)) {
     problems.push(`"${definition.id}" is not a usable skill id`);
+  } else if (definition.id.length > MAX_SKILL_ID) {
+    // The bound `skills.run` has always placed on its input, applied to the
+    // definition too. A definition is not always written in this build: an
+    // exported file can be edited and re-imported, and `importWorkflow` passes
+    // its definition here. Replay then writes this id into three audit records,
+    // in a field bounded at `MAX_STRING`, so an over-long id lost all three
+    // while the replay ran.
+    problems.push(`a skill id may be at most ${MAX_SKILL_ID} characters`);
   }
   if (!VERSION_PATTERN.test(definition.version)) {
     problems.push(`"${definition.version}" is not a major.minor.patch version`);
+  } else if (definition.version.length > MAX_SKILL_VERSION) {
+    // The pattern bounds the shape and not the digits, so `9`.repeat(300) was a
+    // valid major version and then too wide for `workflow.recorded`.
+    problems.push(`a skill version may be at most ${MAX_SKILL_VERSION} characters`);
   }
   if (definition.name.trim().length === 0) problems.push('a display name is required');
   if (definition.description.trim().length === 0) problems.push('a description is required');
