@@ -25,7 +25,11 @@ import { MemoryStorageArea, SerializedStorageArea } from '@/storage/storage-area
 import { TaskStore } from '@/tasks/task-store';
 import { TaskManager } from '@/background/task-manager';
 import { createTask, generateTaintSalt } from '@/tasks/task-model';
-import { UNKNOWN_CAPABILITIES } from '@/providers/core/types';
+import {
+  isUnverified,
+  REQUESTABLE_CAPABILITIES,
+  UNKNOWN_CAPABILITIES,
+} from '@/providers/core/types';
 import type { AIProviderAdapter, ModelCapabilities } from '@/providers/core/types';
 import type { ProviderConnection } from '@/providers/registry/provider-registry';
 import { connectionAfterSwitch, isProviderSwitch } from '@/background/provider-switch';
@@ -140,18 +144,28 @@ describe('a switch does not carry a measurement with it', () => {
 describe('an unmeasured provider claims nothing rather than the last answer', () => {
   it('falls back to the conservative set when nothing was measured', () => {
     const worker = read('src/background/service-worker.ts');
-    expect(worker).toContain('connection.capabilities ?? UNKNOWN_CAPABILITIES');
+    // Both resolve paths fall back to the conservative set, and each names the
+    // scoped measurement it checked first rather than the raw stored record —
+    // a measurement only counts on the pair it was taken on.
+    expect(worker).toContain('slotMeasured ?? UNKNOWN_CAPABILITIES');
+    expect(worker).toContain('measured ?? UNKNOWN_CAPABILITIES');
 
-    // Worth being precise about what this type is and is not. `ModelCapabilities`
-    // is boolean, not the SUPPORTED / UNSUPPORTED / UNKNOWN vocabulary of
-    // specification §24B — that tri-state belongs to the web-provider design,
-    // which is gated and unbuilt. What the boolean set gives instead is a
-    // conservative default: unmeasured reads as "do not rely on it", which is
-    // the same direction §24B asks for even though it cannot tell an
-    // unmeasured capability from a measured absence.
-    expect(
-      Object.values(UNKNOWN_CAPABILITIES).every((value) => value === false || value === null),
-    ).toBe(true);
+    // Every boolean is conservative: unmeasured reads as "do not rely on it".
+    for (const [field, value] of Object.entries(UNKNOWN_CAPABILITIES)) {
+      if (field === 'unverified') continue;
+      expect(value === false || value === null, field).toBe(true);
+    }
+
+    // And the set says *why* they are false. This used to be the one thing the
+    // boolean matrix could not express — "nothing measured" was byte-identical
+    // to "measured, and absent" — so an adapter that honestly could not know
+    // wrote `false` and every reader downstream, including the probe that
+    // existed to settle it, read a measurement. `unverified` is the third
+    // state, and this constant is the case it was introduced for.
+    expect(UNKNOWN_CAPABILITIES.unverified).toEqual(REQUESTABLE_CAPABILITIES);
+    for (const capability of REQUESTABLE_CAPABILITIES) {
+      expect(isUnverified(UNKNOWN_CAPABILITIES, capability), capability).toBe(true);
+    }
   });
 });
 

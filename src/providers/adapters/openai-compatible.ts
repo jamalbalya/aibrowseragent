@@ -93,9 +93,6 @@ export interface WireModelList {
   data?: { id?: string }[];
 }
 
-/** Models known to accept image parts. Used only as an advertised default. */
-const VISION_MODEL_HINTS = ['gpt-4o', 'gpt-4.1', 'gpt-5', 'o3', 'o4', 'vision', 'llava', 'qwen-vl'];
-
 export class OpenAICompatibleAdapter implements AIProviderAdapter {
   // `string` rather than the literal type, so a gateway subclass can name
   // itself. The adapter contract declares both as `string` already.
@@ -209,11 +206,7 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
           headers: this.headers(),
           signal: AbortSignal.timeout(20_000),
         },
-        await managementContext(
-          OPENAI_COMPATIBLE_PROVIDER_ID,
-          config.model ?? '',
-          this.managementSalt,
-        ),
+        await managementContext(this.id, config.model ?? '', this.managementSalt),
       );
       if (!response.ok) {
         // Many compatible servers do not implement /models. That is not fatal.
@@ -224,12 +217,12 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
       const listed = (body.data ?? [])
         .map((entry) => entry.id)
         .filter((id): id is string => typeof id === 'string')
-        .map((id) => ({
-          id,
-          displayName: id,
-          advertisedCapabilities: { vision: looksVisionCapable(id) },
-        }));
-      return admitModelIds(OPENAI_COMPATIBLE_PROVIDER_ID, listed);
+        // No `advertisedCapabilities`: a discovered id is a name, and a name
+        // is not a capability report. It used to carry
+        // `{ vision: looksVisionCapable(id) }`, which put a substring match on
+        // an external string into the catalogue the UI reads.
+        .map((id) => ({ id, displayName: id }));
+      return admitModelIds(this.id, listed);
     } catch (error) {
       log.debug('Model list request failed.', {
         error: error instanceof Error ? error.message : String(error),
@@ -245,7 +238,20 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
    * they are advertised as available; the capability doctor verifies whether
    * this particular endpoint honours them.
    */
+  /**
+   * Capabilities for one exact model.
+   *
+   * A measurement when the runtime supplied one **for this exact model**, and
+   * the advertised placeholder otherwise. The exact-match check is the scoping
+   * rule: an adapter is connected per account and per model, so a measurement
+   * handed in for `gpt-4o` can never answer for `gpt-4.1`, and nothing here
+   * reaches across connections at all.
+   */
   getCapabilities(model: string): Promise<ModelCapabilities> {
+    const measured = this.config?.measuredCapabilities;
+    if (measured !== undefined && this.config?.model === model) {
+      return Promise.resolve(measured);
+    }
     return Promise.resolve(capabilitiesFor(model));
   }
 
@@ -267,30 +273,26 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
           }),
           signal: AbortSignal.timeout(30_000),
         },
-        await managementContext(
-          OPENAI_COMPATIBLE_PROVIDER_ID,
-          config.model ?? '',
-          this.managementSalt,
-        ),
+        await managementContext(this.id, config.model ?? '', this.managementSalt),
       );
       if (!response.ok) {
         return {
           reachable: false,
-          error: (await toHttpFailure(response, this.config?.apiKey)).error,
+          error: (await toHttpFailure(this.id, response, this.config?.apiKey)).error,
         };
       }
       return { reachable: true, latencyMs: Date.now() - started };
     } catch (error) {
       return {
         reachable: false,
-        error: toNetworkError(OPENAI_COMPATIBLE_PROVIDER_ID, error, '/chat/completions').error,
+        error: toNetworkError(this.id, error, '/chat/completions').error,
       };
     }
   }
 
   async generate(request: CanonicalRequest): Promise<CanonicalResponse> {
     const config = this.require();
-    const unsupported = this.unsupported(request, false);
+    const unsupported = await this.unsupported(request, false);
     if (unsupported) throw toThrowable(unsupported);
     const body = this.buildBody(request, false);
 
@@ -307,20 +309,20 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
         requireEgress(request),
       );
     } catch (error) {
-      throw toThrowable(toNetworkError(OPENAI_COMPATIBLE_PROVIDER_ID, error, '/chat/completions'));
+      throw toThrowable(toNetworkError(this.id, error, '/chat/completions'));
     }
 
     if (!response.ok) {
-      throw toThrowable(await toHttpFailure(response, this.config?.apiKey));
+      throw toThrowable(await toHttpFailure(this.id, response, this.config?.apiKey));
     }
 
-    const completion = await parseJsonBody<WireCompletion>(OPENAI_COMPATIBLE_PROVIDER_ID, response);
+    const completion = await parseJsonBody<WireCompletion>(this.id, response);
     return parseCompletion(completion);
   }
 
   async *stream(request: CanonicalRequest): AsyncIterable<CanonicalEvent> {
     const config = this.require();
-    const unsupported = this.unsupported(request, true);
+    const unsupported = await this.unsupported(request, true);
     if (unsupported) {
       yield { type: 'error', error: unsupported.error };
       return;
@@ -342,13 +344,16 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
     } catch (error) {
       yield {
         type: 'error',
-        error: toNetworkError(OPENAI_COMPATIBLE_PROVIDER_ID, error, '/chat/completions').error,
+        error: toNetworkError(this.id, error, '/chat/completions').error,
       };
       return;
     }
 
     if (!response.ok) {
-      yield { type: 'error', error: (await toHttpFailure(response, this.config?.apiKey)).error };
+      yield {
+        type: 'error',
+        error: (await toHttpFailure(this.id, response, this.config?.apiKey)).error,
+      };
       return;
     }
     if (!response.body) {
@@ -402,14 +407,35 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
    * Checked before the body is built, so an unsupported feature can never be
    * lost between the canonical request and the wire request.
    */
-  private unsupported(request: CanonicalRequest, streaming: boolean): ProviderFailure | null {
+  /**
+   * `protected`, and it asks **this adapter** what the model can do.
+   *
+   * Both properties are the fix for one defect. It used to be `private` and to
+   * call the module-level `capabilitiesFor(model)` directly, so a subclass that
+   * overrode `getCapabilities` — `NineRouterAdapter` does, precisely because a
+   * gateway's upstream is unknown at build time — had its override honoured by
+   * the UI and ignored by the check that decides whether the request goes out.
+   * The capability the adapter advertised and the capability it enforced were
+   * two different values, and the enforced one came from a substring match on
+   * the model id.
+   *
+   * So the enforcing code now reads the overridden code, which is the only
+   * arrangement in which a subclass can be correct.
+   */
+  protected async unsupported(
+    request: CanonicalRequest,
+    streaming: boolean,
+  ): Promise<ProviderFailure | null> {
     const model = this.require().model ?? '';
     return checkCapabilities(
-      OPENAI_COMPATIBLE_PROVIDER_ID,
+      this.id,
       model,
       request,
-      capabilitiesFor(model),
+      await this.getCapabilities(model),
       streaming,
+      // A capability probe may attempt the capability it is measuring. The flag
+      // comes from the egress context, which only `managementContext` sets.
+      request.egress?.management === true,
     );
   }
 
@@ -452,26 +478,46 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
  * listing is advertised because `/models` is part of the same contract, even
  * though many compatible servers omit it.
  */
-function capabilitiesFor(model: string): ModelCapabilities {
+/**
+ * What this adapter advertises before anything has been measured.
+ *
+ * `model` is deliberately unread. This used to return
+ * `vision: looksVisionCapable(model)` — a substring match against a table of
+ * name fragments — and that one expression was wrong in three separate ways.
+ *
+ * It was wrong as *evidence*: an endpoint reached through this adapter is
+ * whatever the user pointed it at, so a name is not a capability report and
+ * never was. It was wrong as *authorization*: the result decided whether an
+ * image left the device, which made an arbitrary string the thing that opened
+ * that gate — a gateway model id carries a user-editable prefix, so renaming an
+ * upstream to `gpt-5-work` silently flipped vision on for every model under it.
+ * And it was wrong about its own *confidence*: a guess was returned as a plain
+ * boolean, indistinguishable from a measurement, which is what let the guess
+ * outrank the probe that existed to settle the question.
+ *
+ * So vision is not guessed here at all. It is declared **unverified**, its
+ * placeholder is the conservative `false`, and `CapabilityDoctor` settles it.
+ * Nothing in this file reads a model id to decide what a model can do.
+ */
+function capabilitiesFor(_model: string): ModelCapabilities {
   return {
+    // Part of the Chat Completions contract this adapter implements, so
+    // declared and then verified by the doctor like any other claim.
     text: true,
     streaming: true,
     toolCalling: true,
     parallelToolCalling: true,
-    vision: looksVisionCapable(model),
     structuredOutput: true,
-    fileInput: false,
-    audioInput: false,
     systemInstruction: true,
     modelListing: true,
+    // Not a claim. See the note above.
+    vision: false,
+    unverified: ['vision'],
+    fileInput: false,
+    audioInput: false,
     contextWindow: null,
     maxOutputTokens: null,
   };
-}
-
-function looksVisionCapable(model: string): boolean {
-  const lower = model.toLowerCase();
-  return VISION_MODEL_HINTS.some((hint) => lower.includes(hint));
 }
 
 /**
@@ -681,7 +727,21 @@ class StreamAccumulator {
  * Passed explicitly rather than read from ambient state, because the thing
  * that must not emit a secret should be given it deliberately.
  */
-async function toHttpFailure(response: Response, secret?: string): Promise<ProviderFailure> {
+/**
+ * `providerId` is a parameter, not the module constant.
+ *
+ * This function is shared by every adapter in this file's inheritance chain, so
+ * a constant here labelled a gateway's failures as the generic
+ * OpenAI-compatible provider — the audit trail, the UI and the error taxonomy
+ * all named the wrong provider for a request the user had made against
+ * something else. A module-level helper that needs an instance's identity has
+ * to be given it.
+ */
+async function toHttpFailure(
+  providerId: string,
+  response: Response,
+  secret?: string,
+): Promise<ProviderFailure> {
   const detail = await readErrorBody(response, { ...(secret === undefined ? {} : { secret }) });
   const category = categoryForStatus(response.status);
   const retry = retryAfterMs(response);
@@ -701,17 +761,12 @@ async function toHttpFailure(response: Response, secret?: string): Promise<Provi
               ? 'The provider reported a server error. This is usually temporary.'
               : 'The provider rejected the request.';
 
-  return providerFailure(
-    OPENAI_COMPATIBLE_PROVIDER_ID,
-    category,
-    `The provider returned ${response.status}.`,
-    {
-      httpStatus: response.status,
-      ...(retry === undefined ? {} : { retryAfterMs: retry }),
-      userMessage,
-      technicalDetails: detail,
-    },
-  );
+  return providerFailure(providerId, category, `The provider returned ${response.status}.`, {
+    httpStatus: response.status,
+    ...(retry === undefined ? {} : { retryAfterMs: retry }),
+    userMessage,
+    technicalDetails: detail,
+  });
 }
 
 export { ProviderRequestError } from '@/providers/core/provider-error';

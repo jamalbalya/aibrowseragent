@@ -133,8 +133,21 @@ detects it structurally, so the category, code and retry classification survive.
 | `provider_unavailable`       | `NETWORK_ERROR`     | yes       | unreachable, timeout, overloaded |
 | `invalid_request`            | `INVALID_ARGUMENT`  | no        | malformed request                |
 | `unsupported_capability`     | `MODEL_UNSUPPORTED` | no        | model or route absent            |
+| `capability_unverified`      | `MODEL_UNSUPPORTED` | no        | nothing has established it yet   |
 | `malformed_response`         | `MODEL_ERROR`       | no        | 200 that did not parse           |
 | `transport_blocked`          | `POLICY_BLOCKED`    | no        | the gate refused it              |
+
+`unsupported_capability` and `capability_unverified` are separate for the same
+reason. The first is a measurement — this model was asked and cannot. The second
+is the _absence_ of a measurement, which is the honest answer for a model behind
+a gateway this build has never heard of, and the user action differs: run the
+capability doctor rather than pick another model. Collapsing the second into the
+first is what made vision permanently unavailable through a gateway — the
+adapter wrote the conservative `false`, the doctor skipped its probe because the
+advertisement said `false`, and the one thing that could have corrected the
+guess was gated on the guess. `ModelCapabilities.unverified` names the
+capabilities whose boolean is a placeholder, and a capability therefore has
+three states rather than two.
 
 Two things this buys that a status-code table does not.
 

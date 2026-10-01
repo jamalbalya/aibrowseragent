@@ -26,7 +26,7 @@ inference is gated and is not in this package.
 **Verdict: `AUTOMATED` against a local endpoint. `MANUAL` against a vendor.**
 
 - EVIDENCE: tests/e2e/provider-integration.spec.ts :: connect performs a real reachability probe against the endpoint
-- EVIDENCE: tests/e2e/provider-switching.spec.ts :: the registry offers all three API providers and no web provider
+- EVIDENCE: tests/e2e/provider-switching.spec.ts :: the registry offers every API provider and no web provider
 - EVIDENCE: tests/e2e/provider-switching.spec.ts :: a provider with its own endpoint does not demand one, and one without it does
 - EVIDENCE: tests/unit/openai-compatible.test.ts :: refuses a non-https base URL so a key is never sent in the clear
 - EVIDENCE: tests/unit/openai-compatible.test.ts :: throws when used before connecting rather than guessing a default

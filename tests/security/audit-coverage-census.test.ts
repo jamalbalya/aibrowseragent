@@ -77,8 +77,23 @@ function handlers(): ReadonlyMap<string, string> {
   return found;
 }
 
-/** A record written from inside the handler, in either of the two layouts. */
-const RECORDS = /auditLog\s*\.\s*record|recordShortcutConfigured\(|recordK1\(/;
+/**
+ * A record written from inside the handler, in any of the layouts in use.
+ *
+ * The named helpers are here because a route may record through one rather than
+ * calling `auditLog.record` itself. `recordCatalogueDiscovered` matches without
+ * a parenthesis because the discovery routes *pass* it to `discoverCatalogue`
+ * rather than calling it, and `discoverCatalogue` is listed for the same
+ * reason — it always records, before it branches.
+ *
+ * All of which is still only a *text* check.
+ * `tests/integration/provider-discovery-audit.test.ts` is what actually proves
+ * discovery records, by driving the real function with every registered
+ * provider: this census once passed for two routes whose record sat after an
+ * early return, and that is precisely the hole a regex over source cannot see.
+ */
+const RECORDS =
+  /auditLog\s*\.\s*record|recordShortcutConfigured\(|recordK1\(|recordCatalogueDiscovered|discoverCatalogue\(/;
 
 /**
  * Control-plane routes that deliberately write nothing themselves.

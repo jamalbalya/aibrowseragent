@@ -1219,6 +1219,15 @@ export interface ConnectedAccountView {
   readonly modelId: string | null;
   /** The upstream group the model was chosen from, when the provider has groups. */
   readonly upstreamKey?: string;
+  /**
+   * True when the last discovery did not offer `modelId`.
+   *
+   * The panel shows the selection and says it will not run, which is the whole
+   * reason the flag crosses this boundary: the alternative is a model that
+   * looks ordinary until a task fails on it. The build never substitutes
+   * another model — see `providers/registry/model-selection.ts`.
+   */
+  readonly modelStale?: true;
   readonly capabilities: ModelCapabilities | null;
   readonly status: string;
   readonly statusReason?: string;

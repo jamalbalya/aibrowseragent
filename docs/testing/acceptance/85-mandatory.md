@@ -230,7 +230,7 @@ it is recorded as the weaker claim.
 documented wire format. `MANUAL` against the real vendor endpoints, which
 this repository holds no credentials for.**
 
-- EVIDENCE: tests/e2e/provider-switching.spec.ts :: the registry offers all three API providers and no web provider
+- EVIDENCE: tests/e2e/provider-switching.spec.ts :: the registry offers every API provider and no web provider
 - EVIDENCE: tests/e2e/provider-switching.spec.ts :: the Anthropic adapter completes a real round trip over sockets
 - EVIDENCE: tests/e2e/provider-switching.spec.ts :: the Gemini adapter completes a real round trip and sends no key in a URL
 - EVIDENCE: tests/e2e/provider-switching.spec.ts :: a tool call from each provider drives the same browser action

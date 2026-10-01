@@ -38,6 +38,7 @@ import {
   fieldLimit,
   MAX_ARRAY_STRING,
   MAX_EVENT_BYTES,
+  serialisedWidth,
   MAX_OPAQUE_ID,
   OPAQUE_ID_FIELDS,
 } from './boundaries';
@@ -602,7 +603,11 @@ export function assertAuditShape(event: Record<string, unknown>): void {
       }
       for (const entry of value) {
         if (typeof entry !== 'string') throw new AuditShapeError(key, 'holds a non-string entry');
-        if (entry.length > MAX_ARRAY_STRING) {
+        // Serialised width, not code units — see `serialisedWidth`. Sixteen
+        // scope strings of quotes measured 128 each by `length` and 256 each
+        // once written, which is how `connector.auth` could pass every field
+        // check and then exceed the record budget.
+        if (serialisedWidth(entry) > MAX_ARRAY_STRING) {
           throw new AuditShapeError(key, `holds an entry longer than ${MAX_ARRAY_STRING}`);
         }
       }
@@ -617,12 +622,20 @@ export function assertAuditShape(event: Record<string, unknown>): void {
 
     if (typeof value === 'string') {
       const limit = fieldLimit(key);
-      if (value.length > limit) {
+      // The width this value will occupy in the stored record, which is what
+      // the record budget below is measured in. A model id of 256 quote
+      // characters is 256 code units and 512 serialised, and the gap between
+      // those two numbers is what made the field bounds fail to imply the
+      // record bound.
+      if (serialisedWidth(value) > limit) {
         throw new AuditShapeError(key, `is longer than ${limit} characters`);
       }
     }
   }
 
+  // The same serialiser the fields were measured with, so the implication
+  // "every field inside its limit" ⇒ "the record inside its budget" is an
+  // arithmetic fact rather than an observation that happened to hold for ASCII.
   const size = JSON.stringify(event)?.length ?? 0;
   if (size > MAX_EVENT_BYTES) {
     throw new AuditShapeError('(record)', `is larger than ${MAX_EVENT_BYTES} bytes`);

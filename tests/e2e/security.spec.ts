@@ -326,7 +326,11 @@ test('Chrome itself refuses the extension access to local files', async ({
   // `http://*/*` + `https://*/*` Chrome refuses at the browser level, before
   // any of this extension's own policy runs — so the refusal below is Chrome's
   // answer, not ours, and it disappears the moment the manifest widens again.
-  const target = 'file:///etc/hostname';
+  // `/etc/hosts` rather than `/etc/hostname`: the latter is Linux-only, so on
+  // macOS the navigation found no tab and this case failed for the wrong
+  // reason — it reported that Chrome had not refused, when in fact nothing had
+  // been asked. Any readable local file proves the same point.
+  const target = 'file:///etc/hosts';
   const page = await context.newPage();
   await page.goto(target).catch(() => undefined);
 

@@ -67,11 +67,22 @@ const DISCOVERY_TIMEOUT_MS = 20_000;
 /**
  * Capability floor for a gateway whose models are not known at build time.
  *
- * Everything optional is `false`. The generic OpenAI-compatible adapter guesses
- * vision from the model name; that guess cannot be made here, because the name
- * belongs to an upstream this build has never heard of. `CapabilityDoctor`
- * measures what is actually there, and a floor of `false` means the UI reports
- * only what was proved.
+ * Vision is the interesting one, and it is **unverified** rather than `false`.
+ *
+ * `false` was the original answer and it was a mistake with a specific shape.
+ * The adapter honestly could not know — the model belongs to an upstream this
+ * build has never heard of — so it wrote the conservative boolean. But
+ * `CapabilityDoctor` skipped its vision probe whenever the advertisement was
+ * `false`, so the honest "I cannot know" became a permanent "this model has no
+ * vision" that no measurement could ever overturn. The gateway's own
+ * `/models` response claims `vision: true` for most models, which is no help
+ * either: 9Router derives that by matching names against a table, so it is a
+ * guess with a different author.
+ *
+ * Three states fix it. `unverified: ['vision']` says the boolean beside it is a
+ * placeholder, the request guard refuses an image with `capability_unverified`
+ * rather than "unsupported", and the doctor probes instead of skipping. Nothing
+ * here reads the model id, and nothing here reads the gateway's hints.
  */
 function gatewayFloor(): ModelCapabilities {
   return {
@@ -84,10 +95,9 @@ function gatewayFloor(): ModelCapabilities {
     systemInstruction: true,
     structuredOutput: true,
     modelListing: true,
-    // Not guessable here. The generic adapter infers vision from the model name;
-    // that inference cannot be made for an upstream this build has never heard
-    // of, so it stays false until a probe says otherwise.
+    // A placeholder, not a claim — see the note above.
     vision: false,
+    unverified: ['vision'],
     fileInput: false,
     audioInput: false,
     // `null`, not a number: the gateway reports a window it inferred from the
@@ -189,16 +199,24 @@ export class NineRouterAdapter extends OpenAICompatibleAdapter {
   /**
    * Capabilities for one exact model.
    *
-   * The floor, not the catalogue's opinion. 9Router will happily report a context
-   * window for a model it inferred from the name, and this adapter does not pass
-   * that on as though it were measured. `CapabilityDoctor` probes the model and
-   * the report it produces is what the UI shows.
+   * A measurement when the runtime has one for **this exact model**, and the
+   * floor otherwise. Never the catalogue's opinion: 9Router reports a context
+   * window and a vision flag it inferred from the model name, and passing
+   * either on would dress a guess as a measurement.
+   *
+   * The exact-model comparison is the scope. An adapter instance is connected
+   * for one account and one model, so a measurement taken on
+   * `cx/gpt-5.6-terra` cannot answer for `cx/gpt-5.6-luna`, and there is no
+   * path by which it could answer for another account at all.
    */
-  override getCapabilities(_model: string): Promise<ModelCapabilities> {
-    // The model is deliberately unread. The base class infers vision from the
-    // name; for a gateway the name belongs to an upstream this build has never
-    // heard of, so there is nothing to infer from and guessing would be worse
-    // than admitting ignorance. The doctor measures it.
+  override getCapabilities(model: string): Promise<ModelCapabilities> {
+    const measured = this.config?.measuredCapabilities;
+    if (measured !== undefined && this.config?.model === model) {
+      return Promise.resolve(measured);
+    }
+    // The model id is deliberately unread beyond that identity check. For a
+    // gateway the name belongs to an upstream this build has never heard of, so
+    // there is nothing to infer from and inferring anyway is the defect.
     return Promise.resolve(gatewayFloor());
   }
 }

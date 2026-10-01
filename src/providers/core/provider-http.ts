@@ -14,7 +14,7 @@
  * only way out remains the transport the registry injected.
  */
 import { redact, REDACTED } from '@/security/redaction/secret-redactor';
-import { MAX_MODEL_ID } from '@/audit/boundaries';
+import { MAX_MODEL_ID, serialisedWidth } from '@/audit/boundaries';
 import { getLogger } from '@/logging/logger';
 import { delayFromRetryAfter } from '@/agent/recovery/retry-policy';
 import {
@@ -288,7 +288,15 @@ export async function parseJsonBody<T>(providerId: string, response: Response): 
  * `admitListing` uses for MCP tools.
  */
 export function isRecordableModelId(id: unknown): id is string {
-  return typeof id === 'string' && id.length > 0 && id.length <= MAX_MODEL_ID;
+  if (typeof id !== 'string' || id.length === 0) return false;
+  // The *serialised* width, because that is what the record it has to fit is
+  // measured in. An id of 256 quote characters is 256 code units and 512
+  // characters once written into a record, and an id of 256 control
+  // characters is 1536 — so a check on `length` admitted ids that no record
+  // could carry, and every request made with one lost its trail. This is the
+  // same bound the audit field applies, asked the same way, which is what
+  // makes admitting an id a promise that it can be recorded.
+  return serialisedWidth(id) <= MAX_MODEL_ID;
 }
 
 /**

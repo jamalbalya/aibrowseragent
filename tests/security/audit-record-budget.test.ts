@@ -33,8 +33,12 @@ import {
   OPAQUE_ID_FIELDS,
   recordWidth,
   fieldLimit,
+  serialisedWidth,
+  MAX_MODEL_ID,
 } from '@/audit/boundaries';
-import { AUDIT_EVENT_TYPES, AuditLog } from '@/audit/audit-log';
+import { AUDIT_EVENT_TYPES, AuditLog, assertAuditShape } from '@/audit/audit-log';
+import { isRecordableModelId } from '@/providers/core/provider-http';
+import { parseModelCatalogue } from '@/providers/adapters/nine-router-catalog';
 import { MemoryStorageArea, SerializedStorageArea } from '@/storage/storage-area';
 
 const INVENTORY = auditFieldInventory(AUDIT_EVENT_TYPES);
@@ -242,5 +246,228 @@ describe('TEST-BUDGET-001 — the bounds still refuse what they refused', () => 
     expect(reports).toEqual([
       { state: 'CORRUPT', reason: 'a record could not be shaped: (record)' },
     ]);
+  });
+});
+
+describe('TEST-BUDGET-001 — the proof survives JSON escaping', () => {
+  const area = (): SerializedStorageArea => new SerializedStorageArea(new MemoryStorageArea());
+
+  /**
+   * Character classes that serialise to more than they measure.
+   *
+   * This is the gap the earlier proof had. It filled every string field with
+   * `'s'`, which JSON writes as one character, so the arithmetic was only ever
+   * checked against the one class of content that does not expand. Measured
+   * with the others, two event types crossed the 4096 budget on quotes alone
+   * (`connector.auth` reached 5505) and seventeen crossed it on control
+   * characters (up to 15745) — while every field was inside its own limit,
+   * because the limits counted code units and the budget counted serialised
+   * characters.
+   */
+  const CLASSES: Record<string, (n: number) => string> = {
+    // One serialised character each: the baseline, and the only class the
+    // original proof used.
+    ascii: (n) => 's'.repeat(n),
+    // Two each: `\"` and `\\`.
+    quotes: (n) => '"'.repeat(n),
+    backslashes: (n) => '\\'.repeat(n),
+    // Six each: `\u0000`.
+    nul: (n) => '\u0000'.repeat(n),
+    controls: (n) => '\u0001'.repeat(n),
+    // One per code unit: non-ASCII is left literal, so emoji cost exactly
+    // their code-unit length and a 256 limit still means 128 of them.
+    emoji: (n) => '🙂'.repeat(Math.floor(n / 2)),
+    unicode: (n) => 'é日'.repeat(Math.floor(n / 2)),
+    // All of them at once, which is what an adversarial producer would send.
+    mixed: (n) => '"\u0001s🙂\\'.repeat(Math.max(1, Math.floor(n / 5))),
+  };
+
+  /** The widest value of this class that still satisfies the field's bound. */
+  function atLimit(fill: (n: number) => string, limit: number): string {
+    let n = limit;
+    while (n > 0 && serialisedWidth(fill(n)) > limit) n -= 1;
+    return fill(n);
+  }
+
+  it('09 — the measure is the real serialiser, and it sees the expansion', () => {
+    // Stated first, because every case below depends on it. If this is
+    // measuring code units the rest of the file proves nothing.
+    expect(serialisedWidth('s')).toBe(1);
+    expect(serialisedWidth('"')).toBe(2);
+    expect(serialisedWidth('\\')).toBe(2);
+    expect(serialisedWidth('\u0000')).toBe(6);
+    expect(serialisedWidth('\u0001')).toBe(6);
+    // Non-ASCII is not escaped, so it costs its code units and nothing more.
+    expect(serialisedWidth('🙂')).toBe(2);
+    expect(serialisedWidth('é')).toBe(1);
+    // A lone surrogate is escaped, which `length` alone would miss entirely.
+    expect(serialisedWidth('\ud800')).toBe(6);
+    // And it agrees with the serialiser that actually writes the record.
+    for (const value of ['s', '"', '\\', '\u0000', '🙂', 'é', '\ud800']) {
+      expect(serialisedWidth(value), JSON.stringify(value)).toBe(JSON.stringify(value).length - 2);
+    }
+  });
+
+  for (const [label, fill] of Object.entries(CLASSES)) {
+    it(`10 — every type fits ${MAX_EVENT_BYTES} when filled with ${label}`, async () => {
+      for (const type of AUDIT_EVENT_TYPES) {
+        const fields = INVENTORY.get(type) ?? new Set<string>();
+        const event: Record<string, unknown> = { type, outcome: 'info' };
+        for (const field of fields) {
+          if (field === 'type' || field === 'outcome' || field === 'at') continue;
+          if (ARRAY_FIELDS.has(field)) {
+            event[field] = Array.from({ length: arrayLimit(field) }, () =>
+              atLimit(fill, MAX_ARRAY_STRING),
+            );
+          } else if (NUMERIC_FIELDS.has(field)) event[field] = 1_700_000_000_000;
+          else if (BOOLEAN_FIELDS.has(field)) event[field] = true;
+          // Opaque ids are this build's own and cannot contain any of this.
+          else if (OPAQUE_ID_FIELDS.has(field)) event[field] = 'a'.repeat(MAX_OPAQUE_ID);
+          else event[field] = atLimit(fill, fieldLimit(field));
+        }
+
+        // Accepted — not refused. A refusal would be audit loss, which is the
+        // outcome this whole bound exists to prevent, so "the validator caught
+        // it" is not a passing answer here.
+        const log = new AuditLog(area(), { knownTool: () => true });
+        const written = await log.record(event as never);
+        expect(
+          written,
+          `${type} filled with ${label} was refused: ${log.degradedReason()}`,
+        ).not.toBeNull();
+
+        const observed = JSON.stringify(written).length;
+        expect(observed, `${type} with ${label} serialised to ${observed}`).toBeLessThanOrEqual(
+          MAX_EVENT_BYTES,
+        );
+        // And the model still bounds the measurement for this class. This is
+        // the assertion that fails if `fieldValueWidth` goes back to costing a
+        // string at its code-unit length.
+        const computed = recordWidth(fields);
+        expect(
+          computed,
+          `${type} with ${label}: computed ${computed} but stored ${observed}`,
+        ).toBeGreaterThanOrEqual(observed);
+      }
+    });
+  }
+
+  it('11 — the widest record over all classes is named, with its margin', async () => {
+    let worst = { type: '', label: '', observed: 0 };
+    for (const [label, fill] of Object.entries(CLASSES)) {
+      for (const type of AUDIT_EVENT_TYPES) {
+        const fields = INVENTORY.get(type) ?? new Set<string>();
+        const event: Record<string, unknown> = { type, outcome: 'info' };
+        for (const field of fields) {
+          if (field === 'type' || field === 'outcome' || field === 'at') continue;
+          if (ARRAY_FIELDS.has(field)) {
+            event[field] = Array.from({ length: arrayLimit(field) }, () =>
+              atLimit(fill, MAX_ARRAY_STRING),
+            );
+          } else if (NUMERIC_FIELDS.has(field)) event[field] = 1_700_000_000_000;
+          else if (BOOLEAN_FIELDS.has(field)) event[field] = true;
+          else if (OPAQUE_ID_FIELDS.has(field)) event[field] = 'a'.repeat(MAX_OPAQUE_ID);
+          else event[field] = atLimit(fill, fieldLimit(field));
+        }
+        const log = new AuditLog(area(), { knownTool: () => true });
+        const written = await log.record(event as never);
+        const observed = JSON.stringify(written).length;
+        if (observed > worst.observed) worst = { type, label, observed };
+      }
+    }
+    expect(
+      MAX_EVENT_BYTES - worst.observed,
+      `the widest record is ${worst.type} filled with ${worst.label} at ${worst.observed} of ${MAX_EVENT_BYTES}`,
+    ).toBeGreaterThan(MAX_EVENT_BYTES / 10);
+  });
+
+  it('12 — a value over its serialised bound is refused at the field, naming it', () => {
+    // The other half of requirement: a record that cannot fit is rejected
+    // before it can be appended, and the refusal says which field — so the
+    // chain is never extended with something unreadable.
+    const overQuoted = '"'.repeat(fieldLimit('modelId'));
+    expect(serialisedWidth(overQuoted)).toBeGreaterThan(fieldLimit('modelId'));
+    expect(() =>
+      assertAuditShape({ type: 'egress.decided', outcome: 'allowed', modelId: overQuoted }),
+    ).toThrow(/modelId/);
+
+    // And the same content one character inside the bound is accepted, so the
+    // case above is not passing because everything throws.
+    const justInside = atLimit((n) => '"'.repeat(n), fieldLimit('modelId'));
+    expect(() =>
+      assertAuditShape({ type: 'egress.decided', outcome: 'allowed', modelId: justInside }),
+    ).not.toThrow();
+  });
+
+  it('12b — an array *entry* over its serialised bound is refused too', () => {
+    // The same rule, on the other kind of field, and it needs its own case.
+    // A mutation that reverted only the array-entry check to `entry.length`
+    // survived the whole suite: every other case here builds its arrays with
+    // `atLimit`, which measures serialised width and therefore keeps producing
+    // legal entries whatever the validator does. Nothing was asserting that an
+    // illegal one is rejected.
+    //
+    // It matters because the array fields are the widest contributors to the
+    // record. Sixteen `scopes` of 128 quote characters measure 128 each by
+    // `length` and 256 each once written — which is how `connector.auth` came
+    // to serialise to 5505 characters against a 4096 budget with every field
+    // inside its own limit.
+    const overQuoted = '"'.repeat(MAX_ARRAY_STRING);
+    expect(serialisedWidth(overQuoted)).toBeGreaterThan(MAX_ARRAY_STRING);
+    expect(() =>
+      assertAuditShape({
+        type: 'connector.auth',
+        outcome: 'allowed',
+        scopes: [overQuoted],
+      }),
+    ).toThrow(/scopes/);
+
+    // Control characters expand six-fold, so even a short entry can cross it.
+    expect(() =>
+      assertAuditShape({
+        type: 'connector.auth',
+        outcome: 'allowed',
+        scopes: ['\u0000'.repeat(Math.floor(MAX_ARRAY_STRING / 6) + 1)],
+      }),
+    ).toThrow(/scopes/);
+
+    // And a full-width entry inside the serialised bound is accepted, so the
+    // cases above are not passing because every array throws.
+    const justInside = atLimit((n) => '"'.repeat(n), MAX_ARRAY_STRING);
+    expect(serialisedWidth(justInside)).toBeLessThanOrEqual(MAX_ARRAY_STRING);
+    expect(() =>
+      assertAuditShape({
+        type: 'connector.auth',
+        outcome: 'allowed',
+        scopes: Array.from({ length: arrayLimit('scopes') }, () => justInside),
+      }),
+    ).not.toThrow();
+  });
+
+  it('13 — an id no record could carry is refused at admission, not at the record', () => {
+    // Where the bound has to be enforced for the trail to stay complete. If
+    // the only check were at the record, the model would be offered, selected,
+    // used — and every request made with it would lose its audit record while
+    // succeeding, which is the defect this bound was introduced for.
+    expect(isRecordableModelId('s'.repeat(MAX_MODEL_ID))).toBe(true);
+    expect(isRecordableModelId('s'.repeat(MAX_MODEL_ID + 1))).toBe(false);
+    // 256 code units, 512 serialised: admitted by a `length` check and
+    // unrecordable in fact.
+    expect(isRecordableModelId('"'.repeat(MAX_MODEL_ID))).toBe(false);
+    expect(isRecordableModelId('\u0000'.repeat(MAX_MODEL_ID))).toBe(false);
+    // Emoji are not escaped, so 128 of them fit exactly and are admitted.
+    expect(isRecordableModelId('🙂'.repeat(MAX_MODEL_ID / 2))).toBe(true);
+
+    // And the catalogue parser refuses such an entry rather than shortening it,
+    // so it never becomes selectable.
+    const hostile = parseModelCatalogue({
+      object: 'list',
+      data: [
+        { id: '"'.repeat(MAX_MODEL_ID), object: 'model', owned_by: 'cx' },
+        { id: 'cx/fine', object: 'model', owned_by: 'cx' },
+      ],
+    });
+    expect(hostile.models.map((model) => model.id)).toEqual(['cx/fine']);
+    expect(hostile.refused.map((entry) => entry.reason)).toEqual(['id-unrecordable']);
   });
 });

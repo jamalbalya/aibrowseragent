@@ -225,9 +225,32 @@ describe('generate', () => {
   it('encodes an image part as a data URL', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ choices: [{ message: {} }] }));
     const adapter = new OpenAICompatibleAdapter(passthroughTransport(fetchMock));
-    // A model the adapter reads as vision-capable: the capability guard
-    // refuses an image on a model that does not advertise one.
-    await adapter.connect({ ...CONFIG, model: 'gpt-4o' });
+    // Vision is established by measurement, never by the model's name. This
+    // adapter is pointed at whatever endpoint the user named, so it reports
+    // vision as `unverified` and the guard refuses an image until
+    // `CapabilityDoctor` has settled it — which is what the runtime hands in
+    // here as `measuredCapabilities`. Connecting as `gpt-4o` used to be
+    // sufficient on its own, and that was the defect: a substring of a model
+    // id decided whether an image left the device.
+    await adapter.connect({
+      ...CONFIG,
+      model: 'gpt-4o',
+      measuredCapabilities: {
+        text: true,
+        streaming: true,
+        toolCalling: true,
+        parallelToolCalling: true,
+        structuredOutput: true,
+        systemInstruction: true,
+        modelListing: true,
+        vision: true,
+        fileInput: false,
+        audioInput: false,
+        contextWindow: null,
+        maxOutputTokens: null,
+        unverified: [],
+      },
+    });
 
     await adapter.generate({
       egress: testEgressContext(),

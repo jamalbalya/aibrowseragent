@@ -46,6 +46,14 @@ export interface ProviderConnection {
    * UI opens on, never which model is sent.
    */
   readonly upstreamKey?: string;
+  /**
+   * Set when the last discovery did not offer `modelId`.
+   *
+   * The same flag `ConnectedAccount` carries, for the pre-account slot and for
+   * the projection the panel reads. See `model-selection.ts` for why a stale
+   * selection is reported rather than repaired.
+   */
+  readonly modelStale?: true;
   readonly authKind: string;
   readonly accountLabel?: string;
   readonly capabilities?: ModelCapabilities;

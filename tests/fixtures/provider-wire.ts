@@ -18,7 +18,8 @@
 import { openAICompatibleFactory } from '@/providers/adapters/openai-compatible';
 import { anthropicFactory } from '@/providers/adapters/anthropic';
 import { geminiFactory } from '@/providers/adapters/gemini';
-import type { ProviderConfig, ProviderFactory } from '@/providers/core/types';
+import { nineRouterFactory } from '@/providers/adapters/nine-router';
+import type { ModelCapabilities, ProviderConfig, ProviderFactory } from '@/providers/core/types';
 
 export type WireBody = Record<string, unknown>;
 
@@ -42,10 +43,49 @@ export interface WireInspectors {
 export interface ProviderWirePack {
   readonly factory: ProviderFactory;
   readonly config: ProviderConfig;
-  /** A model this adapter reads as accepting images. */
+  /** A model this adapter will carry an image for. */
   readonly visionModel: string;
-  /** A model this adapter reads as not accepting images. */
+  /** A model this adapter will refuse an image for. */
   readonly noVisionModel: string;
+  /**
+   * How `visionModel` comes to be allowed to carry an image.
+   *
+   * `advertised` — the adapter claims vision from its own per-model knowledge,
+   * so connecting is enough. Anthropic and Gemini describe real model families
+   * and can say.
+   *
+   * `measured` — the adapter cannot know and declares vision **unverified**, so
+   * nothing may carry an image until `CapabilityDoctor` has measured it. The
+   * generic OpenAI-compatible entry is pointed at an arbitrary endpoint, and a
+   * gateway fronts upstreams this build has never heard of; neither is in a
+   * position to claim anything from a model name. `visionMeasurement` is the
+   * measurement the doctor would have recorded.
+   */
+  readonly visionAuthority: 'advertised' | 'measured';
+  /** The measurement that unlocks `visionModel`, for `visionAuthority: 'measured'`. */
+  readonly visionMeasurement?: ModelCapabilities;
+  /**
+   * What refusing an image on `noVisionModel` reports.
+   *
+   * Two different facts, and the suite asserts which one each provider states.
+   * `unsupported_capability` is a measurement — asked, and cannot.
+   * `capability_unverified` is the absence of one, and the user action differs:
+   * run the doctor rather than pick another model.
+   */
+  readonly noVisionCategory: 'unsupported_capability' | 'capability_unverified';
+  /**
+   * Whether a failure from this provider carries the provider's own error code
+   * alongside the normalised category.
+   *
+   * A property of the **wire format**, not of a provider id — which is why it
+   * lives here. The OpenAI error body types a failure as
+   * `invalid_request_error` and this build does not map that into
+   * `providerCode`, so every adapter that speaks that format answers the same
+   * way, including the gateway that inherits it. The suite used to spell this
+   * exemption as `id !== 'openai-compatible'`, which quietly became wrong the
+   * moment a second adapter spoke the same format.
+   */
+  readonly carriesProviderCode: boolean;
   /** Fragment every generation request URL must contain. */
   readonly generateFragment: string;
   /** Header the credential must travel in, and the value it must have. */
@@ -96,6 +136,29 @@ function isGet(init: RequestInit): boolean {
   return (init.method ?? 'GET').toUpperCase() === 'GET';
 }
 
+/**
+ * What the doctor records once it has actually sent an image and seen a reply.
+ *
+ * `unverified: []` is the part that matters: the list is present and empty, so
+ * "measured, and the question is settled" stays distinguishable from "never
+ * asked", which is what the placeholder `false` could not express.
+ */
+const MEASURED_WITH_VISION: ModelCapabilities = {
+  text: true,
+  streaming: true,
+  toolCalling: true,
+  parallelToolCalling: true,
+  structuredOutput: true,
+  systemInstruction: true,
+  modelListing: true,
+  vision: true,
+  fileInput: false,
+  audioInput: false,
+  contextWindow: null,
+  maxOutputTokens: null,
+  unverified: [],
+};
+
 // --- OpenAI-compatible -------------------------------------------------------
 
 const openai: ProviderWirePack = {
@@ -108,6 +171,12 @@ const openai: ProviderWirePack = {
   },
   visionModel: 'gpt-4o',
   noVisionModel: 'text-only-model',
+  // Pointed at whatever endpoint the user named, so a model id is not a
+  // capability report. Vision is unverified until the doctor measures it.
+  visionAuthority: 'measured',
+  visionMeasurement: MEASURED_WITH_VISION,
+  noVisionCategory: 'capability_unverified',
+  carriesProviderCode: false,
   generateFragment: '/chat/completions',
   authHeader: 'Authorization',
   // A bearer token, not a bare key.
@@ -213,6 +282,10 @@ const anthropic: ProviderWirePack = {
   },
   visionModel: 'claude-test-model',
   noVisionModel: 'claude-2.1',
+  // Describes real model families, so it can say.
+  visionAuthority: 'advertised',
+  noVisionCategory: 'unsupported_capability',
+  carriesProviderCode: true,
   generateFragment: '/v1/messages',
   authHeader: 'x-api-key',
   // The bare key, in this provider's own header rather than Authorization.
@@ -340,6 +413,10 @@ const gemini: ProviderWirePack = {
   },
   visionModel: 'gemini-test-model',
   noVisionModel: 'text-embedding-004',
+  // Asks the endpoint about the model before it decides, so it can say.
+  visionAuthority: 'advertised',
+  noVisionCategory: 'unsupported_capability',
+  carriesProviderCode: true,
   generateFragment: ':generateContent',
   authHeader: 'x-goog-api-key',
   authHeaderValue: (apiKey) => apiKey,
@@ -455,14 +532,143 @@ const gemini: ProviderWirePack = {
   },
 };
 
+// --- 9Router (an OpenAI-compatible gateway) ----------------------------------
+
+/**
+ * Model ids as a gateway actually names them.
+ *
+ * `cx/` is the prefix the user's own 9Router reports, and `cx/gpt-5.6-terra` is
+ * the id whose `/` once made `managementTaskId` invalid and silently cost every
+ * probe against it its audit record. The rest are the shapes a gateway can
+ * legitimately produce and that a splitter would mangle: a combination with no
+ * `/` at all, a multi-segment path, and a non-ASCII name.
+ *
+ * They are in the shared matrix rather than in a 9Router-only test because the
+ * generic pipeline is what has to carry them — the pin, the management
+ * identity, the egress context and the audit record are all shared code.
+ */
+export const GATEWAY_MODEL_IDS = {
+  /** The ordinary case: one slash, from a real catalogue. */
+  simple: 'cx/gpt-5.6-terra',
+  /** A combination. No prefix to split on, which is the point. */
+  combo: 'daily-driver-combo',
+  /** More than one separator, so "split and keep the last part" is visibly wrong. */
+  multi: 'org/team/project/model/v2',
+  /** Non-ASCII, so a byte-length bound and a code-unit bound disagree. */
+  unicode: 'modèle-日本語-🙂',
+  /** Punctuation a URL or a record might be tempted to escape. */
+  punctuated: 'cx/model@v1(beta)!#?&=',
+} as const;
+
+const nineRouter: ProviderWirePack = {
+  factory: nineRouterFactory,
+  config: {
+    providerId: 'nine-router',
+    // http is deliberate: the adapter permits it for loopback only, which is
+    // where a gateway the user runs actually lives.
+    baseUrl: 'http://localhost:20128/v1',
+    apiKey: 'sk-' + 'conformance-gateway-key-00000',
+    model: GATEWAY_MODEL_IDS.simple,
+  },
+  visionModel: GATEWAY_MODEL_IDS.simple,
+  noVisionModel: GATEWAY_MODEL_IDS.combo,
+  // A gateway fronts upstreams this build has never heard of. It claims
+  // nothing from a model name — not even the gateway's own `vision` hint,
+  // which 9Router derives by matching names against a table of its own.
+  visionAuthority: 'measured',
+  visionMeasurement: MEASURED_WITH_VISION,
+  noVisionCategory: 'capability_unverified',
+  // Inherited with the wire format, like everything else here.
+  carriesProviderCode: false,
+  generateFragment: '/chat/completions',
+  authHeader: 'Authorization',
+  authHeaderValue: (apiKey) => `Bearer ${apiKey}`,
+
+  // The wire format is OpenAI's, which is the whole reason the adapter
+  // subclasses rather than restates it. The bodies are the same shape, with
+  // gateway-shaped model ids in them.
+  text: (text) =>
+    json({
+      id: 'cmpl_g1',
+      model: GATEWAY_MODEL_IDS.simple,
+      choices: [{ message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 11, completion_tokens: 7 },
+    }),
+
+  toolCall: (name, args) =>
+    json({
+      id: 'cmpl_g2',
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call_g',
+                type: 'function',
+                function: { name, arguments: JSON.stringify(args) },
+              },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        },
+      ],
+      usage: { prompt_tokens: 11, completion_tokens: 7 },
+    }),
+
+  stream: (name, args) =>
+    sse([
+      'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n',
+      `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_gs","function":{"name":${JSON.stringify(name)},"arguments":${JSON.stringify(JSON.stringify(args))}}}]}}]}\n\n`,
+      'data: {"choices":[{"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n',
+      'data: [DONE]\n\n',
+    ]),
+
+  // A gateway catalogue: `owned_by` names the upstream, and it is the grouping
+  // signal rather than the id's prefix.
+  models: (ids) =>
+    json({
+      object: 'list',
+      data: ids.map((id) => ({
+        id,
+        object: 'model',
+        owned_by: id.includes('/') ? id.slice(0, id.indexOf('/')) : 'combo',
+      })),
+    }),
+
+  failure: (status) =>
+    json(
+      { error: { message: 'refused', type: 'invalid_request_error' } },
+      status,
+      status === 429 ? { 'retry-after': '7' } : {},
+    ),
+
+  malformed: () => new Response('not json at all', { status: 200 }),
+
+  route: (_url, init, scripted) =>
+    isGet(init) ? nineRouter.models(Object.values(GATEWAY_MODEL_IDS)) : scripted(),
+
+  inspect: openai.inspect,
+};
+
 /**
  * Every API provider the product registers.
  *
- * The conformance suite iterates this list. Adding a provider without adding
- * a pack leaves it untested, so the registry cross-check in the suite fails
- * rather than letting the omission pass quietly.
+ * The conformance suite iterates this list, and cross-checks it against
+ * `API_PROVIDER_FACTORIES` — the same list the service worker registers from —
+ * so a provider added without a pack fails a test instead of being quietly
+ * untested. That cross-check used to compare against three hardcoded names,
+ * which is how a fourth provider came to be registered and never conformance
+ * tested.
  */
-export const API_PROVIDER_PACKS: readonly ProviderWirePack[] = [openai, anthropic, gemini];
+export const API_PROVIDER_PACKS: readonly ProviderWirePack[] = [
+  openai,
+  anthropic,
+  gemini,
+  nineRouter,
+];
 
 export const API_PROVIDER_CASES = API_PROVIDER_PACKS.map(
   (pack) => [pack.factory.id, pack] as const,

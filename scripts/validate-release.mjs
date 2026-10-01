@@ -49,6 +49,27 @@ const files = walk(dist);
 const relPaths = files.map((f) => relative(dist, f).split('\\').join('/'));
 
 // ---------------------------------------------------------------------------
+// A2b. No platform metadata.
+//
+// Vite copies `publicDir` wholesale, so a `.DS_Store` left in `public/` by the
+// Finder reached `dist/` and then the archive — 6 KB of this machine's
+// metadata inside the extension, and an artifact whose contents depended on
+// the operating system that built it. `scripts/build.mjs` prunes it; this is
+// the assertion that the pruning still runs, because the packaging check below
+// only proves the archive is stable against *repeated* packing on one machine,
+// which litter satisfies perfectly well.
+// ---------------------------------------------------------------------------
+const LITTER = ['.DS_Store', 'Thumbs.db', 'desktop.ini'];
+const littered = relPaths.filter((path) => LITTER.includes(path.split('/').pop()));
+if (littered.length > 0) {
+  fail(
+    `The build output carries platform metadata: ${littered.join(', ')}. ` +
+      'It must not be shipped, and it makes the artifact depend on the machine ' +
+      'that built it.',
+  );
+}
+
+// ---------------------------------------------------------------------------
 // A3. Version is single-sourced.
 // ---------------------------------------------------------------------------
 const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));

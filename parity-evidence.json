@@ -3126,7 +3126,7 @@
           "mandatory": true,
           "status": "VERIFIED",
           "evidence": [
-            "tests/e2e/provider-switching.spec.ts :: the registry offers all three API providers and no web provider",
+            "tests/e2e/provider-switching.spec.ts :: the registry offers every API provider and no web provider",
             "tests/e2e/provider-switching.spec.ts :: a tool call from each provider drives the same browser action"
           ]
         },

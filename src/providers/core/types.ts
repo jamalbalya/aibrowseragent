@@ -101,6 +101,23 @@ export type CanonicalEvent =
   | { readonly type: 'done'; readonly response: CanonicalResponse }
   | { readonly type: 'error'; readonly error: AgentError };
 
+/**
+ * Capabilities a single request can ask for.
+ *
+ * Declared here rather than in `capability-guard.ts` because
+ * `ModelCapabilities.unverified` has to name them, and the guard imports this
+ * module. `capability-guard.ts` re-exports both so its own callers are
+ * unaffected.
+ */
+export const REQUESTABLE_CAPABILITIES = [
+  'vision',
+  'toolCalling',
+  'streaming',
+  'systemInstruction',
+] as const;
+
+export type RequestableCapability = (typeof REQUESTABLE_CAPABILITIES)[number];
+
 /** Capability matrix (specification section 69). */
 export interface ModelCapabilities {
   readonly text: boolean;
@@ -125,6 +142,56 @@ export interface ModelCapabilities {
   /** Maximum input tokens, or null when the provider does not report one. */
   readonly contextWindow: number | null;
   readonly maxOutputTokens: number | null;
+  /**
+   * Capabilities this report cannot speak for: **probe required**, not absent.
+   *
+   * A boolean has two values and a capability has three states — confirmed
+   * supported, confirmed unsupported, and not yet established. Collapsing the
+   * third into `false` is what made a gateway model's vision permanently
+   * unavailable: the adapter honestly could not know, wrote `false`, and every
+   * reader downstream — including the probe that existed to settle it — read
+   * that as "this model has no vision".
+   *
+   * So a capability named here has a boolean that is a **conservative
+   * placeholder**, and the authority is `CapabilityDoctor`. Two rules follow,
+   * and `capability-guard.ts` and `capability-doctor.ts` enforce them:
+   *
+   *  - a request for an unverified capability is refused **explicitly**, as
+   *    `capability_unverified` rather than `unsupported_capability`, so the
+   *    answer is "run the doctor" and never a silent "no";
+   *  - the doctor **probes** an unverified capability instead of skipping it,
+   *    and its measurement is what clears the entry.
+   *
+   * Absent or empty means every boolean above is a claim. Only the four
+   * requestable capabilities can appear, because they are the four the doctor
+   * measures and the four a request can ask for.
+   */
+  readonly unverified?: readonly RequestableCapability[];
+}
+
+/** Whether `capability` is a placeholder in `capabilities` rather than a claim. */
+export function isUnverified(
+  capabilities: ModelCapabilities,
+  capability: RequestableCapability,
+): boolean {
+  return capabilities.unverified?.includes(capability) ?? false;
+}
+
+/**
+ * The same capabilities with `capability` settled at `supported`.
+ *
+ * Used by the doctor, which is the only thing entitled to resolve the third
+ * state: a measurement replaces the placeholder and removes the entry.
+ */
+export function asVerified(
+  capabilities: ModelCapabilities,
+  capability: RequestableCapability,
+  supported: boolean,
+): ModelCapabilities {
+  const left = (capabilities.unverified ?? []).filter((entry) => entry !== capability);
+  // `unverified` is always written, including as an empty list: "measured, and
+  // the list is now empty" and "never had a list" must not be the same value.
+  return { ...capabilities, [capability]: supported, unverified: left };
 }
 
 export const UNKNOWN_CAPABILITIES: ModelCapabilities = {
@@ -140,6 +207,10 @@ export const UNKNOWN_CAPABILITIES: ModelCapabilities = {
   modelListing: false,
   contextWindow: null,
   maxOutputTokens: null,
+  // Every boolean above is a placeholder here, not a claim: this constant is
+  // what a connection holds before the doctor has run on it. Naming them keeps
+  // "no measurement yet" distinguishable from "measured, and absent".
+  unverified: REQUESTABLE_CAPABILITIES,
 };
 
 export interface ModelInfo {
@@ -174,6 +245,21 @@ export interface ProviderConfig {
    */
   readonly apiKey?: string;
   readonly model?: string;
+  /**
+   * Capabilities already **measured** for `model` on this connection.
+   *
+   * Supplied by the runtime, which holds the doctor's report and the
+   * `capabilityScope` proving which (connection, model) pair it was taken on.
+   * The adapter returns these from `getCapabilities` for that exact model, so
+   * the pre-flight check in `generate`/`stream` reads a measurement when one
+   * exists and the advertised placeholder when none does — one capability
+   * system, with the doctor at the top of it.
+   *
+   * Scoped by construction: the runtime only passes a measurement whose scope
+   * matches, and the adapter only returns it for an exact `modelId` match, so a
+   * measurement cannot leak to another model or another account.
+   */
+  readonly measuredCapabilities?: ModelCapabilities;
   readonly organization?: string;
   readonly project?: string;
   readonly extraHeaders?: Readonly<Record<string, string>>;

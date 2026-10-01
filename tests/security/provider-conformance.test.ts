@@ -40,7 +40,9 @@ import type {
   CanonicalEvent,
   CanonicalRequest,
   CanonicalToolSchema,
+  ModelCapabilities,
 } from '@/providers/core/types';
+import { API_PROVIDER_FACTORIES, API_PROVIDER_IDS } from '@/providers/registry/api-providers';
 import {
   API_PROVIDER_CASES,
   API_PROVIDER_PACKS,
@@ -128,12 +130,15 @@ async function connected(
   pack: ProviderWirePack,
   transport: ProviderTransport,
   model?: string,
+  measured?: ModelCapabilities,
 ): Promise<AIProviderAdapter> {
   const registry = new ProviderRegistry({ transport });
   registry.register(pack.factory);
   const adapter = registry.get(pack.factory.id);
   const config = model === undefined ? pack.config : { ...pack.config, model };
-  const result = await adapter.connect(config);
+  const result = await adapter.connect(
+    measured === undefined ? config : { ...config, measuredCapabilities: measured },
+  );
   expect(result.authenticated).toBe(true);
   return adapter;
 }
@@ -152,12 +157,19 @@ beforeEach(() => {
 describe('the suite covers every registered API provider', () => {
   it('has a pack for each one', () => {
     // The guard against a provider being added without being conformance
-    // tested: the registry is the source of truth, not this file.
-    expect(API_PROVIDER_PACKS.map((p) => p.factory.id).sort()).toEqual([
-      'anthropic',
-      'gemini',
-      'openai-compatible',
-    ]);
+    // tested — and now an actual guard. It used to compare against three
+    // hardcoded names while claiming "the registry is the source of truth, not
+    // this file", so when a fourth provider was registered the assertion still
+    // passed and the provider went through none of the matrices below.
+    expect(API_PROVIDER_PACKS.map((pack) => pack.factory.id).sort()).toEqual(API_PROVIDER_IDS);
+  });
+
+  it('packs the same factory objects the build registers', () => {
+    // Identity, not just the id: a pack holding a look-alike factory would
+    // exercise something this build does not ship.
+    for (const pack of API_PROVIDER_PACKS) {
+      expect(API_PROVIDER_FACTORIES, pack.factory.id).toContain(pack.factory);
+    }
   });
 });
 
@@ -358,7 +370,10 @@ describe.each(API_PROVIDER_CASES)('%s', (_id, pack) => {
   // 10. vision where supported
   it('carries an image in its own representation when the model accepts one', async () => {
     const rec = recorder(pack, () => pack.text('seen'));
-    const adapter = await connected(pack, rec.transport, pack.visionModel);
+    // An adapter that cannot know gets the doctor's measurement handed to it,
+    // which is the only thing that unlocks an image for it. One that describes
+    // its own model families needs nothing.
+    const adapter = await connected(pack, rec.transport, pack.visionModel, pack.visionMeasurement);
     await adapter.generate(
       request(pack, {
         egress: context(pack, { modelId: pack.visionModel }),
@@ -441,7 +456,10 @@ describe.each(API_PROVIDER_CASES)('%s', (_id, pack) => {
     ).rejects.toSatisfy(
       (error: unknown) =>
         error instanceof ProviderRequestError &&
-        error.category === 'unsupported_capability' &&
+        // Which of the two refusals is this provider's own answer: a
+        // measurement that says no, or the absence of a measurement. Both are
+        // terminal and neither drops the image.
+        error.category === pack.noVisionCategory &&
         error.agentError.code === 'MODEL_UNSUPPORTED' &&
         error.agentError.retryable === false,
     );
@@ -640,8 +658,9 @@ describe.each(API_PROVIDER_CASES)('%s', (_id, pack) => {
       expect(error!.category, `status ${status}`).toBe(category);
       expect(error!.providerId).toBe(pack.factory.id);
       expect(error!.httpStatus).toBe(status);
-      // The provider's own vocabulary survives beside the normalised one.
-      if (pack.factory.id !== 'openai-compatible') {
+      // The provider's own vocabulary survives beside the normalised one,
+      // where the wire format carries one at all.
+      if (pack.carriesProviderCode) {
         expect(error!.providerCode, `status ${status}`).toBeDefined();
       }
       // Never the credential, in any field the UI or a log might render.

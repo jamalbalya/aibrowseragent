@@ -29,6 +29,16 @@ export const PROVIDER_ERROR_CATEGORIES = [
   'transient_provider_failure',
   'invalid_request',
   'unsupported_capability',
+  /**
+   * The request needs a capability nobody has established yet.
+   *
+   * Distinct from `unsupported_capability` on purpose. That one is a
+   * measurement — this model was asked and cannot. This one is the absence of a
+   * measurement, and reporting it as the former is how a gateway model that had
+   * simply never been probed came to look permanently incapable. The user action
+   * differs too: run the capability doctor, rather than pick another model.
+   */
+  'capability_unverified',
   'malformed_response',
   'transport_blocked',
   'provider_unavailable',
@@ -50,6 +60,9 @@ const CATEGORY_CODES: Record<ProviderErrorCategory, AgentError['code']> = {
   transient_provider_failure: 'MODEL_ERROR',
   invalid_request: 'INVALID_ARGUMENT',
   unsupported_capability: 'MODEL_UNSUPPORTED',
+  // Terminal like its neighbour: retrying cannot produce a measurement, only
+  // running the doctor can.
+  capability_unverified: 'MODEL_UNSUPPORTED',
   malformed_response: 'MODEL_ERROR',
   transport_blocked: 'POLICY_BLOCKED',
   provider_unavailable: 'NETWORK_ERROR',

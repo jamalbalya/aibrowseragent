@@ -26,7 +26,7 @@ import type {
   CanonicalToolSchema,
   ModelCapabilities,
 } from '@/providers/core/types';
-import { textMessage, UNKNOWN_CAPABILITIES } from '@/providers/core/types';
+import { isUnverified, textMessage, UNKNOWN_CAPABILITIES } from '@/providers/core/types';
 
 const log = getLogger('provider');
 
@@ -363,8 +363,16 @@ export class CapabilityDoctor {
     checks.push({ ...streamCheck, id: 'streaming', label: 'Streaming' });
 
     // 6. Vision.
+    //
+    // Skipped only on a *confirmed* absence. An adapter that cannot know —
+    // a gateway in front of an upstream this build has never heard of — says so
+    // with `unverified`, and the whole point of that third state is that the
+    // probe runs. Reading the placeholder boolean here, as this check used to,
+    // made the doctor decline to measure precisely the case it existed for, so
+    // "advertises false, let the doctor decide" decided nothing and vision was
+    // permanently unavailable through a gateway.
     const visionCheck = await timed(async () => {
-      if (!advertised.vision) {
+      if (!advertised.vision && !isUnverified(advertised, 'vision')) {
         return {
           id: 'vision',
           label: 'Vision',
@@ -474,11 +482,16 @@ export class CapabilityDoctor {
           id: 'context',
           label: 'Context capacity',
           status: 'pass' as const,
-          // Stated rather than implied: the floor was measured, the window was not.
+          // Stated rather than implied: the floor was measured, the window was
+          // not. A provider that reports no window at all gets a sentence that
+          // says so, rather than the word "null" rendered into a number.
           detail:
-            `Carried a ${counted}-token prompt, counted by the provider. The ` +
-            `${advertisedWindow}-token window is this build's advertised figure for the ` +
-            'model and was not measured.',
+            `Carried a ${counted}-token prompt, counted by the provider. ` +
+            (advertisedWindow === null
+              ? 'This provider reports no context-window figure, so the ceiling is unknown; ' +
+                'only the floor above was measured.'
+              : `The ${advertisedWindow}-token window is this build's advertised figure for ` +
+                'the model and was not measured.'),
         };
       } catch (error) {
         return {
@@ -504,6 +517,11 @@ export class CapabilityDoctor {
       audioInput: advertised.audioInput,
       // Demonstrated by every check above having carried one and been answered.
       systemInstruction: advertised.systemInstruction && textCheck.status === 'pass',
+      // Nothing is left unverified: every requestable capability above was
+      // either probed here or is a confirmed absence the probe skipped. An
+      // empty list rather than an absent field, so "measured" stays
+      // distinguishable from "never asked".
+      unverified: [],
       modelListing: modelCheck.status === 'pass',
       contextWindow: advertised.contextWindow,
       maxOutputTokens: advertised.maxOutputTokens,

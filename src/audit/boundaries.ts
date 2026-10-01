@@ -87,6 +87,30 @@ export const MAX_ORIGIN = SCHEME_PREFIX_WIDTH + MAX_DNS_NAME + PORT_SUFFIX.lengt
 /** The generic bound for a scalar string field. */
 export const MAX_STRING = 256;
 
+/**
+ * How wide a string is **once serialised**, excluding its quotes.
+ *
+ * Every string bound in this file is a bound on this number rather than on
+ * `value.length`, and the difference is not cosmetic. A record is validated
+ * against `MAX_EVENT_BYTES` as JSON, and JSON escapes: a `"` or a `\` costs two
+ * characters, and a C0 control character costs six as `\u0000`. Counting code
+ * units at the field and counting serialised characters at the record meant the
+ * two bounds measured different things, so the field limits did not imply the
+ * record limit.
+ *
+ * Measured rather than modelled. `JSON.stringify` is the function that will
+ * actually serialise the record, so asking it is the only way to be right about
+ * every case — escapes, lone surrogates, and whatever a future engine decides
+ * to escape — instead of maintaining a table of multipliers that drifts.
+ *
+ * Emoji and other ordinary non-ASCII are unaffected: `JSON.stringify` leaves
+ * them literal, so their serialised width is their code-unit length and a
+ * limit of 256 still means 128 emoji, exactly as before.
+ */
+export function serialisedWidth(value: string): number {
+  return JSON.stringify(value).length - 2;
+}
+
 /** An identifier this build minted. See `isOpaqueId` in `audit-log.ts`. */
 export const MAX_OPAQUE_ID = 80;
 
@@ -205,6 +229,12 @@ export function fieldValueWidth(key: string): number {
   }
   if (NUMERIC_FIELDS.has(key)) return 20;
   if (BOOLEAN_FIELDS.has(key)) return 5;
+  // Exact, now that the limit bounds the *serialised* width: the value cannot
+  // contribute more than its limit plus its two quotes, whatever it contains.
+  // While the limit bounded `value.length` instead, this was an under-estimate
+  // by up to six times, and the proof it feeds was correspondingly wrong — a
+  // quote-filled `connector.auth` serialised to 5505 characters against a
+  // 4096 budget while every field was inside its own limit.
   return fieldLimit(key) + 2;
 }
 

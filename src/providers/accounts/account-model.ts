@@ -89,6 +89,20 @@ export interface ConnectedAccount {
    * which model is sent.
    */
   readonly upstreamKey?: string;
+  /**
+   * Set when the last discovery did not offer `modelId`.
+   *
+   * Persisted rather than re-derived, because the runtime resolves a provider
+   * without discovering a catalogue — it has an account, a key and a model id,
+   * and making every task fetch `/models` first would put a network round trip
+   * in front of each one. So discovery writes the verdict down and the runtime
+   * reads it.
+   *
+   * Only ever set by comparing the exact id against a catalogue that was
+   * actually read, and cleared the moment that exact id appears again. It is
+   * never a reason to pick a different model: see `model-selection.ts`.
+   */
+  readonly modelStale?: true;
   readonly capabilities: ModelCapabilities | null;
   readonly capabilityScope: CapabilityScope | null;
   readonly status: AccountStatus;
@@ -179,16 +193,34 @@ export function accountAfterSelection(
   account: ConnectedAccount,
   modelId: string,
 ): ConnectedAccount {
+  // Choosing a model clears the stale marker. The user picked from a list this
+  // build had just discovered, so the selection is current by construction —
+  // and leaving the flag set would refuse a model that is demonstrably there.
+  // `modelStale` is dropped rather than set to `false`: the field's presence is
+  // the state, so an absent field and a stored `false` must not both exist.
+  const { modelStale: _wasStale, ...rest } = account;
   if (capabilitiesApplyTo(account, account.connectionId, modelId)) {
-    return { ...account, modelId };
+    return { ...rest, modelId };
   }
   return {
-    ...account,
+    ...rest,
     modelId,
     capabilities: null,
     capabilityScope: null,
     lastValidated: null,
   };
+}
+
+/**
+ * The account with its stale marker set or cleared from a discovery verdict.
+ *
+ * One function so the two discovery routes cannot drift, and so the "absent
+ * field means current" rule is applied in a single place.
+ */
+export function accountAfterCatalogue(account: ConnectedAccount, stale: boolean): ConnectedAccount {
+  if (stale) return { ...account, modelStale: true };
+  const { modelStale: _cleared, ...rest } = account;
+  return rest;
 }
 
 /**

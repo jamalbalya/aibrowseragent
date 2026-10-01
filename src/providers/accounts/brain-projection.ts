@@ -58,6 +58,11 @@ export function connectionForBrain(account: ConnectedAccount | null): ProviderCo
     // model is sent, and it is omitted rather than defaulted when the account
     // has none, because a provider without groups has no such level.
     ...(account.upstreamKey === undefined ? {} : { upstreamKey: account.upstreamKey }),
+    // Projected so the panel can say *why* the model it is showing will not
+    // run, instead of leaving the user to discover it when a task fails. Like
+    // `upstreamKey` it is omitted rather than defaulted, because the absence of
+    // the field is what "current" means.
+    ...(account.modelStale === undefined ? {} : { modelStale: account.modelStale }),
     authKind: account.authKind,
     ...(scoped && account.capabilities ? { capabilities: account.capabilities } : {}),
     createdAt: account.createdAt,

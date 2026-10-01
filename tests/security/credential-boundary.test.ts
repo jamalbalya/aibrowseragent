@@ -205,10 +205,23 @@ describe('TEST-SECURITY-059 — credential access matrix', () => {
     expect(body).toContain('withoutSecret');
     expect(body).toContain('redact(');
     // And every adapter threads the key down rather than leaving it to shape
-    // matching alone.
+    // matching alone. Matched as a shape rather than a fixed string: the
+    // OpenAI-compatible helper also takes the instance's provider id now, so
+    // what this has to assert is that the credential is still the last
+    // argument — not the exact spelling of the call.
     for (const adapter of ['openai-compatible', 'gemini', 'anthropic']) {
       const source = code(readFileSync(join(ROOT, `providers/adapters/${adapter}.ts`), 'utf8'));
-      expect(source, adapter).toContain('toHttpFailure(response, this.config?.apiKey)');
+      const threaded = source.match(/toHttpFailure\([^)]*\)/g) ?? [];
+      expect(threaded.length, `${adapter} calls toHttpFailure`).toBeGreaterThan(0);
+      let callSites = 0;
+      for (const call of threaded) {
+        // The declaration matches too, and it is the one with type
+        // annotations in it; a call site has none.
+        if (call.includes(':')) continue;
+        callSites += 1;
+        expect(call, adapter).toContain('this.config?.apiKey');
+      }
+      expect(callSites, `${adapter} has call sites`).toBeGreaterThan(0);
       expect(source, adapter).not.toMatch(/readErrorBody\(response\)\s*;/);
     }
   });

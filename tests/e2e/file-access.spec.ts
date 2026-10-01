@@ -23,7 +23,10 @@ import type { BrowserContext, Worker } from '@playwright/test';
 import { connectProvider, expect, test, waitForTask } from './fixtures/extension';
 
 /** A file that exists on any Linux runner and is not secret. */
-const LOCAL_FILE = 'file:///etc/hostname';
+// A local file that exists on every platform this suite runs on. `/etc/hostname`
+// is Linux-only, so on macOS these cases passed their navigation and then found
+// no tab, which reads as "Chrome allowed it" when nothing had been attempted.
+const LOCAL_FILE = 'file:///etc/hosts';
 
 /** Opens a real file:// tab and returns its Chrome tab id. */
 async function openLocalFile(

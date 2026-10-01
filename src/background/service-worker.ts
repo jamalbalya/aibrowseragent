@@ -47,13 +47,11 @@ import { installNetworkInterceptor } from '@/security/egress/network-interceptor
 import { buildEgressEvidence, type BuiltEgressEvidence } from '@/security/egress/egress-evidence';
 import { connectorDestination, providerDestination } from '@/security/egress/destination';
 import { CapabilityDoctor } from '@/providers/capability-doctor/capability-doctor';
-import {
-  openAICompatibleFactory,
-  OPENAI_COMPATIBLE_PROVIDER_ID,
-} from '@/providers/adapters/openai-compatible';
-import { anthropicFactory, ANTHROPIC_PROVIDER_ID } from '@/providers/adapters/anthropic';
-import { geminiFactory, GEMINI_PROVIDER_ID } from '@/providers/adapters/gemini';
-import { nineRouterFactory, NineRouterAdapter } from '@/providers/adapters/nine-router';
+import { OPENAI_COMPATIBLE_PROVIDER_ID } from '@/providers/adapters/openai-compatible';
+import { ANTHROPIC_PROVIDER_ID } from '@/providers/adapters/anthropic';
+import { GEMINI_PROVIDER_ID } from '@/providers/adapters/gemini';
+import { API_PROVIDER_FACTORIES } from '@/providers/registry/api-providers';
+import { discoverCatalogue } from '@/providers/registry/discovery';
 import { UNKNOWN_CAPABILITIES } from '@/providers/core/types';
 import { ToolRegistry } from '@/tools/registry/tool-registry';
 import { ChromeBrowserAdapter } from '@/tools/browser/chrome-adapter';
@@ -178,7 +176,8 @@ import {
 import { migrateLegacyConnection } from '@/providers/accounts/migrate-legacy';
 import { connectionForBrain } from '@/providers/accounts/brain-projection';
 import { protocolForLegacyProvider } from '@/providers/accounts/migrate-legacy';
-import { deriveAccountLabel } from '@/providers/accounts/account-model';
+import { accountAfterCatalogue, deriveAccountLabel } from '@/providers/accounts/account-model';
+import { modelSelectionState, selectionRefusal } from '@/providers/registry/model-selection';
 import { IdentityProfileStore } from '@/identity/identity-profile';
 import { LocalIdentityStore, resolveOwner } from '@/identity/local-identity';
 import { SessionStore } from '@/identity/session-store';
@@ -445,10 +444,10 @@ const providerRegistry = new ProviderRegistry({ transport: providerTransport });
 // transport above. Web providers are foundation only and are not registered
 // here: registering one would make it selectable, and inference against an
 // authenticated web session remains closed.
-providerRegistry.register(openAICompatibleFactory);
-providerRegistry.register(anthropicFactory);
-providerRegistry.register(geminiFactory);
-providerRegistry.register(nineRouterFactory);
+// Registered from the shared list rather than named here, so the conformance
+// suite can enumerate exactly what this build registers. See
+// `api-providers.ts` for why that matters.
+for (const factory of API_PROVIDER_FACTORIES) providerRegistry.register(factory);
 const capabilityDoctor = new CapabilityDoctor();
 
 // ---------------------------------------------------------------------------
@@ -1894,6 +1893,84 @@ interface ResolvedProvider {
  * endpoint refused them. The *notification* carries neither: see
  * `Notifier.providerDisconnected`.
  */
+/**
+ * Records that a selection became stale, or stopped being so.
+ *
+ * A state change worth reading back: the model a task would have used stopped
+ * existing, and the build refused rather than substituting. Counts and the
+ * verdict only — the model id is already a recordable field, so it is named,
+ * but no catalogue contents are.
+ */
+async function recordSelectionStaleness(
+  providerId: string,
+  modelId: string | null,
+  stale: boolean,
+): Promise<void> {
+  await auditLog.record({
+    type: 'provider.selected',
+    // `denied` rather than a warning: the consequence of the verdict is that
+    // the runtime will refuse to run on this selection.
+    outcome: stale ? 'denied' : 'info',
+    providerId,
+    code: stale ? 'model_selection_stale' : 'model_selection_restored',
+    ...(modelId === null || modelId.length === 0 ? {} : { modelId }),
+  });
+}
+
+/**
+ * Marks or clears an account's stale selection from a fresh catalogue.
+ *
+ * Only writes when the verdict changed, so an unchanged connection does not
+ * churn storage or the trail on every refresh.
+ */
+async function reconcileSelection(
+  account: ConnectedAccount,
+  catalogue: { readonly models: readonly { readonly id: string }[] },
+): Promise<void> {
+  const state = modelSelectionState(
+    account.modelId,
+    catalogue.models.map((model) => model.id),
+    // An empty list is how a failed discovery also returns, so it is treated as
+    // "could not ask" rather than "offers nothing". `model-selection.ts` has
+    // the reasoning: an endpoint that is down has not withdrawn a model.
+    catalogue.models.length > 0,
+  );
+  const stale = state.kind === 'stale';
+  if (stale === (account.modelStale === true)) return;
+  await accountStore.put(accountAfterCatalogue(account, stale));
+  await recordSelectionStaleness(account.providerId, account.modelId, stale);
+}
+
+/**
+ * One discovery record, written by every route that discovers a catalogue.
+ *
+ * A function rather than two copies, and called before either route decides
+ * what shape its answer takes. Both properties are the fix for the same
+ * defect: the record used to be inline, after an early return that only a
+ * gateway got past, so three providers in four discovered a catalogue and left
+ * no trace of it.
+ *
+ * `providerId` is the caller's actual provider, so the trail names what was
+ * really reached. Counts only, never model names or upstream aliases: those are
+ * provider-authored text, and the trail records decisions rather than
+ * catalogues. The credential is not a parameter here and cannot become one —
+ * it never leaves the adapter's request headers.
+ */
+async function recordCatalogueDiscovered(
+  providerId: string,
+  discovered: number,
+  refused: number,
+): Promise<void> {
+  await auditLog.record({
+    type: 'provider.selected',
+    outcome: 'info',
+    providerId,
+    code: 'catalogue_discovered',
+    recordCount: discovered,
+    ...(refused === 0 ? {} : { removedCount: refused }),
+  });
+}
+
 async function noteProviderDisconnected(
   providerId: string,
   connectionId: string | undefined,
@@ -1916,10 +1993,25 @@ async function noteProviderDisconnected(
   void notifier.providerDisconnected(providerId);
 }
 
-async function resolveFromAccount(account: ConnectedAccount): Promise<ResolvedProvider> {
+async function resolveFromAccount(
+  account: ConnectedAccount,
+  options: { readonly allowStale?: boolean } = {},
+): Promise<ResolvedProvider> {
   if (!account.modelId) {
     throw new ProviderUnavailable(
       `${account.displayName} has no model selected. Choose one in Settings.`,
+    );
+  }
+  // A selection the last discovery did not offer stops here, before a key is
+  // read or a request is built. This is the block that makes "never
+  // substitute" more than an intention: there is no code path from a stale
+  // selection to a provider request, so nothing downstream has to remember not
+  // to guess. Only the discovery route itself passes `allowStale`, because it
+  // is what lets the user choose again.
+  if (account.modelStale === true && options.allowStale !== true) {
+    throw new ProviderUnavailable(
+      selectionRefusal({ kind: 'stale', modelId: account.modelId }) ??
+        'The selected model is no longer available.',
     );
   }
   const apiKey = await credentialStore.getConnectionKey(credentialKeyFor(account.connectionId));
@@ -1931,11 +2023,24 @@ async function resolveFromAccount(account: ConnectedAccount): Promise<ResolvedPr
   }
 
   const adapter = providerRegistry.get(account.providerId);
+  // Only a measurement taken on *this* account and *this* model counts. One
+  // expression, used twice below, so the adapter and the runtime cannot come to
+  // disagree about whether a measurement applies.
+  const measured =
+    account.capabilityScope?.connectionId === account.connectionId &&
+    account.capabilityScope?.modelId === account.modelId
+      ? (account.capabilities ?? null)
+      : null;
   const auth = await adapter.connect({
     providerId: account.providerId,
     ...(account.baseUrl === undefined ? {} : { baseUrl: account.baseUrl }),
     apiKey,
     model: account.modelId,
+    // Handed in so the adapter's pre-flight capability check reads the doctor's
+    // measurement rather than its own advertised placeholder. Omitted when
+    // nothing has been measured for this exact pair, which leaves the adapter
+    // reporting `unverified` and the request refused as such.
+    ...(measured === null ? {} : { measuredCapabilities: measured }),
   });
   if (!auth.authenticated) {
     const reason =
@@ -1946,12 +2051,7 @@ async function resolveFromAccount(account: ConnectedAccount): Promise<ResolvedPr
 
   return {
     adapter,
-    // Only a measurement taken on *this* account and *this* model counts.
-    capabilities:
-      account.capabilityScope?.connectionId === account.connectionId &&
-      account.capabilityScope?.modelId === account.modelId
-        ? (account.capabilities ?? UNKNOWN_CAPABILITIES)
-        : UNKNOWN_CAPABILITIES,
+    capabilities: measured ?? UNKNOWN_CAPABILITIES,
     providerId: account.providerId,
     connectionId: account.connectionId,
     modelId: account.modelId,
@@ -1975,17 +2075,33 @@ async function resolveProvider(): Promise<ResolvedProvider> {
     );
   }
 
+  if (connection.modelStale === true) {
+    throw new ProviderUnavailable(
+      selectionRefusal({ kind: 'stale', modelId: connection.modelId }) ??
+        'The selected model is no longer available.',
+    );
+  }
+
   const adapter = providerRegistry.get(settings.activeProviderId);
   const config = await credentialStore.getConfig(settings.activeProviderId);
   const apiKey = await credentialStore.getApiKey(settings.activeProviderId);
 
   // The worker may have restarted since the provider was connected, so the
   // adapter instance is reconnected from stored configuration each time.
+  // The pre-account slot holds one provider and one model, and
+  // `connectionAfterSwitch` clears `capabilities` whenever either changes — so
+  // a measurement present here was taken on this exact pair.
+  const slotMeasured =
+    connection.providerId === settings.activeProviderId &&
+    connection.modelId === settings.activeModelId
+      ? (connection.capabilities ?? null)
+      : null;
   const auth = await adapter.connect({
     providerId: settings.activeProviderId,
     ...(config?.baseUrl === undefined ? {} : { baseUrl: config.baseUrl }),
     ...(apiKey === undefined ? {} : { apiKey }),
     model: settings.activeModelId,
+    ...(slotMeasured === null ? {} : { measuredCapabilities: slotMeasured }),
     ...(config?.organization === undefined ? {} : { organization: config.organization }),
     ...(config?.project === undefined ? {} : { project: config.project }),
   });
@@ -2000,7 +2116,7 @@ async function resolveProvider(): Promise<ResolvedProvider> {
 
   return {
     adapter,
-    capabilities: connection.capabilities ?? UNKNOWN_CAPABILITIES,
+    capabilities: slotMeasured ?? UNKNOWN_CAPABILITIES,
     providerId: settings.activeProviderId,
     modelId: settings.activeModelId,
   };
@@ -2389,38 +2505,31 @@ router.on('provider.getConnection', async () => ({
 }));
 
 router.on('provider.listModels', async ({ providerId }) => {
-  const adapter = providerRegistry.get(providerId);
-  const models = await adapter.listModels();
-  // The id is passed through untouched. A gateway model id contains `/` in the
-  // ordinary case, and this is the first of several stages that must not read it
-  // as structured data.
-  const listed = models.map((model) => ({
-    id: model.id,
-    displayName: model.displayName,
-    ...(model.upstreamKey === undefined ? {} : { upstreamKey: model.upstreamKey }),
-  }));
-  // A provider whose catalogue is a hierarchy reports its levels; one without
-  // groups reports none, and the panel shows a flat list as before.
-  const hierarchy = adapter instanceof NineRouterAdapter ? adapter : null;
-  if (hierarchy === null) return { models: listed };
-  const groups = hierarchy.groups().map((group) => ({
-    key: group.key,
-    displayName: group.displayName,
-    kind: group.kind,
-    modelCount: group.modelCount,
-  }));
-  const refused = hierarchy.refusedCount();
-  await auditLog.record({
-    type: 'provider.selected',
-    outcome: 'info',
+  // One shared path for every provider, which is also where the discovery
+  // event is recorded. See `discovery.ts` for why it is not inline here.
+  const catalogue = await discoverCatalogue(
+    providerRegistry.get(providerId),
     providerId,
-    code: 'catalogue_discovered',
-    // Counts, never names: an upstream alias is provider-authored text and the
-    // trail records decisions rather than catalogues.
-    recordCount: listed.length,
-    ...(refused === 0 ? {} : { removedCount: refused }),
-  });
-  return { models: listed, groups, ...(refused === 0 ? {} : { refused }) };
+    recordCatalogueDiscovered,
+  );
+  // And the pre-account slot gets the same reconciliation the accounts route
+  // gives an account: a selection the provider no longer offers is marked, not
+  // repaired.
+  const connection = await settingsStore.getConnection();
+  if (connection && connection.providerId === providerId) {
+    const state = modelSelectionState(
+      connection.modelId,
+      catalogue.models.map((model) => model.id),
+      catalogue.models.length > 0,
+    );
+    const stale = state.kind === 'stale';
+    if (stale !== (connection.modelStale === true)) {
+      const { modelStale: _previous, ...rest } = connection;
+      await settingsStore.setConnection(stale ? { ...rest, modelStale: true } : rest);
+      await recordSelectionStaleness(providerId, connection.modelId, stale);
+    }
+  }
+  return catalogue;
 });
 
 router.on('provider.runDoctor', async ({ providerId, modelId, quick }) => {
@@ -2472,12 +2581,18 @@ router.on('provider.setActive', async ({ providerId, modelId, upstreamKey }) => 
   // when the caller names none — a stale group from a previous provider would
   // point the UI at a level that no longer exists. It never affects which model
   // is sent: that is `modelId`, exactly as the catalogue gave it.
-  const connection =
+  const grouped =
     upstreamKey === undefined
       ? (Object.fromEntries(
           Object.entries(base).filter(([field]) => field !== 'upstreamKey'),
         ) as typeof base)
       : { ...base, upstreamKey };
+  // And the stale marker is dropped, for the same reason
+  // `accountAfterSelection` drops it: the user chose this model from a list
+  // this build had just discovered, so keeping the flag would refuse a model
+  // that is demonstrably on offer. Dropped rather than set to `false` —
+  // presence of the field is the state.
+  const { modelStale: _chosenAfresh, ...connection } = grouped;
   await settingsStore.setConnection(connection);
   if (switched) {
     await auditLog.record({
@@ -2771,6 +2886,9 @@ function accountView(account: ConnectedAccount, brainId: string | null): Connect
     ...(account.baseUrl === undefined ? {} : { baseUrl: account.baseUrl }),
     modelId: account.modelId,
     ...(account.upstreamKey === undefined ? {} : { upstreamKey: account.upstreamKey }),
+    // So the panel can explain a selection it will not run, rather than
+    // showing it as ordinary and letting the next task fail.
+    ...(account.modelStale === undefined ? {} : { modelStale: account.modelStale }),
     capabilities: account.capabilities,
     status: account.status,
     ...(account.statusReason === undefined ? {} : { statusReason: account.statusReason }),
@@ -3333,35 +3451,21 @@ router.on('accounts.disconnect', async ({ connectionId }) => {
 router.on('accounts.listModels', async ({ connectionId }) => {
   const account = await accountStore.get(connectionId);
   if (!account) throw new Error('That connection no longer exists.');
-  const resolved = await resolveFromAccount({ ...account, modelId: account.modelId ?? 'probe' });
-  const models = await resolved.adapter.listModels();
-  // Ids pass through untouched; see `provider.listModels` for why.
-  const listed = models.map((model) => ({
-    id: model.id,
-    displayName: model.displayName,
-    ...(model.upstreamKey === undefined ? {} : { upstreamKey: model.upstreamKey }),
-  }));
-  const hierarchy = resolved.adapter instanceof NineRouterAdapter ? resolved.adapter : null;
-  if (hierarchy === null) return { models: listed };
-  const refused = hierarchy.refusedCount();
-  await auditLog.record({
-    type: 'provider.selected',
-    outcome: 'info',
-    providerId: account.providerId,
-    code: 'catalogue_discovered',
-    recordCount: listed.length,
-    ...(refused === 0 ? {} : { removedCount: refused }),
-  });
-  return {
-    models: listed,
-    groups: hierarchy.groups().map((group) => ({
-      key: group.key,
-      displayName: group.displayName,
-      kind: group.kind,
-      modelCount: group.modelCount,
-    })),
-    ...(refused === 0 ? {} : { refused }),
-  };
+  // `allowStale` because this is the route that *fixes* a stale selection: it
+  // has to be able to discover a catalogue for a connection whose stored model
+  // is the problem, or the user could never pick a new one.
+  const resolved = await resolveFromAccount(
+    { ...account, modelId: account.modelId ?? 'probe' },
+    { allowStale: true },
+  );
+  // The same shared path, recording against this account's own provider.
+  const catalogue = await discoverCatalogue(
+    resolved.adapter,
+    account.providerId,
+    recordCatalogueDiscovered,
+  );
+  await reconcileSelection(account, catalogue);
+  return catalogue;
 });
 
 router.on('accounts.runDoctor', async ({ connectionId, modelId, quick }) => {

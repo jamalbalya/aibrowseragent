@@ -302,11 +302,21 @@ test('84-P-037 — the agent stops rather than repeating an action that changes 
     kind: 'tool_calls' as const,
     calls: [{ name: 'browser_click', arguments: { elementId: 'e1-1' } }],
   };
-  provider.script([
-    { kind: 'tool_calls', calls: [{ name: 'browser_read_page', arguments: {} }] },
+  const scripted = [
+    { kind: 'tool_calls' as const, calls: [{ name: 'browser_read_page', arguments: {} }] },
     ...Array.from({ length: 12 }, () => click),
-    { kind: 'text', text: 'Never reached.' },
-  ]);
+    { kind: 'text' as const, text: 'Never reached.' },
+  ];
+  provider.script(scripted);
+
+  // Counted from here, not from zero. `connectProvider` runs the capability
+  // doctor, and the doctor's probes reach this same mock provider — so a total
+  // request count measures the task *plus* however many probes the doctor
+  // currently performs. That made this assertion quietly depend on an
+  // unrelated number: when the doctor gained one probe, the count reached the
+  // scripted length and the case failed while the behaviour under test was
+  // unchanged. The task's own turns are what the clause is about.
+  const beforeTask = provider.requests.length;
 
   const { task } = await send('task.create', {
     objective: 'Press search until something changes.',
@@ -331,6 +341,6 @@ test('84-P-037 — the agent stops rather than repeating an action that changes 
   expect(finished.result?.summary ?? '').toContain('identical arguments');
   // And it stopped before exhausting the script — the detector acted, rather
   // than the turn budget running out or the script simply ending.
-  expect(provider.requests.length).toBeLessThan(12);
+  expect(provider.requests.length - beforeTask).toBeLessThan(scripted.length);
   await page.close();
 });

@@ -10,7 +10,14 @@
  * actually emitted the HTML, and the result is validated.
  */
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, copyFileSync } from 'node:fs';
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  copyFileSync,
+  readdirSync,
+  rmSync,
+} from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -95,6 +102,34 @@ if (!existsSync(noticesSource)) {
   process.exit(1);
 }
 copyFileSync(noticesSource, resolve(root, 'dist', NOTICES));
+
+// Platform litter, removed before anything is packaged.
+//
+// Vite copies `publicDir` wholesale, so a `.DS_Store` that macOS leaves in
+// `public/` is copied into `dist/` and then into the release archive — where it
+// was, 6 KB of Finder metadata inside the extension. Two things were wrong with
+// that: it ships a file that is nobody's business but this machine's, and it
+// makes the artifact depend on the operating system that built it, so the
+// "deterministic over repeated packing" check passed while the same commit
+// produced a different archive on Linux.
+//
+// Pruned here rather than by deleting `public/.DS_Store`, because Finder puts
+// it back.
+const LITTER = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini']);
+function prune(dir) {
+  let removed = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = resolve(dir, entry.name);
+    if (entry.isDirectory()) removed += prune(full);
+    else if (LITTER.has(entry.name)) {
+      rmSync(full);
+      removed += 1;
+    }
+  }
+  return removed;
+}
+const pruned = prune(resolve(root, 'dist'));
+if (pruned > 0) console.log(`  pruned ${pruned} platform metadata file(s) from dist/`);
 
 console.log(`\n✓ Build complete. Side panel: ${found}`);
 console.log('  Load dist/ as an unpacked extension at chrome://extensions.');

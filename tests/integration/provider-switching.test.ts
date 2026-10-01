@@ -20,6 +20,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentRuntime, type RuntimeCallbacks } from '@/agent/runtime/agent-runtime';
 import { ProviderRegistry } from '@/providers/registry/provider-registry';
+import { API_PROVIDER_IDS } from '@/providers/registry/api-providers';
 import { createBrowserTools } from '@/tools/browser/browser-tools';
 import { createTask, type AgentTask } from '@/tasks/task-model';
 import { ConsentStore } from '@/security/egress/consent';
@@ -126,6 +127,7 @@ async function liveAdapter(
   pack: ProviderWirePack,
   consent: ConsentStore,
   script: () => Response,
+  measured?: ModelCapabilities,
 ): Promise<{ adapter: AIProviderAdapter; reached: string[] }> {
   const reached: string[] = [];
   const transport = createGuardedTransport({
@@ -138,7 +140,11 @@ async function liveAdapter(
   const registry = new ProviderRegistry({ transport });
   registry.register(pack.factory);
   const adapter = registry.get(pack.factory.id);
-  await adapter.connect(pack.config);
+  // The runtime hands a scoped measurement to `connect` when the doctor has
+  // run on this exact pair; passing one here is how a test stands in for that.
+  await adapter.connect(
+    measured === undefined ? pack.config : { ...pack.config, measuredCapabilities: measured },
+  );
   return { adapter, reached };
 }
 
@@ -485,7 +491,7 @@ describe('a provider cannot be registered twice or reached before it exists', ()
         .list()
         .map((f) => f.id)
         .sort(),
-    ).toEqual(['anthropic', 'gemini', 'openai-compatible']);
+    ).toEqual(API_PROVIDER_IDS);
     // Web providers are foundation only: none is registered, so none is
     // selectable, so no web inference can be reached from here.
     expect(registry.list().every((f) => f.kind === 'api')).toBe(true);
@@ -499,7 +505,17 @@ describe('vision stays on the same guarded path', () => {
     });
     vi.stubGlobal('fetch', forbidden);
     try {
-      const { adapter, reached } = await liveAdapter(pack, consent, () => pack.text('seen'));
+      // Whatever establishes vision for this provider: a measurement for the
+      // adapters that cannot claim it from a model name, nothing for the ones
+      // that describe their own model families. The point of the case is the
+      // *path*, not the permission — an image must not acquire a route of its
+      // own — so each provider is given the permission it legitimately needs.
+      const { adapter, reached } = await liveAdapter(
+        pack,
+        consent,
+        () => pack.text('seen'),
+        pack.visionMeasurement,
+      );
       await adapter.generate({
         systemInstruction: '',
         messages: [
@@ -508,7 +524,7 @@ describe('vision stays on the same guarded path', () => {
             content: [{ type: 'image', data: 'QUFBQQ==', mimeType: 'image/png' }],
           },
         ],
-        egress: egressFor(pack),
+        egress: egressFor(pack, { modelId: pack.visionModel }),
       });
       // No separate route for image traffic: the same endpoint, the same gate.
       expect(reached.some((url) => url.includes(pack.generateFragment))).toBe(true);
