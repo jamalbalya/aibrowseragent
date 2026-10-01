@@ -76,8 +76,9 @@ const probe = await (async (): Promise<{
   ids: string[];
   owners: string[];
   usable: string;
+  unusable: string;
 }> => {
-  const empty = { ids: [], owners: [], usable: '' };
+  const empty = { ids: [], owners: [], usable: '', unusable: '' };
   if (!CONFIGURED) return empty;
   let ids: string[] = [];
   let owners: string[] = [];
@@ -116,6 +117,7 @@ const probe = await (async (): Promise<{
   // asking. Capped, and with the smallest possible body, because every attempt
   // spends the user's quota.
   let usable = '';
+  let unusable = '';
   for (const id of ids.slice(0, 8)) {
     try {
       const response = await fetch(`${BASE_URL}/chat/completions`, {
@@ -128,11 +130,16 @@ const probe = await (async (): Promise<{
         usable = id;
         break;
       }
+      // Discovered and listed, but this account cannot run it. Recorded as it
+      // is found rather than probed for separately, so Phase G costs no
+      // additional upstream calls — and discovered by *asking*, never by
+      // recognising a name.
+      if (unusable.length === 0) unusable = id;
     } catch {
       // Try the next one; an unusable model is not a failure of this file.
     }
   }
-  return { ids, owners, usable };
+  return { ids, owners, usable, unusable };
 })();
 
 const liveIds: string[] = probe.ids;
@@ -141,11 +148,15 @@ const liveOwners: string[] = probe.owners;
 const liveModel: string = liveIds[0] ?? '';
 /** A model this account can actually run. Required by the completion cases. */
 const usableModel: string = probe.usable;
+/** A model the catalogue lists that this account cannot run, if there is one. */
+const unusableModel: string = probe.unusable;
 const reachable = liveIds.length > 0;
 /** Configured *and* answering. */
 const LIVE = CONFIGURED && reachable;
 /** Live *and* with a model the account may use. */
 const RUNNABLE = LIVE && usableModel.length > 0;
+/** Live *and* with a listed model the account may not use. */
+const HAS_UNUSABLE = LIVE && unusableModel.length > 0;
 
 const area = (): SerializedStorageArea => new SerializedStorageArea(new MemoryStorageArea());
 
@@ -597,6 +608,128 @@ describe('TEST-9RLIVE-001 — Phase E: the capability doctor, really run', () =>
       expect(log.degradedReason()).toBeNull();
     },
     180_000,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Phase G — discovered, listed, and not usable by this account
+// ---------------------------------------------------------------------------
+
+describe('TEST-9RLIVE-001 — Phase G: listed is not the same as usable', () => {
+  it.skipIf(!HAS_UNUSABLE)(
+    'G1 — a listed model the account cannot run is measured as failed, with its reason kept',
+    async () => {
+      // The condition only a real service produces. A gateway's catalogue is
+      // the union of what its upstreams *name*; entitlement is a separate fact
+      // the upstream answers at request time. On the account this was written
+      // against, several listed models reply
+      // `"… is not supported when using Codex with a ChatGPT account"`.
+      //
+      // It is deliberately *not* the stale case — the model is in the
+      // catalogue — and the architecture already had the right place for it:
+      // the capability doctor measures one exact (connection, model) pair.
+      const { adapter, log } = harness();
+      await adapter.connect({
+        providerId: NINE_ROUTER_PROVIDER_ID,
+        baseUrl: BASE_URL,
+        apiKey: API_KEY,
+        model: unusableModel,
+      });
+
+      // Quick mode: one upstream call, which is all that is needed to learn
+      // that the account cannot use it. Probing a model nobody selected, or
+      // running the full battery to establish unavailability, would spend the
+      // user's quota to populate a UI.
+      const report = await new CapabilityDoctor().run(adapter, unusableModel, { quick: true });
+
+      expect(report.modelId).toBe(unusableModel);
+      expect(report.providerId).toBe(NINE_ROUTER_PROVIDER_ID);
+      expect(report.readiness).toBe('FAILED');
+      // The real reason, preserved rather than reduced to a status. This is
+      // what `doctorVerdict` stores as `statusReason`.
+      expect(report.summary.trim().length).toBeGreaterThan(0);
+      // Nothing was demonstrated, so nothing is claimed.
+      expect(report.capabilities.text).toBe(false);
+
+      // And it is still in the catalogue, so it is not stale and must not be
+      // marked as such.
+      expect(modelSelectionState(unusableModel, liveIds, true).kind).toBe('valid');
+
+      // The failure was recorded against the gateway, and carries no credential.
+      const trail = JSON.stringify(await log.list(30));
+      expect(trail).not.toContain(API_KEY);
+      expect(log.degradedReason()).toBeNull();
+    },
+    120_000,
+  );
+
+  it.skipIf(!(HAS_UNUSABLE && RUNNABLE))(
+    'G2 — the failed verdict does not follow the user to a model that works',
+    async () => {
+      // The defect this pass fixed, end to end on real verdicts: the
+      // measurement was discarded on a model switch and its conclusion was
+      // not, so the connection kept reading `failed` for a model that runs.
+      const { adapter } = harness();
+      await adapter.connect({
+        providerId: NINE_ROUTER_PROVIDER_ID,
+        baseUrl: BASE_URL,
+        apiKey: API_KEY,
+        model: unusableModel,
+      });
+      const failed = await new CapabilityDoctor().run(adapter, unusableModel, { quick: true });
+      expect(failed.readiness).toBe('FAILED');
+
+      // Stored the way `accounts.runDoctor` stores it.
+      const measured = account(unusableModel);
+      const afterFailure: ConnectedAccount = {
+        ...measured,
+        capabilities: failed.capabilities,
+        capabilityScope: { connectionId: 'conn_live', modelId: unusableModel },
+        lastValidated: failed.generatedAt,
+        status: 'failed',
+        statusReason: failed.summary,
+      };
+      expect(afterFailure.statusReason).toBe(failed.summary);
+
+      // Then the user picks the model that works.
+      const switched = accountAfterSelection(afterFailure, usableModel);
+      expect(switched.modelId).toBe(usableModel);
+      expect(switched.status).toBe('connected');
+      expect('statusReason' in switched).toBe(false);
+      expect(switched.capabilityScope).toBeNull();
+      expect(switched.lastValidated).toBeNull();
+
+      // And the model that works really does work, measured the same way.
+      const { adapter: second } = harness();
+      await second.connect({
+        providerId: NINE_ROUTER_PROVIDER_ID,
+        baseUrl: BASE_URL,
+        apiKey: API_KEY,
+        model: usableModel,
+      });
+      const healthy = await new CapabilityDoctor().run(second, usableModel, { quick: true });
+      expect(healthy.readiness).not.toBe('FAILED');
+    },
+    180_000,
+  );
+
+  it.skipIf(!HAS_UNUSABLE)(
+    'G3 — an unusable model is never removed from the catalogue',
+    async () => {
+      // Silently shortening the list the user is choosing from is its own kind
+      // of lie, and it would also be wrong: entitlement can change without the
+      // catalogue changing at all.
+      const { adapter } = harness();
+      await adapter.connect({
+        providerId: NINE_ROUTER_PROVIDER_ID,
+        baseUrl: BASE_URL,
+        apiKey: API_KEY,
+        model: unusableModel,
+      });
+      const models = await adapter.listModels();
+      expect(models.map((model) => model.id)).toContain(unusableModel);
+      expect(models.map((model) => model.id)).toEqual(liveIds);
+    },
   );
 });
 

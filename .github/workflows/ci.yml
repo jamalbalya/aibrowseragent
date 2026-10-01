@@ -25,7 +25,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          # `.nvmrc` rather than a literal, so CI and a developer's shell read
+          # the same pinned version from the same file. A major-only '22' here
+          # drifted from the version the suite is actually validated on.
+          node-version-file: '.nvmrc'
           cache: npm
 
       # `npm ci` fails when package-lock.json is out of step with package.json,
@@ -98,7 +101,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          # `.nvmrc` rather than a literal, so CI and a developer's shell read
+          # the same pinned version from the same file. A major-only '22' here
+          # drifted from the version the suite is actually validated on.
+          node-version-file: '.nvmrc'
           cache: npm
 
       - name: Install dependencies
@@ -140,7 +146,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          # `.nvmrc` rather than a literal, so CI and a developer's shell read
+          # the same pinned version from the same file. A major-only '22' here
+          # drifted from the version the suite is actually validated on.
+          node-version-file: '.nvmrc'
           cache: npm
 
       - name: Install dependencies

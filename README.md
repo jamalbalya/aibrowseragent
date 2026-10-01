@@ -341,11 +341,19 @@ is requested despite its cost.
 
 ## Status
 
-**Not released.** This extension has never been submitted to or published on
-the Chrome Web Store. A production artifact is built and hashed locally; see
+**Submitted, not published.** An artifact has been submitted to the Chrome Web
+Store and its last known status is `Pending Review`. It is **not approved** and
+**not published**: there is no public listing. That status is what the account
+owner reported, not something this repository can observe.
+
+The artifact under review is the one uploaded at submission time, which is
+**not** the artifact a fresh build produces now — engineering has continued
+since. See
+[docs/release/README.md](docs/release/README.md#two-artifacts-and-which-one-is-which)
+for the distinction and
 [docs/release/chrome-web-store-submission-checklist.md](docs/release/chrome-web-store-submission-checklist.md)
-for what submission would still require and which parts only an account owner
-can do.
+for the pre-submission checklist and which parts only an account owner can
+do.
 
 ## Licence
 

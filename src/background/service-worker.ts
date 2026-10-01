@@ -52,6 +52,7 @@ import { ANTHROPIC_PROVIDER_ID } from '@/providers/adapters/anthropic';
 import { GEMINI_PROVIDER_ID } from '@/providers/adapters/gemini';
 import { API_PROVIDER_FACTORIES } from '@/providers/registry/api-providers';
 import { discoverCatalogue } from '@/providers/registry/discovery';
+import { doctorVerdict } from '@/providers/capability-doctor/doctor-verdict';
 import { UNKNOWN_CAPABILITIES } from '@/providers/core/types';
 import { ToolRegistry } from '@/tools/registry/tool-registry';
 import { ChromeBrowserAdapter } from '@/tools/browser/chrome-adapter';
@@ -2547,12 +2548,7 @@ router.on('provider.runDoctor', async ({ providerId, modelId, quick }) => {
       modelId,
       capabilities: report.capabilities,
       lastValidated: report.generatedAt,
-      status:
-        report.readiness === 'AGENT_READY'
-          ? 'connected'
-          : report.readiness === 'FAILED'
-            ? 'failed'
-            : 'limited',
+      ...doctorVerdict(report),
     };
     await settingsStore.setConnection(connection);
     broadcastEvent({ type: 'provider.statusChanged', connection });
@@ -3478,19 +3474,17 @@ router.on('accounts.runDoctor', async ({ connectionId, modelId, quick }) => {
   });
 
   // The measurement is stamped with the account and model it was taken on, so
-  // nothing downstream can mistake it for evidence about another.
+  // nothing downstream can mistake it for evidence about another. The verdict
+  // goes with it: `statusReason` is dropped first so a healthy run cannot leave
+  // a previous failure's wording attached to a model that works.
+  const { statusReason: _previous, ...base } = account;
   await accountStore.put({
-    ...account,
+    ...base,
     modelId,
     capabilities: report.capabilities,
     capabilityScope: { connectionId, modelId },
     lastValidated: report.generatedAt,
-    status:
-      report.readiness === 'AGENT_READY'
-        ? 'connected'
-        : report.readiness === 'FAILED'
-          ? 'failed'
-          : 'limited',
+    ...doctorVerdict(report),
   });
   // The measurement the panel gates the composer on. Projected here rather
   // than left for the next brain change, because a capability check that

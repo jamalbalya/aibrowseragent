@@ -228,12 +228,40 @@ verifiable from here. A script claiming to check it would be inventing a fact.
 
 ## What has and has not happened
 
-- The artifact has been **built, validated and packaged**, and its digest
-  recorded, twice, reproducibly.
-- It has **not been uploaded** anywhere.
-- It has **not been submitted** for review.
-- It has **not been published**, and there is no public listing.
-- No developer account exists for it, and none is claimed.
+A submission **has** been made. That is new, and it changes what this document
+can claim — but less than it might appear, because it introduces a second
+artifact and the two must not be confused.
 
-There is no state between "packaged locally" and "live on the store" that this
-repository can reach on its own.
+- An artifact was **uploaded and submitted** for Chrome Web Store review by the
+  account owner.
+- Its **last known status is `Pending Review`**, as reported by the owner. This
+  repository cannot observe the store, so that status is a report rather than a
+  measurement, and it may have changed since it was written here.
+- It has **not been approved** and it has **not been published**. There is no
+  public listing, and nothing in this repository should be read as saying
+  otherwise.
+- The artifact a fresh `npm run release` produces today is a **different, later
+  artifact**, and it has **not been uploaded**. See the section below.
+
+### Two artifacts, and which one is which
+
+|                                  |                                                                                                                             |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **Submitted artifact**           | The archive the owner uploaded at submission time, built from the commit that was current then. It is the one under review. |
+| **Current engineering artifact** | What `npm run release` builds from `HEAD` now. Reproducible, validated, and **not uploaded**.                               |
+
+They are not the same bytes and will not be: the digest is a function of the
+source tree, so every commit touching `src/` or `public/` produces a different
+archive. Engineering has continued since the submission, so the current artifact
+is ahead of the submitted one by definition.
+
+Three facts about the submitted artifact live with the owner's Chrome Web Store
+account and are deliberately **not** written here: the item id, the submission
+date, and which digest was uploaded. This repository cannot verify any of them,
+and recording an unverifiable value in prose is how the digest in this very
+document went stale three times (see below). If a later submission needs them
+pinned, pin them where they can be checked — not here.
+
+What has not changed is the shape of the boundary: there is still no state
+between "packaged locally" and "live on the store" that this repository can
+reach, observe or advance on its own.

@@ -198,9 +198,15 @@ export function accountAfterSelection(
   // and leaving the flag set would refuse a model that is demonstrably there.
   // `modelStale` is dropped rather than set to `false`: the field's presence is
   // the state, so an absent field and a stored `false` must not both exist.
-  const { modelStale: _wasStale, ...rest } = account;
+  const { modelStale: _wasStale, statusReason: _priorReason, ...rest } = account;
   if (capabilitiesApplyTo(account, account.connectionId, modelId)) {
-    return { ...rest, modelId };
+    // The measurement still applies, so the verdict it produced still applies
+    // with it — including `statusReason`, which is put back here.
+    return {
+      ...rest,
+      modelId,
+      ...(account.statusReason === undefined ? {} : { statusReason: account.statusReason }),
+    };
   }
   return {
     ...rest,
@@ -208,6 +214,30 @@ export function accountAfterSelection(
     capabilities: null,
     capabilityScope: null,
     lastValidated: null,
+    // The verdict goes with the measurement that produced it.
+    //
+    // `status` and `statusReason` are written by `runDoctor`, which measures one
+    // exact (connection, model) pair — so they are part of that measurement and
+    // not a property of the account. Leaving them behind meant a model the
+    // upstream account cannot use left the whole connection reading `failed`,
+    // with that model's reason attached, after the user had switched to a model
+    // that works. The measurement was correctly discarded and its conclusion
+    // was not.
+    //
+    // `connectionAfterSwitch` has always done this for the pre-account slot, in
+    // the same words: configured, not yet validated. Whether a credential is
+    // stored is a different question from whether a model can do the work, and
+    // only the capability doctor answers the second one. This is the account
+    // path agreeing with the slot path.
+    //
+    // `disconnected` is the exception, because it is the one status that *is*
+    // about the credential rather than the model: `noteProviderDisconnected`
+    // sets it when the endpoint rejected the stored key, and no choice of model
+    // makes that untrue.
+    status: account.status === 'disconnected' ? 'disconnected' : 'connected',
+    ...(account.status === 'disconnected' && account.statusReason !== undefined
+      ? { statusReason: account.statusReason }
+      : {}),
   };
 }
 

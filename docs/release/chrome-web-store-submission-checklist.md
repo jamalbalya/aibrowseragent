@@ -11,11 +11,27 @@ Split into two halves that must not be confused:
 Nothing in the second half is fabricated, approximated, or marked done on the
 strength of the first half being done.
 
-> **This extension has not been submitted and is not published.** There is no
-> listing, no item id, and no developer account. No statement anywhere in this
-> repository should be read as saying otherwise. The artifact described in
-> [README.md](README.md) has been built and hashed locally and has gone
-> nowhere.
+> **A submission has been made. Its last known status is `Pending Review`.**
+>
+> The extension is **not approved and not published**: there is no public
+> listing, and no statement anywhere in this repository should be read as
+> saying otherwise. The status above is what the account owner reported — this
+> repository cannot observe the store, so it is a report rather than a
+> measurement and may be out of date.
+>
+> **The artifact under review is not the artifact this repository builds
+> today.** It is the archive the owner uploaded at submission time. Engineering
+> has continued since, so a fresh `npm run release` produces a different, later
+> archive that has **not** been uploaded. See
+> [README.md](README.md#two-artifacts-and-which-one-is-which).
+>
+> The checklist below is kept as it was written: a **pre-submission** checklist,
+> describing what had to be true before anything could be uploaded. It is
+> history, not a live status board, and the first submission is evidence that
+> its "REPOSITORY COMPLETE" half was in fact complete. The
+> "ACCOUNT OWNER ACTION REQUIRED" half below is left in its original wording
+> for the same reason — it records what the repository could never do, which is
+> still true of the next submission.
 
 ---
 

@@ -7,7 +7,7 @@
   "author": "jamalbalya",
   "type": "module",
   "engines": {
-    "node": ">=20.11"
+    "node": ">=22"
   },
   "scripts": {
     "dev": "vite build --watch",

@@ -1,12 +1,20 @@
 # Changelog
 
-## 0.1.0 — unreleased
+## 0.1.0 — submitted, under review
 
-**Not released.** This version has never been submitted to or published on the
-Chrome Web Store. It is the version in `package.json` and in the manifest, and
-a production artifact has been built and hashed from it locally — that is all.
-See [`docs/release/chrome-web-store-submission-checklist.md`](docs/release/chrome-web-store-submission-checklist.md)
-for what publishing would still require.
+**Not published.** A `0.1.0` artifact has been submitted to the Chrome Web
+Store and its last known status is `Pending Review`. It is not approved, there
+is no public listing, and that status is what the account owner reported rather
+than something this repository can observe.
+
+`0.1.0` is also still the version in `package.json` and the manifest, and work
+has continued since the submission — so the artifact a build produces from
+`HEAD` today is **not** the artifact under review, even though both carry this
+version number. See
+[`docs/release/README.md`](docs/release/README.md#two-artifacts-and-which-one-is-which)
+for that distinction and
+[`docs/release/chrome-web-store-submission-checklist.md`](docs/release/chrome-web-store-submission-checklist.md)
+for what publishing still requires.
 
 The version number is deliberately still `0.1.0`. Seven capabilities are
 PARTIAL and three are NOT-STARTED (see [`PARITY_MATRIX.md`](PARITY_MATRIX.md)),

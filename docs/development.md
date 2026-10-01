@@ -2,7 +2,16 @@
 
 ## Requirements
 
-Node.js 20.11+, Chrome 116+ (the Side Panel API's minimum).
+Node.js as pinned in `.nvmrc` — currently **22.23.3** — and Chrome 116+ (the
+Side Panel API's minimum).
+
+The Node version is pinned rather than given as a range because the range was
+wrong: `package.json` claimed `>=20.11`, and on Node 20 eight jsdom-environment
+test files fail to start on an ESM/CommonJS incompatibility in a transitive
+dependency of `jsdom`. Nothing in this project's own code is at fault, and the
+failure looks like a broken suite rather than a wrong toolchain — which is
+exactly why it is pinned. `nvm use` picks it up from `.nvmrc`, and CI reads the
+same file through `node-version-file`, so there is one source of truth.
 
 ## Setup
 

@@ -60,6 +60,19 @@ export interface ProviderConnection {
   readonly createdAt: number;
   readonly lastValidated?: number;
   readonly status: 'connected' | 'limited' | 'failed' | 'disconnected';
+  /**
+   * Why `status` is what it is, when there is something to say.
+   *
+   * The capability doctor's own summary, so the reason a model could not be
+   * used survives the report being discarded — "The provider rejected the
+   * request" and "The provider reported a server error. This is usually
+   * temporary" are different facts that send the user to different actions, and
+   * storing only `failed` lost both. Absent on a healthy run, so a stale reason
+   * cannot outlive the failure it described.
+   *
+   * `ConnectedAccount` carries the same field for the same reason.
+   */
+  readonly statusReason?: string;
 }
 
 export interface ProviderRegistryOptions {

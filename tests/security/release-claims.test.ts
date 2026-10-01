@@ -77,16 +77,66 @@ describe('the repository does not claim a publication that has not happened', ()
     }
   });
 
-  it('says plainly, in the release documentation, that it has not been submitted', () => {
+  it('says plainly, in the release documentation, what the store state is', () => {
     // The absence of a false claim is not the presence of a true one. A
     // reader looking for the answer should find it stated, not inferred from
     // nothing being said.
+    //
+    // The true statement changed when a submission was actually made, so this
+    // case changed with it. What it must not become is weaker: the three facts
+    // below are each a thing a reader could otherwise get wrong, and the third
+    // is the one that is easiest to state carelessly.
     const store = read('docs/release/chrome-web-store-submission-checklist.md');
-    expect(store).toContain('has not been submitted and is not published');
+    // 1. A submission exists, and its status is named rather than implied.
+    expect(store).toContain('A submission has been made');
+    expect(store).toContain('Pending Review');
+    // 2. Pending is not approved. Saying only "submitted" invites the reader
+    //    to assume the rest.
+    expect(store).toMatch(/not approved\*{0,2} and \*{0,2}not published/i);
+    // 3. The artifact under review is not the artifact this repository builds
+    //    today, and after this pass it never will be again — engineering
+    //    continues, the digest is a function of the source tree.
+    expect(store).toContain('not the artifact this repository builds');
+    // The status is a report, not a measurement: nothing here can see the store.
+    expect(store).toMatch(/cannot observe the store/i);
     expect(store).toContain('ACCOUNT OWNER ACTION REQUIRED');
     // And the thing that cannot be done here is named as such rather than
     // left as an empty checkbox somebody might tick.
     expect(store).toContain('Developer Agreement');
+  });
+
+  it('states the two-artifact distinction where the artifact is described', () => {
+    // The specific way this documentation could now become false without any
+    // sentence in it being wrong: a reader who finds a digest beside the words
+    // "submitted" will conclude that digest is under review.
+    const release = read('docs/release/README.md');
+    expect(release).toContain('Two artifacts, and which one is which');
+    expect(release).toContain('Submitted artifact');
+    expect(release).toContain('Current engineering artifact');
+    expect(release).toMatch(/has \*{0,2}not been uploaded/i);
+    // No digest anywhere in the submission section.
+    //
+    // This is narrower than "no digest in this file" on purpose, because two
+    // digests in it are legitimate and both say so where they appear: a
+    // reproducibility measurement taken at a named historical commit, and the
+    // `package-lock.json` hash that identifies the toolchain. Forbidding the
+    // subject would forbid the honesty, the same way the store-availability
+    // patterns above are written as whole claims rather than as the words
+    // "Chrome Web Store".
+    //
+    // What must never appear is a digest *beside submission language*, because
+    // a reader who finds one there will conclude it is the archive under
+    // review — and it would be stale the next time `src/` changed, which is the
+    // defect this document already had three times.
+    const section = release.slice(
+      release.indexOf('## What has and has not happened'),
+      release.indexOf('\n## ', release.indexOf('## What has and has not happened') + 4),
+    );
+    expect(section.length).toBeGreaterThan(200);
+    expect(section).toContain('Pending Review');
+    expect(section, 'a digest appears beside submission language').not.toMatch(/\b[0-9a-f]{64}\b/);
+    // And the rule itself is still written down, so the next person knows why.
+    expect(release).toContain('No digest is written into this document any more');
   });
 
   it('keeps the two halves of the checklist apart', () => {

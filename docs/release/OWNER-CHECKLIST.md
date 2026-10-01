@@ -8,9 +8,14 @@ except using it. Everything marked **YOU** cannot be done from a repository:
 it needs a Google account, a payment, an agreement you can be bound by, a
 credential you hold, or a person at a browser.
 
-> **Current state: not submitted, not published.** There is no listing, no
-> item id and no developer account. Nothing below has been performed on your
-> behalf.
+> **Current state: submitted, last known status `Pending Review`.** Not
+> approved, not published, no public listing.
+>
+> Nothing below has been performed on your behalf, and this list is kept in its
+> original wording because every step in it is still yours to take — for the
+> review now in progress, and for whatever is submitted next. The item id and
+> the submission date live in your Chrome Web Store account and deliberately
+> not here, because this repository cannot verify them.
 
 ---
 
