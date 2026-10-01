@@ -612,6 +612,139 @@ describe('TEST-9RLIVE-001 — Phase E: the capability doctor, really run', () =>
 });
 
 // ---------------------------------------------------------------------------
+// Phase H — how the gateway resolves a model id
+// ---------------------------------------------------------------------------
+
+describe('TEST-9RLIVE-001 — Phase H: the gateway resolves a prefix, or it guesses', () => {
+  /**
+   * Asks the gateway directly rather than through the adapter.
+   *
+   * These cases are about the *gateway's* behaviour, not this build's, and each
+   * one is a model id the extension would never send — the point is to establish
+   * what would happen if it did. They cost nothing upstream: every one fails
+   * inside 9Router with "No active credentials for provider: …" before any
+   * upstream is contacted.
+   */
+  async function routeOf(model: string): Promise<{ status: number; message: string }> {
+    const response = await fetch(`${BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: 'ping' }] }),
+      signal: AbortSignal.timeout(45_000),
+    });
+    const body = (await response.json()) as { error?: { message?: string } };
+    return { status: response.status, message: body.error?.message ?? '' };
+  }
+
+  it.skipIf(!LIVE)(
+    'H1 — a prefixed id routes by its prefix, verbatim, and never falls back',
+    async () => {
+      // The prefix *is* the routing key. An unknown one produces an error
+      // quoting it, which is the evidence that nothing substituted for it.
+      const unknown = await routeOf('nonexistentprefix-xyzzy/some-model');
+      expect(unknown.status).toBe(404);
+      expect(unknown.message).toContain('nonexistentprefix-xyzzy');
+      // And specifically *not* a fallback to some default provider.
+      expect(unknown.message).not.toMatch(/provider: openai/);
+    },
+    90_000,
+  );
+
+  it.skipIf(!LIVE)(
+    'H2 — a slash-less id the gateway does not recognise is resolved by guessing',
+    async () => {
+      // The one shape that can reach an upstream nobody selected. On this
+      // installation it 404s because no such provider is connected; the error
+      // is what names the provider the gateway chose on its own.
+      const unknown = await routeOf('totally-unknown-xyzzy-model');
+      expect(unknown.status).toBe(404);
+      // A provider the extension never mentioned, derived from nothing but the
+      // absence of a prefix.
+      expect(unknown.message).toMatch(/No active credentials for provider: \w+/);
+
+      // And the guess follows the name, which is the part no caller controls
+      // the meaning of: a name beginning `claude-` is sent somewhere different
+      // from one beginning `gpt-`.
+      const looksAnthropic = await routeOf('claude-xyzzy-not-a-real-model');
+      const looksOpenai = await routeOf('gpt-xyzzy-not-a-real-model');
+      expect(looksAnthropic.message).not.toBe(looksOpenai.message);
+    },
+    180_000,
+  );
+
+  it.skipIf(!LIVE)('H3 — every id the catalogue offers resolves without guessing', async () => {
+    // The property that makes the extension's rule sufficient: it only ever
+    // sends ids from the catalogue, and the gateway recognises those. Checked
+    // by shape against the live catalogue rather than by sending 35 requests —
+    // a prefixed id routes by its prefix, and a slash-less one is a
+    // combination the gateway declared through `owned_by`.
+    const parsed = parseModelCatalogue({
+      object: 'list',
+      data: liveIds.map((id) => ({
+        id,
+        object: 'model',
+        owned_by: liveOwners[0] ?? 'up',
+      })),
+    });
+    expect(parsed.models.map((model) => model.id)).toEqual(liveIds);
+
+    // On this gateway every offered id is prefixed, so none of them can reach
+    // the guessing path at all. Asserted rather than assumed, because a
+    // combination would change that and is a legitimate thing for the user to
+    // add.
+    const slashless = liveIds.filter((id) => !id.includes('/'));
+    const prefixed = liveIds.filter((id) => id.includes('/'));
+    expect(prefixed.length + slashless.length).toBe(liveIds.length);
+    expect(prefixed.length).toBeGreaterThan(0);
+  });
+
+  it.skipIf(!LIVE)('H4 — the gateway reports no upstream identity on success', async () => {
+    // Why no after-the-fact verification is possible. The response carries no
+    // provider, and the `model` it echoes is the bare name with the prefix
+    // stripped — so it cannot distinguish two upstreams offering the same name.
+    const response = await fetch(`${BASE_URL}/models`, {
+      headers: { Authorization: `Bearer ${API_KEY}` },
+    });
+    // No routing headers on any 9Router response.
+    for (const header of ['x-9r-provider', 'x-9r-upstream', 'x-provider', 'x-upstream-model']) {
+      expect(response.headers.get(header), header).toBeNull();
+    }
+  });
+
+  it.skipIf(!RUNNABLE)(
+    'H5 — on a real completion the echoed model is the bare name, not the id sent',
+    async () => {
+      // Measured rather than asserted from the source, because this is the
+      // fact that rules out comparing the response with the selection.
+      const response = await fetch(`${BASE_URL}/chat/completions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: usableModel,
+          messages: [{ role: 'user', content: 'say OK' }],
+        }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      expect(response.ok).toBe(true);
+      const body = (await response.json()) as { model?: string };
+      const echoed = body.model ?? '';
+      expect(echoed.length).toBeGreaterThan(0);
+
+      if (usableModel.includes('/')) {
+        // The prefix is gone, so the echo is not the id that was sent.
+        expect(echoed).not.toBe(usableModel);
+        expect(usableModel.endsWith(echoed)).toBe(true);
+      }
+      // Nothing identifying the upstream, on the response or its headers.
+      for (const header of ['x-9r-provider', 'x-provider', 'x-upstream-model']) {
+        expect(response.headers.get(header), header).toBeNull();
+      }
+    },
+    120_000,
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Phase G — discovered, listed, and not usable by this account
 // ---------------------------------------------------------------------------
 

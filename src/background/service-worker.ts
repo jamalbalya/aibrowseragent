@@ -52,6 +52,7 @@ import { ANTHROPIC_PROVIDER_ID } from '@/providers/adapters/anthropic';
 import { GEMINI_PROVIDER_ID } from '@/providers/adapters/gemini';
 import { API_PROVIDER_FACTORIES } from '@/providers/registry/api-providers';
 import { discoverCatalogue } from '@/providers/registry/discovery';
+import { OfferedModels } from '@/providers/registry/offered-models';
 import { doctorVerdict } from '@/providers/capability-doctor/doctor-verdict';
 import { UNKNOWN_CAPABILITIES } from '@/providers/core/types';
 import { ToolRegistry } from '@/tools/registry/tool-registry';
@@ -177,7 +178,11 @@ import {
 import { migrateLegacyConnection } from '@/providers/accounts/migrate-legacy';
 import { connectionForBrain } from '@/providers/accounts/brain-projection';
 import { protocolForLegacyProvider } from '@/providers/accounts/migrate-legacy';
-import { accountAfterCatalogue, deriveAccountLabel } from '@/providers/accounts/account-model';
+import {
+  accountAfterCatalogue,
+  accountAfterOfferedSelection,
+  deriveAccountLabel,
+} from '@/providers/accounts/account-model';
 import { modelSelectionState, selectionRefusal } from '@/providers/registry/model-selection';
 import { IdentityProfileStore } from '@/identity/identity-profile';
 import { LocalIdentityStore, resolveOwner } from '@/identity/local-identity';
@@ -1943,6 +1948,20 @@ async function reconcileSelection(
 }
 
 /**
+ * What the last successful discovery offered, per connection.
+ *
+ * Read by the selection routes so a model that no discovery offered does not
+ * get its stale marker cleared. `offered-models.ts` carries the reasoning,
+ * including the 9Router resolution rules that make an unrecognised slash-less
+ * id the one shape a gateway answers by choosing an upstream itself.
+ *
+ * In memory: after a restart there is no entry, the verdict is `unknown`, and
+ * nothing is asserted — which is correct, because an endpoint that has never
+ * answered a discovery in this lifetime cannot serve a request either.
+ */
+const offeredModels = new OfferedModels();
+
+/**
  * One discovery record, written by every route that discovers a catalogue.
  *
  * A function rather than two copies, and called before either route decides
@@ -2516,6 +2535,14 @@ router.on('provider.listModels', async ({ providerId }) => {
   // And the pre-account slot gets the same reconciliation the accounts route
   // gives an account: a selection the provider no longer offers is marked, not
   // repaired.
+  // Remembered so a later *selection* can be checked against it. Only a
+  // non-empty answer counts: an empty list is how a failed discovery returns
+  // too, and recording that would read as "this provider offers nothing".
+  offeredModels.record(
+    providerId,
+    undefined,
+    catalogue.models.map((model) => model.id),
+  );
   const connection = await settingsStore.getConnection();
   if (connection && connection.providerId === providerId) {
     const state = modelSelectionState(
@@ -2588,7 +2615,13 @@ router.on('provider.setActive', async ({ providerId, modelId, upstreamKey }) => 
   // this build had just discovered, so keeping the flag would refuse a model
   // that is demonstrably on offer. Dropped rather than set to `false` —
   // presence of the field is the state.
-  const { modelStale: _chosenAfresh, ...connection } = grouped;
+  const { modelStale: _chosenAfresh, ...cleared } = grouped;
+  // Same rule as `accounts.setBrain`: a model that no discovery offered does
+  // not get its marker cleared.
+  const connection =
+    offeredModels.wasOffered(modelId, providerId) === 'not-offered'
+      ? { ...cleared, modelStale: true as const }
+      : cleared;
   await settingsStore.setConnection(connection);
   if (switched) {
     await auditLog.record({
@@ -3460,6 +3493,11 @@ router.on('accounts.listModels', async ({ connectionId }) => {
     account.providerId,
     recordCatalogueDiscovered,
   );
+  offeredModels.record(
+    account.providerId,
+    connectionId,
+    catalogue.models.map((model) => model.id),
+  );
   await reconcileSelection(account, catalogue);
   return catalogue;
 });
@@ -3508,12 +3546,20 @@ router.on('accounts.setBrain', async ({ connectionId, modelId, upstreamKey }) =>
   // The group is remembered for the selection UI and dropped when none is named,
   // so a stale group cannot outlive the provider it belonged to. It is never an
   // input to which model is sent.
-  const updated: typeof selected =
+  const grouped: typeof selected =
     upstreamKey === undefined
       ? (Object.fromEntries(
           Object.entries(selected).filter(([field]) => field !== 'upstreamKey'),
         ) as typeof selected)
       : { ...selected, upstreamKey };
+  // The stale marker is cleared only when a discovery actually offered this
+  // model — see `accountAfterOfferedSelection` for why the text-box path makes
+  // that conditional rather than automatic.
+  const updated = accountAfterOfferedSelection(
+    grouped,
+    modelId,
+    offeredModels.wasOffered(modelId, existing.providerId, connectionId),
+  );
   const switched = updated.capabilities === null && existing.capabilities !== null;
   await accountStore.put(updated);
   await accountStore.setBrain(abaUserId, connectionId, modelId);

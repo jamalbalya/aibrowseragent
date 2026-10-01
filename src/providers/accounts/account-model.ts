@@ -242,6 +242,48 @@ export function accountAfterSelection(
 }
 
 /**
+ * How a selection's freshness was established.
+ *
+ * Produced by `OfferedModels`, and a plain union here so this module does not
+ * import it — the dependency runs the other way.
+ */
+export type SelectionProvenance = 'offered' | 'not-offered' | 'unknown';
+
+/**
+ * Applies a selection together with what is known about where it came from.
+ *
+ * `accountAfterSelection` always clears the stale marker, on the stated grounds
+ * that "the user picked from a list this build had just discovered". That holds
+ * for the dropdown and not for the text box beside it: `SettingsView` falls back
+ * to a free-text input whenever the filtered list is empty, so an id can arrive
+ * having never been in a catalogue.
+ *
+ * So the clear is conditional on provenance:
+ *
+ *  - `offered` — clear it. The selection is current.
+ *  - `not-offered` — put it back. The id was not in the catalogue, which for a
+ *    gateway is the one case that matters: 9Router resolves an unrecognised
+ *    **slash-less** id through a table of name patterns and then defaults to
+ *    `openai`, so sending one risks reaching an upstream nobody chose. (A
+ *    prefixed id fails loudly instead — `404 No active credentials for
+ *    provider: <prefix>` — but the rule is membership for every shape.)
+ *  - `unknown` — clear it, because nothing was established either way. No
+ *    discovery has succeeded in this worker lifetime, which means the endpoint
+ *    has not answered, which means it cannot serve a request either.
+ *
+ * One function so the two selection routes cannot drift, and so the decision is
+ * callable in a test rather than only readable in the worker's source.
+ */
+export function accountAfterOfferedSelection(
+  account: ConnectedAccount,
+  modelId: string,
+  provenance: SelectionProvenance,
+): ConnectedAccount {
+  const selected = accountAfterSelection(account, modelId);
+  return provenance === 'not-offered' ? accountAfterCatalogue(selected, true) : selected;
+}
+
+/**
  * The account with its stale marker set or cleared from a discovery verdict.
  *
  * One function so the two discovery routes cannot drift, and so the "absent
