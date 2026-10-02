@@ -164,6 +164,45 @@ installations claiming to be one owner.
 **Not shown.** No route carries it and no surface renders it. A person sees
 "your data is stored on this device", never an id.
 
+**And it keeps owning the data after a sign-in.** This is a correction, and the
+defect it fixes was reached by the ordinary path rather than an edge case.
+
+Every standalone installation mints a `loc_…` on first run. The first Google
+sign-in on that installation then produced two ids — `loc_…` labelling every
+row, and `usr_…` from the profile — and `resolveOwner` deliberately **failed
+closed** on that disagreement, on the reasoning that _"preferring the profile
+would hide every standalone row behind an owner that never wrote them;
+preferring the local id would ignore an authentication that did happen."_
+
+The first half of that is right. The second was wrong, and failing closed was
+much worse than either option, because `currentAbaUserId` answered the refusal
+by reporting persistence `RECOVERY_REQUIRED` — which `TaskManager` treats as
+work-blocking. **Signing in with Google stopped every task from starting**,
+with `POLICY_BLOCKED` and the message _"Stored state needs to be reviewed
+before work can continue."_ Nothing was wrong with the stored state. It also
+returned `unassigned`, so a connected account was stored unowned and the
+association offer presented an action that could never bind anything.
+
+Measured in real Chromium before it changed: both ids present, health
+`RECOVERY_REQUIRED / CONFLICT` with twelve reports, every `task.create`
+refused. The regression test is the full journey —
+`auth-google-protocol.spec.ts :: 03b`, which signs in, connects an account,
+selects it and **runs a task**.
+
+The rule now is one line: **the owner is the id that actually labelled the
+rows.** With a local identity present that is the installation id; with none it
+is the profile id, which is what older installations labelled their rows with.
+Preferring the installation id ignores no authentication, because this value is
+not an identity — it is the partition label described above, and the session is
+a separate record that stays exactly as real. What the sign-in deliberately
+does not do is relabel local data, which is the same promise this document
+makes about providers, in the other direction.
+
+The disagreement is still worth a person's decision, so it is reported rather
+than swallowed: `resolveOwner` returns the signed-in profile as `adoptable`,
+and until somebody adopts the data everything keeps working under the id that
+wrote it. An offer, not a refusal to work.
+
 **Conflict fails closed.** A profile id and an installation id that disagree —
 reachable if an installation ran standalone and later signed in — resolve to
 neither. Preferring the profile would hide every standalone row behind an

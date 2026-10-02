@@ -3202,15 +3202,16 @@
           "mandatory": true,
           "status": "VERIFIED",
           "evidence": [
-            "tests/integration/brain-routing.test.ts :: sends the selected account’s credential, endpoint and model",
-            "tests/integration/brain-routing.test.ts :: switches every subsequent request when the brain changes",
-            "tests/integration/brain-routing.test.ts :: reconnects the shared adapter on every resolution, so no credential lingers",
-            "tests/integration/brain-routing.test.ts :: keeps resolving the same account across repeated requests",
-            "tests/integration/brain-routing.test.ts :: refuses rather than falling back to the other connected account",
+            "tests/e2e/auth-google-protocol.spec.ts :: 03b — the whole journey: signed in, account connected, selected, and used",
+            "tests/e2e/multi-account.spec.ts :: a task refuses when the selected account is disconnected, with no fallback",
             "tests/e2e/multi-account.spec.ts :: the selected account is the one that actually serves the agent’s request",
-            "tests/e2e/multi-account.spec.ts :: a task refuses when the selected account is disconnected, with no fallback"
+            "tests/integration/brain-routing.test.ts :: keeps resolving the same account across repeated requests",
+            "tests/integration/brain-routing.test.ts :: reconnects the shared adapter on every resolution, so no credential lingers",
+            "tests/integration/brain-routing.test.ts :: refuses rather than falling back to the other connected account",
+            "tests/integration/brain-routing.test.ts :: sends the selected account’s credential, endpoint and model",
+            "tests/integration/brain-routing.test.ts :: switches every subsequent request when the brain changes"
           ],
-          "note": "§17 requires provider routing to be user-controlled and forbids silent switching. Every clause before this one tested a *component* of that — the registry, the switch state, the resume guard, the capability scope — and none of them tested the claim itself: that the account the user picked is the account the provider hears from. The evidence here asserts on the credential the endpoint actually received, with two accounts at the same origin differing only in their key, which is the one observation that distinguishes \"the right account\" from \"the right provider\". Added because the claim had no clause, not to move a status: P-033 was already PASS and still is."
+          "note": "§17 requires provider routing to be user-controlled and forbids silent switching. Every clause before this one tested a *component* of that — the registry, the switch state, the resume guard, the capability scope — and none of them tested the claim itself: that the account the user picked is the account the provider hears from. The evidence here asserts on the credential the endpoint actually received, with two accounts at the same origin differing only in their key, which is the one observation that distinguishes \"the right account\" from \"the right provider\". Added because the claim had no clause, not to move a status: P-033 was already PASS and still is. The journey case in `auth-google-protocol.spec.ts` covers the same claim with a Google session in force, and it is the regression test for a defect it found: signing in put persistence into RECOVERY_REQUIRED, which `TaskManager` treats as work-blocking, so **every task was refused while signed in**. See `docs/architecture/STANDALONE_ARCHITECTURE.md` §4a."
         },
         {
           "id": "P-033-C5",

@@ -231,39 +231,88 @@ export class LocalIdentityStore {
  * Which id owns the local data, given both the sign-in profile and the local
  * identity.
  *
- * A signed-in profile wins, because its id is what every row was labelled
- * with while it was in force. Absent one, the installation identity is the
- * owner. That ordering is the whole rule — but it leaves one state that must
- * not be resolved by preferring either side.
+ * ## The rule
  *
- * **Conflict: both exist and disagree.** Reachable if an installation ran
- * standalone, labelled its rows `loc_…`, and later signed in as `usr_…`.
- * Preferring the profile would hide every standalone row behind an owner
- * that never wrote them; preferring the local id would ignore an
- * authentication that did happen. Neither is safe, and adopting one into the
- * other is a migration with its own consent questions. So this fails closed
- * and leaves the decision to a person, exactly as `recordSignIn` already does
- * for a second user on one installation.
+ * **The owner is the id that actually labelled the rows.** With a local
+ * installation identity present, that is the installation id — it was minted
+ * before anybody could sign in and every row written since carries it. With
+ * no local identity, it is the profile id, which is what older installations
+ * labelled their rows with. With neither, there is no owner and that is a
+ * refusal rather than an invented one.
+ *
+ * ## The revision this replaces, and the defect it caused
+ *
+ * It used to prefer the **profile** when one existed, and to fail closed with
+ * `CONFLICT` when both existed and disagreed. The reasoning was: *"preferring
+ * the profile would hide every standalone row behind an owner that never
+ * wrote them; preferring the local id would ignore an authentication that did
+ * happen. Neither is safe."*
+ *
+ * The first half of that is right and is why the rule is now what it is. The
+ * second half was wrong, and failing closed was much worse than either option:
+ *
+ *  - the conflict is **reached by the ordinary path**, not an edge case. Every
+ *    standalone installation mints a `loc_…` on first run, so the first Google
+ *    sign-in on any installation produces it.
+ *  - `currentAbaUserId` answered the refusal by reporting
+ *    `persistence RECOVERY_REQUIRED`, which `TaskManager` treats as
+ *    work-blocking. **Signing in with Google stopped every task from
+ *    starting**, with `POLICY_BLOCKED` and the message *"Stored state needs to
+ *    be reviewed before work can continue."* Nothing was wrong with the
+ *    stored state. Measured in real Chromium: two ids present, health
+ *    `RECOVERY_REQUIRED/CONFLICT` with twelve reports, every `task.create`
+ *    refused.
+ *  - it also returned `UNASSIGNED_ABA_USER`, so a connected account was stored
+ *    unowned and `associateUnassigned` could never bind it — binding
+ *    `unassigned` to `unassigned` is no change. The panel offered an action
+ *    that silently did nothing.
+ *
+ * ## Why preferring the installation id does not ignore the sign-in
+ *
+ * Because this value is not an identity. It is, as the top of this file says
+ * at length, *a partition label for local data* — it authenticates nothing,
+ * authorises nothing, and no route, tool or egress decision reads it. The
+ * session is a separate record and stays exactly as real: `auth.status` still
+ * reports `signed_in`, the device is still registered, the refresh still
+ * rotates. What the sign-in deliberately does **not** do is relabel local
+ * data, which is the same promise the README makes about providers.
+ *
+ * The conflict is still worth surfacing, so it is reported rather than
+ * swallowed: `adoptable` names the signed-in profile whose id is not the one
+ * labelling the data, so a caller can offer the migration. Offering it is a
+ * decision for a person, exactly as the old comment said — but it is an offer,
+ * not a refusal to work.
  */
 export type OwnerResolution =
-  | { readonly ok: true; readonly abaUserId: string; readonly source: 'profile' | 'installation' }
+  | {
+      readonly ok: true;
+      readonly abaUserId: string;
+      readonly source: 'profile' | 'installation';
+      /**
+       * A signed-in profile that is not the owner of the local data.
+       *
+       * Present only when both ids exist and disagree. Informational: a caller
+       * may offer to adopt the data into that account, and until somebody
+       * does, everything keeps working under the id that wrote it.
+       */
+      readonly adoptable?: string;
+    }
   | { readonly ok: false; readonly failure: 'CONFLICT'; readonly reason: string };
 
 export function resolveOwner(
   profileUserId: string | null,
   installationId: string | null,
 ): OwnerResolution {
-  if (profileUserId !== null && installationId !== null && profileUserId !== installationId) {
+  if (installationId !== null) {
+    const disagrees = profileUserId !== null && profileUserId !== installationId;
     return {
-      ok: false,
-      failure: 'CONFLICT',
-      reason: 'a signed-in identity and a local identity disagree about who owns this data',
+      ok: true,
+      abaUserId: installationId,
+      source: 'installation',
+      ...(disagrees ? { adoptable: profileUserId } : {}),
     };
   }
   if (profileUserId !== null) return { ok: true, abaUserId: profileUserId, source: 'profile' };
-  if (installationId !== null) {
-    return { ok: true, abaUserId: installationId, source: 'installation' };
-  }
   return {
     ok: false,
     failure: 'CONFLICT',

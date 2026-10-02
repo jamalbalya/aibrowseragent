@@ -31,12 +31,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { startAuthBackend, type AuthBackend } from './fixtures/auth-backend';
+import { startMockProvider, type MockProvider } from './fixtures/mock-provider';
 import { BROWSER, killServiceWorker } from './fixtures/extension';
 import type { PanelRequestType, PanelResponse } from '../../src/messaging/protocol';
 
 const EXTENSION_PATH = resolve(import.meta.dirname, '../../dist-auth');
 
 let backend: AuthBackend;
+let provider: MockProvider;
 let context: BrowserContext;
 let worker: Worker;
 let panel: Page;
@@ -71,8 +73,34 @@ async function send<T extends PanelRequestType>(
   return envelope.value as PanelResponse<T>;
 }
 
+/**
+ * The service worker that is alive **now**.
+ *
+ * MV3 replaces a worker whenever it feels like it, and real work makes that
+ * more likely — a capability check issuing real requests is enough. An
+ * `evaluate` against a replaced handle does not throw; it answers from a dead
+ * context, and `chrome.storage.local.get(null)` comes back `{}`. A storage
+ * assertion reading that passes or fails for a reason that has nothing to do
+ * with storage.
+ *
+ * The spec already replaced the handle by hand after its own deliberate
+ * termination. Every storage read now goes through this instead, because the
+ * cases were otherwise only correct in the order they happened to run in —
+ * which is how adding one before them broke four.
+ */
+async function liveWorker(): Promise<Worker> {
+  const current = context.serviceWorkers()[0];
+  if (current) worker = current;
+  else worker = await context.waitForEvent('serviceworker');
+  return worker;
+}
+
 test.beforeAll(async () => {
   backend = await startAuthBackend();
+  // A local endpoint speaking Chat Completions, so the one journey case below
+  // can run an actual task on an actual selected account. Loopback over plain
+  // http, which the provider adapter accepts and refuses for any other host.
+  provider = await startMockProvider();
   profile = mkdtempSync(join(tmpdir(), 'aba-auth-e2e-'));
   context = await chromium.launchPersistentContext(profile, {
     // The shared fixture's options, reused rather than restated. They pin
@@ -107,6 +135,7 @@ test.afterAll(async () => {
   // teardown throws a second error that hides the first one.
   await context?.close();
   await backend?.close();
+  await provider?.close();
   if (profile !== undefined) rmSync(profile, { recursive: true, force: true });
 });
 
@@ -145,8 +174,173 @@ test('03 — the extension is signed in afterwards, with no token in the status'
   }
 });
 
+test('03b — the whole journey: signed in, account connected, selected, and used', async () => {
+  // **The product's stated experience, run end to end**, in the order a person
+  // does it, in a real browser, against the one build that has both halves:
+  //
+  //   1. signed in with Google — tests 02 and 03, above;
+  //   2. connect an AI provider account the user holds a key for;
+  //   3. verify that connection against the endpoint;
+  //   4. select it as the active AI;
+  //   5. submit a browser-agent task;
+  //   6. observe that *that* account served it.
+  //
+  // ## What writing this case found
+  //
+  // Step 5 was `POLICY_BLOCKED`. Signing in with Google put persistence into
+  // `RECOVERY_REQUIRED` and `TaskManager` refuses to start work in that state,
+  // so **every task was refused while signed in** — with "Stored state needs
+  // to be reviewed before work can continue", and nothing wrong with the
+  // stored state. The cause was `resolveOwner` failing closed on a conflict
+  // reached by the ordinary path: every standalone installation mints a
+  // `loc_…` on first run, so the first sign-in on any installation produced
+  // it. `local-identity.ts` has the rule that replaced it.
+  //
+  // This case is the regression test for that, and it is why it runs a task
+  // rather than stopping at the selection.
+  const status = await send('auth.status', {});
+  expect(status.state).toBe('signed_in');
+  const abaUserId = status.abaUserId;
+  expect(typeof abaUserId).toBe('string');
+
+  // Signing in brought no AI account with it. It never does.
+  const empty = await send('accounts.list', {});
+  expect(empty.accounts).toEqual([]);
+  expect(empty.brain).toBeNull();
+
+  // 2. Connect. A key the user holds; the sign-in produced nothing like it.
+  const supplied = 'journey-key-aaaaaaaaaaaaaaaa';
+  const connected = await send('accounts.connect', {
+    providerId: 'openai-compatible',
+    baseUrl: provider.baseUrl,
+    apiKey: supplied,
+    model: 'mock-model',
+    displayName: 'The journey account',
+  });
+  expect(connected.error).toBeUndefined();
+  const connectionId = connected.account!.connectionId;
+
+  // 3. Verify it, the way the panel does — real requests to the endpoint.
+  const doctor = await send('accounts.runDoctor', { connectionId, modelId: 'mock-model' });
+  expect(doctor.report.readiness).toBe('AGENT_READY');
+
+  // 4. Select it, and see it reported as active.
+  await send('accounts.setBrain', { connectionId, modelId: 'mock-model' });
+  expect((await send('accounts.list', {})).brain?.connectionId).toBe(connectionId);
+
+  // 5. Run a task. An ordinary page first, because an agent needs a tab it may
+  // act on — without one the refusal is `POLICY_BLOCKED` for a completely
+  // different and correct reason, which is how the defect above was initially
+  // mistaken for a missing page.
+  const target = await context.newPage();
+  await target.goto(`${provider.baseUrl.replace(/\/v1$/, '')}/blank`);
+  await target.bringToFront();
+
+  const before = provider.requests.filter((r) => r.path.includes('/chat/completions')).length;
+  provider.script([{ kind: 'text', text: 'Done.' }]);
+  const created = await send('task.create', { objective: 'Say something.' });
+
+  let final = '';
+  for (let waited = 0; waited < 200; waited += 1) {
+    const { task } = await send('task.get', { taskId: created.task.id });
+    if (task && ['COMPLETED', 'FAILED', 'CANCELLED'].includes(task.state)) {
+      final = task.state;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  // Started at all, which is the regression. Whether the mock's single reply
+  // satisfied the agent is not what this case is about.
+  expect(final).not.toBe('');
+
+  // 6. That account served it. The `Authorization` header the endpoint was
+  // presented is the key the user pasted in step 2 — not something derived
+  // from the Google session, and not a default.
+  const keys = provider.requests
+    .filter((r) => r.path.includes('/chat/completions'))
+    .slice(before)
+    .map((r) => (r.headers['authorization'] ?? '').replace(/^Bearer /, ''));
+  expect(keys.length).toBeGreaterThan(0);
+  expect(new Set(keys)).toEqual(new Set([supplied]));
+
+  // The separation, asserted on the wire: nothing the sign-in produced
+  // reached the provider, on any request.
+  const sentToProvider = JSON.stringify(provider.requests);
+  expect(sentToProvider).toContain(supplied);
+  expect(sentToProvider).not.toContain(String(abaUserId));
+  for (const term of ['refresh', 'id_token', 'aba_session']) {
+    expect(sentToProvider.toLowerCase(), term).not.toContain(term);
+  }
+  // And nothing the provider knows reached the authentication backend.
+  expect(JSON.stringify(backend.seen)).not.toContain(supplied);
+
+  await target.close();
+});
+
+test('03c — the account is owned by the partition that wrote it, not by the sign-in', async () => {
+  // **This case was written twice, and both drafts were wrong in a way worth
+  // keeping.**
+  //
+  // The first asserted that an account connected while signed in belongs to
+  // the signed-in Google user. It does not, and finding out why uncovered the
+  // defect 03b now guards: `resolveOwner` was failing closed, so the owner
+  // resolved to `unassigned` and the account was stored unowned.
+  //
+  // The second asserted the `unassigned` state and drove the association
+  // offer, on the belief that claiming it was a separate consented act. That
+  // was a description of the defect rather than of the design: with the owner
+  // resolution fixed, there is nothing unowned to claim. The account is
+  // labelled with the **installation** partition the moment it is connected,
+  // which is the id every other row on this installation already carries.
+  //
+  // What is left is the rule, which is worth pinning precisely because two
+  // reasonable readings of it were both wrong: **the data belongs to the
+  // installation, and the sign-in does not relabel it.** That is the same
+  // promise the README makes about providers, in the other direction.
+  const status = await send('auth.status', {});
+  const signedInAs = String(status.abaUserId);
+  expect(signedInAs).toMatch(/^usr_/);
+
+  const accountsRecord = async (): Promise<string> =>
+    await (
+      await liveWorker()
+    ).evaluate(async () => {
+      const local = await chrome.storage.local.get(null);
+      // The exact key. `includes('accounts')` also matches
+      // `accounts:legacy-migration`, which is a different record and was what
+      // this read the first time.
+      return JSON.stringify(local['accounts:accounts'] ?? null);
+    });
+
+  const owned = await accountsRecord();
+  // Owned by the installation partition, immediately.
+  expect(owned).toMatch(/"abaUserId":"loc_[0-9a-f]{32}"/);
+  // Not by the Google account, and not left unowned.
+  expect(owned).not.toContain(signedInAs);
+  expect(owned).not.toContain('"abaUserId":"unassigned"');
+  // The credential is not in the account record. It never is.
+  expect(owned).not.toContain('journey-key-aaaaaaaaaaaaaaaa');
+
+  // So there is nothing unowned to be offered. The association path exists for
+  // records written before installations had identities, and an offer made
+  // here would be an offer to adopt something that is already adopted.
+  const offer = await send('accounts.associationOffer', {});
+  expect(offer.accounts).toEqual([]);
+
+  // And the selection is intact, under that owner, after all of it.
+  const listed = await send('accounts.list', {});
+  expect(listed.brain).not.toBeNull();
+  expect(listed.accounts).toHaveLength(1);
+
+  // Tidied up, so the auth cases that follow start from the state they expect.
+  await send('accounts.disconnect', { connectionId: listed.brain!.connectionId });
+  expect((await send('accounts.list', {})).brain).toBeNull();
+});
+
 test('04 — the session is in extension storage and the access token is not on disk', async () => {
-  const stored = await worker.evaluate(async () => {
+  const stored = await (
+    await liveWorker()
+  ).evaluate(async () => {
     const local = await chrome.storage.local.get(null);
     const session = await chrome.storage.session.get(null);
     return { local: JSON.stringify(local), sessionKeys: Object.keys(session) };
@@ -255,7 +449,9 @@ test('11 — a provider credential is untouched by a whole sign-in', async () =>
 
   // The key is still in local storage, under its own connection key, and no
   // request the backend saw carried it.
-  const stored = await worker.evaluate(async (id: string) => {
+  const stored = await (
+    await liveWorker()
+  ).evaluate(async (id: string) => {
     const all = await chrome.storage.local.get(null);
     return JSON.stringify(all).includes(id);
   }, connectionId);
@@ -267,7 +463,9 @@ test('11 — a provider credential is untouched by a whole sign-in', async () =>
 });
 
 test('12 — no K1 material exists, and signing in did not create any', async () => {
-  const keys = await worker.evaluate(async () => {
+  const keys = await (
+    await liveWorker()
+  ).evaluate(async () => {
     const all = await chrome.storage.local.get(null);
     return Object.keys(all).join('|').toLowerCase();
   });
@@ -318,7 +516,9 @@ test('15 — a different Google account cannot inherit this installation’s ses
 });
 
 test('16 — the sign-in that was refused left no session for the other account', async () => {
-  const stored = await worker.evaluate(async () => {
+  const stored = await (
+    await liveWorker()
+  ).evaluate(async () => {
     const local = await chrome.storage.local.get(null);
     return JSON.stringify(local);
   });
@@ -352,7 +552,9 @@ test('17 — a refresh renews the session and keeps the same account', async () 
 });
 
 test('18 — the refresh went over the wire and rotated the stored token', async () => {
-  const storedBefore = await worker.evaluate(async () => {
+  const storedBefore = await (
+    await liveWorker()
+  ).evaluate(async () => {
     const all = await chrome.storage.local.get(null);
     return JSON.stringify(all);
   });
@@ -362,7 +564,9 @@ test('18 — the refresh went over the wire and rotated the stored token', async
   expect(result.ok).toBe(true);
 
   expect(backend.seen.slice(before)).toContain('/v1/auth/refresh');
-  const storedAfter = await worker.evaluate(async () => {
+  const storedAfter = await (
+    await liveWorker()
+  ).evaluate(async () => {
     const all = await chrome.storage.local.get(null);
     return JSON.stringify(all);
   });
@@ -486,7 +690,9 @@ test('24 — logout kept every local record, credential and preference', async (
   expect(preference.mode).toBe('local');
 
   // And the provider key is still in local storage under its own key.
-  const hasCredential = await worker.evaluate(async () => {
+  const hasCredential = await (
+    await liveWorker()
+  ).evaluate(async () => {
     const all = await chrome.storage.local.get(null);
     return Object.keys(all).some((key) => key.includes('credentials:conn:'));
   });
@@ -494,7 +700,9 @@ test('24 — logout kept every local record, credential and preference', async (
 });
 
 test('25 — no K1 material appeared across the whole refresh and logout cycle', async () => {
-  const keys = await worker.evaluate(async () => {
+  const keys = await (
+    await liveWorker()
+  ).evaluate(async () => {
     const all = await chrome.storage.local.get(null);
     return Object.keys(all).join('|').toLowerCase();
   });
@@ -514,7 +722,7 @@ test('26 — refresh and logout uploaded no local work', async () => {
 });
 
 test('14 — the configured build still added no permission and no host access', async () => {
-  const manifest = await worker.evaluate(() => chrome.runtime.getManifest());
+  const manifest = await (await liveWorker()).evaluate(() => chrome.runtime.getManifest());
 
   // Same manifest as the shipped build: configuring a backend origin is a
   // build-time constant, not a capability.

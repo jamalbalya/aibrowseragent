@@ -36,8 +36,10 @@ account at all, and signing in grants access to no AI provider.
 **What the shipped build can and cannot do here, stated plainly.** The sign-in
 is implemented end to end — the flow, session persistence, token refresh,
 concurrent refresh, worker restart, logout and server-side revocation are
-covered by 33 cases in real Chromium against a controlled backend over real
-HTTPS with genuinely signed tokens. What has **not** happened is a sign-in
+covered by 34 cases in real Chromium against a controlled backend over real
+HTTPS with genuinely signed tokens, and one of those runs the whole journey:
+signed in, an AI account connected, verified, selected, and a task actually
+run on it. What has **not** happened is a sign-in
 against Google's own endpoints: that needs a deployed backend and a Google
 OAuth client registered to it, neither of which exists, so the shipped build
 compiles in no backend origin and the panel offers no sign-in rather than

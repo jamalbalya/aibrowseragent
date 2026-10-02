@@ -310,6 +310,14 @@ async function currentAbaUserId(): Promise<string> {
     established.identity.installationId,
   );
   if (!resolved.ok) {
+    // Only reachable with no owner established at all, which is a storage
+    // failure and is reported as one. A signed-in profile that is not the
+    // owner of the local data is **not** a failure and no longer comes
+    // through here: it used to, and the consequence was that signing in with
+    // Google reported `RECOVERY_REQUIRED`, which `TaskManager` treats as
+    // work-blocking, and every task was refused with "Stored state needs to be
+    // reviewed before work can continue." Nothing was wrong with the stored
+    // state. See `resolveOwner` for the measurement and the rule.
     await persistenceHealth.report('storage', 'RECOVERY_REQUIRED', resolved.failure);
     return UNASSIGNED_ABA_USER;
   }

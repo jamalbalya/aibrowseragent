@@ -13,6 +13,7 @@
  * rather than presence.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { MemoryStorageArea, type StorageArea } from '@/storage/storage-area';
 import {
   LOCAL_IDENTITY_PATTERN,
@@ -224,15 +225,73 @@ describe('owner resolution', () => {
     expect(resolved.ok && resolved.source).toBe('profile');
   });
 
-  it('13 — two identities that disagree fail closed rather than picking one', () => {
-    const resolved = resolveOwner('usr_11111111111111111111111111111111', mintInstallationId());
+  it('13 — when two identities disagree, the one that wrote the rows owns them', () => {
+    // **This case asserted the opposite, and the opposite was a defect.** It
+    // required `CONFLICT`, on the reasoning that *"preferring the profile
+    // would hide every standalone row behind an owner that never wrote them;
+    // preferring the local id would ignore an authentication that did happen.
+    // Neither is safe."*
+    //
+    // The first half is why the rule is now what it is. The second half was
+    // wrong, and failing closed was worse than either: the conflict is reached
+    // by the **ordinary** path — every standalone installation mints a `loc_…`
+    // on first run, so the first Google sign-in on any installation produces
+    // it — and `currentAbaUserId` answered the refusal by reporting
+    // persistence `RECOVERY_REQUIRED`, which `TaskManager` treats as
+    // work-blocking. Signing in with Google stopped every task from starting.
+    // Measured in real Chromium before this changed.
+    const installation = mintInstallationId();
+    const profile = 'usr_11111111111111111111111111111111';
 
-    // Preferring the profile would hide every standalone row behind an owner
-    // that never wrote them; preferring the local id would ignore an
-    // authentication that did happen. Neither is safe.
-    expect(resolved.ok).toBe(false);
-    if (resolved.ok) throw new Error('unreachable');
-    expect(resolved.failure).toBe('CONFLICT');
+    const resolved = resolveOwner(profile, installation);
+
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) throw new Error('unreachable');
+    expect(resolved.abaUserId).toBe(installation);
+    expect(resolved.source).toBe('installation');
+    // Never the placeholder: an installation stuck on `unassigned` could not
+    // take ownership of anything it connected, which is the second half of
+    // what the old refusal caused.
+    expect(resolved.abaUserId).not.toBe(UNASSIGNED_ABA_USER);
+  });
+
+  it('13b — and the signed-in profile is reported as adoptable, not discarded', () => {
+    // The conflict is still a real thing worth a person's decision; what
+    // changed is that it is an offer rather than a refusal to work. A caller
+    // can see whose account the data could be adopted into.
+    const installation = mintInstallationId();
+    const profile = 'usr_11111111111111111111111111111111';
+
+    const resolved = resolveOwner(profile, installation);
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) throw new Error('unreachable');
+    expect(resolved.adoptable).toBe(profile);
+
+    // Absent when there is nothing to adopt: no profile at all, or a profile
+    // that already is the owner.
+    const alone = resolveOwner(null, installation);
+    expect(alone.ok).toBe(true);
+    if (!alone.ok) throw new Error('unreachable');
+    expect(alone.adoptable).toBeUndefined();
+
+    const same = resolveOwner(installation, installation);
+    expect(same.ok).toBe(true);
+    if (!same.ok) throw new Error('unreachable');
+    expect(same.adoptable).toBeUndefined();
+  });
+
+  it('13c — preferring the installation id ignores no authentication', () => {
+    // Because this value is not an identity. It is a partition label for
+    // local data: it authenticates nothing and authorises nothing, and no
+    // route, tool or egress decision reads it. The session is a separate
+    // record and is untouched by this function — `resolveOwner` cannot see a
+    // session and cannot change one.
+    const source = readFileSync('src/identity/local-identity.ts', 'utf8');
+    const start = source.indexOf('export function resolveOwner(');
+    const body = source.slice(start, source.indexOf('\n}', start));
+    for (const forbidden of ['session', 'token', 'signOut', 'revoke']) {
+      expect(body.toLowerCase(), forbidden).not.toContain(forbidden);
+    }
   });
 
   it('14 — no owner at all is a refusal, not an invented one', () => {
