@@ -99,7 +99,23 @@ export function createConnectorTransport(options: ConnectorTransportOptions): Co
   );
 
   /**
-   * Caller headers, with any spelling of `Authorization` removed.
+   * The one header this connector's credential travels in.
+   *
+   * `Authorization` for every service that takes a bearer or basic
+   * credential, which is most of them. Named by the **descriptor** for the
+   * ones that do not: Figma's REST API takes a personal access token in
+   * `X-Figma-Token` and ignores `Authorization`, so a connector for it would
+   * otherwise send its credential to a header the service does not read — an
+   * unauthenticated request with the token attached to it.
+   *
+   * From the descriptor and from nowhere else. A header name a caller could
+   * supply would be a caller choosing where a credential goes, which is the
+   * one decision this module exists to keep.
+   */
+  const credentialHeader = options.descriptor.credentialHeader ?? 'Authorization';
+
+  /**
+   * Caller headers, with any spelling of the credential header removed.
    *
    * Applying the credential last is only a guarantee if the caller cannot
    * have written the same header under a different casing: HTTP header names
@@ -107,13 +123,20 @@ export function createConnectorTransport(options: ConnectorTransportOptions): Co
    * is two keys to an object literal and one header to `fetch`, and which
    * one survives is not something to leave to key order. Stripping every
    * spelling first makes "applied last" mean what it says.
+   *
+   * It strips `Authorization` **as well as** the configured header, always.
+   * A connector whose credential goes in `X-Figma-Token` must still not let a
+   * caller attach an `Authorization` header of its own choosing: that would be
+   * a second credential on the request, travelling to a declared origin, that
+   * this module never saw.
    */
-  const withoutAuthorization = (
+  const stripped = new Set(['authorization', credentialHeader.toLowerCase()]);
+  const withoutCredential = (
     headers: Readonly<Record<string, string>> | undefined,
   ): Record<string, string> => {
     const kept: Record<string, string> = {};
     for (const [name, value] of Object.entries(headers ?? {})) {
-      if (name.toLowerCase() === 'authorization') continue;
+      if (stripped.has(name.toLowerCase())) continue;
       kept[name] = value;
     }
     return kept;
@@ -142,7 +165,7 @@ export function createConnectorTransport(options: ConnectorTransportOptions): Co
       let url = request.url;
       assertDeclared(url);
 
-      const authorization = await options.vault.authorizationHeader(options.descriptor.id, now());
+      const authorization = await options.vault.credentialHeaderValue(options.descriptor.id, now());
       if (authorization === null) {
         throw new ConnectorTransportError(
           'NOT_AUTHENTICATED',
@@ -159,11 +182,11 @@ export function createConnectorTransport(options: ConnectorTransportOptions): Co
               headers: {
                 Accept: 'application/json',
                 ...(request.body === undefined ? {} : { 'Content-Type': 'application/json' }),
-                ...withoutAuthorization(request.headers),
+                ...withoutCredential(request.headers),
                 // Applied last, over headers that can no longer carry any
                 // spelling of this one, so a caller cannot displace it — and
                 // never earlier, so it cannot be read back out.
-                Authorization: authorization,
+                [credentialHeader]: authorization,
               },
               ...(request.body === undefined ? {} : { body: request.body }),
               // Never followed automatically. See the module comment.

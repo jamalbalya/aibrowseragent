@@ -117,6 +117,41 @@ user is reading the result. Claiming the scopes the descriptor wanted would
 assert a permission nobody established, and the first thing it would buy is a
 write that fails at the service _after_ the user approved it.
 
+### Which connectors exist
+
+| Connector | Mechanism   | Credential header | Operations                    |
+| --------- | ----------- | ----------------- | ----------------------------- |
+| GitHub    | `api_token` | `Authorization`   | 2 reads, 2 writes             |
+| Figma     | `api_token` | `X-Figma-Token`   | 2 reads, **no write** (below) |
+
+Both need nothing from whoever deploys this build: the user creates a token in
+their own account and can revoke it in the same page.
+
+**The credential header is on the descriptor.** Figma's REST API reads
+`X-Figma-Token` and ignores `Authorization`, and that header's value _is_ the
+token with no scheme — so a build that always sent `Authorization: Bearer …`
+would make an unauthenticated request with the user's token attached to it. The
+transport takes the header name from the descriptor, applies the credential
+**last**, and strips every spelling of that header _and_ of `Authorization`
+from caller headers first: a caller can neither displace the credential nor
+attach a second one beside it.
+
+**Figma is read-only, and that is a consequence rather than a precaution.** It
+reports nothing about what a personal access token may do — no header naming
+its scopes, the way GitHub's `x-oauth-scopes` does for a classic token. Under
+the three-state rule above, a write operation would declare
+`file_comments:write`, never establish it, and be refused every single time. An
+operation that can only fail reads as a broken feature rather than an absent
+one, so there is none. If Figma later reports a token's scopes, a write becomes
+implementable on evidence.
+
+**Jira is the next one that could work this way, and does not yet.** Its API
+base is the user's own `*.atlassian.net` site, so the connector's reachable
+origin would have to come from the credential — and `apiOrigins` is fixed when
+a descriptor is registered, deliberately, because it is what the transport
+checks every request against. Making it per-connection is a framework change
+with a real security surface, and it is recorded here rather than improvised.
+
 ### Authorization code with PKCE (`oauth2`) — supported, and unreachable here
 
 Authorization code with PKCE, no client secret. A secret shipped inside an

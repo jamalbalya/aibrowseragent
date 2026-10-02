@@ -395,7 +395,7 @@ describe('refreshing', () => {
     const status = await session.refresh();
 
     expect(status.state).toBe('READY');
-    expect(await vault.authorizationHeader(descriptor.id, clock)).toBe('Bearer new');
+    expect(await vault.credentialHeaderValue(descriptor.id, clock)).toBe('Bearer new');
     expect(exchanges[0]!.body.get('grant_type')).toBe('refresh_token');
   });
 
@@ -453,7 +453,7 @@ describe('ending a connection', () => {
   it('forgets the grant on disconnect', async () => {
     const status = await session.disconnect();
     expect(status).toMatchObject({ state: 'UNCONFIGURED', reason: 'revoked' });
-    expect(await vault.authorizationHeader(descriptor.id, clock)).toBeNull();
+    expect(await vault.credentialHeaderValue(descriptor.id, clock)).toBeNull();
   });
 
   it('records a service-side refusal as denied', () => {

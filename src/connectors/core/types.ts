@@ -90,6 +90,21 @@ export interface ConnectorDescriptor {
    */
   readonly apiOrigins: readonly string[];
   readonly operations: readonly ConnectorOperation[];
+  /**
+   * The single header this connector's credential travels in.
+   *
+   * `Authorization` when absent, which is almost everything. Named here for
+   * the services that do not read it: Figma's REST API takes a personal
+   * access token in `X-Figma-Token` and ignores `Authorization`, so sending
+   * the credential there would be an unauthenticated request with the token
+   * attached to it.
+   *
+   * On the descriptor and nowhere else. A header name a *caller* could supply
+   * would be a caller choosing where a credential goes, and the transport
+   * strips every spelling of both this and `Authorization` from caller headers
+   * before applying the credential last.
+   */
+  readonly credentialHeader?: string;
   /** Present when `authKind` is `oauth2`. */
   readonly oauth?: ConnectorOAuthConfig;
   /** Why each scope is requested, shown to the user and kept in the docs. */
@@ -224,6 +239,16 @@ export function validateConnectorDescriptor(descriptor: ConnectorDescriptor): st
       } catch {
         problems.push('redirectUri is not a usable URL');
       }
+    }
+  }
+
+  // A credential header has to be a header name. One with a space, a colon or
+  // a newline in it would be a request this build composed wrongly, and the
+  // place to refuse that is where a descriptor becomes registrable rather
+  // than at the moment a credential is attached to something.
+  if (descriptor.credentialHeader !== undefined) {
+    if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(descriptor.credentialHeader)) {
+      problems.push(`"${descriptor.credentialHeader}" is not a usable header name`);
     }
   }
 

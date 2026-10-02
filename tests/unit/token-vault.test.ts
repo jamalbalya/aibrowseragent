@@ -36,18 +36,26 @@ beforeEach(async () => {
 
 describe('getting a credential out', () => {
   it('hands back a header, never a token', async () => {
-    expect(await vault.authorizationHeader('github', NOW)).toBe(`Bearer ${TOKEN}`);
+    expect(await vault.credentialHeaderValue('github', NOW)).toBe(`Bearer ${TOKEN}`);
   });
 
-  it('exposes no method that returns a bare access token', () => {
+  it('exposes exactly one credential exit, and no bare-token getter', () => {
     // The enumerable surface is the argument: a reviewer adding an
     // `accessToken()` getter for convenience breaks this test, which is
     // exactly when someone should be asked why.
+    //
+    // `authorizationHeader` was renamed to `credentialHeaderValue`, and this
+    // test is how the rename was noticed rather than slipped through. The
+    // reason is in the vault: one connector's credential header takes the
+    // token with no scheme, so the old name described a prefix the method no
+    // longer always adds. The guarantee it was really protecting is unchanged
+    // and is asserted by the two cases below it — there is **one** exit, and
+    // what comes out of it goes into a header.
     const surface = Object.getOwnPropertyNames(TokenVault.prototype).sort();
     expect(surface).toEqual([
-      'authorizationHeader',
       'clear',
       'constructor',
+      'credentialHeaderValue',
       'isUsable',
       'key',
       'refreshTokenForRefreshOnly',
@@ -57,8 +65,25 @@ describe('getting a credential out', () => {
     ]);
   });
 
+  it('is the only method whose result contains the token', async () => {
+    // Swept rather than listed, so a method added later is covered by
+    // construction. Every zero-argument-ish accessor is called and its result
+    // searched for the stored token.
+    const results: unknown[] = [
+      await vault.isUsable('github', NOW),
+      await vault.summary('github', NOW),
+      await vault.credentialHeaderValue('github', NOW),
+    ];
+    const carrying = results.filter((value) => JSON.stringify(value ?? null).includes(TOKEN));
+    expect(carrying).toHaveLength(1);
+    expect(carrying[0]).toBe(`Bearer ${TOKEN}`);
+
+    // And the refresh exit hands back a refresh token, never the access one.
+    expect(await vault.refreshTokenForRefreshOnly('github')).toBe('refresh_secret');
+  });
+
   it('says nothing about a connector it has never seen', async () => {
-    expect(await vault.authorizationHeader('unknown', NOW)).toBeNull();
+    expect(await vault.credentialHeaderValue('unknown', NOW)).toBeNull();
     expect(await vault.isUsable('unknown', NOW)).toBe(false);
     expect(await vault.summary('unknown', NOW)).toEqual({
       connected: false,
@@ -69,12 +94,33 @@ describe('getting a credential out', () => {
 
   it('honours the token type the service chose', async () => {
     await vault.store('other', { accessToken: 'x', tokenType: 'DPoP', scopes: [] });
-    expect(await vault.authorizationHeader('other', NOW)).toBe('DPoP x');
+    expect(await vault.credentialHeaderValue('other', NOW)).toBe('DPoP x');
   });
 
   it('falls back to Bearer when the service said nothing', async () => {
     await vault.store('other', { accessToken: 'x', tokenType: '', scopes: [] });
-    expect(await vault.authorizationHeader('other', NOW)).toBe('Bearer x');
+    expect(await vault.credentialHeaderValue('other', NOW)).toBe('Bearer x');
+  });
+
+  it('sends the token bare only when a writer asked for that explicitly', async () => {
+    // `null` is the one way to get an unprefixed value, and it exists for a
+    // header whose syntax is the token itself — Figma's `X-Figma-Token`.
+    // Sending `Bearer <token>` to it is an unauthenticated request with the
+    // credential attached to it.
+    await vault.store('bare', { accessToken: 'figma-token', tokenType: null, scopes: [] });
+    expect(await vault.credentialHeaderValue('bare', NOW)).toBe('figma-token');
+  });
+
+  it('does not reach the bare form by accident', async () => {
+    // The distinction that matters: absent, empty and any other falsy-looking
+    // value all still mean `Bearer`. Only `null` is bare, so a record written
+    // without thinking about it cannot produce an unprefixed credential.
+    for (const tokenType of ['', 'Bearer', 'bearer', 'Basic']) {
+      await vault.store('shades', { accessToken: 'x', tokenType, scopes: [] });
+      expect(await vault.credentialHeaderValue('shades', NOW), JSON.stringify(tokenType)).toContain(
+        ' x',
+      );
+    }
   });
 });
 
@@ -86,7 +132,7 @@ describe('expiry', () => {
       scopes: [],
       expiresAt: NOW - 1,
     });
-    expect(await vault.authorizationHeader('github', NOW)).toBeNull();
+    expect(await vault.credentialHeaderValue('github', NOW)).toBeNull();
     expect(await vault.isUsable('github', NOW)).toBe(false);
   });
 
@@ -99,7 +145,7 @@ describe('expiry', () => {
       scopes: [],
       expiresAt: NOW + 30_000,
     });
-    expect(await vault.authorizationHeader('github', NOW)).toBeNull();
+    expect(await vault.credentialHeaderValue('github', NOW)).toBeNull();
 
     await vault.store('github', {
       accessToken: TOKEN,
@@ -107,7 +153,7 @@ describe('expiry', () => {
       scopes: [],
       expiresAt: NOW + 120_000,
     });
-    expect(await vault.authorizationHeader('github', NOW)).toBe(`Bearer ${TOKEN}`);
+    expect(await vault.credentialHeaderValue('github', NOW)).toBe(`Bearer ${TOKEN}`);
   });
 
   it('treats a token with no stated expiry as usable', async () => {
@@ -155,7 +201,7 @@ describe('refresh', () => {
       scopes: ['public_repo'],
     });
     expect(await vault.refreshTokenForRefreshOnly('github')).toBe('refresh_secret');
-    expect(await vault.authorizationHeader('github', NOW)).toBe('Bearer new-access');
+    expect(await vault.credentialHeaderValue('github', NOW)).toBe('Bearer new-access');
   });
 
   it('takes a rotated refresh token when the response carries one', async () => {
@@ -172,7 +218,7 @@ describe('refresh', () => {
 describe('clearing', () => {
   it('leaves nothing behind in storage', async () => {
     await vault.clear('github');
-    expect(await vault.authorizationHeader('github', NOW)).toBeNull();
+    expect(await vault.credentialHeaderValue('github', NOW)).toBeNull();
     expect(await area.keys()).toEqual([]);
     // Not just the accessor: the raw storage holds no trace either.
     const dump = JSON.stringify(await Promise.all((await area.keys()).map((key) => area.get(key))));
@@ -182,7 +228,7 @@ describe('clearing', () => {
   it('clears one connector without touching another', async () => {
     await vault.store('other', { accessToken: 'other-token', tokenType: 'Bearer', scopes: [] });
     await vault.clear('github');
-    expect(await vault.authorizationHeader('other', NOW)).toBe('Bearer other-token');
+    expect(await vault.credentialHeaderValue('other', NOW)).toBe('Bearer other-token');
   });
 });
 

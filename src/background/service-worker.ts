@@ -72,7 +72,11 @@ import { ConnectorSession } from '@/connectors/core/connector-session';
 import { TokenVault } from '@/connectors/oauth/token-vault';
 import { WriteGuard } from '@/connectors/core/write-guard';
 import { TabAuthFlow, chromeTabs } from '@/connectors/oauth/auth-flow-port';
-import { createConnectorTransport } from '@/connectors/transport/connector-transport';
+import {
+  createConnectorTransport,
+  type ConnectorEgressContext,
+} from '@/connectors/transport/connector-transport';
+import type { EgressDecision } from '@/security/egress/egress-gate';
 import { DEFAULT_BUDGET } from '@/agent/budget/budget';
 import { SkillRegistry } from '@/skills/core/skill-registry';
 import { SkillRunner } from '@/skills/runtime/skill-runner';
@@ -106,6 +110,13 @@ import { UnattendedPrompter } from './unattended-prompter';
 import { isIncomplete, type RecordedWorkflow } from '@/workflows/workflow-model';
 import { digestSteps } from '@/workflows/step-digest';
 import type { WorkflowSummary } from '@/messaging/protocol';
+import {
+  FigmaConnector,
+  figmaDescriptor,
+  figmaTokenProbeUrl,
+  readFigmaTokenProbe,
+  FIGMA_CREDENTIAL_HEADER,
+} from '@/connectors/adapters/figma';
 import {
   GitHubConnector,
   githubDescriptor,
@@ -838,6 +849,16 @@ const CONNECTOR_CLIENT_IDS: Readonly<Record<string, string>> = {};
 const CONNECTOR_TOKEN_HINTS: Readonly<
   Record<string, { label: string; issuePage: string; help: string }>
 > = {
+  figma: {
+    label: 'Figma personal access token',
+    issuePage: 'https://www.figma.com/developers/api#access-tokens',
+    help:
+      'Create a token in your own Figma account and paste it here. Give it ' +
+      'file_content:read, file_comments:read and current_user:read — the last one is what ' +
+      'lets this build check the token belongs to you. Figma does not report what a token may ' +
+      'do, so this connector is read-only: it reads a file’s structure and its comments, and ' +
+      'posts nothing.',
+  },
   github: {
     label: 'GitHub personal access token',
     issuePage: 'https://github.com/settings/tokens',
@@ -957,7 +978,16 @@ async function exchangeConnectorToken(
  */
 async function probeConnectorToken(
   url: string,
-  credential: { token: string; tokenType: string },
+  credential: { token: string; tokenType: string | null },
+  /**
+   * The header the credential goes in for this probe.
+   *
+   * From the connector's descriptor, like everywhere else a credential header
+   * is chosen. Figma reads `X-Figma-Token` and ignores `Authorization`, so a
+   * probe that always used `Authorization` would report every Figma token as
+   * refused.
+   */
+  header = 'Authorization',
 ): Promise<{ status: number; headers: Headers; body: unknown }> {
   const response = await guardedSend(
     {
@@ -966,7 +996,10 @@ async function probeConnectorToken(
         method: 'GET',
         headers: {
           Accept: 'application/json',
-          Authorization: `${credential.tokenType} ${credential.token}`,
+          [header]:
+            credential.tokenType === null
+              ? credential.token
+              : `${credential.tokenType} ${credential.token}`,
         },
         // Never followed: a probe that redirects is one that could be made to
         // carry a credential somewhere else.
@@ -1058,6 +1091,50 @@ const githubSession = new ConnectorSession({
   },
 });
 
+/**
+ * What every connector's egress decision is recorded as.
+ *
+ * One function, because two connectors must not produce two different audit
+ * shapes for the same kind of event — and because a second copy is where the
+ * evidence and the record come to disagree about which decision they describe.
+ * Named here rather than inside a transport so each connector's wiring reads
+ * as the one line it is.
+ */
+const connectorEgressObserver = async (
+  decision: EgressDecision,
+  context: ConnectorEgressContext,
+  url: string,
+  payload: unknown,
+): Promise<void> => {
+  const built = await buildEgressEvidence({
+    taskId: context.taskId,
+    sourceTool: `connector.${context.connectorId}.${context.operationId}`,
+    destination: connectorDestination(context.connectorId, url, {
+      purpose: context.operationId,
+    }),
+    decision,
+    ...(typeof payload === 'string' ? { payload } : {}),
+    taintSalt: context.taintSalt,
+    saltEpoch: context.saltEpoch,
+    now: Date.now(),
+  });
+  await recordWithEvidence(built, (evidenceId) => ({
+    type: 'connector.operation',
+    taskId: context.taskId,
+    connectorId: context.connectorId,
+    operation: context.operationId,
+    ...(decision.destinationIdentity === null ? {} : { destination: decision.destinationIdentity }),
+    outcome:
+      decision.verdict === 'allow'
+        ? 'allowed'
+        : decision.verdict === 'deny'
+          ? 'denied'
+          : 'confirmed',
+    code: decision.code,
+    evidenceIds: [evidenceId],
+  }));
+};
+
 const githubConnector = new GitHubConnector({
   descriptor: githubDescriptorValue,
   session: githubSession,
@@ -1065,37 +1142,7 @@ const githubConnector = new GitHubConnector({
     descriptor: githubDescriptorValue,
     vault: connectorTokens,
     consent: consentStore,
-    onDecision: async (decision, context, url, payload) => {
-      const built = await buildEgressEvidence({
-        taskId: context.taskId,
-        sourceTool: `connector.${context.connectorId}.${context.operationId}`,
-        destination: connectorDestination(context.connectorId, url, {
-          purpose: context.operationId,
-        }),
-        decision,
-        ...(payload === undefined ? {} : { payload }),
-        taintSalt: context.taintSalt,
-        saltEpoch: context.saltEpoch,
-        now: Date.now(),
-      });
-      await recordWithEvidence(built, (evidenceId) => ({
-        type: 'connector.operation',
-        taskId: context.taskId,
-        connectorId: context.connectorId,
-        operation: context.operationId,
-        ...(decision.destinationIdentity === null
-          ? {}
-          : { destination: decision.destinationIdentity }),
-        outcome:
-          decision.verdict === 'allow'
-            ? 'allowed'
-            : decision.verdict === 'deny'
-              ? 'denied'
-              : 'confirmed',
-        code: decision.code,
-        evidenceIds: [evidenceId],
-      }));
-    },
+    onDecision: connectorEgressObserver,
   }),
   writes: connectorWrites,
   // The connector never builds its own security context: it asks the runtime
@@ -1129,7 +1176,73 @@ function registerConnector(connector: Connector): void {
   }
 }
 
+/**
+ * Figma, the second connector, and the second that needs no registration.
+ *
+ * `api_token` like GitHub, and for a stronger reason: Figma's OAuth requires a
+ * `client_secret` in its code exchange even with PKCE, so there is no
+ * authorization flow this extension could ever complete for it. A personal
+ * access token the user creates needs nothing from anybody.
+ *
+ * Read-only, because Figma reports nothing about what a token may do and a
+ * write would declare a scope that could never be satisfied. See the adapter.
+ */
+const figmaDescriptorValue = figmaDescriptor();
+
+const figmaSession = new ConnectorSession({
+  descriptor: figmaDescriptorValue,
+  vault: connectorTokens,
+  authFlow: new TabAuthFlow(chromeTabs()),
+  // No client id, and none would help: there is no flow to start.
+  clientId: '',
+  exchange: exchangeConnectorToken,
+  introspect: async (credential) => {
+    const probe = await probeConnectorToken(
+      figmaTokenProbeUrl(figmaDescriptorValue.apiOrigins[0]!),
+      credential,
+      // Figma ignores `Authorization`. A probe on the wrong header would
+      // report every valid token as refused.
+      FIGMA_CREDENTIAL_HEADER,
+    );
+    const body = probe.body !== null && typeof probe.body === 'object' ? probe.body : {};
+    return readFigmaTokenProbe({
+      status: probe.status,
+      handle: (body as { handle?: unknown }).handle,
+      email: (body as { email?: unknown }).email,
+    });
+  },
+  onStatusChange: (status) => {
+    void auditLog
+      .record({
+        type: 'connector.auth',
+        connectorId: status.connectorId,
+        connectorState: status.state,
+        outcome: status.state === 'READY' ? 'allowed' : 'info',
+        code: status.reason,
+        scopes: status.scopes,
+      })
+      .catch(() => undefined);
+    if (status.state === 'NEEDS_AUTH' && status.reason === 'grant_expired') {
+      void notifier.connectorAuthExpired(figmaDescriptorValue.displayName);
+    }
+  },
+});
+
+const figmaConnector = new FigmaConnector({
+  descriptor: figmaDescriptorValue,
+  session: figmaSession,
+  transport: createConnectorTransport({
+    descriptor: figmaDescriptorValue,
+    vault: connectorTokens,
+    consent: consentStore,
+    onDecision: connectorEgressObserver,
+  }),
+  writes: connectorWrites,
+  egressFor: (taskId) => connectorEgressContexts.get(taskId),
+});
+
 registerConnector(githubConnector);
+registerConnector(figmaConnector);
 
 /**
  * Security contexts for in-flight tasks.
@@ -2936,12 +3049,32 @@ router.on('connector.connectToken', async ({ connectorId, token }) => {
     code: 'token_supplied',
   });
 
-  const outcome = await githubSession.connectWithToken({
+  // Which session owns this connector, and what scheme its credential header
+  // carries. A table rather than a chain of ifs, so adding a connector is one
+  // entry and a connector with no entry is refused above rather than silently
+  // routed to the wrong session.
+  const tokenSessions: Readonly<
+    Record<string, { session: ConnectorSession; tokenType: string | null }>
+  > = {
+    [githubDescriptorValue.id]: { session: githubSession, tokenType: 'Bearer' },
+    // `null`, not `'Bearer'`: Figma reads `X-Figma-Token` and that header's
+    // syntax is the token itself. A scheme prefix here would be an
+    // unauthenticated request with the user's token attached to it.
+    [figmaDescriptorValue.id]: { session: figmaSession, tokenType: null },
+  };
+
+  const owner = tokenSessions[connectorId];
+  if (!owner) {
+    throw new RouteError(
+      createError('INVALID_ARGUMENT', `No token session is wired for "${connectorId}".`, {
+        userMessage: `${connector.descriptor.displayName} cannot be connected with a token.`,
+      }),
+    );
+  }
+
+  const outcome = await owner.session.connectWithToken({
     token: supplied,
-    // `Bearer` for GitHub. A service wanting `email:token` would be `Basic`,
-    // and the base64 would be assembled in the panel rather than here — the
-    // worker stores what it is given and adds a scheme name.
-    tokenType: 'Bearer',
+    tokenType: owner.tokenType,
   });
 
   const status = outcome.status;

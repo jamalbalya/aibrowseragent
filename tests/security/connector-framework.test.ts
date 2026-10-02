@@ -202,12 +202,12 @@ describe('TEST-SECURITY-072 group C: nothing crosses between connectors', () => 
     });
 
     const now = 2;
-    expect(await vault.authorizationHeader('github', now)).not.toBeNull();
+    expect(await vault.credentialHeaderValue('github', now)).not.toBeNull();
     // NEGATIVE CONTROL: the same vault, a different connector, no header.
-    expect(await vault.authorizationHeader('ledger', now)).toBeNull();
+    expect(await vault.credentialHeaderValue('ledger', now)).toBeNull();
 
     await vault.clear('github');
-    expect(await vault.authorizationHeader('github', now)).toBeNull();
+    expect(await vault.credentialHeaderValue('github', now)).toBeNull();
   });
 
   it('08 — each connector declares its own origins, and they do not pool', () => {

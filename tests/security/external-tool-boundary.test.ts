@@ -181,7 +181,7 @@ describe('TEST-SECURITY-073 group C: the credential boundary', () => {
     const vault = readFileSync(join(SRC_ROOT, 'connectors/oauth/token-vault.ts'), 'utf8');
     // One accessor returns anything token-shaped, and its name says what it is
     // for. A general `getToken()` would be the shape this deliberately lacks.
-    expect(vault).toMatch(/authorizationHeader\(/);
+    expect(vault).toMatch(/credentialHeaderValue\(/);
     expect(vault).toMatch(/refreshTokenForRefreshOnly\(/);
     expect(vault).not.toMatch(/\n {2}async getToken\(|\n {2}getAccessToken\(/);
   });

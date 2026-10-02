@@ -34,7 +34,21 @@ const log = getLogger('security');
  */
 export interface StoredTokens {
   readonly accessToken: string;
-  readonly tokenType: string;
+  /**
+   * The scheme the credential header carries, or `null` for none at all.
+   *
+   * `Bearer` for almost everything, `Basic` for a service that wants
+   * base64(user:token). `null` means the header's value **is** the token, with
+   * no prefix — which is what Figma's `X-Figma-Token` is, and what sending
+   * `Bearer <token>` to it would break.
+   *
+   * Explicit, and never a default. An empty string still means `Bearer`,
+   * because that is what it has always meant and changing it would alter
+   * every record already on disk; `null` is a new state a writer has to ask
+   * for. A connector that needed a bare token and got `Bearer` prepended
+   * would send an unauthenticated request with the credential attached to it.
+   */
+  readonly tokenType: string | null;
   readonly refreshToken?: string;
   /** Absolute epoch milliseconds, or `undefined` when the service said nothing. */
   readonly expiresAt?: number;
@@ -73,15 +87,29 @@ export class TokenVault {
   }
 
   /**
-   * The `Authorization` header for a connector, or `null`.
+   * The value of the credential header for a connector, or `null`.
    *
-   * The only way a token leaves this module, and it leaves already wrapped.
-   * A caller cannot log the token because it never sees one.
+   * The only way a credential leaves this module. It was called
+   * `authorizationHeader` and returned `"<scheme> <token>"` always, on the
+   * stated grounds that it leaves "already wrapped" so a caller cannot log a
+   * token it never sees. One connector broke that: Figma's REST API takes a
+   * personal access token in `X-Figma-Token` and ignores `Authorization`, and
+   * that header's syntax is the token with no prefix. A wrapped value sent to
+   * it is an unauthenticated request with the credential attached.
+   *
+   * So a `null` `tokenType` returns the token itself. What the rename records
+   * is that the guarantee was never really about the prefix: it is that this
+   * is the **one** exit, that only the transport calls it, and that what comes
+   * out goes straight into a header and nowhere else. `tests/unit/token-vault`
+   * asserts the whole enumerable surface for exactly that reason.
    */
-  async authorizationHeader(connectorId: string, now: number): Promise<string | null> {
+  async credentialHeaderValue(connectorId: string, now: number): Promise<string | null> {
     const tokens = await this.area.get<StoredTokens>(this.key(connectorId));
     if (!tokens) return null;
     if (isExpired(tokens, now)) return null;
+    // `null` is the only way to get an unprefixed value, and a writer has to
+    // ask for it. An absent or empty `tokenType` still means `Bearer`.
+    if (tokens.tokenType === null) return tokens.accessToken;
     return `${tokens.tokenType || 'Bearer'} ${tokens.accessToken}`;
   }
 

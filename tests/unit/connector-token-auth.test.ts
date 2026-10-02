@@ -198,7 +198,7 @@ describe('what a successful connection records', () => {
     await session.connectWithToken({ token: SUPPLIED, tokenType: 'Bearer' });
     // Read through the vault's own accessor, because the header is what the
     // transport will actually attach.
-    expect(await vault.authorizationHeader('github', NOW)).toBe(`Bearer ${SUPPLIED}`);
+    expect(await vault.credentialHeaderValue('github', NOW)).toBe(`Bearer ${SUPPLIED}`);
   });
 
   it('stores the scheme it was given rather than assuming one', async () => {
@@ -210,7 +210,7 @@ describe('what a successful connection records', () => {
     // case here passes.
     const session = build({});
     await session.connectWithToken({ token: SUPPLIED, tokenType: 'Basic' });
-    expect(await vault.authorizationHeader('github', NOW)).toBe(`Basic ${SUPPLIED}`);
+    expect(await vault.credentialHeaderValue('github', NOW)).toBe(`Basic ${SUPPLIED}`);
   });
 
   it('records the scopes the service confirmed, and no others', async () => {
@@ -324,7 +324,7 @@ describe('replacing and discarding a token', () => {
       'AUTHENTICATING',
       'READY',
     ]);
-    expect(await vault.authorizationHeader('github', NOW)).toBe('Bearer a-second-token');
+    expect(await vault.credentialHeaderValue('github', NOW)).toBe('Bearer a-second-token');
   });
 
   it('leaves the old token in place when the new one is refused', async () => {
@@ -340,7 +340,7 @@ describe('replacing and discarding a token', () => {
     refuse = true;
     const outcome = await session.connectWithToken({ token: 'wrong', tokenType: 'Bearer' });
     expect(outcome.status.state).toBe('NEEDS_AUTH');
-    expect(await vault.authorizationHeader('github', NOW)).toBe(`Bearer ${SUPPLIED}`);
+    expect(await vault.credentialHeaderValue('github', NOW)).toBe(`Bearer ${SUPPLIED}`);
   });
 
   it('cannot be reconnected while the service has refused access', async () => {
@@ -363,7 +363,7 @@ describe('replacing and discarding a token', () => {
     await session.connectWithToken({ token: SUPPLIED, tokenType: 'Bearer' });
     await session.disconnect();
 
-    expect(await vault.authorizationHeader('github', NOW)).toBeNull();
+    expect(await vault.credentialHeaderValue('github', NOW)).toBeNull();
     expect(await storedText()).not.toContain(SUPPLIED);
   });
 });

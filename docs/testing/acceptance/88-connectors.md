@@ -309,7 +309,8 @@ earned for free.
 - EVIDENCE: tests/security/connector-security.test.ts :: never appears in a log line
 - EVIDENCE: tests/security/connector-security.test.ts :: never appears in the connector status a caller can read
 - EVIDENCE: tests/security/connector-security.test.ts :: is refused by the audit trail if a caller ever tries to record one
-- EVIDENCE: tests/unit/token-vault.test.ts :: exposes no method that returns a bare access token
+- EVIDENCE: tests/unit/token-vault.test.ts :: exposes exactly one credential exit, and no bare-token getter
+- EVIDENCE: tests/unit/token-vault.test.ts :: is the only method whose result contains the token
 - EVIDENCE: tests/security/connector-security.test.ts :: does not let a caller reach the token by holding the transport
 - EVIDENCE: tests/security/connector-security.test.ts :: cannot be displaced by a caller-supplied Authorization header
 - EVIDENCE: tests/security/connector-security.test.ts :: can never take the AI provider pin

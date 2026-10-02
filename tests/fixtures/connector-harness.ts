@@ -174,7 +174,7 @@ export interface HarnessOptions {
    */
   readonly introspect?: (credential: {
     token: string;
-    tokenType: string;
+    tokenType: string | null;
   }) => Promise<{ scopes: readonly string[] | null; accountLabel?: string }>;
 }
 

@@ -1681,9 +1681,37 @@ successful connection and a real read or write still need a person with an
 account, and `docs/release/OWNER-CHECKLIST.md` section D is now a procedure
 that person can perform.
 
-PARTIAL also because one connector is not a connector ecosystem. The Jira,
-Confluence, Figma and Google Sheets connectors named in the specification are
-not implemented, and nothing returns a fake response for them.
+PARTIAL also because two connectors are not a connector ecosystem. **Figma is
+the second**, and it is the second that needs nothing from the owner: no
+registered application, no client id, no deployed anything. A personal access
+token the user creates is the whole of it.
+
+Figma is worth having for what it establishes rather than for what it reads. It
+differs from GitHub in the three ways that make a framework a framework: its
+credential goes in `X-Figma-Token` and **not** `Authorization`, which Figma
+ignores; that header's value _is_ the token, with no scheme; and Figma reports
+nothing about what a token may do. The first two moved the credential header
+onto the descriptor — applied last, with every spelling of it _and_ of
+`Authorization` stripped from caller headers first, so a caller still cannot
+displace it or smuggle a second credential alongside it. A mutation removing
+that stripping **survived the first battery**, because the mock service
+lowercases header names as it records them and the credential, written last,
+overwrote a differently-cased caller key; a browser's `Headers` does not
+normalise before it appends, so the case now asserts on the raw header object
+and counts the keys.
+
+The third is why the adapter is read-only, and that is not caution. With no
+reported scopes a write would declare `file_comments:write`, never satisfy it,
+and be refused every time — an operation that can only fail reads as a broken
+feature rather than an absent one. If Figma ever reports a token's scopes, a
+write becomes implementable on evidence.
+
+Jira is the next one that could work the same way and cannot yet. Its API base
+is the user's own `*.atlassian.net` site, so the connector's reachable origin
+would have to come from the credential, and `apiOrigins` is fixed when a
+descriptor is registered. That is a framework change rather than an adapter,
+and it is named here rather than attempted. Confluence and Google Sheets are
+not implemented, and nothing returns a fake response for any of them.
 
 What _was_ closed is narrower and worth naming precisely: the framework is now
 shown to hold more than one connector rather than assumed to. A second,

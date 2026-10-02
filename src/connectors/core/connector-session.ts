@@ -127,8 +127,14 @@ export interface TokenConnectOutcome {
 /** A credential the user pasted, on its way to being checked. */
 export interface SuppliedCredential {
   readonly token: string;
-  /** `Bearer` for GitHub, `Basic` for a service that wants email:token. */
-  readonly tokenType: string;
+  /**
+   * The scheme the credential header carries, or `null` for none.
+   *
+   * `Bearer` for GitHub, `Basic` for a service that wants base64(email:token),
+   * and `null` for a header whose syntax is the token itself — Figma's
+   * `X-Figma-Token`. See `StoredTokens.tokenType`, which is where it lands.
+   */
+  readonly tokenType: string | null;
 }
 
 export interface ConnectorSessionOptions {

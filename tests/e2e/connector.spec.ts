@@ -150,6 +150,48 @@ test('the connector is registered, and says how it can be connected', async ({ s
   for (const scope of needed) expect(github!.scopeRationale[scope]).toBeTruthy();
 });
 
+test('the second connector is registered too, with its own credential header', async ({ send }) => {
+  // What this settles that an integration suite cannot: that the real worker
+  // registers both, that the second one's descriptor survived
+  // `validateConnectorDescriptor` at module scope — a descriptor it rejects
+  // takes the whole worker down, which is the failure the first case in this
+  // file exists for — and that the panel is told how to connect it.
+  const { connectors } = await send('connector.list', {});
+  expect(connectors.map((entry) => entry.id).sort()).toEqual(['figma', 'github']);
+
+  const figma = connectors.find((entry) => entry.id === 'figma')!;
+  expect(figma.authKind).toBe('api_token');
+  expect(figma.configured).toBe(true);
+  expect(figma.state).not.toBe('READY');
+
+  // Read-only, because Figma reports nothing about what a token may do and a
+  // declared write scope could never be satisfied.
+  expect(figma.operations.filter((operation) => operation.kind === 'write')).toEqual([]);
+  expect(
+    figma.operations
+      .filter((operation) => operation.kind === 'read')
+      .map((operation) => operation.id)
+      .sort(),
+  ).toEqual(['read_comments', 'read_file']);
+
+  // The hint tells the user which scopes to give the token, including the one
+  // this build needs to check it belongs to them.
+  expect(figma.tokenHint).toBeDefined();
+  expect(figma.tokenHint!.issuePage).toMatch(/^https:\/\/(www\.)?figma\.com\//);
+  expect(figma.tokenHint!.help).toContain('current_user:read');
+  expect(figma.tokenHint!.help).toMatch(/read-only/i);
+});
+
+test('each connector’s tools are namespaced to it, with no cross-wiring', async ({ send }) => {
+  const { tools } = await send('tools.list', {});
+  const names = tools.map((tool) => tool.name);
+  expect(names).toContain('figma.read_file');
+  expect(names).toContain('figma.read_comments');
+  expect(names).toContain('github.search_issues');
+  // Figma contributes no write tool at all — not one that exists and refuses.
+  expect(names.filter((name) => name.startsWith('figma.'))).toHaveLength(2);
+});
+
 test('reading needs no scope and writing does', async ({ send }) => {
   const { connectors } = await send('connector.list', {});
   const github = connectors.find((entry) => entry.id === 'github')!;
