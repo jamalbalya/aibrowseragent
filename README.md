@@ -29,7 +29,20 @@ There is an optional AI Browser Agent account (Google sign-in), and it is
 optional in the strong sense: a build with no backend origin configured has no
 sign-in at all, and every feature above works regardless. Signing in identifies
 your AI Browser Agent account — it does **not** connect or authorise OpenAI,
-Anthropic or Gemini, which stay where they are with their own keys.
+Anthropic or Gemini, which stay where they are with their own keys. They are two
+separate acts, in that order of independence: you can use the agent with no
+account at all, and signing in grants access to no AI provider.
+
+**What the shipped build can and cannot do here, stated plainly.** The sign-in
+is implemented end to end — the flow, session persistence, token refresh,
+concurrent refresh, worker restart, logout and server-side revocation are
+covered by 33 cases in real Chromium against a controlled backend over real
+HTTPS with genuinely signed tokens. What has **not** happened is a sign-in
+against Google's own endpoints: that needs a deployed backend and a Google
+OAuth client registered to it, neither of which exists, so the shipped build
+compiles in no backend origin and the panel offers no sign-in rather than
+offering a button that cannot work. Choosing and using an AI account does not
+depend on any of it.
 
 Because your data lives in this Chrome profile, deleting the profile deletes
 it. Settings → Your data → **Save a copy** writes an export file. It carries
@@ -153,17 +166,26 @@ Then load it into Chrome:
    OpenAI-compatible adapter, which is the one you point wherever you like;
    the other two default to their own documented endpoint.
 
-   | Provider               | Base URL                    | Example model      |
-   | ---------------------- | --------------------------- | ------------------ |
-   | Anthropic API          | _(default)_                 | a Claude model id  |
-   | Google Gemini API      | _(default)_                 | a Gemini model id  |
-   | OpenAI-compatible      | `https://api.openai.com/v1` | `gpt-4o-mini`      |
-   | Local (Ollama)         | `http://localhost:11434/v1` | `qwen2.5:14b`      |
-   | Local (LM Studio)      | `http://localhost:1234/v1`  | whatever is loaded |
-   | Any compatible gateway | its `/v1` base URL          | its model id       |
+   For the OpenAI-compatible adapter there is a **Known endpoint** list that
+   fills the base URL for you — Kimi (Moonshot, both regions), DeepSeek,
+   OpenRouter, Groq, Mistral, xAI, Together, and Ollama or LM Studio on this
+   computer. It is a convenience and nothing more: it prefills one editable
+   field, and you can type any other base URL instead.
+
+   | Provider               | Base URL                     | Example model      |
+   | ---------------------- | ---------------------------- | ------------------ |
+   | Anthropic API          | _(default)_                  | a Claude model id  |
+   | Google Gemini API      | _(default)_                  | a Gemini model id  |
+   | OpenAI-compatible      | `https://api.openai.com/v1`  | `gpt-4o-mini`      |
+   | Kimi (Moonshot)        | `https://api.moonshot.ai/v1` | a Kimi model id    |
+   | Local (Ollama)         | `http://localhost:11434/v1`  | `qwen2.5:14b`      |
+   | Local (LM Studio)      | `http://localhost:1234/v1`   | whatever is loaded |
+   | Any compatible gateway | its `/v1` base URL           | its model id       |
 
    A key from one provider is never sent to another, and an API key is not the
-   same thing as a subscription to a provider's consumer product.
+   same thing as a subscription to a provider's consumer product. API keys go
+   over https only; plain `http` is accepted for `localhost` alone, so a local
+   model runner works and a plain-http remote endpoint is refused with a reason.
 
 4. Click **Connect**, then **Run capability check**.
 
@@ -176,6 +198,27 @@ and fail later.
 Your API key is stored by the extension and sent only to that provider's
 endpoint, as a request header. It never appears in a URL, and it is never
 written to logs, evidence, audit records, task records, or model prompts.
+
+### Choose which account the agent uses
+
+Connect as many accounts as you like, including two on the same provider — a
+personal key and a work key are two accounts, not one setting. Each gets its
+own credential, its own model selection and its own capability measurement.
+
+One of them is the **AI brain**: the account every task runs on until you
+change it. Pick it under **Connected accounts**, where you can also see which
+one is active, switch, disconnect one, or re-run its capability check.
+
+What that selection guarantees:
+
+- every request goes to the selected account's endpoint with the selected
+  account's key, and switching changes every subsequent request;
+- a follow-up turn or a tool-use cycle stays on the same account;
+- the selection survives closing the browser;
+- if the selected account cannot be used — no model chosen, a model the
+  provider no longer offers, a key missing on this device, a key the provider
+  refused — the task is **refused and says why**. It is never quietly run on
+  another account you happen to have connected.
 
 ### Run a task
 
