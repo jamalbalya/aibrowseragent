@@ -88,7 +88,8 @@ WHAT IT CAN DO
 • Upload a file you pick yourself, and download one if you allow it.
 • Record a task you performed and replay it later.
 • Run bundled skills, and name them as shortcuts.
-• Connect to GitHub to read and write issues.
+• Connect GitHub to read and write issues, or Figma and Jira to read from
+  them, using a token you create in your own account.
 • Keep an audit trail of every decision, which you can export.
 
 HOW IT DECIDES WHAT IT MAY DO
@@ -125,8 +126,16 @@ WHAT IT DOES NOT DO YET
 Being straight about this up front, because discovering it after installing
 is worse:
 
-• Only one connector exists: GitHub. There is no Jira, Confluence, Figma or
-  Google Sheets integration.
+• Three connectors exist: GitHub, Figma and Jira. There is no Confluence or
+  Google Sheets integration. Figma and Jira are read-only, because neither
+  service tells the extension what a token may do — so rather than attempting
+  a change and failing, it offers no way to make one.
+• You connect each one with a token you create in your own account, not by
+  signing in. Jira also needs your own site address, and your token is bound
+  to that one address and can go nowhere else.
+• No connector has been used against a real service from this repository. The
+  paths are tested against local servers; what is untested is somebody else's
+  production endpoint.
 • Plugins are not implemented.
 • MCP works as a client only. You can add a server in Settings and its tools
   and resources are offered to the model, confirmed on every call. It has been
@@ -233,13 +242,17 @@ supporting Manifest V3 and the Side Panel API.
 Already in the detailed description above. Repeated here as a checklist so
 none is quietly dropped when the copy is edited:
 
-- One connector only (GitHub).
+- Three connectors (GitHub, Figma, Jira), two of them read-only, each
+  connected with a token you supply. None exercised against a real service.
 - No plugins. MCP is client-side only, and has been verified against the MCP
   project's own reference server, not against a server somebody else operates.
 - Scheduled tasks exist, but only while Chrome is running.
 - No cross-origin iframe support.
 - Requires a tool-calling model and the user's own API key.
 - Three of forty specification capabilities are partial; one is not started.
+- No Google sign-in in this build. The product has one, but it needs a backend
+  that is not deployed, so the option is absent rather than offered and
+  broken. Everything the extension does works without it.
 
 ## What is NOT claimed anywhere in this copy
 

@@ -162,13 +162,56 @@ of `chrome.runtime.getURL('oauth/callback.html')` for your installed build,
 and `web_accessible_resources` in the manifest must list the authorization
 origin.
 
+### D-2. With a Figma or Jira token — the same five, on another service
+
+The five procedures in D are written for GitHub because GitHub is the one with
+a write. Two more connectors now accept a token you create yourself, and
+running D on either is worth doing: it is the same framework against a
+different service, which is the only way to find out whether "the framework
+holds more than one connector" is true of anything but the tests.
+
+**Figma.** Create a token at
+<https://www.figma.com/developers/api#access-tokens> with
+`file_content:read`, `file_comments:read` and `current_user:read`. The last one
+is what lets this build check the token belongs to you — without it the
+connection is refused, which is deliberate and conservative rather than a bug.
+Paste it in Settings → Connectors → Figma. Then ask the agent to read a Figma
+file you have open, using the file key from its URL.
+
+Figma is **read-only** and that is not caution: Figma reports nothing about what
+a token may do, so a write would declare a permission that could never be
+established and be refused every time. `88-write` is therefore not available on
+Figma; use GitHub for it.
+
+**Jira.** Create an API token at
+<https://id.atlassian.com/manage-profile/security/api-tokens>. Paste it in with
+the **email address of your Atlassian account** and **your own site address** —
+`https://your-team.atlassian.net`, with nothing after it.
+
+The site address is the interesting part to test, and it is worth being
+deliberate about:
+
+1. Enter it correctly first and confirm the connection reports your name.
+2. Then try it again with the site typed wrongly — `http://` instead of
+   `https://`, a path on the end, or somebody else's team name. Each must be
+   refused with a sentence that says what to fix, and **nothing must be
+   stored**. That is the whole security property of a connector whose API
+   address belongs to the user.
+3. Ask the agent to search issues with JQL and to read one.
+
+Jira is read-only for the same reason Figma is.
+
+**What to record.** Which service, which procedures, what happened, and the
+date. Not the token, not the base64 of it, and not a screenshot showing the
+field with anything in it.
+
 ### E. Not executable by anybody, and not waiting on you
 
-| Procedure      | Why                                                                                                                                                                                                                                                                                            |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `84-P-025`     | P-025 Plugins is not implemented, and is off the parity critical path                                                                                                                                                                                                                          |
-| `85-D`, `85-E` | They name Jira, Confluence, Figma and Sheets; those connectors do not exist here, and no credential changes that. Two of them could not be built as sign-in connectors at all — see the table in `docs/connectors.md` — so what they wait on is a decision about mechanism, not a registration |
-| `89-06`        | The iframe exclusion is behaviour, not a gap: the agent has no handle inside a cross-origin frame                                                                                                                                                                                              |
+| Procedure      | Why                                                                                                                                                                                                                                                                                                                                   |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `84-P-025`     | P-025 Plugins is not implemented, and is off the parity critical path                                                                                                                                                                                                                                                                 |
+| `85-D`, `85-E` | They name Jira, Confluence, Figma and Sheets, and need **all four at once** for one workflow. Jira and Figma now exist and are connectable with a token you create (D-2); Confluence and Sheets do not. So these moved from "no connector exists" to "two of four exist" — still not executable, and for a smaller reason than before |
+| `89-06`        | The iframe exclusion is behaviour, not a gap: the agent has no handle inside a cross-origin frame                                                                                                                                                                                                                                     |
 
 ### One more that is separate, and unavoidable
 

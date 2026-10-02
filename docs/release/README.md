@@ -268,6 +268,11 @@ reach, observe or advance on its own.
 
 ### Is the current artifact ready for a new submission?
 
+> The facts for that one decision are collected in
+> [SUBMISSION-CANDIDATE.md](SUBMISSION-CANDIDATE.md), including what is **not**
+> known about the submitted artifact and a ten-minute checklist for the
+> dashboard. This section is the summary; that file is the detail.
+
 **Technically yes, and the decision is not this repository's to make.** The
 current artifact is reproducible, deterministic over repeated packing,
 validated, and built from a tree where every gate passes. Its permission set
@@ -286,11 +291,42 @@ are judgement rather than fact:
 - **Replacing an item under review restarts the review.** If the pending one is
   close to a verdict, waiting costs nothing and resubmitting costs the queue
   position.
-- **The pending artifact contains the sign-in defect.** A reviewer who signs in
-  with Google and then runs a task will find it refused with "Stored state needs
-  to be reviewed before work can continue". That is a plausible review path and
-  it reads as a broken extension.
+- **Capability.** The current artifact can do things the pending one cannot:
+  three connectors a user can connect, controls inside web components, and the
+  account-selection routing proved rather than assumed.
 
-Those point in opposite directions. The second is the stronger argument and it
-is still the owner's call, because only the owner can see the queue. Nothing
-here submits, replaces or withdraws anything.
+Nothing here submits, replaces or withdraws anything, and the call is the
+owner's because only the owner can see the queue.
+
+### A correction: the pending artifact does **not** have the sign-in defect
+
+An earlier revision of this section said it did, and told the owner that _"a
+reviewer who signs in with Google and then runs a task will find it refused"_.
+That was wrong, and it was the stronger of the two arguments for replacing the
+submission — so the correction matters more than the original claim did.
+
+The defect needed a **completed** sign-in. The conflict was between a local
+installation id and a **profile** id, and the profile is written only by
+`recordSignIn`, which `signInWithGoogle` and `verifyEmailSignIn` both refuse to
+reach when no backend origin is compiled in. The shipped build has none: the
+origin is inlined by Vite at build time, there is no default, and nothing can
+set one at run time. So no profile is ever written, the two ids never disagree,
+and the conflict never fires.
+
+**Measured rather than reasoned.** `auth-google.spec.ts :: the sign-in
+ownership conflict is unreachable in the shipped build` drives the shipped
+`dist` in real Chromium: both sign-in paths answer `NOT_CONFIGURED`, no profile
+key exists in storage, the health record does not say `RECOVERY_REQUIRED`, and
+`task.create` is not `POLICY_BLOCKED`. That same case was then run against a
+build with the **old, defective** resolution restored and a shipped
+configuration — and it still passed, which is what establishes unreachability
+rather than merely "fixed".
+
+It was reachable in exactly one build: `dist-auth`, the fixture with an origin
+inlined for `auth-google-protocol.spec.ts`. That is a test artifact and has
+never been uploaded anywhere.
+
+What this changes for the decision: replacing the pending submission is now a
+question about **capability and queue position only**. There is no defect in it
+that a reviewer can reach, so there is no correctness argument for restarting a
+review that may be close to a verdict.

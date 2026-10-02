@@ -3220,6 +3220,7 @@
           "status": "VERIFIED",
           "evidence": [
             "tests/e2e/auth-google-protocol.spec.ts :: 03b — the whole journey: signed in, account connected, selected, and used",
+            "tests/e2e/auth-google.spec.ts :: the sign-in ownership conflict is unreachable in the shipped build",
             "tests/e2e/multi-account.spec.ts :: a task refuses when the selected account is disconnected, with no fallback",
             "tests/e2e/multi-account.spec.ts :: the selected account is the one that actually serves the agent’s request",
             "tests/integration/brain-routing.test.ts :: keeps resolving the same account across repeated requests",

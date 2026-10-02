@@ -125,6 +125,61 @@ if (!relPaths.includes(REQUIRED_NOTICES)) {
   fail(`${REQUIRED_NOTICES} ships empty, which discharges no licence obligation.`);
 }
 
+/**
+ * Debug and development artefacts that reach the *contents* rather than the
+ * file list.
+ *
+ * The extension checks above catch a `.map` or a `.ts` that was packaged. These
+ * catch the things that compile into a bundle and survive minification: a
+ * `debugger` statement pauses a reviewer's devtools, a `console.log` prints
+ * whatever it was given wherever it ends up, and a test fixture name means a
+ * module that should not be reachable is.
+ *
+ * Added after an audit scanned the artifact by hand and found none of them. A
+ * confirmation nobody enforces decays into a claim, so the scan became a
+ * check — and it costs nothing when it passes.
+ *
+ * `eval` and `new Function` are listed although the CSP already forbids them at
+ * run time: a bundle containing one is a bundle that intends to use it, and
+ * finding out at review time that the CSP is doing the refusing is worse than
+ * not shipping it.
+ */
+const DEBUG_PATTERNS = [
+  {
+    id: 'A `debugger` statement',
+    // Bounded by a statement boundary so a property or identifier containing
+    // the word — `chrome.debugger`, which this extension legitimately uses —
+    // is not matched.
+    re: /(^|[;{}\s])debugger\s*[;}]/m,
+    why: 'it pauses a reviewer’s devtools and has no place in a release.',
+  },
+  {
+    id: 'A `console.log` call',
+    re: /\bconsole\s*\.\s*log\s*\(/,
+    why: 'the logger is the one path that redacts; this one is not.',
+  },
+  {
+    id: 'An `eval` call',
+    re: /[^.\w]eval\s*\(/,
+    why: 'the CSP forbids it at run time, so shipping one is shipping a failure.',
+  },
+  {
+    id: 'A `new Function` constructor',
+    re: /\bnew\s+Function\s*\(/,
+    why: 'it is `eval` by another name and the CSP forbids it too.',
+  },
+  {
+    id: 'A test fixture reference',
+    re: /\b(mock-provider|mock-connector-service|mock-mcp-server|test-site|auth-backend)\b/,
+    why: 'a module that should not be reachable from the bundle is.',
+  },
+  {
+    id: 'A test-runner reference',
+    re: /\b(vitest|@playwright\/test)\b/,
+    why: 'a development dependency reached the bundle.',
+  },
+];
+
 const FORBIDDEN_PATHS = [
   /(^|\/)tests?\//i,
   /(^|\/)__tests__\//i,
@@ -191,6 +246,9 @@ for (const full of files) {
   }
   if (/\/\/# sourceMappingURL=/.test(content)) {
     fail(`${rel} references a source map, which is not intended for release.`);
+  }
+  for (const { id, re, why } of DEBUG_PATTERNS) {
+    if (re.test(content)) fail(`${id} in ${rel} — ${why}`);
   }
 }
 

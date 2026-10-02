@@ -66,15 +66,33 @@ you first.
 **Changing provider re-asks.** A task is bound to the provider and model you
 started it with. Switching either does not inherit the previous approval.
 
-**Data sent to a service you connected.** If you connect a service — GitHub —
-the agent can read from it and, if you granted write access, write to it. Those
-requests pass the same authorization gate as everything else, so a task that
-has read a confidential page and then tries to send it to a connected service
-asks you first. Nothing about the connection lets it skip that.
+**Data sent to a service you connected.** Three services can be connected —
+**GitHub**, **Figma** and **Jira** — and only if you choose to. The agent can
+read from one you connected and, for GitHub, write to it if the token you
+supplied permits that. Those requests pass the same authorization gate as
+everything else, so a task that has read a confidential page and then tries to
+send it to a connected service asks you first. Nothing about the connection
+lets it skip that.
 
-You choose read-only or read-and-write when you connect, and the agent cannot
-widen it. Every permission the extension asks a service for is listed in the
-side panel with the reason it is needed.
+**You connect each one with a token you create in your own account.** Not a
+sign-in: you paste a token, and you can revoke it in the same page you made it
+in. The extension registers no application with any of them and holds no secret
+of its own. The token is stored by the extension, sent only to that service, and
+never written to logs, evidence, audit records, task data or model prompts.
+
+**Figma and Jira are read-only.** Neither service tells this extension what a
+token is allowed to do, so rather than attempting a change and failing, the
+extension offers no way to make one. Figma reads a file's structure and its
+comments; Jira searches issues and reads one with its comments.
+
+**For Jira, you also enter your own site address.** It must be an `https`
+address on `atlassian.net`, and the extension binds your token to that exact
+address: the token can never be sent anywhere else, and changing the address
+means entering the token again. That is why the field is there — so the
+extension knows the one place your credential may go, rather than guessing.
+
+Every permission the extension asks a service for is listed in the side panel
+with the reason it is needed.
 
 **A file you chose, if you approve sending it.** Choosing a file and sending it
 to a website are two separate decisions, and you are asked for both. The second

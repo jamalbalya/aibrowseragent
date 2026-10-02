@@ -68,6 +68,84 @@ test('sign-in refuses when no backend is configured, rather than reaching out', 
   expect(result.failure).toBe('NOT_CONFIGURED');
 });
 
+test('the sign-in ownership conflict is unreachable in the shipped build', async ({
+  send,
+  serviceWorker,
+  context,
+  site,
+}) => {
+  // **This case exists to settle a claim I made and should not have.**
+  //
+  // A defect was found and fixed in `ef66e4e`: signing in with Google put
+  // persistence into `RECOVERY_REQUIRED`, which `TaskManager` treats as
+  // work-blocking, so every `task.create` was refused. The previous report
+  // then told the owner that the artifact pending Chrome Web Store review
+  // "contains the sign-in defect" and that "a reviewer who signs in with
+  // Google and then runs a task will find it refused".
+  //
+  // **That was wrong**, and this is the measurement. The defect needs a
+  // *completed* sign-in, because the conflict is between a local installation
+  // id and a **profile** id — and the profile is written only by
+  // `recordSignIn`, which `signInWithGoogle` cannot reach when no backend
+  // origin is compiled in. The shipped build has none. So no profile is ever
+  // written, the two ids never disagree, and the conflict never fires.
+  //
+  // It was reachable in exactly one build: `dist-auth`, the fixture built for
+  // `auth-google-protocol.spec.ts` with an origin inlined. That is a test
+  // artifact and has never been uploaded anywhere.
+  //
+  // This runs against the shipped `dist`, which is what a reviewer installs.
+  const status = await send('auth.status', {});
+  expect(status.configured).toBe(false);
+  expect(status.state).toBe('signed_out');
+
+  // Both sign-in paths refuse before anything is recorded. Email as well as
+  // Google: either would write the profile, so one of them succeeding would
+  // make the conflict reachable.
+  const google = (await send('auth.signInWithGoogle', {})) as { failure: string | null };
+  expect(google.failure).toBe('NOT_CONFIGURED');
+  const email = (await send('auth.startEmailSignIn', { email: 'someone@example.test' })) as {
+    failure: string | null;
+  };
+  expect(email.failure).toBe('NOT_CONFIGURED');
+
+  // No profile exists, so there is no second id to disagree with the local
+  // one. Read out of the real extension's own storage.
+  const stored = await serviceWorker.evaluate(async () => {
+    const local = await chrome.storage.local.get(null);
+    return {
+      keys: Object.keys(local),
+      profile: JSON.stringify(local['identity-profile:profile'] ?? null),
+      health: JSON.stringify(local['health:persistence-health'] ?? null),
+    };
+  });
+  expect(stored.profile).toBe('null');
+  expect(stored.keys).not.toContain('identity-profile:profile');
+
+  // And therefore persistence is not blocked. The defect's whole effect was
+  // this record saying RECOVERY_REQUIRED.
+  expect(stored.health).not.toContain('RECOVERY_REQUIRED');
+
+  // The end a reviewer would actually reach: a task is created. Needs a page
+  // the agent may act on and a connected provider, so this is the full path
+  // rather than a probe of the health record.
+  const target = await context.newPage();
+  await target.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await target.bringToFront();
+
+  const created = await send('task.create', { objective: 'Read this page.' }).catch(
+    (error: unknown) => ({ failed: error instanceof Error ? error.message : String(error) }),
+  );
+  // Either it was created, or it was refused for the *provider* reason — this
+  // spec connects none. What must not happen is POLICY_BLOCKED, which is what
+  // the defect produced.
+  const describe = JSON.stringify(created);
+  expect(describe).not.toContain('POLICY_BLOCKED');
+  expect(describe).not.toContain('Stored state needs to be reviewed');
+
+  await target.close();
+});
+
 test('authentication added no permission and no host access', async ({ serviceWorker }) => {
   const manifest = await serviceWorker.evaluate(() => chrome.runtime.getManifest());
   expect(manifest.permissions).toEqual([

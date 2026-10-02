@@ -14,6 +14,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { isIdentityConfigured, loadIdentityConfig } from '@/identity/identity-config';
 import { MemoryStorageArea, type StorageArea } from '@/storage/storage-area';
 import {
   LOCAL_IDENTITY_PATTERN,
@@ -373,5 +374,108 @@ describe('what the installation identity is not', () => {
     expect(
       isLocalIdentity({ version: 1, installationId: mintInstallationId(), createdAt: NOW }),
     ).toBe(true);
+  });
+});
+
+describe('the ownership conflict, and which builds can reach it', () => {
+  /**
+   * Why this group exists, and what it corrects.
+   *
+   * `resolveOwner` used to fail closed when a local installation id and a
+   * signed-in profile id disagreed, and `currentAbaUserId` answered that
+   * refusal by reporting persistence `RECOVERY_REQUIRED` — which
+   * `TaskManager` treats as work-blocking. So signing in with Google stopped
+   * every task from starting. That is fixed, and the regression test is the
+   * whole journey in `auth-google-protocol.spec.ts`.
+   *
+   * **A separate claim was made about it and was wrong.** The previous report
+   * told the owner that the artifact pending Chrome Web Store review contained
+   * the defect and that a reviewer who signed in would hit it. The conflict
+   * needs **both** ids, and the profile id exists only after a *completed*
+   * sign-in — which no shipped build can perform, because the backend origin
+   * is inlined at build time and the shipped one has none.
+   *
+   * These cases pin the reachability argument so it is testable rather than
+   * narrated. The browser-level measurement is
+   * `auth-google.spec.ts :: the sign-in ownership conflict is unreachable in
+   * the shipped build`, which was also run with the **old** code restored in a
+   * shipped-configuration build and still passed.
+   */
+  it('needs two ids, so one id alone resolves cleanly either way', () => {
+    // With no profile there is nothing to disagree with, under the old rule
+    // and the new one alike. That is why the configuration decides
+    // reachability rather than the rule.
+    const installation = mintInstallationId();
+    const alone = resolveOwner(null, installation);
+    expect(alone.ok).toBe(true);
+    if (!alone.ok) throw new Error('unreachable');
+    expect(alone.abaUserId).toBe(installation);
+    expect(alone.adoptable).toBeUndefined();
+  });
+
+  it('the profile id is written by one function, and only after a sign-in', () => {
+    // `recordSignIn` is the only writer, and the controller calls it only
+    // after the provider half has returned `ok`. So a build that cannot
+    // complete a sign-in cannot produce the second id, whatever the
+    // resolution rule does with it.
+    const controller = readFileSync('src/identity/auth-controller.ts', 'utf8');
+    const profile = readFileSync('src/identity/identity-profile.ts', 'utf8');
+
+    // One writer of `abaUserId` on the profile record.
+    expect(profile.split('abaUserId:').length - 1).toBeGreaterThan(0);
+    expect(controller.split('recordSignIn(').length - 1).toBe(2);
+
+    // And each call site is gated on a configured provider first. Asserted on
+    // ordering, because the gate is only a gate if it comes first.
+    for (const method of ['signInWithGoogle', 'verifyEmailSignIn']) {
+      const start = controller.indexOf(`async ${method}(`);
+      expect(start, method).toBeGreaterThan(-1);
+      // Bounded by the next method rather than by the next `\n  }`: one of
+      // these has a multi-line return type whose closing brace sits at that
+      // indentation, so the naive terminator cut the body off at 155
+      // characters and the assertions below passed for the wrong reason.
+      const rest = controller.slice(start + 1);
+      const nextMethod = rest.search(/\n {2}(async |\/\*\*)/);
+      const body = nextMethod === -1 ? rest : rest.slice(0, nextMethod);
+
+      const guard = body.indexOf("failure: 'NOT_CONFIGURED'");
+      const record = body.indexOf('recordSignIn(');
+      expect(guard, `${method}: no NOT_CONFIGURED guard`).toBeGreaterThan(-1);
+      expect(record, `${method}: no recordSignIn call`).toBeGreaterThan(-1);
+      // The gate is only a gate if it comes first.
+      expect(guard, `${method}: the guard is not before the write`).toBeLessThan(record);
+
+      // **And before the provider is touched at all.** A mutation that moved
+      // the guard to sit between `signIn` and `recordSignIn` survived the
+      // assertion above: the ordering it checked was still true, and an
+      // unconfigured build would have reached out before refusing. The
+      // property is that nothing happens first, not that the write happens
+      // last.
+      const reachOut = body.search(/this\.options\.(google|email)[!?]?\.\w/);
+      expect(reachOut, `${method}: no provider call found`).toBeGreaterThan(-1);
+      expect(guard, `${method}: the guard is not before the provider call`).toBeLessThan(reachOut);
+    }
+  });
+
+  it('has no backend origin when none was compiled in, so no sign-in is possible', () => {
+    // **Called rather than pattern-matched.** An earlier version of this case
+    // grepped for a `??` fallback beside the variable name, and a mutation
+    // that returned a default from a different line survived it. Nothing is
+    // set in this environment, so the honest answer is `null` — and any
+    // default, wherever it is written, makes this fail.
+    expect(loadIdentityConfig()).toBeNull();
+    expect(isIdentityConfigured()).toBe(false);
+  });
+
+  it('refuses a non-https origin even when one is compiled in', () => {
+    // The other half, which cannot be reached by calling the loader in this
+    // environment. An http origin is a bearer token in clear text, and a
+    // loopback exception here would ship to everybody.
+    const config = readFileSync('src/identity/identity-config.ts', 'utf8');
+    expect(config).toContain("url.protocol !== 'https:'");
+    // Read from the build-time environment and nowhere else: an origin that
+    // could be set from a message would be an origin an attacker could set.
+    expect(config).toContain('import.meta');
+    expect(config).not.toMatch(/function\s+setBackendOrigin|export\s+function\s+set/);
   });
 });
