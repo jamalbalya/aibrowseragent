@@ -176,11 +176,20 @@ export function validateConnectorDescriptor(descriptor: ConnectorDescriptor): st
     }
   }
 
-  if (descriptor.authKind === 'oauth2') {
+  if (descriptor.authKind === 'oauth2' && !descriptor.oauth) {
+    problems.push('an oauth2 connector needs an oauth configuration');
+  }
+
+  // Checked whenever it is **present**, not only when `authKind` says it is
+  // in use. A connector that authenticates with a user-supplied token may
+  // still carry this configuration — the shipped GitHub connector does, for
+  // the deployment that holds a client secret elsewhere — and a descriptor
+  // whose endpoints are wrong should be unregistrable either way. Keying the
+  // check off `authKind` would have meant that switching a connector to the
+  // token path silently stopped validating its endpoints.
+  {
     const oauth = descriptor.oauth;
-    if (!oauth) {
-      problems.push('an oauth2 connector needs an oauth configuration');
-    } else {
+    if (oauth) {
       // The endpoints this extension *sends* to must be https, because a
       // code, a verifier and a client id travel to them over the network.
       for (const [field, value] of [

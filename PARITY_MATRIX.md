@@ -637,18 +637,47 @@ notes go back behind the PASS gate.
 
 What they now say, in full:
 
-- **P-023-C8, P-023-C9, P-022-C8, P-024-C9 — no OAuth application is
-  registered**, with any provider. A confidential client cannot ship in an
-  extension, and a public client still needs a client id issued by the service
-  and a redirect URI the service has been told about. Neither exists, so no
-  authorization code can be obtained and no connector has ever been connected to
-  a real service. Everything above that line — registry, adapter, PKCE, state,
-  callback validation, token vault, scope discovery, policy, execution — runs
-  against a local mock authorization server over real HTTP. The five unwritten
-  Tier 1 connectors are recorded as external rather than unimplemented on
-  purpose: writing them would not make them connectable. This one blocker is
-  what holds P-022, P-023 and P-024 below PASS, and §44's reference
-  multi-service workflow with them.
+- **P-023-C8, P-023-C9, P-022-C8, P-024-C9 — no connector has been connected
+  to a real service**, because no token from anybody's account is held here.
+  Everything above that line — registry, adapter, PKCE, state, callback
+  validation, token vault, scope discovery, policy, execution — runs against a
+  local mock authorization server over real HTTP, and the credential check now
+  runs against the live service: a measurement in real Chromium records
+  GitHub's own refusal of a string that is not a credential for anything.
+  §44's reference multi-service workflow is held with them.
+
+  **This bullet used to say the blocker was a missing OAuth application, and
+  that was wrong.** Checked against each vendor's own documentation rather than
+  assumed: GitHub's web application flow requires a `client_secret` in the code
+  exchange, PKCE or not; Atlassian 3LO requires one and supports no PKCE at
+  all; Figma requires one even with PKCE. This extension must not carry a
+  secret — one inside an extension is readable by anyone who unzips it — so for
+  four of the six Tier 1 services a registration would have changed nothing.
+  Only Google's Sheets and Drive could be built as sign-in connectors here, via
+  the installed-app client types that use PKCE with no secret.
+
+  The error went unnoticed for a reason worth naming: with no client id the
+  flow is refused _before it starts_, so the refusal looked exactly like
+  missing configuration. Nothing had ever attempted an authorization, so
+  nothing had ever reached the step that needs the secret. `docs/connectors.md`
+  carries the table and the sources.
+
+  **What changed in response.** The build now authenticates GitHub with a token
+  the user creates in their own account: no registration, no client id, no
+  secret anywhere, and revocable by the user in the page they made it in. The
+  path is implemented, in the panel, and exercised — including the three states
+  a token's reach can be in, because GitHub reports a classic token's scopes
+  and reports nothing at all for a fine-grained one, and a reach that was never
+  established must refuse every write rather than claim the scopes the
+  descriptor wanted. `docs/release/OWNER-CHECKLIST.md` section D is now a
+  five-step procedure a person can actually perform, where before it asked for
+  a registration that would not have worked.
+
+  The clause stays `EXTERNAL_REQUIRED` and no status moved. What narrowed is the
+  blocker: from "no mechanism exists" to "no token is held". The five unwritten
+  Tier 1 connectors stay external rather than unimplemented, for a corrected
+  reason — four of them wait on a decision about mechanism, not on a form.
+
 - **P-011-C7 — Chrome's own optional-permission dialog**, which has no frame,
   no exposed accessibility tree and no CDP domain behind it. Everything
   downstream of the grant runs end to end.
@@ -1545,20 +1574,48 @@ prompt raised when the step actually runs carries the escalated risk, so the
 floor understates a review screen and never an authorization.
 
 **P-023 Connector framework** — The framework is implemented and one adapter
-exists, for GitHub: OAuth (authorization code + PKCE, no client secret), a
-token vault whose only exit is an `Authorization` header, a guarded transport
-that shares the one egress gate rather than duplicating it, least-privilege
-scopes with a stated rationale for each, duplicate-write protection, and four
-tools in the same registry as every other tool. Covered by four unit suites,
-an integration suite against a mock service, a security suite and a
-real-Chromium E2E suite.
+exists, for GitHub: a token vault whose only exit is an `Authorization` header,
+a guarded transport that shares the one egress gate rather than duplicating it,
+least-privilege scopes with a stated rationale for each, duplicate-write
+protection, and four tools in the same registry as every other tool. Covered by
+five unit suites, an integration suite against a mock service, a security suite
+and a real-Chromium E2E suite. The parts that are the same for every service —
+the preflight that refuses an operation the grant does not cover, the call that
+carries the task's own taint, the write claim, and the status mapping — are one
+module rather than something a second adapter would copy; the duplicate-write
+protection in particular must not exist twice, because two answers to "has this
+write already happened" is a question with two answers.
 
-PARTIAL for one reason, and it is external rather than architectural: **this
-project registers no OAuth application**, so no connector can actually be
-connected in this build and no live authorization has ever been performed.
-The extension says so and refuses to start a flow it cannot finish, rather
-than faking one. Everything below that line is exercised against a local mock
-authorization server and API over real HTTP.
+**Two authentication mechanisms, and a correction.** The build authenticates
+GitHub with a token the user creates in their own account. That is not a
+convenience: the authorization-code flow it also supports **cannot be completed
+against any of the six Tier 1 services**, because every one of them requires a
+`client_secret` in the code exchange — GitHub for the web flow, Atlassian with
+no PKCE at all, Figma even with PKCE — and this extension must not carry one.
+An earlier revision of this row and of the clause blockers said the obstacle
+was a missing registered application; that was wrong, and it stayed wrong
+because no authorization had ever been attempted, so nothing had ever reached
+the step that needs the secret. The external-blocker note above has the full
+correction and the sources.
+
+The token path is checked before anything is stored, which is the order that
+matters: writing first would mean a worker evicted in between leaves an
+unverified credential in the vault that `reconcile` reads back as a connection
+and never re-examines. And a token's reach has three states, not two — GitHub
+reports a classic token's scopes and reports nothing at all for a fine-grained
+one, so "the service said none" and "the service would not say" are different
+facts, and the second records no scopes and refuses every write rather than
+claiming what the descriptor wanted.
+
+PARTIAL for one reason, and it is external rather than architectural: **no
+token from anybody's account is held here**, so no connector has been connected
+to a real service. What has happened is that the credential check reaches the
+live service — GitHub's own refusal of a non-credential string, over the
+network, in real Chromium, is recorded — so the transport, the egress gate and
+the failure classification are exercised against a live third party. A
+successful connection and a real read or write still need a person with an
+account, and `docs/release/OWNER-CHECKLIST.md` section D is now a procedure
+that person can perform.
 
 PARTIAL also because one connector is not a connector ecosystem. The Jira,
 Confluence, Figma and Google Sheets connectors named in the specification are

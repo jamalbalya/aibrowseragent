@@ -425,6 +425,12 @@ export const PANEL_ROUTE_CLASSES: Record<PanelRequestType, RouteClass> = {
 
   'connector.list': 'CLASS_E_PANEL_READ_ONLY',
   'connector.authorize': 'CLASS_B_PANEL_CONTROL_PLANE',
+  // Control plane, and the one panel route whose *request* carries a
+  // credential. Nothing weaker would do: the panel is the only sender that may
+  // reach it, which is the same rule as every other B route, and the reason it
+  // matters more here is that a content script reaching this one could post a
+  // token of its choosing into the vault.
+  'connector.connectToken': 'CLASS_B_PANEL_CONTROL_PLANE',
   'connector.disconnect': 'CLASS_B_PANEL_CONTROL_PLANE',
   'connector.pendingWrites': 'CLASS_E_PANEL_READ_ONLY',
   'connector.resolveWrite': 'CLASS_B_PANEL_CONTROL_PLANE',

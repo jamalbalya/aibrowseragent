@@ -2427,10 +2427,18 @@ credentials, per-connector scope and least-privilege enforcement, write
 consent, connector evidence, and §88 acceptance per connector. See
 `docs/connectors.md`.
 
-The one thing outstanding is external rather than architectural: this project
-registers no OAuth application, so no live authorization has been performed.
-The framework is exercised against a local mock authorization server and API
-over real HTTP, and the extension refuses to start a flow it cannot finish.
+The one thing outstanding is external rather than architectural: no token from
+anybody's account is held here, so no connector has been connected to a real
+service. The framework is exercised against a local mock authorization server
+and API over real HTTP, the token path end to end, and the credential check
+against the live service.
+
+**Corrected since this was written.** This paragraph used to say the blocker
+was a missing registered OAuth application. It was not — GitHub, Atlassian and
+Figma all require a `client_secret` in the code exchange, which this extension
+must not carry, so the flow was unreachable at any registration. The build
+authenticates GitHub with a token the user creates in their own account
+instead. `docs/connectors.md` has the table and the sources.
 
 **Skills (Phase 7) are implemented.** `src/skills/` holds the definition
 model and validator, the trusted registry, the step runner over

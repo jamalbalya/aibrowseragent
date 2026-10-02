@@ -337,8 +337,12 @@ not a procedure.
 
 **Verdict: `MANUAL`**
 
-- COVERED BY: 88-connect through 88-least-privilege, all `BLOCKED — OAUTH`. The
-  procedures exist; what is missing is a registered OAuth application (A-1).
+- COVERED BY: 88-connect through 88-least-privilege, all `BLOCKED — SERVICE TOKEN`.
+  The procedures exist; what is missing is a token from the owner's own GitHub
+  account (A-1). It was recorded as a missing OAuth application registration,
+  which was wrong — the code exchange needs a client secret this extension must
+  not hold, so no registration would have unblocked it. See the top of
+  [88-connectors.md](88-connectors.md).
 
 ## P-024 — Skills
 

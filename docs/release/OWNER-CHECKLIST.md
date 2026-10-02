@@ -119,7 +119,30 @@ the earlier items are using.
 `87-08` is in group A and is the same prerequisite: on a text-only model it
 exercises the unsupported-capability path instead, which is already covered.
 
-### D. With a registered OAuth application — five more
+### D. With a GitHub token you create yourself — five more
+
+**This section used to say "with a registered OAuth application", and that was
+wrong.** Registering one would not have let you do any of the five. GitHub's
+web application flow requires a `client_secret` in the code exchange, PKCE or
+not, and this extension must not carry one — a secret inside an extension is
+readable by anyone who unzips it. The same is true of Atlassian, which also
+supports no PKCE at all, and of Figma. `docs/connectors.md` has the table and
+the vendor sources.
+
+So the five are now reachable, and reachable **without registering anything**:
+
+1. Go to <https://github.com/settings/tokens> in your own GitHub account.
+2. Create a token. For `88-read` alone, a token with **no** permissions is
+   enough — reading public issues needs no scope. For `88-write` you need
+   `public_repo` on a classic token.
+3. **Prefer a classic token.** GitHub reports a classic token's scopes in an
+   `x-oauth-scopes` header and reports nothing for a fine-grained one, so a
+   fine-grained token connects, reads, and **refuses every write** — not a
+   fault, but it will not get you `88-write`.
+4. Paste it into Settings → Connectors → GitHub → Connect.
+5. Use a repository you own, or one you do not mind an issue appearing in.
+   `88-write` opens a real issue attributed to you.
+6. Revoke the token on that same settings page when you are finished.
 
 | Procedure       | What it establishes                                                |
 | --------------- | ------------------------------------------------------------------ |
@@ -129,13 +152,23 @@ exercises the unsupported-capability path instead, which is already covered.
 | `88-revocation` | Revoking at the service is noticed here                            |
 | `86-5-manual`   | A write killed mid-flight leaves exactly one record on the service |
 
+**If you would rather register an application anyway**, the thing to register
+is a GitHub OAuth app for the **device authorization flow**, which is the one
+GitHub flow that needs no client secret. That gets you a sign-in flow instead
+of a pasted token; it does not get you anything the five procedures above
+cannot already establish, and it is not implemented here. The redirect URI for
+the code flow, if you ever hold a secret outside the extension, is the value
+of `chrome.runtime.getURL('oauth/callback.html')` for your installed build,
+and `web_accessible_resources` in the manifest must list the authorization
+origin.
+
 ### E. Not executable by anybody, and not waiting on you
 
-| Procedure      | Why                                                                                                              |
-| -------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `84-P-025`     | P-025 Plugins is not implemented, and is off the parity critical path                                            |
-| `85-D`, `85-E` | They name Jira, Confluence, Figma and Sheets; those connectors do not exist here, and no credential changes that |
-| `89-06`        | The iframe exclusion is behaviour, not a gap: the agent has no handle inside a cross-origin frame                |
+| Procedure      | Why                                                                                                                                                                                                                                                                                            |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `84-P-025`     | P-025 Plugins is not implemented, and is off the parity critical path                                                                                                                                                                                                                          |
+| `85-D`, `85-E` | They name Jira, Confluence, Figma and Sheets; those connectors do not exist here, and no credential changes that. Two of them could not be built as sign-in connectors at all — see the table in `docs/connectors.md` — so what they wait on is a decision about mechanism, not a registration |
+| `89-06`        | The iframe exclusion is behaviour, not a gap: the agent has no handle inside a cross-origin frame                                                                                                                                                                                              |
 
 ### One more that is separate, and unavoidable
 

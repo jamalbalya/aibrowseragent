@@ -5,10 +5,10 @@
  * brief rather than by popularity:
  *
  *  - *Testability.* A plain REST API over JSON with conventional OAuth
- *    (authorization code, PKCE supported, no client secret needed for a
- *    public client). A local mock can speak it faithfully over real sockets,
- *    which several of the alternatives cannot — Google's flows assume a
- *    web-server client and a consent screen that has no local equivalent.
+ *    (authorization code, PKCE supported). A local mock can speak it
+ *    faithfully over real sockets, which several of the alternatives cannot —
+ *    Google's flows assume a web-server client and a consent screen that has
+ *    no local equivalent.
  *  - *Least privilege.* Its scopes decompose cleanly: `public_repo` is write
  *    access limited to public repositories, and reading public issues needs
  *    no scope at all. A connector that can only be authorised at "all your
@@ -29,29 +29,59 @@
  * **No live OAuth application exists for this project.** The client id is
  * configuration, supplied by whoever deploys it; without one the connector
  * reports as unconfigured and refuses rather than pretending.
+ *
+ * ## A correction, and why this connector authenticates with a token
+ *
+ * An earlier revision of the paragraph above said GitHub needs "no client
+ * secret ... for a public client". **That is wrong**, and it was wrong in a way
+ * that mattered: GitHub's web application flow lists `client_secret` as
+ * *required* when exchanging the code at `/login/oauth/access_token`, PKCE or
+ * not. `ConnectorOAuthConfig` deliberately carries no secret, so the flow this
+ * build runs cannot be completed against GitHub at all — and registering an
+ * application would not change that. It went unnoticed because no
+ * authorization has ever been attempted: the deployment has no client id, so
+ * the flow is refused before it starts, and the refusal looked like the only
+ * thing missing was a registration.
+ *
+ * It is not GitHub-specific. Atlassian requires a secret and supports no PKCE
+ * at all; Figma requires a secret even with PKCE. `docs/connectors.md` has the
+ * table for all six Tier-1 services and the two mechanisms that do work
+ * without one: the device authorization flow, and a token the user creates in
+ * their own account.
+ *
+ * This adapter therefore supports both auth kinds. The OAuth configuration
+ * stays — it is correct, and it is what a deployment holding a secret
+ * elsewhere would use — and `authKind` is an option, so the deployment states
+ * which mechanism it actually has. The shipped build says `api_token`, because
+ * that is the one that can connect.
  */
 
 import { z } from 'zod';
 import { ToolError } from '@/types/result';
-import { getLogger } from '@/logging/logger';
-import type { TaintState } from '@/security/taint/taint-state';
 import { newEvidenceId } from '@/utils/ids';
-import { wrapUntrusted, type Provenance } from '@/security/prompt-injection/untrusted-content';
 import type { AgentTool, ToolExecutionResult } from '@/tools/core/tool-types';
 import { connectorDestination } from '@/security/egress/destination';
-import {
-  findOperation,
-  type Connector,
-  type ConnectorAuthState,
-  type ConnectorCapability,
-  type ConnectorDescriptor,
+import type {
+  Connector,
+  ConnectorAuthState,
+  ConnectorCapability,
+  ConnectorDescriptor,
 } from '@/connectors/core/types';
-import type { ConnectorSession } from '@/connectors/core/connector-session';
+import {
+  TokenRejected,
+  type ConnectorSession,
+  type TokenIntrospection,
+} from '@/connectors/core/connector-session';
 import type { ConnectorTransport } from '@/connectors/transport/connector-transport';
-import { ConnectorTransportError } from '@/connectors/transport/connector-transport';
-import { outcomeIsUncertain, writeKey, type WriteGuard } from '@/connectors/core/write-guard';
+import type { WriteGuard } from '@/connectors/core/write-guard';
+import {
+  ConnectorRuntime,
+  truncate,
+  untrustedFromConnector,
+  type ConnectorCallContext,
+} from '@/connectors/core/connector-runtime';
 
-const log = getLogger('agent');
+export type { ConnectorCallContext };
 
 export const GITHUB_CONNECTOR_ID = 'github';
 
@@ -64,12 +94,22 @@ export function githubDescriptor(options: {
   authorizationEndpoint?: string;
   tokenEndpoint?: string;
   redirectUri: string;
+  /**
+   * How this deployment authenticates.
+   *
+   * Defaults to `oauth2`, which is what the configuration below describes and
+   * what a deployment holding a client secret somewhere other than the
+   * extension would use. The shipped worker passes `api_token`, because no
+   * such secret exists here and the code exchange cannot be completed without
+   * one. See the module comment.
+   */
+  authKind?: 'oauth2' | 'api_token';
 }): ConnectorDescriptor {
   const apiOrigin = options.apiOrigin ?? 'https://api.github.com';
   return {
     id: GITHUB_CONNECTOR_ID,
     displayName: 'GitHub',
-    authKind: 'oauth2',
+    authKind: options.authKind ?? 'oauth2',
     site: 'github.com',
     defaultSensitivity: 'internal',
     apiOrigins: [apiOrigin],
@@ -129,6 +169,80 @@ export function githubDescriptor(options: {
   };
 }
 
+/**
+ * What a user-supplied GitHub token is asked, and how its answer is read.
+ *
+ * Split into a URL and a reader, with nothing in between, because the send
+ * itself must not happen here. The request carries the credential, and the
+ * only place in this build that sends a credential-bearing request outside the
+ * connector transport is the worker's authentication path — the same one the
+ * token exchange uses, and for the same reasons: it belongs to no task, must
+ * not be attributed to one, and must never be logged. The transport cannot do
+ * it either, because the transport reads the credential out of the vault and
+ * the whole point is to check this one *before* it is stored.
+ *
+ * So the service knowledge lives here and the sending lives there.
+ */
+export function githubTokenProbeUrl(apiOrigin: string): string {
+  // `GET /user` is the smallest call that establishes a token is real and
+  // whose account it belongs to. It reads no repository and writes nothing.
+  return `${apiOrigin.replace(/\/+$/, '')}/user`;
+}
+
+/**
+ * Reads GitHub's answer about a token.
+ *
+ * Three outcomes, and the difference between the last two is the point:
+ *
+ *  - **401 or 403** — the token is not valid, or not valid for this. Refused,
+ *    as `TokenRejected`, so the user is told to supply another one.
+ *  - **A classic token** — GitHub returns `x-oauth-scopes`, so the scopes are
+ *    *known* and recorded exactly. A token lacking `public_repo` then cannot
+ *    run a write: the refusal happens in the preflight, before anything is
+ *    sent, and names the missing permission.
+ *  - **A fine-grained token** — no `x-oauth-scopes` header comes back at all.
+ *    The scopes are **unknown**, reported as `null`, and the session records
+ *    none. Every write refuses. Claiming the scopes the descriptor wanted
+ *    would assert a permission nobody established, and what it would buy is a
+ *    write that fails at the service after the user approved it.
+ *
+ * An empty header value is `[]` and not `null`: GitHub sending the header with
+ * nothing in it is GitHub saying the token has no scopes, which is an answer.
+ */
+export function readGitHubTokenProbe(response: {
+  readonly status: number;
+  readonly headers: { get(name: string): string | null };
+  readonly login?: unknown;
+}): TokenIntrospection {
+  if (response.status === 401 || response.status === 403) {
+    throw new TokenRejected();
+  }
+  if (response.status < 200 || response.status >= 300) {
+    // Not a refusal — a service that could not be asked. The session reports
+    // these differently because they send the user to different actions.
+    throw new Error(`github_token_probe_status_${response.status}`);
+  }
+
+  const header = response.headers.get('x-oauth-scopes');
+  const scopes =
+    header === null
+      ? null
+      : header
+          .split(',')
+          .map((scope) => scope.trim())
+          .filter((scope) => scope.length > 0);
+
+  // The login is a public account name, not a credential. It is the one thing
+  // shown in the panel so a user with two accounts can tell which is
+  // connected, and it is length-capped because it arrives from the service.
+  const login = typeof response.login === 'string' ? response.login.slice(0, 64) : '';
+
+  return {
+    scopes,
+    ...(login.length === 0 ? {} : { accountLabel: login }),
+  };
+}
+
 export interface GitHubConnectorDeps {
   readonly descriptor: ConnectorDescriptor;
   readonly session: ConnectorSession;
@@ -136,13 +250,6 @@ export interface GitHubConnectorDeps {
   readonly writes: WriteGuard;
   /** Resolves the security context for the task making the call. */
   readonly egressFor: (taskId: string, operationId: string) => ConnectorCallContext | undefined;
-}
-
-export interface ConnectorCallContext {
-  readonly taintState: TaintState;
-  readonly taintSalt: string;
-  readonly saltEpoch: number;
-  readonly taintSignature: string;
 }
 
 // --- wire shapes ------------------------------------------------------------
@@ -198,100 +305,35 @@ const commentInput = z.object({
 
 export class GitHubConnector implements Connector {
   readonly descriptor: ConnectorDescriptor;
+  private readonly runtime: ConnectorRuntime;
 
-  constructor(private readonly deps: GitHubConnectorDeps) {
+  constructor(deps: GitHubConnectorDeps) {
     this.descriptor = deps.descriptor;
+    this.runtime = new ConnectorRuntime({
+      ...deps,
+      headers: { 'X-GitHub-Api-Version': '2022-11-28' },
+      classifyStatus: classifyGitHubStatus,
+    });
   }
 
-  async authenticate(): Promise<ConnectorAuthState> {
-    const status = await this.deps.session.reconcile();
-    return toAuthState(status);
+  authenticate(): Promise<ConnectorAuthState> {
+    return this.runtime.authenticate();
   }
 
-  async getAuthState(): Promise<ConnectorAuthState> {
-    return toAuthState(await this.deps.session.reconcile());
+  getAuthState(): Promise<ConnectorAuthState> {
+    return this.runtime.getAuthState();
   }
 
-  async revoke(): Promise<void> {
-    await this.deps.session.disconnect();
+  revoke(): Promise<void> {
+    return this.runtime.revoke();
   }
 
   listCapabilities(): Promise<ConnectorCapability[]> {
-    return Promise.resolve(
-      this.descriptor.operations.map((operation) => ({
-        id: operation.id,
-        description: operation.description,
-        readOnly: operation.kind === 'read',
-        requiredScopes: operation.requiredScopes,
-      })),
-    );
+    return this.runtime.listCapabilities();
   }
 
   private apiBase(): string {
-    return this.descriptor.apiOrigins[0]!.replace(/\/+$/, '');
-  }
-
-  /** Shared preflight: the connector must be ready and hold the scopes. */
-  private async preflight(operationId: string, taskId: string): Promise<ConnectorCallContext> {
-    const operation = findOperation(this.descriptor, operationId);
-    if (!operation) {
-      throw new ToolError('TOOL_NOT_FOUND', `Unknown connector operation "${operationId}".`);
-    }
-
-    const status = await this.deps.session.reconcile();
-    if (status.state !== 'READY') {
-      throw new ToolError('AUTH_REQUIRED', `${this.descriptor.displayName} is not connected.`, {
-        userMessage: `Connect ${this.descriptor.displayName} in Settings first.`,
-        retryable: false,
-      });
-    }
-    if (!this.deps.session.hasScopes(operation.requiredScopes)) {
-      // A read-only authorization cannot be talked into a write.
-      throw new ToolError(
-        'PERMISSION_DENIED',
-        `${this.descriptor.displayName} was authorised without the scope this needs.`,
-        {
-          userMessage:
-            `This needs the ${operation.requiredScopes.join(', ')} permission, which was not ` +
-            `granted when ${this.descriptor.displayName} was connected. Reconnect to grant it.`,
-          retryable: false,
-        },
-      );
-    }
-
-    const context = this.deps.egressFor(taskId, operationId);
-    if (!context) {
-      throw new ToolError(
-        'INTERNAL_ERROR',
-        'This connector call carries no security context, so it cannot be authorised.',
-      );
-    }
-    return context;
-  }
-
-  private async call(
-    operationId: string,
-    taskId: string,
-    request: { url: string; method: 'GET' | 'POST'; body?: string },
-  ): Promise<Response> {
-    const context = await this.preflight(operationId, taskId);
-    return await this.deps.transport.send(
-      {
-        url: request.url,
-        method: request.method,
-        ...(request.body === undefined ? {} : { body: request.body }),
-        headers: { 'X-GitHub-Api-Version': '2022-11-28' },
-      },
-      {
-        taskId,
-        taintState: context.taintState,
-        taintSalt: context.taintSalt,
-        saltEpoch: context.saltEpoch,
-        taintSignature: context.taintSignature,
-        connectorId: this.descriptor.id,
-        operationId,
-      },
-    );
+    return this.runtime.apiBase();
   }
 
   createTools(): AgentTool[] {
@@ -336,8 +378,11 @@ export class GitHubConnector implements Connector {
       execute: async (input, context): Promise<ToolExecutionResult> => {
         const q = input.repository ? `${input.query} repo:${input.repository}` : input.query;
         const url = `${this.apiBase()}/search/issues?q=${encodeURIComponent(q)}&per_page=${MAX_ITEMS}`;
-        const response = await this.call('search_issues', context.taskId, { url, method: 'GET' });
-        if (!response.ok) throw await httpError(response, this.descriptor.displayName);
+        const response = await this.runtime.call('search_issues', context.taskId, {
+          url,
+          method: 'GET',
+        });
+        if (!response.ok) throw await this.runtime.httpError(response);
 
         const body = (await response.json()) as WireSearch;
         const items = (body.items ?? []).slice(0, MAX_ITEMS).map((issue) => ({
@@ -368,9 +413,10 @@ export class GitHubConnector implements Connector {
                 ? [issue.number]
                 : [],
             ),
-            items: wrapUntrusted(
+            items: untrustedFromConnector(
               JSON.stringify(items),
-              connectorProvenance(this.descriptor.site, 'search_issues'),
+              this.descriptor.site,
+              'search_issues',
             ),
           },
           taint: [{ sourceType: 'connector', site: this.descriptor.site, sensitivity: 'internal' }],
@@ -409,14 +455,14 @@ export class GitHubConnector implements Connector {
 
       execute: async (input, context): Promise<ToolExecutionResult> => {
         const base = `${this.apiBase()}/repos/${input.repository}/issues/${input.issueNumber}`;
-        const response = await this.call('read_issue', context.taskId, {
+        const response = await this.runtime.call('read_issue', context.taskId, {
           url: base,
           method: 'GET',
         });
-        if (!response.ok) throw await httpError(response, this.descriptor.displayName);
+        if (!response.ok) throw await this.runtime.httpError(response);
         const issue = (await response.json()) as WireIssue;
 
-        const commentsResponse = await this.call('read_issue', context.taskId, {
+        const commentsResponse = await this.runtime.call('read_issue', context.taskId, {
           url: `${base}/comments?per_page=10`,
           method: 'GET',
         });
@@ -457,7 +503,7 @@ export class GitHubConnector implements Connector {
         return {
           success: true,
           data: {
-            issue: wrapUntrusted(document, connectorProvenance(this.descriptor.site, 'read_issue')),
+            issue: untrustedFromConnector(document, this.descriptor.site, 'read_issue'),
           },
           taint: [{ sourceType: 'connector', site: this.descriptor.site, sensitivity: 'internal' }],
         };
@@ -494,7 +540,7 @@ export class GitHubConnector implements Connector {
       }),
 
       execute: async (input, context): Promise<ToolExecutionResult> =>
-        await this.performWrite({
+        await this.runtime.performWrite({
           operationId: 'create_issue',
           taskId: context.taskId,
           args: input,
@@ -535,7 +581,7 @@ export class GitHubConnector implements Connector {
       }),
 
       execute: async (input, context): Promise<ToolExecutionResult> =>
-        await this.performWrite({
+        await this.runtime.performWrite({
           operationId: 'comment_issue',
           taskId: context.taskId,
           args: input,
@@ -545,175 +591,31 @@ export class GitHubConnector implements Connector {
         }),
     };
   }
-
-  /**
-   * One write, claimed before it is sent and settled after.
-   *
-   * The ordering is the protection: the claim is persisted first, so a worker
-   * evicted mid-request leaves an `in_flight` record rather than no trace,
-   * and the next attempt finds it instead of sending a second write.
-   */
-  private async performWrite<T>(input: {
-    operationId: string;
-    taskId: string;
-    args: unknown;
-    url: string;
-    body: string;
-    describe: (created: T) => Record<string, unknown>;
-  }): Promise<ToolExecutionResult> {
-    const key = await writeKey({
-      taskId: input.taskId,
-      connectorId: this.descriptor.id,
-      operationId: input.operationId,
-      args: input.args,
-    });
-
-    const claim = await this.deps.writes.claim({
-      key,
-      connectorId: this.descriptor.id,
-      operationId: input.operationId,
-      taskId: input.taskId,
-    });
-
-    if (claim.kind === 'already_completed') {
-      // Reported as a success without sending anything: the write is already
-      // done, and doing it again would be the duplicate.
-      return {
-        success: true,
-        data: {
-          duplicate: true,
-          alreadyDone: true,
-          ...(claim.record.resultRef === undefined ? {} : { resultRef: claim.record.resultRef }),
-        },
-      };
-    }
-    if (claim.kind === 'uncertain') {
-      throw new ToolError(
-        'CONNECTOR_ERROR',
-        'An identical write was attempted earlier and its outcome is unknown.',
-        {
-          userMessage:
-            `An identical ${this.descriptor.displayName} write was attempted earlier and never ` +
-            'confirmed. It may already have happened. Check on GitHub before trying again.',
-          retryable: false,
-        },
-      );
-    }
-    if (claim.kind === 'in_flight') {
-      throw new ToolError('CONNECTOR_ERROR', 'That write is already in progress.', {
-        userMessage: 'That write is already in progress.',
-        retryable: false,
-      });
-    }
-
-    let response: Response;
-    try {
-      response = await this.call(input.operationId, input.taskId, {
-        url: input.url,
-        method: 'POST',
-        body: input.body,
-      });
-    } catch (error) {
-      // A refusal by the gate or by the connector's own preflight never
-      // reached the service, so nothing happened remotely.
-      if (error instanceof ToolError || error instanceof ConnectorTransportError) {
-        await this.deps.writes.settle(key, 'failed');
-        throw error;
-      }
-      if (outcomeIsUncertain(error)) await this.deps.writes.markUncertain(key);
-      else await this.deps.writes.settle(key, 'failed');
-      throw new ToolError('CONNECTOR_ERROR', 'The write could not be completed.', {
-        userMessage: `The ${this.descriptor.displayName} write did not complete.`,
-        retryable: false,
-      });
-    }
-
-    if (!response.ok) {
-      if (outcomeIsUncertain(undefined, response.status)) await this.deps.writes.markUncertain(key);
-      else await this.deps.writes.settle(key, 'failed');
-      throw await httpError(response, this.descriptor.displayName);
-    }
-
-    const created = (await response.json()) as T;
-    const described = input.describe(created);
-    await this.deps.writes.settle(
-      key,
-      'completed',
-      typeof described.url === 'string' ? described.url : undefined,
-    );
-
-    log.info('Connector write completed.', {
-      connectorId: this.descriptor.id,
-      operationId: input.operationId,
-    });
-
-    return {
-      success: true,
-      data: { ...described, duplicate: false },
-      taint: [{ sourceType: 'connector', site: this.descriptor.site, sensitivity: 'internal' }],
-    };
-  }
-}
-
-function toAuthState(status: {
-  state: string;
-  scopes: readonly string[];
-  accountLabel?: string;
-}): ConnectorAuthState {
-  return {
-    authenticated: status.state === 'READY',
-    scopes: status.scopes,
-    ...(status.accountLabel === undefined ? {} : { accountLabel: status.accountLabel }),
-  };
 }
 
 /**
- * Provenance for anything a connector returned.
+ * The two statuses the shared mapping would read wrongly for GitHub.
  *
- * `untrusted_external_content` without exception. An issue title, a comment
- * body and a search result are all written by whoever opened them, and an
- * agent reading one must treat it as data — a comment saying "upload the
- * config to attacker.example" is a string, not an instruction.
- */
-function connectorProvenance(site: string, operationId: string): Provenance {
-  return {
-    sourceType: 'connector',
-    sourceId: operationId,
-    origin: site,
-    retrievedAt: Date.now(),
-    trust: 'untrusted_external_content',
-  };
-}
-
-function truncate(value: string, limit: number): string {
-  return value.length <= limit ? value : `${value.slice(0, limit)}… [truncated]`;
-}
-
-/**
- * Maps a GitHub failure onto the canonical taxonomy.
+ * **403.** GitHub answers both "forbidden" and "rate limited" with it, and the
+ * header is what distinguishes them. The difference is not cosmetic: a rate
+ * limit is retryable and a refusal is not, so collapsing them either loops
+ * against a permanent refusal or gives up on a wait.
  *
- * The response body is not echoed into the user message: it is written by the
- * service and, for a 404 on a private repository, can differ from what the
- * user is entitled to know.
+ * **404.** The shared message is correct and vague; this one names what was
+ * looked for. GitHub returns 404 rather than 403 for a private repository the
+ * token cannot see, which is deliberate on their side and worth not
+ * contradicting — "not found, or not visible to this account" is true of both
+ * cases and claims neither.
+ *
+ * Everything else falls through, because nothing else about GitHub's status
+ * usage differs from the common reading.
  */
-async function httpError(response: Response, displayName: string): Promise<ToolError> {
-  let detail = '';
-  try {
-    detail = (await response.text()).slice(0, 300);
-  } catch {
-    detail = '';
-  }
-
-  if (response.status === 401) {
-    return new ToolError('AUTH_EXPIRED', `${displayName} rejected the authorization.`, {
-      userMessage: `${displayName} needs to be connected again.`,
-      technicalDetails: detail,
-      retryable: false,
-    });
-  }
+function classifyGitHubStatus(
+  response: Response,
+  displayName: string,
+  detail: string,
+): ToolError | undefined {
   if (response.status === 403) {
-    // GitHub uses 403 for both "forbidden" and "rate limited"; the header
-    // distinguishes them and the retry classification depends on which.
     const remaining = response.headers.get('x-ratelimit-remaining');
     if (remaining === '0') {
       return new ToolError('RATE_LIMITED', `${displayName} is rate limiting requests.`, {
@@ -733,28 +635,5 @@ async function httpError(response: Response, displayName: string): Promise<ToolE
       retryable: false,
     });
   }
-  if (response.status === 409 || response.status === 422) {
-    return new ToolError('CONNECTOR_ERROR', `${displayName} rejected the request.`, {
-      userMessage: `${displayName} rejected that request as invalid.`,
-      technicalDetails: detail,
-      retryable: false,
-    });
-  }
-  if (response.status === 429) {
-    return new ToolError('RATE_LIMITED', `${displayName} is rate limiting requests.`, {
-      userMessage: `${displayName} is rate limiting requests. Try again shortly.`,
-      retryable: true,
-    });
-  }
-  if (response.status >= 500) {
-    return new ToolError('CONNECTOR_ERROR', `${displayName} returned ${response.status}.`, {
-      userMessage: `${displayName} reported a server error.`,
-      retryable: true,
-    });
-  }
-  return new ToolError('CONNECTOR_ERROR', `${displayName} returned ${response.status}.`, {
-    userMessage: `${displayName} rejected the request.`,
-    technicalDetails: detail,
-    retryable: false,
-  });
+  return undefined;
 }

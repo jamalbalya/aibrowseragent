@@ -109,6 +109,8 @@ import type { WorkflowSummary } from '@/messaging/protocol';
 import {
   GitHubConnector,
   githubDescriptor,
+  githubTokenProbeUrl,
+  readGitHubTokenProbe,
   type ConnectorCallContext,
 } from '@/connectors/adapters/github';
 import { PermissionEngine } from '@/policy/permission-engine';
@@ -825,6 +827,28 @@ const toolRegistry = new ToolRegistry({
 const CONNECTOR_CLIENT_IDS: Readonly<Record<string, string>> = {};
 
 /**
+ * Where a user goes to create a token, per connector.
+ *
+ * Here rather than in the adapter because it is a sentence shown in the panel,
+ * and here rather than in the panel because which service a connector talks to
+ * is the worker's knowledge. No credential is in this table and none can be:
+ * it holds a label, a URL the *user* opens, and a line of help.
+ */
+const CONNECTOR_TOKEN_HINTS: Readonly<
+  Record<string, { label: string; issuePage: string; help: string }>
+> = {
+  github: {
+    label: 'GitHub personal access token',
+    issuePage: 'https://github.com/settings/tokens',
+    help:
+      'Create a token in your own GitHub account and paste it here. Reading public issues ' +
+      'needs no permission at all; opening or commenting on one needs public_repo. A ' +
+      'fine-grained token works for reads, but GitHub does not report what it may do, so ' +
+      'writes are refused rather than attempted.',
+  },
+};
+
+/**
  * The redirect the authorization lands on.
  *
  * A real page inside the extension, declared as a web-accessible resource for
@@ -917,7 +941,80 @@ async function exchangeConnectorToken(
   return (await response.json()) as Record<string, unknown>;
 }
 
-const githubDescriptorValue = githubDescriptor({ redirectUri: CONNECTOR_REDIRECT_URI });
+/**
+ * Checks a token the user supplied, before anything is stored.
+ *
+ * Deliberately alongside the token exchange and not in the connector
+ * transport, for the two reasons the exchange gives plus one of its own: the
+ * transport reads a credential out of the vault, and this call exists to check
+ * one that has not been written there. Writing first and checking second would
+ * mean a worker evicted in between leaves an unverified token stored, which
+ * `reconcile` then reads back as a grant and never re-checks.
+ *
+ * It belongs to no task, carries no task taint, and its payload is opaque —
+ * the credential is in a header by construction.
+ */
+async function probeConnectorToken(
+  url: string,
+  credential: { token: string; tokenType: string },
+): Promise<{ status: number; headers: Headers; body: unknown }> {
+  const response = await guardedSend(
+    {
+      url,
+      init: {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `${credential.tokenType} ${credential.token}`,
+        },
+        // Never followed: a probe that redirects is one that could be made to
+        // carry a credential somewhere else.
+        redirect: 'error',
+        signal: AbortSignal.timeout(30_000),
+      },
+      destination: connectorDestination('connector-token-probe', url, {
+        purpose: 'token_probe',
+      }),
+      taskId: 'connector-authentication',
+      taintState: { kind: 'KNOWN_UNTAINTED' },
+      taintSalt: connectorAuthSalt,
+      taintSignature: 'authentication',
+      describe: 'connector token check',
+      payloadPolicy: 'opaque',
+    },
+    { consent: consentStore },
+  );
+
+  let body: unknown = null;
+  try {
+    body = await response.json();
+  } catch {
+    // A non-JSON body is not a failure here: the status and the headers are
+    // what the verdict is built from, and the account label is optional.
+    body = null;
+  }
+  return { status: response.status, headers: response.headers, body };
+}
+
+/**
+ * How GitHub is authenticated in the shipped build.
+ *
+ * `api_token`, not `oauth2`, and the reason is a correction rather than a
+ * preference: GitHub's web application flow requires a `client_secret` in the
+ * code exchange, PKCE or not, and this extension must not carry one. The
+ * authorization-code path is therefore unreachable here whatever client id a
+ * deployment supplies — which is a different thing from what
+ * `connector.authorize` used to imply. A token the user creates in their own
+ * account needs no registered application and no secret anywhere.
+ *
+ * The OAuth configuration is still on the descriptor and still validated. A
+ * deployment that holds a secret outside the extension would pass `oauth2`
+ * here and use it.
+ */
+const githubDescriptorValue = githubDescriptor({
+  redirectUri: CONNECTOR_REDIRECT_URI,
+  authKind: 'api_token',
+});
 
 const githubSession = new ConnectorSession({
   descriptor: githubDescriptorValue,
@@ -925,6 +1022,19 @@ const githubSession = new ConnectorSession({
   authFlow: new TabAuthFlow(chromeTabs()),
   clientId: CONNECTOR_CLIENT_IDS[githubDescriptorValue.id] ?? '',
   exchange: exchangeConnectorToken,
+  introspect: async (credential) => {
+    const probe = await probeConnectorToken(
+      githubTokenProbeUrl(githubDescriptorValue.apiOrigins[0]!),
+      credential,
+    );
+    return readGitHubTokenProbe({
+      status: probe.status,
+      headers: probe.headers,
+      ...(probe.body !== null && typeof probe.body === 'object'
+        ? { login: (probe.body as { login?: unknown }).login }
+        : {}),
+    });
+  },
   onStatusChange: (status) => {
     void auditLog
       .record({
@@ -2732,9 +2842,16 @@ router.on('connector.list', async () => {
       reason: status?.reason ?? 'no_grant',
       scopes: state.scopes,
       ...(state.accountLabel === undefined ? {} : { accountLabel: state.accountLabel }),
-      // A deployment without an OAuth application cannot authorise anything,
-      // and says so rather than offering a button that cannot work.
-      configured: (CONNECTOR_CLIENT_IDS[descriptor.id] ?? '').length > 0,
+      // An `oauth2` connector needs a client id this deployment does not have.
+      // An `api_token` connector needs nothing from the deployment at all —
+      // the user creates the token in their own account — so it is always
+      // connectable, and the panel offers the field rather than an explanation.
+      configured:
+        descriptor.authKind === 'api_token' ||
+        (CONNECTOR_CLIENT_IDS[descriptor.id] ?? '').length > 0,
+      ...(descriptor.authKind === 'api_token' && CONNECTOR_TOKEN_HINTS[descriptor.id]
+        ? { tokenHint: CONNECTOR_TOKEN_HINTS[descriptor.id]! }
+        : {}),
       operations: descriptor.operations.map((operation) => ({
         id: operation.id,
         kind: operation.kind,
@@ -2750,6 +2867,24 @@ router.on('connector.authorize', async ({ connectorId, includeWrite }) => {
   const connector = connectorRegistry.get(connectorId);
   if (!connector) {
     throw new RouteError(createError('INVALID_ARGUMENT', `Unknown connector "${connectorId}".`));
+  }
+  if (connector.descriptor.authKind !== 'oauth2') {
+    // This connector does not authenticate with a flow. Saying so is better
+    // than starting one: an earlier revision implied the only thing missing
+    // was a registration, and for GitHub, Atlassian and Figma that is false —
+    // every one of them requires a client secret in the code exchange, which
+    // this extension must not hold. `docs/connectors.md` has the table.
+    throw new RouteError(
+      createError(
+        'NOT_IMPLEMENTED',
+        `${connector.descriptor.displayName} does not use an authorization flow in this build.`,
+        {
+          userMessage:
+            `${connector.descriptor.displayName} is connected with a token you create in your ` +
+            'own account, not with a sign-in flow. Paste one in Settings.',
+        },
+      ),
+    );
   }
   if ((CONNECTOR_CLIENT_IDS[connectorId] ?? '').length === 0) {
     // No OAuth application is configured for this deployment. Refusing here
@@ -2782,6 +2917,60 @@ router.on('connector.authorize', async ({ connectorId, includeWrite }) => {
   const controller = new AbortController();
   const status = await githubSession.authorize(scopes, controller.signal);
   return { state: status.state, reason: status.reason, scopes: status.scopes };
+});
+
+router.on('connector.connectToken', async ({ connectorId, token }) => {
+  const connector = connectorRegistry.get(connectorId);
+  if (!connector) {
+    throw new RouteError(createError('INVALID_ARGUMENT', `Unknown connector "${connectorId}".`));
+  }
+  if (connector.descriptor.authKind !== 'api_token') {
+    throw new RouteError(
+      createError(
+        'INVALID_ARGUMENT',
+        `${connector.descriptor.displayName} does not accept a supplied token.`,
+      ),
+    );
+  }
+
+  const supplied = token.trim();
+  if (supplied.length === 0) {
+    throw new RouteError(
+      createError('INVALID_ARGUMENT', 'No token was supplied.', {
+        userMessage: 'Paste the token before connecting.',
+      }),
+    );
+  }
+
+  // Recorded before the attempt and without the token. The audit trail says a
+  // connection was attempted, never what was attempted with.
+  await auditLog.record({
+    type: 'connector.auth',
+    connectorId,
+    outcome: 'info',
+    code: 'token_supplied',
+  });
+
+  const outcome = await githubSession.connectWithToken({
+    token: supplied,
+    // `Bearer` for GitHub. A service wanting `email:token` would be `Basic`,
+    // and the base64 would be assembled in the panel rather than here — the
+    // worker stores what it is given and adds a scheme name.
+    tokenType: 'Bearer',
+  });
+
+  const status = outcome.status;
+  return {
+    state: status.state,
+    reason: status.reason,
+    scopes: status.scopes,
+    // Reported by the session rather than inferred from an empty list, because
+    // "the service said this token has no permissions" and "the service would
+    // not say" are both the empty list here and only the second is worth
+    // explaining. Both refuse every write.
+    scopesKnown: outcome.scopesEstablished,
+    ...(status.accountLabel === undefined ? {} : { accountLabel: status.accountLabel }),
+  };
 });
 
 router.on('connector.disconnect', async ({ connectorId }) => {

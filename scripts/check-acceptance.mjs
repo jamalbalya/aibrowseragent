@@ -455,9 +455,18 @@ for (const { name, path } of documents) {
 //    is derived from MATRIX.md's own rows rather than trusted.
 //
 //    "Needing a person" means exactly the three blocked classifications: an
-//    environment nothing here can produce, a credential nobody here holds, and
-//    an OAuth application nobody here has registered. `NOT IMPLEMENTED` is not
-//    in the count, because no person unblocks it.
+//    environment nothing here can produce, a model vendor's key nobody here
+//    holds, and a token for an external service from the owner's own account.
+//    `NOT IMPLEMENTED` is not in the count, because no person unblocks it.
+//
+//    The third used to be `BLOCKED — OAUTH`, "needs a registered OAuth
+//    application". It was renamed because the name asserted something false:
+//    the services involved require a client secret in the code exchange, which
+//    this extension must not carry, so no registration would have unblocked
+//    those rows. The old spelling is deliberately **not** still accepted — a
+//    checker that recognised both would let the dead label drift back in
+//    unnoticed, and the whole point of this count is that it is derived rather
+//    than trusted.
 {
   const checklistPath = join(root, 'docs/release/OWNER-CHECKLIST.md');
   const matrixPath = join(dir, 'MATRIX.md');
@@ -472,7 +481,7 @@ for (const { name, path } of documents) {
       const needsPerson = cells.some(
         (cell) =>
           cell.startsWith('`BLOCKED — CREDENTIAL`') ||
-          cell.startsWith('`BLOCKED — OAUTH`') ||
+          cell.startsWith('`BLOCKED — SERVICE TOKEN`') ||
           cell.startsWith('`BLOCKED — HUMAN/ENVIRONMENT`'),
       );
       if (needsPerson) blocked.add(id);

@@ -741,8 +741,28 @@ export interface PanelRequestMap {
         reason: string;
         scopes: readonly string[];
         accountLabel?: string;
-        /** Whether a client id has been configured for this deployment. */
+        /**
+         * Whether this connector can be connected at all in this build.
+         *
+         * For `oauth2` that still means a client id was configured. For
+         * `api_token` it is always true, because a token the user creates in
+         * their own account needs no deployment configuration — which is the
+         * whole reason that path exists.
+         */
         configured: boolean;
+        /**
+         * How the user supplies a credential, when `authKind` is `api_token`.
+         *
+         * Present so the panel can label the field and link to the page that
+         * issues the token, instead of hard-coding one service's wording. The
+         * worker fills it from the connector; nothing here is a credential.
+         */
+        tokenHint?: {
+          label: string;
+          /** Where the user creates the token. Opened by the user, never fetched. */
+          issuePage: string;
+          help: string;
+        };
         operations: { id: string; kind: 'read' | 'write'; description: string }[];
         scopeRationale: Readonly<Record<string, string>>;
       }[];
@@ -758,6 +778,28 @@ export interface PanelRequestMap {
   'connector.authorize': {
     request: { connectorId: string; includeWrite?: boolean };
     response: { state: string; reason: string; scopes: readonly string[] };
+  };
+  /**
+   * Connects with a token the user created in their own account.
+   *
+   * The request carries a credential, which is why it is a separate route
+   * rather than an argument to `connector.authorize`: it is the only panel
+   * message that does, the worker never echoes it back, and the response says
+   * only what state the connector reached and what the service confirmed.
+   *
+   * `scopesKnown` is `false` when the service would not say what the token may
+   * do. It is not the same as an empty `scopes` list, and the panel says so,
+   * because a connector whose reach is unknown refuses every write.
+   */
+  'connector.connectToken': {
+    request: { connectorId: string; token: string };
+    response: {
+      state: string;
+      reason: string;
+      scopes: readonly string[];
+      scopesKnown: boolean;
+      accountLabel?: string;
+    };
   };
   'connector.disconnect': {
     request: { connectorId: string };

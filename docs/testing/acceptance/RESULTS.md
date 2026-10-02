@@ -224,9 +224,9 @@ invent. Stated per item rather than as one excuse.
 | §85     | B. Multi-tab         | B-1 three tabs         | BLOCKED               | a vendor API key                             |
 | §85     | C. Debugging         | C-1 a real diagnosis   | BLOCKED               | a vendor API key                             |
 | §85     | F. Provider swap     | F-1 real endpoints     | BLOCKED               | keys for all three vendors                   |
-| §86     | Duplicate write      | against a real service | BLOCKED               | a registered OAuth application               |
+| §86     | Duplicate write      | against a real service | BLOCKED               | a GitHub token from the owner's own account  |
 | §87     | all twelve           | against a real vendor  | BLOCKED               | a vendor API key per provider                |
-| §88     | Connect              | C-1 a real grant       | BLOCKED               | a registered OAuth application               |
+| §88     | Connect              | C-1 a real grant       | BLOCKED               | a GitHub token from the owner's own account  |
 | §88     | Read                 | R-1                    | BLOCKED               | §88 C-1 first                                |
 | §88     | Revocation           | V-1                    | BLOCKED               | §88 C-1 first                                |
 | §90     | Browser restart      | B-1                    | BLOCKED — environment | a person able to quit and reopen Chrome      |

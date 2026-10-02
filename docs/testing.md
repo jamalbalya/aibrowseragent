@@ -368,12 +368,21 @@ Stated plainly rather than implied by omission:
   36 tool calls, with usage accounting and step ordering asserted exactly),
   and the duration budget is covered with an injected clock. A test that
   really slept would be slower, flakier, and would prove less.
-- **A live OAuth authorization has not been performed.** This project owns no
-  registered OAuth application, so no real grant exists to drive. What is
-  covered instead: the protocol exhaustively in unit tests, the full read and
-  write paths against a mock service, the redirect landing in real Chromium,
-  and the extension's refusal to start a flow it cannot finish. See
-  `docs/connectors.md`.
+- **No connector has been connected to a real service.** No token from
+  anybody's account is held here. What is covered instead: the OAuth protocol
+  exhaustively in unit tests, the token path end to end including the three
+  states a token's reach can be in, the full read and write paths against a
+  mock service, the redirect landing in real Chromium, the extension's refusal
+  to start a flow it cannot finish, and the credential check against the
+  **live** service — GitHub's own refusal of a string that is not a credential,
+  over the network, in real Chromium.
+
+  An earlier revision of this bullet said the blocker was a missing registered
+  OAuth application. It was not: GitHub's web flow requires a `client_secret`
+  in the code exchange, Atlassian requires one and supports no PKCE, Figma
+  requires one even with PKCE, and this extension must not carry one — so no
+  registration would have unblocked it. See `docs/connectors.md`.
+
 - MCP, plugins and scheduling are untested because they are unimplemented.
   Skills and workflows no longer belong on this list: both are implemented and
   are covered in unit, integration, security and real-Chromium suites.

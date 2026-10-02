@@ -157,6 +157,25 @@ export interface HarnessOptions {
   readonly apiOrigin?: string;
   readonly now?: () => number;
   readonly taintState?: TaintState;
+  /**
+   * Which mechanism this connector authenticates with.
+   *
+   * `oauth2` by default, so every suite written before the token path keeps
+   * exercising the flow. `api_token` is what the shipped worker uses, because
+   * GitHub's code exchange needs a client secret this extension must not hold.
+   */
+  readonly authKind?: 'oauth2' | 'api_token';
+  /**
+   * What the service says about a supplied token.
+   *
+   * Replaces the network for this one call, the way `fetchImpl` does for the
+   * rest. `scopes: null` is the fine-grained-token case: GitHub sends no
+   * `x-oauth-scopes` header, so what the token may do is unknown.
+   */
+  readonly introspect?: (credential: {
+    token: string;
+    tokenType: string;
+  }) => Promise<{ scopes: readonly string[] | null; accountLabel?: string }>;
 }
 
 export interface ConnectorHarness {
@@ -179,6 +198,14 @@ export interface ConnectorHarness {
   seedTokens(tokens: Partial<StoredTokens>): Promise<void>;
   /** Makes the connector READY without running a flow, for read/write tests. */
   connect(scopes?: readonly string[]): Promise<void>;
+  /**
+   * Connects the way a user does: by supplying a token.
+   *
+   * Unlike `connect`, this goes through the real `connectWithToken`, so the
+   * scope recording and the three-state scope verdict are the production
+   * ones rather than seeded.
+   */
+  connectByToken(token?: string): Promise<{ scopesEstablished: boolean }>;
   context(taskId: string): ToolExecutionContext;
   readonly evidence: { label: string; content: string }[];
 }
@@ -198,6 +225,7 @@ export function buildConnectorHarness(options: HarnessOptions = {}): ConnectorHa
     authorizationEndpoint: MOCK_AUTHORIZE,
     tokenEndpoint: MOCK_TOKEN,
     redirectUri: MOCK_REDIRECT,
+    ...(options.authKind === undefined ? {} : { authKind: options.authKind }),
   });
 
   const vault = new TokenVault(new MemoryStorageArea());
@@ -216,6 +244,9 @@ export function buildConnectorHarness(options: HarnessOptions = {}): ConnectorHa
       }
       return Promise.resolve(next);
     },
+    ...(options.introspect === undefined
+      ? {}
+      : { introspect: (credential) => options.introspect!(credential) }),
     now,
   });
 
@@ -287,6 +318,13 @@ export function buildConnectorHarness(options: HarnessOptions = {}): ConnectorHa
         scopes: [...scopes],
       });
       await session.reconcile();
+    },
+
+    async connectByToken(token = 'supplied-token-under-test'): Promise<{
+      scopesEstablished: boolean;
+    }> {
+      const outcome = await session.connectWithToken({ token, tokenType: 'Bearer' });
+      return { scopesEstablished: outcome.scopesEstablished };
     },
 
     context(taskId: string): ToolExecutionContext {

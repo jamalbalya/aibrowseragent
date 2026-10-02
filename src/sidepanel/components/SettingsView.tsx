@@ -108,6 +108,15 @@ export function SettingsView({
   const [downloadsGranted, setDownloadsGranted] = useState(false);
   const [notifications, setNotifications] = useState(true);
   const [connectors, setConnectors] = useState<PanelResponse<'connector.list'>['connectors']>([]);
+  /**
+   * Tokens typed into the form, per connector, before being sent.
+   *
+   * Held in component state and nowhere else: not in `localStorage`, not in a
+   * ref that outlives the form, and cleared the moment the worker answers. The
+   * input is `type="password"` so a screen share or a screenshot does not
+   * carry it, and the value never reaches any route but `connector.connectToken`.
+   */
+  const [tokenDrafts, setTokenDrafts] = useState<Record<string, string>>({});
   const [skills, setSkills] = useState<PanelResponse<'skill.list'>['skills']>([]);
   const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
 
@@ -212,6 +221,62 @@ export function SettingsView({
       }
     },
     [refreshConnectors],
+  );
+
+  /**
+   * Connects with a token the user created in their own account.
+   *
+   * Separate from `authorizeConnector` because it is a different mechanism,
+   * not a different argument: there is no flow, no redirect and no client id.
+   * It exists because every one of the services on the roadmap requires a
+   * client secret in its code exchange, and this extension must not hold one.
+   *
+   * The draft is cleared whatever happens, including on a failure. A token
+   * that was refused is of no further use, and leaving it in the field invites
+   * pressing the button again.
+   */
+  const connectWithToken = useCallback(
+    async (connectorId: string) => {
+      const token = (tokenDrafts[connectorId] ?? '').trim();
+      if (token.length === 0) {
+        setMessage({ tone: 'error', text: 'Paste the token before connecting.' });
+        return;
+      }
+      setBusy('connector');
+      setMessage(null);
+      try {
+        const result = await sendToBackground('connector.connectToken', { connectorId, token });
+        setMessage(
+          result.state === 'READY'
+            ? {
+                tone: 'ok',
+                text:
+                  `Connected${result.accountLabel ? ` as ${result.accountLabel}` : ''}. ` +
+                  (result.scopesKnown
+                    ? `Permissions: ${result.scopes.join(', ') || 'none'}.`
+                    : 'The service did not report what this token may do, so reads will work ' +
+                      'and writes will be refused rather than attempted.'),
+              }
+            : {
+                tone: 'error',
+                text:
+                  result.reason === 'token_rejected'
+                    ? 'That token was refused. Check it is current and try another.'
+                    : result.reason === 'token_unverified'
+                      ? 'The service could not be reached to check the token. Nothing was saved.'
+                      : `Not connected (${result.reason}).`,
+              },
+        );
+        await refreshConnectors();
+      } catch (error) {
+        setMessage({ tone: 'error', text: describe(error) });
+      } finally {
+        // Cleared on every path, including the error ones.
+        setTokenDrafts((drafts) => ({ ...drafts, [connectorId]: '' }));
+        setBusy(null);
+      }
+    },
+    [refreshConnectors, tokenDrafts],
   );
 
   const disconnectConnector = useCallback(
@@ -462,8 +527,15 @@ export function SettingsView({
         <h3>Connectors</h3>
         <p className="field__hint">
           A connector lets the agent use an external service through its API instead of by driving
-          its website. You authorise it in that service’s own sign-in page: the extension never sees
-          your password, and it receives only the permissions listed here.
+          its website. The extension never sees your password, and a connector receives only the
+          permissions listed under it.
+        </p>
+        <p className="field__hint">
+          Connectors here are authorised with a token you create in your own account, rather than
+          with a sign-in flow. That is not a shortcut: every service on this build’s list requires a
+          client secret to complete a sign-in flow, and a secret shipped inside an extension is
+          readable by anyone who unzips it, so this build does not carry one. A token you issue
+          yourself can be revoked by you at any time, in the same account page you made it in.
         </p>
 
         {connectors.length === 0 ? (
@@ -485,39 +557,77 @@ export function SettingsView({
               </p>
             ))}
 
-            {connector.configured ? (
+            {connector.state === 'READY' ? (
               <div className="settings__actions">
-                {connector.state === 'READY' ? (
+                <button
+                  type="button"
+                  className="button"
+                  disabled={busy !== null}
+                  onClick={() => void disconnectConnector(connector.id)}
+                >
+                  Disconnect
+                </button>
+              </div>
+            ) : connector.tokenHint ? (
+              <>
+                <p className="field__hint">{connector.tokenHint.help}</p>
+                <p className="field__hint">
+                  {/* The user opens it. Nothing here fetches that page, and
+                      the extension never reads the account it leads to. */}
+                  <a href={connector.tokenHint.issuePage} target="_blank" rel="noreferrer noopener">
+                    Create a token
+                  </a>
+                </p>
+                <label className="field">
+                  <span className="field__label">{connector.tokenHint.label}</span>
+                  <input
+                    className="field__input"
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={tokenDrafts[connector.id] ?? ''}
+                    placeholder="Paste the token"
+                    onChange={(event) =>
+                      setTokenDrafts((drafts) => ({
+                        ...drafts,
+                        [connector.id]: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <div className="settings__actions">
                   <button
                     type="button"
-                    className="button"
-                    disabled={busy !== null}
-                    onClick={() => void disconnectConnector(connector.id)}
+                    className="button button--primary"
+                    disabled={
+                      busy !== null || (tokenDrafts[connector.id] ?? '').trim().length === 0
+                    }
+                    onClick={() => void connectWithToken(connector.id)}
                   >
-                    Disconnect
+                    Connect
                   </button>
-                ) : (
-                  <>
-                    {/* Two buttons rather than a checkbox: the scope is the
-                        decision, and it should be the thing being pressed. */}
-                    <button
-                      type="button"
-                      className="button button--primary"
-                      disabled={busy !== null}
-                      onClick={() => void authorizeConnector(connector.id, false)}
-                    >
-                      Connect (read only)
-                    </button>
-                    <button
-                      type="button"
-                      className="button"
-                      disabled={busy !== null}
-                      onClick={() => void authorizeConnector(connector.id, true)}
-                    >
-                      Connect with write access
-                    </button>
-                  </>
-                )}
+                </div>
+              </>
+            ) : connector.configured ? (
+              <div className="settings__actions">
+                {/* Two buttons rather than a checkbox: the scope is the
+                    decision, and it should be the thing being pressed. */}
+                <button
+                  type="button"
+                  className="button button--primary"
+                  disabled={busy !== null}
+                  onClick={() => void authorizeConnector(connector.id, false)}
+                >
+                  Connect (read only)
+                </button>
+                <button
+                  type="button"
+                  className="button"
+                  disabled={busy !== null}
+                  onClick={() => void authorizeConnector(connector.id, true)}
+                >
+                  Connect with write access
+                </button>
               </div>
             ) : (
               <p className="field__hint">

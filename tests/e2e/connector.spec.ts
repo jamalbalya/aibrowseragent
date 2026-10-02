@@ -115,18 +115,32 @@ test('connector tokens live in session storage, which a content script cannot re
 
 // --- the connector surface --------------------------------------------------
 
-test('the connector is registered, and reports itself unconfigured rather than broken', async ({
-  send,
-}) => {
+test('the connector is registered, and says how it can be connected', async ({ send }) => {
   const { connectors } = await send('connector.list', {});
   const github = connectors.find((entry) => entry.id === 'github');
 
   expect(github).toBeDefined();
-  expect(github!.authKind).toBe('oauth2');
-  // No OAuth application is registered for this build, and the panel is told
-  // so plainly instead of being offered a button that cannot work.
-  expect(github!.configured).toBe(false);
+  // `api_token`, not `oauth2`, and the reason is a correction rather than a
+  // preference. An earlier revision of this case asserted `oauth2` and
+  // `configured: false`, on the understanding that the only thing missing was
+  // a registered application. That was wrong: GitHub's web application flow
+  // requires a `client_secret` in the code exchange, PKCE or not, and this
+  // extension must not carry one — so the flow is unreachable here whatever
+  // client id a deployment supplies. A token the user creates in their own
+  // account needs no registration and no secret, so the connector is
+  // connectable, and `configured` says so.
+  expect(github!.authKind).toBe('api_token');
+  expect(github!.configured).toBe(true);
   expect(github!.state).not.toBe('READY');
+
+  // The panel needs somewhere to send the user and something to label the
+  // field with, and it is the worker that knows which service this is.
+  expect(github!.tokenHint).toBeDefined();
+  expect(github!.tokenHint!.issuePage).toMatch(/^https:\/\/github\.com\//);
+  expect(github!.tokenHint!.label.length).toBeGreaterThan(0);
+  expect(github!.tokenHint!.help.length).toBeGreaterThan(0);
+  // A hint is a sentence and a link. It is not, and cannot become, a credential.
+  expect(JSON.stringify(github!.tokenHint)).not.toMatch(/token[-_]?[A-Za-z0-9]{20,}/);
 
   // Every scope any operation needs carries a stated reason, which is what
   // the Settings view shows the user before they grant anything.
@@ -154,15 +168,72 @@ test('reading needs no scope and writing does', async ({ send }) => {
   ).toEqual(['comment_issue', 'create_issue']);
 });
 
-test('authorizing refuses honestly when no OAuth application is configured', async ({ send }) => {
+test('the authorization flow is refused, and says why rather than being offered', async ({
+  send,
+}) => {
   // The failure that matters is the one that does not happen: no tab opens,
   // no state is minted, and nothing reports a connection that does not exist.
+  //
+  // The reason given changed, and the change is the point. It used to be "no
+  // OAuth application is configured", which implied a registration would fix
+  // it. It would not: the code exchange needs a client secret this extension
+  // must not hold, so the flow is refused for what it is rather than for what
+  // is missing from the deployment.
   await expect(send('connector.authorize', { connectorId: 'github' })).rejects.toThrow(
-    /NOT_IMPLEMENTED|cannot be connected/i,
+    /NOT_IMPLEMENTED|does not use an authorization flow/i,
   );
 
   const { connectors } = await send('connector.list', {});
   expect(connectors.find((entry) => entry.id === 'github')!.state).not.toBe('READY');
+});
+
+test('a token the service refuses leaves nothing connected and nothing stored', async ({
+  send,
+  serviceWorker,
+}) => {
+  // Driven against real GitHub, which refuses it — the one live call in this
+  // suite, and the only kind that is safe to make: an unauthenticated probe
+  // with a string that is not a credential for anything. Nothing is created,
+  // nothing is read, and no account is involved. If the network is
+  // unavailable the connector lands on `token_unverified` instead, which this
+  // case accepts, because both outcomes are "not connected, nothing stored"
+  // and the suite must not depend on somebody else's uptime to prove that.
+  const supplied = 'not-a-real-token-0000000000000000000000';
+  const result = await send('connector.connectToken', {
+    connectorId: 'github',
+    token: supplied,
+  });
+
+  expect(result.state).not.toBe('READY');
+  expect(['token_rejected', 'token_unverified']).toContain(result.reason);
+  expect(result.scopesKnown).toBe(false);
+
+  const { connectors } = await send('connector.list', {});
+  expect(connectors.find((entry) => entry.id === 'github')!.state).not.toBe('READY');
+
+  // And the ordering that matters: the credential was checked before it was
+  // stored, so a refusal leaves the vault untouched. Read out of the real
+  // extension's own storage, both areas.
+  const stored = await serviceWorker.evaluate(async () => {
+    const [session, local] = await Promise.all([
+      chrome.storage.session.get(null),
+      chrome.storage.local.get(null),
+    ]);
+    return JSON.stringify({ session, local });
+  });
+  expect(stored).not.toContain(supplied);
+});
+
+test('an empty token is refused by the route, before anything is asked', async ({ send }) => {
+  await expect(
+    send('connector.connectToken', { connectorId: 'github', token: '   ' }),
+  ).rejects.toThrow(/INVALID_ARGUMENT|No token was supplied|Paste the token/i);
+});
+
+test('a supplied token is refused for a connector that does not take one', async ({ send }) => {
+  await expect(
+    send('connector.connectToken', { connectorId: 'not-a-connector', token: 'anything' }),
+  ).rejects.toThrow(/INVALID_ARGUMENT|Unknown connector/i);
 });
 
 test('an unknown connector is refused rather than invented', async ({ send }) => {
@@ -328,4 +399,21 @@ test('disconnecting is recorded, with no credential in the record', async ({ sen
   for (const forbidden of ['access_token', 'refresh_token', 'code_verifier', 'Bearer ']) {
     expect(dumped).not.toContain(forbidden);
   }
+});
+
+test('a token attempt is recorded, and the token is not', async ({ send }) => {
+  // The audit trail says a connection was attempted. It must not say what
+  // was attempted with — and this is the one panel route whose request
+  // carries a credential, so it is the one worth checking directly.
+  const supplied = 'audit-probe-token-0000000000000000000000';
+  await send('connector.connectToken', { connectorId: 'github', token: supplied }).catch(
+    () => undefined,
+  );
+
+  const { events } = await send('audit.list', { limit: 50 });
+  const dumped = JSON.stringify(events);
+  expect(dumped).toContain('token_supplied');
+  expect(dumped).not.toContain(supplied);
+  // Not truncated or partially echoed either.
+  expect(dumped).not.toContain(supplied.slice(0, 16));
 });

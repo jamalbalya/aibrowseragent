@@ -69,11 +69,20 @@ so. The distinction that matters throughout is between
 
 - **work this repository can do** — anything implementable here, which is not
   deferred to a person; and
-- **work only the account owner can do** — registering an OAuth application,
-  holding a vendor API key, accepting a developer agreement.
+- **work only the account owner can do** — holding a credential for a service
+  or a model vendor, accepting a developer agreement, standing in front of a
+  browser.
 
-No credential, OAuth application or external approval is fabricated anywhere
-in this package to make an item look executable.
+No credential, application registration or external approval is fabricated
+anywhere in this package to make an item look executable.
+
+One item moved between those two categories and it is worth knowing why. The
+connector procedures were recorded as needing a registered OAuth application,
+which is work the owner would have had to do and which **would not have
+worked**: the services on the list require a client secret in the code
+exchange, and this extension must not carry one. They now need a token the
+owner creates in their own account — still owner work, but work that succeeds.
+See the top of [88-connectors.md](88-connectors.md).
 
 ## The packages
 

@@ -84,11 +84,73 @@ authorise a tool, or steer a later request's destination — request URLs are
 built from the descriptor's declared origin and schema-validated input, never
 from anything the service said.
 
-## OAuth
+## How a connector is authenticated
+
+Two mechanisms, and which one a connector uses is a property of the service
+rather than a preference.
+
+### A token the user creates (`api_token`) — what the shipped build uses
+
+The user makes a token in their own account, pastes it into Settings, and can
+revoke it in the same page they made it in. Nothing is registered with the
+service, no client id is needed, and no secret exists anywhere to be shipped.
+
+The order of operations is the control: the token is **checked against the
+service before it is written to the vault**. The other order would mean a
+worker evicted between the write and the check leaves an unverified token
+stored, which `reconcile` then reads back as a connection and never
+re-examines. A refusal therefore stores nothing at all.
+
+What a token may do is recorded only if the service says. GitHub returns
+`x-oauth-scopes` for a classic token, and nothing at all for a fine-grained
+one — so there are three states, not two:
+
+| What the service said           | Recorded   | Reads | Writes                               |
+| ------------------------------- | ---------- | ----- | ------------------------------------ |
+| `public_repo`                   | that scope | work  | work                                 |
+| the header, empty               | no scopes  | work  | refused, scope not granted           |
+| no header at all (fine-grained) | no scopes  | work  | refused, **reach never established** |
+
+The last two look identical in the vault and they are different facts, so the
+difference is reported at the moment of connecting — which is the moment the
+user is reading the result. Claiming the scopes the descriptor wanted would
+assert a permission nobody established, and the first thing it would buy is a
+write that fails at the service _after_ the user approved it.
+
+### Authorization code with PKCE (`oauth2`) — supported, and unreachable here
 
 Authorization code with PKCE, no client secret. A secret shipped inside an
 extension is readable by anyone who unzips it, so only flows that do not need
 one are supported.
+
+**And that rules out every service on this build's list.** This was checked
+against each vendor's own documentation rather than assumed:
+
+| Service                          | PKCE   | `client_secret` in the code exchange                   | Usable as a public client here |
+| -------------------------------- | ------ | ------------------------------------------------------ | ------------------------------ |
+| GitHub (web app flow)            | yes    | **required**                                           | no                             |
+| GitHub (device flow)             | n/a    | **not needed**                                         | yes, with a client id          |
+| Atlassian (Jira, Confluence) 3LO | **no** | **required**                                           | no                             |
+| Figma                            | yes    | **required**                                           | no                             |
+| Google (Sheets, Drive)           | yes    | not applicable to Chrome, Android and iOS client types | yes, with a client id          |
+
+Two consequences, both of which the records previously got wrong:
+
+- **For GitHub, Atlassian and Figma, registering an application would not be
+  enough.** The blocker is not a missing registration, it is a required secret
+  the extension must not hold. The repository used to say the opposite, and it
+  went unnoticed because no authorization had ever been attempted: without a
+  client id the flow is refused before it starts, so the refusal looked like
+  the only missing piece was the registration.
+- **The two mechanisms that work without a secret are the device authorization
+  flow and a user-supplied token.** Google's installed-app client types are a
+  third case: PKCE with no secret, but still a registered client id.
+
+So the OAuth configuration stays on the descriptors — it is correct, it is
+validated whenever it is present, and it is what a deployment holding a secret
+outside the extension would use — and the shipped build authenticates GitHub
+with a token instead. `connector.authorize` refuses for what the flow is
+rather than for what the deployment lacks.
 
 Each mechanism exists for a specific attack:
 
@@ -269,15 +331,29 @@ attacker-influenced text.
 
 ## What this build cannot do
 
-**No OAuth application is registered for this project.** A connector without
-a client id reports itself as unconfigured and refuses to start a flow, and
-the side panel says so rather than offering a button that cannot work. A live
-end-to-end authorization against GitHub has therefore not been performed.
+**No OAuth application is registered for this project, and for three of the
+listed services one would not help.** See the table above. A connector without
+a client id reports itself as unconfigured and refuses to start a flow, and the
+side panel says so rather than offering a button that cannot work.
 
-Everything below that line is exercised: the OAuth protocol against a local
-mock authorization server over real HTTP, the redirect landing in real
-Chromium, the full read and write paths against a mock API, and the refusal
-behaviour in the real extension.
+**What has now happened, and what has not.** The credential path reaches the
+real service: a token pasted into Settings is sent to `api.github.com` for
+checking, and a measurement in `tests/e2e/connector.spec.ts` drives that with a
+string that is not a credential for anything and records GitHub's real refusal
+(`token_rejected`, from a live 401 over the network, in real Chromium). So the
+transport, the egress gate, the credential handling and the failure
+classification are all exercised against a live third party for the first time.
+
+What has **not** happened is a successful connection: that needs a token from
+somebody's account, and nobody's is in this repository. Nor has any read or
+write against real data. Those two remain the gap, and the only thing that
+closes them is a person with a GitHub account pasting a token in — which is
+now a thing a person can do, where before it was not.
+
+Everything else is exercised: the OAuth protocol against a local mock
+authorization server over real HTTP, the redirect landing in real Chromium, the
+full read and write paths against a mock API, the three scope states on the
+token path, and the refusal behaviour in the real extension.
 
 A service that only accepts a redirect through its own SDK, or that refuses
 every redirect URI this extension can register, cannot be connected this way.

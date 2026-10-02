@@ -2,18 +2,29 @@
 
 One row per procedure. One classification per row, from exactly this set:
 
-| Classification                | Means                                                                 |
-| ----------------------------- | --------------------------------------------------------------------- |
-| `PASS`                        | Executed, and it met its criterion. The evidence column says by what. |
-| `FAIL`                        | Executed, and it did not meet its criterion. Still open.              |
-| `BLOCKED — CREDENTIAL`        | Implemented; needs a vendor API key nobody here holds                 |
-| `BLOCKED — OAUTH`             | Implemented; needs a registered OAuth application                     |
-| `BLOCKED — HUMAN/ENVIRONMENT` | Implemented; needs a person at a machine, not a headless container    |
-| `NOT IMPLEMENTED`             | The capability itself does not exist here. No credential unblocks it. |
-| `NOT EXECUTED`                | Nothing has run it and nothing is stopping it                         |
+| Classification                | Means                                                                            |
+| ----------------------------- | -------------------------------------------------------------------------------- |
+| `PASS`                        | Executed, and it met its criterion. The evidence column says by what.            |
+| `FAIL`                        | Executed, and it did not meet its criterion. Still open.                         |
+| `BLOCKED — CREDENTIAL`        | Implemented; needs a vendor API key nobody here holds                            |
+| `BLOCKED — SERVICE TOKEN`     | Implemented; needs a token for an external service, from the owner's own account |
+| `BLOCKED — HUMAN/ENVIRONMENT` | Implemented; needs a person at a machine, not a headless container               |
+| `NOT IMPLEMENTED`             | The capability itself does not exist here. No credential unblocks it.            |
+| `NOT EXECUTED`                | Nothing has run it and nothing is stopping it                                    |
 
 Every row carries one of the seven classifications above and nothing else —
-a hedge is not a status. Where a procedure has an automated half
+a hedge is not a status.
+
+**One classification was renamed, because its name asserted something false.**
+It was `BLOCKED — OAUTH`, meaning "needs a registered OAuth application". Those
+five rows do not need one, and registering one would not have unblocked them:
+GitHub's web application flow requires a `client_secret` in the code exchange,
+Atlassian requires one and supports no PKCE at all, Figma requires one even
+with PKCE, and this extension must not carry a secret. What the rows need is a
+token the owner creates in their own account, which is a different kind of
+work and one that succeeds. The count is unchanged — five rows, still blocked,
+on a correctly named blocker. `docs/connectors.md` has the table and the vendor
+sources. Where a procedure has an automated half
 and a manual half, it is split into two rows, because one classification
 cannot honestly describe both.
 
@@ -34,7 +45,7 @@ in real Chromium, 0 dependency vulnerabilities.
 | `PASS`                        | 45    |
 | `FAIL`                        | 0     |
 | `BLOCKED — CREDENTIAL`        | 17    |
-| `BLOCKED — OAUTH`             | 5     |
+| `BLOCKED — SERVICE TOKEN`     | 5     |
 | `BLOCKED — HUMAN/ENVIRONMENT` | 10    |
 | `NOT IMPLEMENTED`             | 4     |
 | `NOT EXECUTED`                | 0     |
@@ -141,14 +152,14 @@ fix.
 
 ## §86 — Security acceptance
 
-| ID          | Capability                               | Prerequisite                   | Exact action required                                                                             | Automated coverage                                                                                                                                    | Manual status                                                                | Evidence                                             | Owner action          |
-| ----------- | ---------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------- | --------------------- |
-| 86-1        | Prompt injection                         | none                           | —                                                                                                 | `PASS` — a genuinely hostile page in real Chromium: override text, forged approval claim, a literal closing envelope marker, an API-key-shaped string | `NOT EXECUTED` (not required)                                                | `security.spec.ts`, `prompt-injection.test.ts`       | none                  |
-| 86-2        | Exfiltration                             | none                           | —                                                                                                 | `PASS` — asserted at the receiving end (zero hits on a real collector) across five encodings, with positive controls                                  | `NOT EXECUTED` (not required)                                                | `egress.spec.ts` (12 cases)                          | none                  |
-| 86-3        | Redirect / origin change                 | none                           | —                                                                                                 | `PASS` — cross-origin redirect forces revalidation; same-origin move does not                                                                         | `NOT EXECUTED` (not required)                                                | `origin-validation.test.ts`, `browser-tools.test.ts` | none                  |
-| 86-4        | Credential leakage                       | none                           | —                                                                                                 | `PASS` — provider prompt and worker log checked separately                                                                                            | `security.spec.ts`, `provider-switching.spec.ts`, `secret-redaction.test.ts` | `NOT EXECUTED` (not required)                        | none                  |
-| 86-5-auto   | Duplicate write — the guard              | none                           | —                                                                                                 | `PASS` — claim persisted before the request; timeout/abort/unclassified all resolve to _unknown_; replay refused                                      | n/a                                                                          | `write-guard.test.ts` (25 cases)                     | none                  |
-| 86-5-manual | Duplicate write — against a real service | a registered OAuth application | Connect GitHub, start a write, kill the worker mid-flight, check the repository holds exactly one | guard only                                                                                                                                            | `BLOCKED — OAUTH`                                                            | [86-security.md](86-security.md)                     | register an OAuth app |
+| ID          | Capability                               | Prerequisite                                | Exact action required                                                                             | Automated coverage                                                                                                                                    | Manual status                                                                | Evidence                                             | Owner action          |
+| ----------- | ---------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------- | --------------------- |
+| 86-1        | Prompt injection                         | none                                        | —                                                                                                 | `PASS` — a genuinely hostile page in real Chromium: override text, forged approval claim, a literal closing envelope marker, an API-key-shaped string | `NOT EXECUTED` (not required)                                                | `security.spec.ts`, `prompt-injection.test.ts`       | none                  |
+| 86-2        | Exfiltration                             | none                                        | —                                                                                                 | `PASS` — asserted at the receiving end (zero hits on a real collector) across five encodings, with positive controls                                  | `NOT EXECUTED` (not required)                                                | `egress.spec.ts` (12 cases)                          | none                  |
+| 86-3        | Redirect / origin change                 | none                                        | —                                                                                                 | `PASS` — cross-origin redirect forces revalidation; same-origin move does not                                                                         | `NOT EXECUTED` (not required)                                                | `origin-validation.test.ts`, `browser-tools.test.ts` | none                  |
+| 86-4        | Credential leakage                       | none                                        | —                                                                                                 | `PASS` — provider prompt and worker log checked separately                                                                                            | `security.spec.ts`, `provider-switching.spec.ts`, `secret-redaction.test.ts` | `NOT EXECUTED` (not required)                        | none                  |
+| 86-5-auto   | Duplicate write — the guard              | none                                        | —                                                                                                 | `PASS` — claim persisted before the request; timeout/abort/unclassified all resolve to _unknown_; replay refused                                      | n/a                                                                          | `write-guard.test.ts` (25 cases)                     | none                  |
+| 86-5-manual | Duplicate write — against a real service | a GitHub token from the owner's own account | Connect GitHub, start a write, kill the worker mid-flight, check the repository holds exactly one | guard only                                                                                                                                            | `BLOCKED — SERVICE TOKEN`                                                    | [86-security.md](86-security.md)                     | create a GitHub token |
 
 **No row here was upgraded from automated to manual.** Items 1–4 are marked
 `NOT EXECUTED` in the manual column and `PASS` in the automated one, which is
@@ -223,13 +234,13 @@ feature gets described as a missing credential.
 
 ### B. Individual connectors
 
-| Connector     | Implementation                                    | Status                                       |
-| ------------- | ------------------------------------------------- | -------------------------------------------- |
-| GitHub        | implemented (`src/connectors/adapters/github.ts`) | framework `PASS`; live use `BLOCKED — OAUTH` |
-| Jira          | **does not exist**                                | `NOT IMPLEMENTED`                            |
-| Confluence    | **does not exist**                                | `NOT IMPLEMENTED`                            |
-| Figma         | **does not exist**                                | `NOT IMPLEMENTED`                            |
-| Google Sheets | **does not exist**                                | `NOT IMPLEMENTED`                            |
+| Connector     | Implementation                                    | Status                                               |
+| ------------- | ------------------------------------------------- | ---------------------------------------------------- |
+| GitHub        | implemented (`src/connectors/adapters/github.ts`) | framework `PASS`; live use `BLOCKED — SERVICE TOKEN` |
+| Jira          | **does not exist**                                | `NOT IMPLEMENTED`                                    |
+| Confluence    | **does not exist**                                | `NOT IMPLEMENTED`                                    |
+| Figma         | **does not exist**                                | `NOT IMPLEMENTED`                                    |
+| Google Sheets | **does not exist**                                | `NOT IMPLEMENTED`                                    |
 
 The four absent connectors are `NOT IMPLEMENTED`. They are not waiting on an
 OAuth application. Registering one for Jira would produce a client id with
@@ -237,17 +248,17 @@ nothing to use it.
 
 ### C. OAuth application requirement — GitHub only
 
-| Item                 | Status             | Needs                                                                          |
-| -------------------- | ------------------ | ------------------------------------------------------------------------------ |
-| 88-connect (C-1)     | `BLOCKED — OAUTH`  | a GitHub OAuth app with callback `chrome-extension://<id>/oauth/callback.html` |
-| 88-scope-validation  | `PASS` (automated) | —                                                                              |
-| 88-read (R-1)        | `BLOCKED — OAUTH`  | C-1 first                                                                      |
-| 88-write             | `BLOCKED — OAUTH`  | C-1 first                                                                      |
-| 88-auth-expiry       | `PASS` (automated) | —                                                                              |
-| 88-revocation (V-1)  | `BLOCKED — OAUTH`  | C-1 first                                                                      |
-| 88-rate-limit        | `PASS` (automated) | —                                                                              |
-| 88-permission-denied | `PASS` (automated) | —                                                                              |
-| 88-least-privilege   | `PASS` (automated) | —                                                                              |
+| Item                 | Status                    | Needs                                                                                   |
+| -------------------- | ------------------------- | --------------------------------------------------------------------------------------- |
+| 88-connect (C-1)     | `BLOCKED — SERVICE TOKEN` | a classic GitHub personal access token with `public_repo`, from the owner's own account |
+| 88-scope-validation  | `PASS` (automated)        | —                                                                                       |
+| 88-read (R-1)        | `BLOCKED — SERVICE TOKEN` | C-1 first                                                                               |
+| 88-write             | `BLOCKED — SERVICE TOKEN` | C-1 first                                                                               |
+| 88-auth-expiry       | `PASS` (automated)        | —                                                                                       |
+| 88-revocation (V-1)  | `BLOCKED — SERVICE TOKEN` | C-1 first                                                                               |
+| 88-rate-limit        | `PASS` (automated)        | —                                                                                       |
+| 88-permission-denied | `PASS` (automated)        | —                                                                                       |
+| 88-least-privilege   | `PASS` (automated)        | —                                                                                       |
 
 ### D. User credential requirement
 

@@ -1974,7 +1974,7 @@
           "status": "EXTERNAL_REQUIRED",
           "blocker": "§44 names this as the primary reference integration workflow for validating the multi-tool architecture, and none of the four connectors it spans exists — each blocked on its own OAuth application, per P-023-C8 and C9. So the multi-connector case is untested against anything real, and nothing simulates it.",
           "evidence": [
-            "tests/e2e/connector.spec.ts :: authorizing refuses honestly when no OAuth application is configured"
+            "tests/e2e/connector.spec.ts :: the authorization flow is refused, and says why rather than being offered"
           ],
           "note": "Recording and replay are complete and evidenced for browser actions; what cannot be recorded is a workflow that spans services none of which can be connected. The gap is in the connectors, not in the recorder."
         }
@@ -1990,10 +1990,11 @@
     },
     "P-023": {
       "unit": [
+        "tests/unit/connector-session.test.ts",
+        "tests/unit/connector-token-auth.test.ts",
         "tests/unit/oauth-flow.test.ts",
         "tests/unit/token-vault.test.ts",
-        "tests/unit/write-guard.test.ts",
-        "tests/unit/connector-session.test.ts"
+        "tests/unit/write-guard.test.ts"
       ],
       "integration": ["tests/integration/connector-workflow.test.ts"],
       "security": [
@@ -2009,7 +2010,7 @@
           "mandatory": true,
           "status": "VERIFIED",
           "evidence": [
-            "tests/e2e/connector.spec.ts :: the connector is registered, and reports itself unconfigured rather than broken",
+            "tests/e2e/connector.spec.ts :: the connector is registered, and says how it can be connected",
             "tests/e2e/connector.spec.ts :: an unknown connector is refused rather than invented"
           ]
         },
@@ -2083,11 +2084,12 @@
           "requirement": "A connector can actually be connected and used against a real service.",
           "mandatory": true,
           "status": "EXTERNAL_REQUIRED",
-          "blocker": "No OAuth application is registered for this project, with any provider. A confidential client cannot be shipped in an extension, and a public client still needs a client id issued by the service and a redirect URI the service has been told about. Neither exists, so no authorization code can be obtained and no live authorization has ever been performed. The extension says so and refuses to start a flow it cannot finish rather than faking one.",
+          "blocker": "A credential from somebody’s own account. The earlier blocker said a registered OAuth application, and that was wrong in a way that mattered: GitHub’s web application flow requires a client_secret in the code exchange, PKCE or not, so registering an application would not have made an authorization possible. The extension must not carry a secret. What the build now does instead is accept a token the user creates in their own account — no registration, no secret — and that path is implemented, wired into the panel, and exercised end to end. The credential check reaches the real service: a live call to api.github.com from real Chromium is recorded, with GitHub’s own refusal of a non-credential string. What remains external is one token from an account, which this repository holds none of.",
           "evidence": [
-            "tests/e2e/connector.spec.ts :: authorizing refuses honestly when no OAuth application is configured"
+            "tests/e2e/connector.spec.ts :: the authorization flow is refused, and says why rather than being offered",
+            "tests/e2e/connector.spec.ts :: a token the service refuses leaves nothing connected and nothing stored"
           ],
-          "note": "Everything above this line is exercised against a local mock authorization server and API over real HTTP. What has never happened is an authorization against a real service, and it cannot happen from this repository: the missing piece is a registered application, not code."
+          "note": "The remaining gap narrowed from \"no mechanism exists\" to \"no token is held\". The connect path, the three scope states, the read and the write are exercised against a mock API, and the credential check against the live service. A successful connection and a real read or write still need a person with an account; docs/release/OWNER-CHECKLIST.md section D is the five-step procedure, and it no longer asks for a registration it does not need."
         },
         {
           "id": "P-023-C9",
@@ -2095,11 +2097,11 @@
           "requirement": "Tier 1 roadmap: Jira, Confluence, Google Sheets, Google Drive, Figma, GitHub.",
           "mandatory": true,
           "status": "EXTERNAL_REQUIRED",
-          "blocker": "One of the six is implemented — GitHub — and the other five are not. Each needs its own registered OAuth application before it could be connected even if it were written, so the blocker in C8 applies to every one of them. Nothing returns a fake response for a connector that does not exist.",
+          "blocker": "One of the six is implemented — GitHub — and the other five are not. The earlier blocker said each needs its own registered OAuth application; checked against each vendor’s documentation, that is false for three of them and would not have been enough for GitHub either. Atlassian 3LO (Jira, Confluence) requires a client_secret and supports no PKCE at all; Figma requires one even with PKCE; GitHub requires one for the web flow. This extension must not carry a secret, so none of those four is buildable as a sign-in connector here at any registration. Google’s Sheets and Drive are the two that could be: their Chrome and installed-app client types use PKCE with no secret, and need a registered client id. docs/connectors.md has the table and the sources.",
           "evidence": [
             "tests/e2e/connector.spec.ts :: an unknown connector is refused rather than invented"
           ],
-          "note": "One of the six ships — GitHub — and the other five are not written. Recording them as external rather than unimplemented is deliberate: writing them would not make them connectable, because each still needs its own registered application first."
+          "note": "Still external, and for a corrected reason. Four of the six would need either a secret the extension must not hold or a different mechanism — the device authorization flow, or a user-supplied token, which is what GitHub now uses here. Two would need a registered client id and nothing else. Recording them as external rather than unimplemented stays right; what changed is that the obstacle is a decision about mechanism and not a form to fill in."
         },
         {
           "id": "P-023-C10",
@@ -2228,7 +2230,7 @@
           "status": "EXTERNAL_REQUIRED",
           "blocker": "The same blocker as P-022-C8: §44's reference skill spans Jira, Confluence, Figma and Google Sheets, and none of those connectors exists because none has a registered OAuth application. Four workflows ship and one writes, to the page's own origin at R2; a connector-writing skill is deliberately not the easiest path through a young feature, so writes to a service stay individually requested.",
           "evidence": [
-            "tests/e2e/connector.spec.ts :: authorizing refuses honestly when no OAuth application is configured"
+            "tests/e2e/connector.spec.ts :: the authorization flow is refused, and says why rather than being offered"
           ],
           "note": "The skill engine is complete and evidenced, including the clause that matters most — approving a run does not approve the actions inside it. What is missing is the four services §44's reference skill spans."
         }

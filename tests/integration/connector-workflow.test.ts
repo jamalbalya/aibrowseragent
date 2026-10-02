@@ -417,3 +417,103 @@ describe('what a tool will accept as input', () => {
     ).toBe(true);
   });
 });
+
+describe('a connector connected with a token the user supplied', () => {
+  /**
+   * Why these cases are here and not only in the session suite.
+   *
+   * The session suite proves the token path records the right scopes. These
+   * prove the *tools* then behave accordingly, through the real preflight,
+   * the real transport and the real write guard — which is the wiring no unit
+   * test sees. It matters because this is the only mechanism by which any
+   * connector in this build can actually be connected: every roadmap service
+   * requires a client secret in its code exchange, and the extension must not
+   * hold one.
+   */
+  function tokenHarness(scopes: readonly string[] | null): ConnectorHarness {
+    return buildConnectorHarness({
+      authKind: 'api_token',
+      introspect: () => Promise.resolve({ scopes, accountLabel: 'someone' }),
+    });
+  }
+
+  it('reads with a token whose permissions the service would not state', async () => {
+    // The fine-grained-token case. Reading public issues needs no scope at
+    // all, so an unknown scope set must not make the connector useless.
+    const supplied = tokenHarness(null);
+    const verdict = await supplied.connectByToken();
+    expect(verdict.scopesEstablished).toBe(false);
+
+    supplied.service.on('/search/issues', { json: { total_count: 1, items: [wireIssue()] } });
+    const result = await supplied
+      .tool('github.search_issues')
+      .execute({ query: 'broken login' }, supplied.context(TASK));
+
+    expect(result.success).toBe(true);
+  });
+
+  it('refuses a write it cannot prove the token may do, before sending anything', async () => {
+    const supplied = tokenHarness(null);
+    await supplied.connectByToken();
+
+    const error = await failure(() =>
+      supplied
+        .tool('github.create_issue')
+        .execute(
+          { repository: 'acme/widgets', title: 'A title', body: 'A body.' },
+          supplied.context(TASK),
+        ),
+    );
+
+    expect(error.toAgentError().code).toBe('PERMISSION_DENIED');
+    // Nothing reached the service. A write refused at the preflight is a
+    // write that did not happen, which is the only outcome worth having when
+    // the alternative is finding out from a 403 after the user approved it.
+    expect(supplied.service.seen).toEqual([]);
+  });
+
+  it('writes with a token whose permissions the service did state', async () => {
+    // The classic-token case: GitHub returns `x-oauth-scopes`, so the scopes
+    // are known and the preflight has something to check against.
+    const supplied = tokenHarness(['public_repo']);
+    const verdict = await supplied.connectByToken();
+    expect(verdict.scopesEstablished).toBe(true);
+
+    supplied.service.on('/issues', { json: { number: 9, html_url: 'https://github.test/i/9' } });
+    const result = await supplied
+      .tool('github.create_issue')
+      .execute(
+        { repository: 'acme/widgets', title: 'A title', body: 'A body.' },
+        supplied.context(TASK),
+      );
+
+    expect(result.success).toBe(true);
+    expect((result.data as { number: number }).number).toBe(9);
+  });
+
+  it('attaches the supplied token to the request, and nothing else does', async () => {
+    const supplied = tokenHarness(['public_repo']);
+    await supplied.connectByToken('a-particular-token');
+
+    supplied.service.on('/search/issues', { json: { total_count: 0, items: [] } });
+    await supplied
+      .tool('github.search_issues')
+      .execute({ query: 'anything' }, supplied.context(TASK));
+
+    // The transport reads it out of the vault and applies it last, so no
+    // caller can displace it and none can read it back.
+    expect(supplied.service.authorizations()).toEqual(['Bearer a-particular-token']);
+  });
+
+  it('refuses every operation again once the token is discarded', async () => {
+    const supplied = tokenHarness(['public_repo']);
+    await supplied.connectByToken();
+    await supplied.connector.revoke();
+
+    const error = await failure(() =>
+      supplied.tool('github.search_issues').execute({ query: 'anything' }, supplied.context(TASK)),
+    );
+    expect(error.toAgentError().code).toBe('AUTH_REQUIRED');
+    expect(supplied.service.seen).toEqual([]);
+  });
+});
