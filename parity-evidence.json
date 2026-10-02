@@ -2340,10 +2340,19 @@
           "specRef": "§5.11",
           "requirement": "remote MCP",
           "mandatory": true,
-          "status": "EXTERNAL_REQUIRED",
-          "note": "Remote MCP over HTTPS is the settled and only transport, and the whole path is exercised against a local server over real sockets — real JSON-RPC, the real egress gate, a real browser. What has never happened is a connection to a server somebody else operates, and it cannot happen from here. Loopback is permitted for that test double only, and a plain-http server is refused by the policy engine's origin check at call time, which the real-Chromium suite observes rather than asserts. This is now the only thing standing between the row and PASS, alongside the same limit P-023 and P-033 carry: a capability never exercised against a real external service is PARTIAL here, whatever its clauses say.",
-          "blocker": "A real remote MCP server, and any credential it requires. This repository holds neither.",
-          "notes": " Still external, and now for a narrower reason than before: a server run on loopback in this repository’s own test suite is local MCP, not remote. C2 asks for one reached over the network at an origin somebody else operates, which needs a third party rather than a package."
+          "status": "VERIFIED",
+          "note": "Established against a remote MCP server this repository does not operate, reached over the public internet with no credential. The old blocker said \"a real remote MCP server, and any credential it requires. This repository holds neither\" — the second half was an assumption and it was wrong: public, documented, credential-free remote MCP servers exist, and one answered a conformant initialize on the first attempt. The production transport, discovery, admission and schema compiler were driven against it: handshake at 2025-06-18, tools admitted under their namespaced names, nothing dropped without a reason, and the schema subset enforced against schemas written by someone with no knowledge of it — one of the three tools offered was refused by name for the unsupported keyword `anyOf`, which is the documented cost of compiling a subset measured for the first time against a real server rather than argued. Discovery sends only initialize, tools/list and resources/list, and the captured request bodies carry no task id, no taint salt and no page content. The suite is opt-in on MCP_REMOTE_TEST_URL and skips without it, deliberately: a build whose green depended on a third party's uptime is the reason mcp-interop runs a local reference server rather than a hosted one. Unlike a vendor-credential case, the evidence is reproducible by anyone who clones this repository — one environment variable and no secret.",
+          "notes": " Still external, and now for a narrower reason than before: a server run on loopback in this repository’s own test suite is local MCP, not remote. C2 asks for one reached over the network at an origin somebody else operates, which needs a third party rather than a package.",
+          "evidence": [
+            "tests/integration/mcp-remote-live.test.ts :: 01 — the server is reachable and completed discovery",
+            "tests/integration/mcp-remote-live.test.ts :: 02 — agrees on the revision this build declares, or declines",
+            "tests/integration/mcp-remote-live.test.ts :: 03 — the server is at an origin this repository does not operate",
+            "tests/integration/mcp-remote-live.test.ts :: 04 — a plain-http remote server is refused, not downgraded to",
+            "tests/integration/mcp-remote-live.test.ts :: 05 — every admitted tool is namespaced by server",
+            "tests/integration/mcp-remote-live.test.ts :: 06 — nothing the server sent disappeared silently",
+            "tests/integration/mcp-remote-live.test.ts :: 07 — the schema subset is enforced against schemas written elsewhere",
+            "tests/integration/mcp-remote-live.test.ts :: 09 — discovery sends no task data, only the three list calls"
+          ]
         },
         {
           "id": "P-026-C3",

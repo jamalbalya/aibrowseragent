@@ -197,9 +197,13 @@ page-derived text, so the prompt quotes the server's label instead.
 - EVIDENCE: tests/security/mcp-resources.test.ts :: names binary content rather than decoding it
 - EVIDENCE: tests/security/mcp-resources.test.ts :: are both R3, with no read-only exception for the listing
 
-**Not covered.** No real third-party server has been used — the whole path is
-evidenced against a local server over real sockets, which is a different fact, and
-it is why P-026 is PARTIAL rather than PASS.
+**Covered since the remote audit.** A real third-party server has now been
+used: `tests/integration/mcp-remote-live.test.ts` drives the production path
+against a public, credential-free remote MCP server over the public internet, and
+P-026 is PASS. What the local server still establishes separately is the
+`tools/call` path at R3 — the remote suite discovers and admits but deliberately
+calls nothing, because invoking a stranger's tool is a different act from
+listing it.
 
 The inverse threat — something outside driving this extension over MCP — is not
 in this list because it is not possible: this build is not an MCP server and

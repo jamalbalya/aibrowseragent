@@ -239,7 +239,7 @@ none is quietly dropped when the copy is edited:
 - Scheduled tasks exist, but only while Chrome is running.
 - No cross-origin iframe support.
 - Requires a tool-calling model and the user's own API key.
-- Four of forty specification capabilities are partial; one is not started.
+- Three of forty specification capabilities are partial; one is not started.
 
 ## What is NOT claimed anywhere in this copy
 

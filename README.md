@@ -48,7 +48,7 @@ the Chat Completions protocol, not a commercial provider. It is not yet at the
 full capability
 parity described in the specification — see
 [PARITY_MATRIX.md](PARITY_MATRIX.md) for the honest per-capability status
-(35 of 40 mandatory capabilities PASS), and [docs/testing.md](docs/testing.md)
+(36 of 40 mandatory capabilities PASS), and [docs/testing.md](docs/testing.md)
 for what is actually verified and what is not.
 
 What works today:

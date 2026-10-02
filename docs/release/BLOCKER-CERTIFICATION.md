@@ -205,11 +205,13 @@ same.**
 
 ## How to read this table against the matrix
 
-The matrix says 35 PASS, 4 PARTIAL, 1 NOT-STARTED. This table says why the last
-five are not PASS, and the answers are not interchangeable:
+The matrix says 36 PASS, 3 PARTIAL, 1 NOT-STARTED. This table says why the last
+four are not PASS, and the answers are not interchangeable:
 
 - **P-022, P-023, P-024** — PARTIAL on A-1 through A-5. Services and credentials.
-- **P-026** — PARTIAL on A-6 alone. An operator, not an implementation.
+- ~~**P-026** — PARTIAL on A-6 alone. An operator, not an implementation.~~
+  **Now PASS.** A-6 assumed an operator was unobtainable without checking;
+  public credential-free remote MCP servers exist and one was reached.
 - **P-025** — NOT-STARTED on C-1, which is a decision, plus A-7 for one clause of
   the six models. It is the only row whose status turns on a decision nobody has
   taken rather than on a thing nobody has — and, since the parity adjudication,

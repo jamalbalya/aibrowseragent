@@ -704,17 +704,31 @@ fixtures, so "it handles real schemas" was an assumption until this.
 **What it is not.** `P-026-C2` asks for a _remote_ MCP server, and this is not
 one. The distinction the audit had to get right is that the reference server is an
 independent **implementation** while this repository remains its **operator**. C2
-wants an origin somebody else runs, and no package supplies that — so C2 stays
-external and P-026 stays PARTIAL.
+wants an origin somebody else runs, and no package supplies that.
+
+That distinction was right and the conclusion drawn from it was not. "No package
+supplies an operator" is true; "therefore an operator is unobtainable" does not
+follow, and it was never checked. Public, documented, **credential-free** remote
+MCP servers exist. One answered a conformant `initialize` on the first attempt,
+and `tests/integration/mcp-remote-live.test.ts` now drives the production
+transport, discovery, admission and schema compiler against it over the public
+internet — so **C2 is VERIFIED and P-026 is PASS**. The suite is opt-in on
+`MCP_REMOTE_TEST_URL` and skips without it, because a build whose green depends
+on a third party's uptime is the reason this section runs a local reference
+server rather than a hosted one.
 
 ## 9. What is still open, and who owns it
 
-- **A real server.** Every mandatory clause is now VERIFIED except the two
-  recorded as external. The row stays PARTIAL because nothing has met a real
-  third party — the same standard P-023 and P-033 are held to.
-- **Validation against a real server.** Needs a real remote MCP endpoint and its
-  credentials, which this project does not hold. An owner or external
-  prerequisite, recorded the way every other external blocker is.
+- ~~**A real server.**~~ **Closed.** Every mandatory clause is VERIFIED and the
+  row is PASS. A real third party has been met — see §8's correction — and the
+  standard P-023 and P-033 are held to is unchanged: those two still have not met
+  one, and this row now has.
+- ~~**Validation against a real server.**~~ **Closed, and the blocker was
+  wrong.** It read "needs a real remote MCP endpoint and its credentials, which
+  this project does not hold". The endpoint half was true and the credential half
+  was an assumption: the server used needs none, so the evidence is reproducible
+  by anyone who clones this repository with one environment variable and no
+  secret.
 - **Nothing for the account owner to decide about trust.** §5 is settled on
   security grounds from the specification, the existing thresholds and the
   documented behaviour of a comparable client. There is no business, legal or

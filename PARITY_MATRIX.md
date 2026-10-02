@@ -167,8 +167,8 @@ capability, not necessarily a test of the capability itself.
 
 | Status          | Count  |
 | --------------- | ------ |
-| PASS            | 35     |
-| PARTIAL         | 4      |
+| PASS            | 36     |
+| PARTIAL         | 3      |
 | INTERFACES-ONLY | 0      |
 | NOT-STARTED     | 1      |
 | **Total**       | **40** |
@@ -447,13 +447,28 @@ environment" was ever explicitly decided is not recorded anywhere in this
 repository — the evidence for such a decision is **absent**, which is stated here
 as an absence rather than settled in either direction.
 
-### P-026 MCP — why PARTIAL
+### P-026 MCP — why PASS
 
 **P-026 MCP** — An MCP _client_ is built and reachable: a person adds a server in
 Settings, the worker discovers it, and its tools and resources appear in the set
-the model is offered, each confirmed on every call. It is PARTIAL for one reason
-only: **no MCP server that somebody else operates has been reached**
-(`P-026-C2`), which is recorded as external rather than unimplemented.
+the model is offered, each confirmed on every call. All thirteen clauses are
+VERIFIED.
+
+It was PARTIAL for one reason only — **no MCP server that somebody else operates
+had been reached** (`P-026-C2`) — and that is no longer true. The blocker read
+_"a real remote MCP server, and any credential it requires. This repository holds
+neither."_ The second half was an assumption. Public, documented,
+credential-free remote MCP servers exist; one answered a conformant `initialize`
+on the first attempt, and `tests/integration/mcp-remote-live.test.ts` drives the
+production transport, discovery, admission and schema compiler against it over
+the public internet. The suite is opt-in on `MCP_REMOTE_TEST_URL` and skips
+without it, because a build whose green depends on a third party's uptime is the
+reason `mcp-interop` runs a local reference server rather than a hosted one.
+
+The consistency argument that previously held this row down now supports it
+rather than blocking it. P-023 and P-033 are PARTIAL because nothing has met a
+real third party; P-026 now has. The standard is unchanged — this row clears it
+and those two still do not.
 
 This paragraph previously gave two more reasons, and both were wrong by the time
 the final audit re-read them. It said resource discovery was unbuilt; it was
@@ -578,14 +593,14 @@ hiding work, and the method that found it is worth keeping: ask whether an
 _independent implementation_ of the thing exists as an obtainable artifact, which
 is a different question from whether a _third-party operator_ is needed.
 
-| Clause                                                      | Asks for                                                                                         | Verdict                                                                                                                                                         |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `P-026-C3` local MCP                                        | a local MCP server                                                                               | **Was wrong.** The MCP project's own reference server is an npm package speaking Streamable HTTP over loopback. Now VERIFIED, and running it found two defects. |
-| `P-026-C2` remote MCP                                       | an origin somebody else operates                                                                 | Genuinely external. An independent implementation is obtainable; an independent operator is not.                                                                |
-| `P-023-C8` a connector used against a real service          | a real service and its OAuth application                                                         | Genuinely external, and doubly so: inventing OAuth credentials is on this project's locked prohibition list.                                                    |
-| `P-023-C9` the Tier 1 connector roadmap                     | six named services                                                                               | Genuinely external. Writing connector definitions without their services would be inventing production connectors, also prohibited.                             |
-| `P-022-C8` / `P-024-C9` the reference QA workflow and skill | §44's scenario names Jira, Confluence, Figma, Sheets, a Jira **write** and the permission system | Genuinely external. The clause requires executing against four services, not authoring a definition.                                                            |
-| `P-033-C5` live commercial provider endpoints               | the vendors' paid APIs                                                                           | Genuinely external.                                                                                                                                             |
+| Clause                                                      | Asks for                                                                                         | Verdict                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `P-026-C3` local MCP                                        | a local MCP server                                                                               | **Was wrong.** The MCP project's own reference server is an npm package speaking Streamable HTTP over loopback. Now VERIFIED, and running it found two defects.                                                                                                                                                                                                                                                                          |
+| `P-026-C2` remote MCP                                       | an origin somebody else operates                                                                 | **Was wrong too.** The question was right and the answer assumed operators cost something. Public, credential-free hosted MCP servers exist; one was reached over the public internet and the clause is now VERIFIED.                                                                                                                                                                                                                    |
+| `P-023-C8` a connector used against a real service          | a real service and its OAuth application                                                         | Genuinely external, and doubly so: inventing OAuth credentials is on this project's locked prohibition list. Re-asked with the method above and it still holds — `ConnectorAuthKind` does admit `none`, so a credential-free public API could be connected, but C8's subject is the **authorization** that has never run against a real service, and a connector that authorizes nothing sidesteps the clause rather than satisfying it. |
+| `P-023-C9` the Tier 1 connector roadmap                     | six named services                                                                               | Genuinely external. Writing connector definitions without their services would be inventing production connectors, also prohibited.                                                                                                                                                                                                                                                                                                      |
+| `P-022-C8` / `P-024-C9` the reference QA workflow and skill | §44's scenario names Jira, Confluence, Figma, Sheets, a Jira **write** and the permission system | Genuinely external. The clause requires executing against four services, not authoring a definition.                                                                                                                                                                                                                                                                                                                                     |
+| `P-033-C5` live commercial provider endpoints               | the vendors' paid APIs                                                                           | Genuinely external.                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 One option was considered and **rejected** rather than silently skipped: running an
 independent OpenAI-compatible server to give the provider adapters the same
@@ -861,7 +876,7 @@ into the verdict.
 | P-023 | Connector framework                  | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-024 | Skills                               | yes  | yes  | yes         | yes      | yes | PARTIAL     |
 | P-025 | Plugins                              | no   | —    | —           | —        | —   | NOT-STARTED |
-| P-026 | MCP                                  | yes  | —    | yes         | yes      | yes | PARTIAL     |
+| P-026 | MCP                                  | yes  | —    | yes         | yes      | yes | PASS        |
 | P-027 | Permission modes                     | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-028 | Site permissions                     | yes  | yes  | —           | yes      | yes | PASS        |
 | P-029 | Permission history                   | yes  | yes  | —           | yes      | yes | PASS        |
