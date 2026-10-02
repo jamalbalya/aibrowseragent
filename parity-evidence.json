@@ -1877,7 +1877,7 @@
       }
     },
     "P-022": {
-      "unit": ["tests/unit/workflow-recording.test.ts"],
+      "unit": ["tests/unit/workflow-recording.test.ts", "tests/unit/workflow-step-digest.test.ts"],
       "integration": ["tests/integration/workflow-lifecycle.test.ts"],
       "security": [
         "tests/security/workflow-replay-authority.test.ts",

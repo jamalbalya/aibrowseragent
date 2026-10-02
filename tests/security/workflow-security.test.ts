@@ -41,6 +41,15 @@ import type { SkillDefinition } from '@/skills/core/skill-model';
 import type { TaintState } from '@/security/taint/taint-state';
 
 const WORKFLOWS_ROOT = resolve(import.meta.dirname, '../../src/workflows');
+
+/**
+ * The only module allowed to put a binding field into a string.
+ *
+ * Named as an exact path rather than matched by a pattern, so adding a second
+ * one is a failing test and not a silent inheritance. Case 20b is what the
+ * allowance costs.
+ */
+const DESCRIBER = resolve(WORKFLOWS_ROOT, 'step-digest.ts');
 const SRC_ROOT = resolve(import.meta.dirname, '../../src');
 
 /** Assembled at runtime so no scannable credential literal sits on one line. */
@@ -809,9 +818,54 @@ describe('a page-derived value carries where it came from, permanently', () => {
       expect(code, file).not.toMatch(/Runtime\.evaluate/);
       expect(code, file).not.toMatch(/\beval\(/);
       // And no interpolation of a binding field into a string that could be
-      // read as a selector.
-      expect(code, file).not.toMatch(/\$\{\s*binding\.(role|name)\s*\}/);
+      // read as a selector — everywhere except the one module whose only job
+      // is to describe a binding to a person. See case 20b.
+      if (file !== DESCRIBER) {
+        expect(code, file).not.toMatch(/\$\{\s*binding\.(role|name)\s*\}/);
+      }
     }
+  });
+
+  it('20b. the one module that may interpolate a binding cannot reach a page', () => {
+    // ## Why there is an exemption at all
+    //
+    // `describeBinding` renders `role` and `name` into a sentence for the
+    // review list, which has always shown them: reviewing a workflow means
+    // seeing which control it will act on, and those two strings are text the
+    // user already saw on their own page. That did not previously trip case 20
+    // only because the mapping was inline in `service-worker.ts`, outside the
+    // roots this case scans. Moving it into `src/workflows`, where the step
+    // list it serves lives, made the collision visible — so it is written down
+    // here rather than dodged by composing the sentence without a template.
+    //
+    // ## What replaces the prohibition for this file
+    //
+    // Case 20's blanket rule exists because an interpolated binding field in
+    // code that resolves or runs something could become a selector. That is a
+    // statement about *reach*, so the exemption is paid for by pinning the
+    // reach to nothing: the describer imports only types, so it holds no
+    // transport, no debugger, no DOM and no dispatch, and nothing that resolves
+    // an element imports it. The five sink checks above still apply to it
+    // unchanged, and the exemption is one exact path rather than a pattern.
+    const code = readFileSync(DESCRIBER, 'utf8');
+
+    // Type-only imports, so there is nothing here at run time to reach with.
+    const imports = [...code.matchAll(/^import\s+(?!type\b)[^\n]*$/gm)].map((match) => match[0]);
+    expect(imports, 'the describer must import values from nothing').toEqual([]);
+
+    // And nothing that resolves an element against a page may import it.
+    const resolvers = sources(resolve(import.meta.dirname, '../../src/skills/runtime'));
+    for (const file of resolvers) {
+      expect(readFileSync(file, 'utf8'), file).not.toMatch(/['"][^'"]*step-digest['"]/);
+    }
+
+    // The exemption is this file and no other: a second describer would have
+    // to be argued for here rather than inherit this one's allowance.
+    expect(
+      sources(WORKFLOWS_ROOT).filter((file) =>
+        /\$\{\s*binding\.(role|name)\s*\}/.test(readFileSync(file, 'utf8')),
+      ),
+    ).toEqual([DESCRIBER]);
   });
 
   it('21. does not trust the record-time match count at replay', () => {

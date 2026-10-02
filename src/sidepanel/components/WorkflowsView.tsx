@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { sendToBackground, MessagingError } from '@/messaging/bus';
 import type { PanelResponse, ShortcutSummary, WorkflowSummary } from '@/messaging/protocol';
+import { interleave } from '@/workflows/step-digest';
 
 interface WorkflowsViewProps {
   /** The task whose calls a new recording would capture. */
@@ -39,6 +40,22 @@ export function WorkflowsView({
   const [workflows, setWorkflows] = useState<readonly WorkflowSummary[]>([]);
   const [recording, setRecording] = useState(false);
   const [recordedSteps, setRecordedSteps] = useState(0);
+  /**
+   * The captured steps, and the steps that could not be captured.
+   *
+   * Held separately from `recordedSteps` rather than derived from it, because
+   * the count is what the Stop button is disabled on and these are what the
+   * person checks their recording against. The list is collapsed by default:
+   * the panel is narrow, and a recording that is going fine needs the number
+   * and nothing else.
+   */
+  const [recordedList, setRecordedList] = useState<PanelResponse<'workflow.recordStatus'>['steps']>(
+    [],
+  );
+  const [recordedSkipped, setRecordedSkipped] = useState<
+    PanelResponse<'workflow.recordStatus'>['skipped']
+  >([]);
+  const [stepsOpen, setStepsOpen] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
@@ -72,6 +89,8 @@ export function WorkflowsView({
       setWorkflows(list.workflows);
       setRecording(status.recording);
       setRecordedSteps(status.stepCount);
+      setRecordedList(status.steps);
+      setRecordedSkipped(status.skipped);
       setShortcuts(shortcutList.shortcuts);
       setSkills(skillList.skills);
     } catch (error) {
@@ -83,8 +102,10 @@ export function WorkflowsView({
     void (async () => {
       await refresh();
     })();
-    // While a recording runs, the step count is the only feedback that
-    // anything is being captured, so it is polled rather than left stale.
+    // While a recording runs this poll is the only feedback that anything is
+    // being captured, so it is polled rather than left stale. It carries the
+    // steps as well as the count, because a rising count does not tell the
+    // person whether the step they just took is the step that was recorded.
     const timer = window.setInterval(() => void refresh(), 2_000);
     return () => window.clearInterval(timer);
   }, [refresh]);
@@ -317,6 +338,28 @@ export function WorkflowsView({
             <p className="field__hint">
               Recording — {recordedSteps} step{recordedSteps === 1 ? '' : 's'} captured so far.
             </p>
+            {recordedSteps > 0 || recordedSkipped.length > 0 ? (
+              <>
+                <button
+                  type="button"
+                  className="button button--ghost"
+                  aria-expanded={stepsOpen}
+                  onClick={() => setStepsOpen((open) => !open)}
+                >
+                  {stepsOpen ? 'Hide steps' : `Steps (${recordedSteps})`}
+                </button>
+                {stepsOpen ? (
+                  <StepList steps={recordedList} droppedSteps={recordedSkipped} />
+                ) : null}
+              </>
+            ) : null}
+            {recordedSkipped.length > 0 ? (
+              <p className="banner banner--error" role="alert">
+                {recordedSkipped.length} step{recordedSkipped.length === 1 ? '' : 's'} could not be
+                recorded, so saving now would store something that does not do what this task did.
+                Open the steps to see where the gap is.
+              </p>
+            ) : null}
             <label className="field">
               <span className="field__label">Name</span>
               <input
@@ -506,35 +549,7 @@ export function WorkflowsView({
                         </p>
                       ) : null}
 
-                      <ol className="workflow__steps">
-                        {interleave(workflow).map((entry) =>
-                          entry.kind === 'step' ? (
-                            <li key={entry.step.id}>
-                              <code>{entry.step.tool}</code>
-                              <ul className="workflow__args">
-                                {Object.entries(entry.step.arguments).map(([argument, binding]) => (
-                                  <li key={argument}>
-                                    <span className="workflow__arg">{argument}</span>
-                                    <span
-                                      className={`workflow__binding workflow__binding--${binding.kind}`}
-                                    >
-                                      {binding.detail}
-                                    </span>
-                                  </li>
-                                ))}
-                              </ul>
-                            </li>
-                          ) : (
-                            <li key={`dropped-${entry.index}`} className="workflow__dropped">
-                              <span className="workflow__droppedTag">[NOT RECORDED]</span>{' '}
-                              <code>{entry.dropped.tool}</code>
-                              <p className="workflow__droppedReason">
-                                Reason: {entry.dropped.reason}
-                              </p>
-                            </li>
-                          ),
-                        )}
-                      </ol>
+                      <StepList steps={workflow.steps} droppedSteps={workflow.droppedSteps} />
 
                       {workflow.inputs.length > 0 ? (
                         <div className="workflow__inputs">
@@ -595,43 +610,54 @@ export function WorkflowsView({
   );
 }
 
+/**
+ * The step list, used by the review surface and by a running recording.
+ *
+ * One component, because a recording that reads differently while it is being
+ * made from how it reads once saved is a recording the person cannot check.
+ * It renders what it is given and fetches nothing, so it has no opinion about
+ * whether the steps are still being captured.
+ */
+export function StepList({
+  steps,
+  droppedSteps,
+}: {
+  readonly steps: WorkflowSummary['steps'];
+  readonly droppedSteps: WorkflowSummary['droppedSteps'];
+}): React.JSX.Element {
+  return (
+    <ol className="workflow__steps">
+      {interleave({ steps, droppedSteps }).map((entry) =>
+        entry.kind === 'step' ? (
+          <li key={entry.step.id}>
+            <code>{entry.step.tool}</code>
+            <ul className="workflow__args">
+              {Object.entries(entry.step.arguments).map(([argument, binding]) => (
+                <li key={argument}>
+                  <span className="workflow__arg">{argument}</span>
+                  <span className={`workflow__binding workflow__binding--${binding.kind}`}>
+                    {binding.detail}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </li>
+        ) : (
+          <li key={`dropped-${entry.index}`} className="workflow__dropped">
+            <span className="workflow__droppedTag">[NOT RECORDED]</span>{' '}
+            <code>{entry.dropped.tool}</code>
+            <p className="workflow__droppedReason">Reason: {entry.dropped.reason}</p>
+          </li>
+        ),
+      )}
+    </ol>
+  );
+}
+
 /** What a shortcut may point at. A reference, never a definition. */
 type ShortcutSummaryTarget =
   | { kind: 'workflow'; workflowId: string }
   | { kind: 'skill'; skillId: string; skillVersion: string };
-
-/**
- * The steps and the gaps, in the order they happened.
- *
- * A dropped step is shown where it was, not in a list at the end, because
- * where it was is what tells the reader what the workflow will not do — a gap
- * between "navigate" and "read" means something very different from a gap
- * after the last step.
- */
-type ReviewEntry =
-  | { readonly kind: 'step'; readonly step: WorkflowSummary['steps'][number] }
-  | {
-      readonly kind: 'dropped';
-      readonly dropped: WorkflowSummary['droppedSteps'][number];
-      readonly index: number;
-    };
-
-function interleave(workflow: WorkflowSummary): ReviewEntry[] {
-  const entries: ReviewEntry[] = [];
-  const after = (stepId: string | null): void => {
-    workflow.droppedSteps.forEach((dropped, index) => {
-      if (dropped.afterStepId === stepId) entries.push({ kind: 'dropped', dropped, index });
-    });
-  };
-
-  // Anything dropped before the first recorded step carries a null position.
-  after(null);
-  for (const step of workflow.steps) {
-    entries.push({ kind: 'step', step });
-    after(step.id);
-  }
-  return entries;
-}
 
 function describe(error: unknown): string {
   if (error instanceof MessagingError) return error.agentError.userMessage;

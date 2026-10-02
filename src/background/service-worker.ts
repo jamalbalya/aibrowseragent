@@ -104,6 +104,7 @@ import {
 import { ScheduleRunner, type ScheduledExecution, type TargetResolution } from './schedule-runner';
 import { UnattendedPrompter } from './unattended-prompter';
 import { isIncomplete, type RecordedWorkflow } from '@/workflows/workflow-model';
+import { digestSteps } from '@/workflows/step-digest';
 import type { WorkflowSummary } from '@/messaging/protocol';
 import {
   GitHubConnector,
@@ -1370,10 +1371,10 @@ const workflowReplayer = new WorkflowReplayer({
 /**
  * A recording, as the review surface sees it.
  *
- * Bindings are described rather than dumped: a literal shows its value,
- * because reviewing a workflow means seeing what it will actually do, while a
- * slot shows only that something will be asked for. Nothing that could not be
- * shown was stored as a literal in the first place.
+ * Bindings are described by `digestStep`, which the live recording list uses
+ * as well so that one step has one description wherever it is shown. Why that
+ * mapping is not inline here any more, and why a literal shows its value, are
+ * both in `step-digest.ts`.
  */
 function summariseWorkflow(record: RecordedWorkflow): WorkflowSummary {
   return {
@@ -1394,27 +1395,7 @@ function summariseWorkflow(record: RecordedWorkflow): WorkflowSummary {
       tool: dropped.tool,
       reason: dropped.reason,
     })),
-    steps: record.definition.steps.map((step) => ({
-      id: step.id,
-      tool: step.kind === 'tool' ? step.tool : step.skill,
-      description: step.description,
-      arguments: Object.fromEntries(
-        Object.entries(step.arguments).map(([name, binding]) => [
-          name,
-          {
-            kind: binding.kind,
-            detail:
-              binding.kind === 'literal'
-                ? JSON.stringify(binding.value)
-                : binding.kind === 'input'
-                  ? `asked for at replay (${binding.name})`
-                  : binding.kind === 'step'
-                    ? `from step ${binding.step}`
-                    : `the ${binding.role} named "${binding.name}" (read from the page)`,
-          },
-        ]),
-      ),
-    })),
+    steps: digestSteps(record.definition.steps),
     inputs: record.definition.inputs.map((input) => ({
       name: input.name,
       type: input.type,
@@ -4241,6 +4222,7 @@ router.on('workflow.recordStatus', () => {
     recording: workflowRecorder.isRecording(),
     taskId: summary.taskId,
     stepCount: summary.stepCount,
+    steps: summary.steps.map((step) => ({ ...step })),
     skipped: [...summary.skipped],
   });
 });

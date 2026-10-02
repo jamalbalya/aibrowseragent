@@ -9,25 +9,179 @@ checked against.
 
 ## What this document is not
 
-**Nobody has observed the Claude Extension for this project.** No one on this
-side has installed it, run it, or watched it behave. Everything below is
-documentary, gathered from published sources on 2026-09-24 and labelled with
-where it came from. A reader deciding what to build should treat the UNKNOWN
-rows as the most important ones in the file.
+**Sections 1–17 rest on documentation, not observation.** They were gathered
+from published sources on 2026-09-24 and are labelled with where each fact came
+from. A reader deciding what to build should treat the UNKNOWN rows as the most
+important ones in the file.
+
+**Section 0 is different, and it is new.** A shipping copy of the extension is
+installed on the machine this repository is developed on, and its shipped files
+were read directly. That is E0 for the _artefacts_ — the manifest Chrome
+loaded and the interface strings the build carries — and it is **not** E0 for
+behaviour: nobody has signed into it, run a task in it, or watched it act on a
+page. The two are kept apart throughout, because a string proves a surface
+exists and says nothing about what happens when it is used.
 
 ### Evidence classes
 
-| Class  | Meaning                                                      |
-| ------ | ------------------------------------------------------------ |
-| **E0** | Direct observation of the shipping extension — **none held** |
-| **E1** | Official documentation about Claude in Chrome specifically   |
-| **E2** | Official documentation about a directly related product      |
-| **E3** | Official product or blog documentation                       |
-| **E4** | Reliable third-party evidence                                |
-| **E5** | Inference                                                    |
+| Class   | Meaning                                                              |
+| ------- | -------------------------------------------------------------------- |
+| **E0a** | The shipping extension's own files, read from an installed copy (§0) |
+| **E0b** | The shipping extension observed running — **none held**              |
+| **E1**  | Official documentation about Claude in Chrome specifically           |
+| **E2**  | Official documentation about a directly related product              |
+| **E3**  | Official product or blog documentation                               |
+| **E4**  | Reliable third-party evidence                                        |
+| **E5**  | Inference                                                            |
 
-E2–E5 is never promoted to E1. Where two surfaces disagree the conflict is
-preserved rather than resolved.
+E2–E5 is never promoted to E1, and E0a is never promoted to E0b. Where two
+surfaces disagree the conflict is preserved rather than resolved.
+
+An earlier revision of this table had a single **E0** row reading "**none
+held**". That was true when it was written and is now wrong for half of what E0
+meant, so the row was split rather than relabelled: collapsing an artefact read
+and a behavioural observation into one class is exactly the promotion the
+classes exist to prevent.
+
+---
+
+## 0. What an installed copy shows (E0a)
+
+Read on 2026-10-02 from the extension Chrome had already unpacked on this
+machine, at
+`~/Library/Application Support/Google/Chrome/Default/Extensions/fcoeoabgfenejglbffodgkkbkcdhcgfn/1.0.97_0/`.
+Two files: the `manifest.json` Chrome loads, and `i18n/en-US.json`, the build's
+own 941 interface strings. Extension id `fcoeoabgfenejglbffodgkkbkcdhcgfn`,
+name `Claude`, version **1.0.97**, manifest version 3.
+
+Nothing was signed into, started or driven. Every statement here is about a
+file's contents.
+
+### 0.1 The manifest, against this build's
+
+`minimum_chrome_version: 116`, an `options_page`, one command
+(`toggle-side-panel`), `externally_connectable` restricted to `claude.ai` and a
+managed-storage schema.
+
+| Permission                                                                                                                       | Claude 1.0.97 | This build                  |
+| -------------------------------------------------------------------------------------------------------------------------------- | ------------- | --------------------------- |
+| `sidePanel`, `storage`, `activeTab`, `scripting`, `debugger`, `tabGroups`, `tabs`, `alarms`, `notifications`, `unlimitedStorage` | yes           | yes                         |
+| `downloads`                                                                                                                      | required      | **optional**                |
+| `webNavigation`                                                                                                                  | yes           | no                          |
+| `declarativeNetRequestWithHostAccess`                                                                                            | yes           | no                          |
+| `offscreen`                                                                                                                      | yes           | no                          |
+| `nativeMessaging`                                                                                                                | yes           | no — **prohibited**         |
+| `identity`                                                                                                                       | yes           | no                          |
+| Host access                                                                                                                      | `<all_urls>`  | `http://*/*`, `https://*/*` |
+
+Content scripts: an accessibility-tree script on `<all_urls>` with
+`all_frames: true` at `document_start`, a visual-indicator script on
+`<all_urls>` with `all_frames: false` at `document_idle`, and a third script on
+`claude.ai` only.
+
+Three things this settles that were previously inference or E4:
+
+- **The E4 permission list is replaced by the shipped manifest.** "What would
+  resolve the unknowns" named this as one of the things only an installed copy
+  could settle. It is settled.
+- **`nativeMessaging` is really there.** §13 inferred it from how the MCP
+  surface must be carried. The inference was right, and divergence 2 in the
+  table below — _Claude can spawn a local MCP process; this build cannot_ —
+  now rests on the manifest rather than on reasoning about it.
+- **Six permissions and `<all_urls>` are a real difference, not a cautious
+  guess about one.** This build refuses `nativeMessaging` outright and takes
+  `downloads` only when asked for it. `webNavigation`, `declarativeNetRequest`,
+  `offscreen` and `identity` were never requested. None of that changes here on
+  the strength of the comparison: a wider permission set is not a capability
+  the benchmark has and this build lacks, it is a wider permission set.
+
+The `all_frames: true` accessibility script is the one difference worth naming
+as a capability rather than a posture. This build injects into the top frame
+only, so a control inside a cross-origin iframe is outside what it can read.
+That is a narrower reach, recorded here and not closed by this pass.
+
+### 0.2 The interface strings, counted
+
+The build ships 941 strings. The counts below are of the whole file, keys and
+values together, case-insensitive.
+
+| Term        | Occurrences | What the strings are                                                              |
+| ----------- | ----------- | --------------------------------------------------------------------------------- |
+| `plugin`    | **0**       | —                                                                                 |
+| `mcp`       | **0**       | —                                                                                 |
+| `connector` | 3           | `Connectors`, `Manage connectors`, `This connector has known issues`              |
+| `skill`     | 4           | `Loaded skill`, `Loading skill`, `Used a skill`, `Used {count} skills`            |
+| `cowork`    | 4           | including `Embed claude.ai Cowork in the side panel instead of the classic chat.` |
+| `shortcut`  | 25          | including `Type / in the chat to use shortcuts or run them on schedule`           |
+
+**This is direct evidence for §4b's adjudication, and it agrees with it.** The
+shipping extension's own interface has no word for a plugin and no word for
+MCP. §4b concluded on E2 that plugins are a Cowork-side surface and that the
+extension is neither an MCP client nor an MCP server (Gap-5); 941 strings
+containing neither term is what that conclusion predicts. It remains an
+_absence_ and is recorded as one: a build can reach a capability through
+strings that do not name it, and these files do not rule that out. What they do
+rule out is a **plugin management surface inside the extension**, which is the
+thing P-025 would have had to match.
+
+The `connector` and `skill` counts are the same kind of fact. Three connector
+strings are a management entry point — a list, a way in, one error — and not a
+connector framework's worth of interface. Four skill strings are all activity
+indicators: _loading_, _loaded_, _used_. Neither set describes authoring,
+editing or configuring. On E0a the extension **surfaces** connectors and skills
+that live somewhere else, which is what §4a says on E1.
+
+### 0.3 Workflow recording, and the one capability this file did not know about
+
+Thirty strings concern recording. Two groups matter.
+
+**A step list, collapsible, with a position indicator.** `Steps ({count})`,
+`Hide steps`, `Steps`, `Step {currentStep} of {totalCount}`,
+`{collapsedCount, plural, one {# step} other {# steps}}`, and
+`Click through your task to record each step`.
+
+§9 recorded recording as E1 and said nothing about what a recording shows while
+it runs, because no documentary source does. This build had a step **count** and
+nothing else, and its own panel said so in a comment: _"While a recording runs,
+the step count is the only feedback that anything is being captured."_ A count
+cannot answer the question the person recording actually has — _was that last
+thing the step I meant?_ — and it is worse than neutral here, because this
+recorder drops steps it cannot write down and keeps counting, so the number
+rises whether or not the right thing was captured.
+
+**Closed in this pass.** `workflow.recordStatus` now carries the ordered steps
+and the gaps between them, described by the same `digestStep` the saved review
+list uses, and the panel renders them under a `Steps (n)` / `Hide steps`
+control. A step that could not be recorded reaches the user while the step
+could still be taken again, instead of only in the result of stopping. Covered
+by `tests/unit/workflow-step-digest.test.ts`,
+`tests/unit/workflow-recording.test.ts` and, in real Chromium,
+`tests/e2e/workflows.spec.ts :: a running recording reports its steps, and its
+gaps, before it is saved`.
+
+**Voice narration — observed, and not built.** Eleven strings:
+`Turn on voice narration`, `Turn off voice narration`, `Toggle voice
+narration`, `Voice narration active`, `Voice narration paused`, and the
+microphone-permission flow around them — `Claude needs microphone access to
+hear your voice narration while you demonstrate workflows`, `Enable microphone
+access to use your browser's speech-to-text functionality for voice narration
+during workflow recording`, and `Recording workflow without speech` for the
+case where it is declined.
+
+This is a capability no documentary source in this file mentioned, and it is a
+genuine divergence. It is **not** implemented here, and not for want of effort:
+it would require microphone access, which is not in this build's permission set
+and is not something to add on the strength of a string file. The benchmark's
+own strings show it degrades gracefully when declined, which is the shape a
+later implementation should take if one is made — an opt-in that leaves
+recording working without it. Recorded as divergence 11 below.
+
+### 0.4 What §0 does not settle
+
+Gap-2 is untouched: scheduled-run semantics are behaviour, and no file read
+here describes them. The `claude-in-chrome` tool surface is untouched for the
+same reason. Nothing in §0 promotes any E1, E2, E4 or E5 claim in §§1–17, and
+nothing in §0 lowers one either — the two kinds of evidence sit side by side.
 
 ---
 
@@ -201,6 +355,19 @@ decision. Note that this is a different thing from P-026-C3 local MCP, which is
 VERIFIED — this build connects to a local MCP server over Streamable HTTP; what it
 does not do is **spawn** one.
 
+**Checked against the shipping extension's own files, after the fact (E0a).**
+This adjudication was reached on E2, with the documented silence recorded _as_
+silence. §0.2 then read the build's 941 interface strings: `plugin` occurs
+**zero** times and `mcp` occurs **zero** times. That is what this adjudication
+predicted and it is the strongest evidence available short of running the
+extension, but it does not turn the adjudication into a proof. An absence of
+strings rules out a plugin management surface **inside the extension** — the
+thing P-025 would have had to match — and does not rule out the extension
+reaching plugin content through an interface that never names it. The
+disposition is unchanged, now on firmer ground: **P-025 stays an internal
+specification requirement and off the parity critical path.** Nothing here
+argues it to PASS, and §0.2's own caveat is kept rather than dropped.
+
 ## 5. Injection defence (E1/E3)
 
 Two classifiers — one over inbound content, one over every action — and
@@ -285,6 +452,16 @@ and a saved-prompt target was added later as the narrow exception.
 
 The first two match. This build accepts `/name` in the composer
 (`TaskComposer.tsx`) and supports a saved-prompt target.
+
+**Extended on E0a, 2026-10-02.** This section rested on one sentence of E1,
+which describes recording as _record icon, perform the steps, stop_ and says
+nothing about what the recorder shows while it runs. The shipping build's own
+strings say more: a collapsible step list with a position indicator, and voice
+narration with a microphone-permission flow around it. §0.3 has both, what was
+built in response to the first, and why the second is recorded as a divergence
+instead. The twenty-five `shortcut` strings are consistent with this section's
+E1 account, including scheduling — `Type / in the chat to use shortcuts or run
+them on schedule` — so the behaviour difference above stands as written.
 
 ## 10. Multi-tab is a tab group (E1)
 
@@ -447,18 +624,20 @@ downgrade a capability because the benchmark's behaviour is undocumented** —
 absence of evidence about Claude is a gap in what is known, not a deficiency
 here.
 
-| #   | Divergence                                                               | Category                                           | Where it is settled                                                                                                |
-| --- | ------------------------------------------------------------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| 1   | Sessions live with the account vs local-first                            | **Intentional** — locked product decision          | `LOCAL_FIRST_ARCHITECTURE.md`; tested by the local-first suite                                                     |
-| 2   | Claude can spawn a local MCP process; this build cannot                  | **Security-mandated**                              | Native messaging is on the locked prohibition list. Local MCP itself is _not_ divergent — see the note under Gap-6 |
-| 3   | MCP client in a cloud session vs in the extension                        | **Intentional** — there is no session to host it   | `MCP_GUIDE.md` §1, and tested against a real server                                                                |
-| 4   | Claude models vs an interchangeable provider                             | **Intentional** — the locked product goal          | Provider conformance suite across three adapters                                                                   |
-| 5   | User-driven reconnect vs automatic reconciliation on startup             | **Intentional**, and stricter here                 | MV3 lifecycle suite                                                                                                |
-| 6   | Claude has a plan → approve → execute step (Gap-3)                       | **Documented and built**                           | The Classic plan; nineteen real-Chromium cases                                                                     |
-| 7   | Claude's declared prohibitions (purchases, account creation, card entry) | **Documented and built** (Gap-1, partially closed) | Nine hard prohibitions, refused in every mode including Skip                                                       |
-| 8   | Chrome's scheduled-run semantics have no Claude answer (Gap-2)           | **Unresolved — and not this project's to resolve** | Three questions with no published Chrome answer. Answered here by decision, and the decisions are written down     |
-| 9   | Credential-manager boundary (Gap-4)                                      | **Half intentional, half unresolved**              | The open half is stated as open rather than argued closed                                                          |
-| 10  | No action-by-action trail in Claude (§12, E1 absence)                    | **Divergence in this project's favour**            | The audit trail exists here. Not a gap to close                                                                    |
+| #   | Divergence                                                               | Category                                           | Where it is settled                                                                                                                                                                     |
+| --- | ------------------------------------------------------------------------ | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Sessions live with the account vs local-first                            | **Intentional** — locked product decision          | `LOCAL_FIRST_ARCHITECTURE.md`; tested by the local-first suite                                                                                                                          |
+| 2   | Claude can spawn a local MCP process; this build cannot                  | **Security-mandated**                              | Native messaging is on the locked prohibition list. Local MCP itself is _not_ divergent — see the note under Gap-6                                                                      |
+| 3   | MCP client in a cloud session vs in the extension                        | **Intentional** — there is no session to host it   | `MCP_GUIDE.md` §1, and tested against a real server                                                                                                                                     |
+| 4   | Claude models vs an interchangeable provider                             | **Intentional** — the locked product goal          | Provider conformance suite across three adapters                                                                                                                                        |
+| 5   | User-driven reconnect vs automatic reconciliation on startup             | **Intentional**, and stricter here                 | MV3 lifecycle suite                                                                                                                                                                     |
+| 6   | Claude has a plan → approve → execute step (Gap-3)                       | **Documented and built**                           | The Classic plan; nineteen real-Chromium cases                                                                                                                                          |
+| 7   | Claude's declared prohibitions (purchases, account creation, card entry) | **Documented and built** (Gap-1, partially closed) | Nine hard prohibitions, refused in every mode including Skip                                                                                                                            |
+| 8   | Chrome's scheduled-run semantics have no Claude answer (Gap-2)           | **Unresolved — and not this project's to resolve** | Three questions with no published Chrome answer. Answered here by decision, and the decisions are written down                                                                          |
+| 9   | Credential-manager boundary (Gap-4)                                      | **Half intentional, half unresolved**              | The open half is stated as open rather than argued closed                                                                                                                               |
+| 10  | No action-by-action trail in Claude (§12, E1 absence)                    | **Divergence in this project's favour**            | The audit trail exists here. Not a gap to close                                                                                                                                         |
+| 11  | Voice narration while recording a workflow (§0.3, E0a)                   | **Unbuilt — and named rather than quietly absent** | Eleven shipped strings describe it. It needs microphone access, which is not in this build's permission set; adding one on the strength of a string file is not a trade this pass makes |
+| 12  | `all_frames: true` accessibility injection (§0.1, E0a)                   | **Divergence against this build, narrower reach**  | Claude reads every frame; this build reads the top frame only, so a control in a cross-origin iframe is out of reach. Recorded, not closed                                              |
 
 **On category "external".** No divergence in this table is external in the sense
 Part 11 uses — none is waiting on a credential or an account. The external
@@ -471,6 +650,23 @@ _about Claude_, not about this build: Chrome's scheduled-run semantics, and half
 of the credential-manager boundary. Neither can be closed by work here, and
 neither is recorded as a deficiency — the evidence classes exist precisely so
 that "we do not know what Claude does" reads differently from "this is missing".
+
+**On entries 11 and 12, which are the first two in this table that are
+divergences against this build.** They were found by reading the shipping
+extension's own files (§0), and neither is unresolved in the sense above: what
+Claude does is known in both cases, and this build does not do it. Entry 11 is
+not built and entry 12 is a narrower reach, and both are named rather than
+argued away. Writing them down in the same table as the intentional divergences
+is the point — a table that only recorded differences in this project's favour
+would be a worse table.
+
+Neither is closed by this pass, and the reason is the same in both cases: each
+would cost a permission. Voice narration needs the microphone, and reading
+every frame needs `all_frames: true` on `<all_urls>`. The locked goal makes the
+Claude Extension the benchmark for capability; it does not make its permission
+set the benchmark for this one, and a string file is not a reason to widen a
+boundary. A decision to pay either cost is the owner's to make, with the cost
+stated, which is what these rows are for.
 
 ## Gaps this benchmark opened
 
@@ -593,6 +789,12 @@ tools that did not exist when it was written. This project's R3 classification
 makes the situation unreachable, which is recorded in `MCP_GUIDE.md` §5.1 as the
 reason the earlier per-server ceiling was withdrawn.
 
+**Re-checked on E0a, 2026-10-02.** The shipping build's interface strings
+contain the word `mcp` zero times in 941 strings (§0.2). Gap-5 concluded on four
+W29 sources that the extension is neither an MCP client nor an MCP server; this
+is consistent with it, and is an absence rather than a proof, for the reason
+§0.2 gives. The conclusion is unchanged.
+
 ### Gap-6 — deliberate divergences, recorded as such
 
 Not gaps to close:
@@ -631,7 +833,16 @@ process execution, which no approved design here has.
 Sections 1–8 and the gaps were gathered on 2026-09-24. Sections 9–17 were added
 on 2026-09-25 by the Wave 9 parity audit; the new citations are marked below.
 Gap-5 was re-gathered on 2026-09-27 by the Wave 29 P-026 scope audit, against
-the four sources marked **W29**.
+the four sources marked **W29**. Section 0 was read on 2026-10-02 from the
+installed copy and cites no published source at all, which is the point of it.
+
+E0a — `Claude` 1.0.97, extension id `fcoeoabgfenejglbffodgkkbkcdhcgfn`, as
+Chrome unpacked it on the development machine: `manifest.json` and
+`i18n/en-US.json`. Not a download, not a decompiled bundle, and not the
+extension running — the files Chrome loads, read where Chrome put them. A
+reader on another machine can repeat it only if they have the extension
+installed; the version is pinned here so a later copy that disagrees is
+recognisable as a different build rather than as this one being wrong.
 
 E1 — [Get started](https://support.claude.com/en/articles/12012173-get-started-with-claude-in-chrome) ·
 [Permissions guide](https://support.claude.com/en/articles/12902446-claude-in-chrome-permissions-guide) ·
@@ -670,6 +881,9 @@ fourth joined them with §10: whether the benchmark exposes any _per-tab_
 operation to its model — reordering a tab, or addressing one tab by identity —
 as against the collective view of a group that the documentation describes.
 
-Installing the extension and observing it. One session settles Gap-2 entirely,
-replaces the E4 permission list with the shipped manifest, and enumerates the
-`claude-in-chrome` tool surface through `/mcp`. Nothing short of that will.
+Installing the extension and observing it. Half of that has now happened and
+is §0: the extension is installed, and its shipped manifest has replaced the E4
+permission list. The other half has not. Gap-2 and the `claude-in-chrome` tool
+surface are both **behaviour**, and reading a build's files establishes neither
+— they need a session that is signed in and driven, which is E0b and is still
+none held.

@@ -29,6 +29,7 @@ import type {
 } from '@/skills/core/skill-model';
 import { MAX_STEPS_PER_SKILL } from '@/skills/core/skill-model';
 import { RECORDED_PROVENANCE, type DroppedStep } from './workflow-model';
+import { digestSteps, type StepDigest } from './step-digest';
 import { parameteriseArgument } from './parameteriser';
 
 const log = getLogger('agent');
@@ -56,6 +57,22 @@ export interface RecordingSummary {
   readonly taskId: string;
   readonly startedAt: number;
   readonly stepCount: number;
+  /**
+   * The steps captured so far, in order.
+   *
+   * A count alone was the whole of the live feedback, and a count cannot
+   * answer the question a person recording actually has: *was that last thing
+   * the step I meant?* A recorder that drops a step it could not write down
+   * keeps counting up, so the number rises whether or not the right thing was
+   * captured — and the recording is only reviewable after it has been stopped
+   * and saved, which is too late to redo the step.
+   *
+   * These are digests, described by the same `digestStep` the stored review
+   * list uses, so a step reads the same before and after saving. They are
+   * derived from the session rather than accumulated alongside it, so the list
+   * and `stepCount` cannot disagree.
+   */
+  readonly steps: readonly StepDigest[];
   /** What the recorder watched happen and could not write down, in position. */
   readonly skipped: readonly DroppedStep[];
 }
@@ -115,14 +132,9 @@ export class WorkflowRecorder {
   summary(): RecordingSummary {
     const session = this.session;
     if (!session) {
-      return { taskId: '', startedAt: 0, stepCount: 0, skipped: [] };
+      return { taskId: '', startedAt: 0, stepCount: 0, steps: [], skipped: [] };
     }
-    return {
-      taskId: session.taskId,
-      startedAt: session.startedAt,
-      stepCount: session.steps.length,
-      skipped: [...session.skipped],
-    };
+    return summarise(session);
   }
 
   /**
@@ -254,12 +266,7 @@ export class WorkflowRecorder {
 
     return {
       definition,
-      summary: {
-        taskId: session.taskId,
-        startedAt: session.startedAt,
-        stepCount: session.steps.length,
-        skipped: [...session.skipped],
-      },
+      summary: summarise(session),
       taint: session.taint,
     };
   }
@@ -268,6 +275,24 @@ export class WorkflowRecorder {
   cancel(): void {
     this.session = null;
   }
+}
+
+/**
+ * One session, as the panel reads it.
+ *
+ * Shared by `summary()` and `stop()` because the two used to build the same
+ * object separately, and the step list is the second field they would have had
+ * to agree about. The list is computed from `session.steps` on each call, so
+ * the count it reports is the length of the list it reports.
+ */
+function summarise(session: Session): RecordingSummary {
+  return {
+    taskId: session.taskId,
+    startedAt: session.startedAt,
+    stepCount: session.steps.length,
+    steps: digestSteps(session.steps),
+    skipped: [...session.skipped],
+  };
 }
 
 /** Taint only ever widens, here as everywhere else. */

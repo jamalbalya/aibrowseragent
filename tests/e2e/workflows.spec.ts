@@ -570,6 +570,72 @@ test('an incomplete recording cannot be replayed at all', async ({
   expect(await clicksSeen(target)).toEqual([]);
 });
 
+test('a running recording reports its steps, and its gaps, before it is saved', async ({
+  context,
+  send,
+  provider,
+  site,
+}) => {
+  // What this settles that a unit test cannot: the step list survives the
+  // structured-clone boundary between the service worker and the panel. A
+  // digest built in the worker is only useful if it arrives — and the route
+  // the panel polls is the real one here.
+  const target = await context.newPage();
+  await target.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await target.bringToFront();
+  await connectProvider(send, provider);
+
+  // Secret-shaped, so the click cannot be written down and the recording ends
+  // up with a step list and a gap in it.
+  await target.evaluate(() => {
+    const button = document.getElementById('submit');
+    if (button) button.textContent = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+  });
+
+  provider.script([
+    { kind: 'tool_calls', calls: [{ name: 'browser.read_page', arguments: {} }] },
+    {
+      kind: 'tool_calls',
+      calls: [{ name: 'browser.click', arguments: { elementId: '$lastElementId' } }],
+    },
+    { kind: 'text', text: 'Clicked.' },
+  ]);
+
+  const { task } = await send('task.create', { objective: 'Read the page, then click Search.' });
+  await send('workflow.recordStart', { taskId: task.id });
+  expect((await send('workflow.recordStatus', {})).steps).toEqual([]);
+
+  const finished = await waitForTask(send, task.id, 40_000);
+  expect(finished.state).toBe('COMPLETED');
+
+  // Still recording: this is the live answer, not the result of stopping.
+  const live = await send('workflow.recordStatus', {});
+  expect(live.recording).toBe(true);
+  expect(live.steps.map((step) => step.tool)).toEqual(['browser.read_page']);
+  expect(live.steps).toHaveLength(live.stepCount);
+  for (const step of live.steps) {
+    expect(step.id, 'a step with no id cannot be keyed or positioned').toMatch(/^s\d+$/);
+    expect(step.description.length).toBeGreaterThan(0);
+  }
+
+  // The gap reaches the user while the step could still be taken again. Before
+  // this, a drop was only in the result of stopping — after the moment it was
+  // useful.
+  expect(live.skipped.map((entry) => entry.tool)).toEqual(['browser.click']);
+  expect(live.skipped[0]?.afterStepId).toBe(live.steps[0]?.id);
+  expect(live.skipped[0]?.reason).toContain('credential');
+
+  // And what the live list said is what the saved record says. Two
+  // descriptions of one action would be worse than one, because the person
+  // would have checked the wrong one.
+  const saved = await send('workflow.recordStop', {
+    name: 'A live recording',
+    description: 'Recorded from a real task.',
+  });
+  expect(saved.workflow!.steps).toEqual(live.steps);
+  expect(saved.workflow!.droppedSteps).toEqual(live.skipped);
+});
+
 test('recording added no permission and no host access', async ({ serviceWorker }) => {
   const manifest = await serviceWorker.evaluate(() => chrome.runtime.getManifest());
 

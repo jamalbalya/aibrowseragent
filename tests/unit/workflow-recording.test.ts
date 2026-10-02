@@ -478,3 +478,132 @@ describe('a recording says what it could not capture', () => {
     });
   });
 });
+
+describe('what a recording still running reports about itself', () => {
+  it('reports no steps and no task when nothing is being recorded', () => {
+    // The panel polls this route whether or not a recording is running, so
+    // the idle answer has to be a shape it can render rather than a null.
+    expect(recorder().summary()).toEqual({
+      taskId: '',
+      startedAt: 0,
+      stepCount: 0,
+      steps: [],
+      skipped: [],
+    });
+  });
+
+  it('starts empty, then lists each captured step as it happens', () => {
+    // The gap this closes: a count was the whole of the live feedback, and a
+    // count cannot answer *was that last thing the step I meant?*
+    const recording = recorder();
+    expect(recording.start('task_1').steps).toEqual([]);
+
+    recording.observe(observation());
+    expect(recording.summary().steps).toEqual([
+      {
+        id: 's1',
+        tool: 'browser.navigate',
+        description: 'Recorded browser.navigate.',
+        arguments: { url: { kind: 'literal', detail: '"https://example.test/"' } },
+      },
+    ]);
+
+    recording.observe(
+      observation({ tool: 'browser.read_page', arguments: {}, toolCallId: 'tc_2' }),
+    );
+    expect(recording.summary().steps.map((step) => step.tool)).toEqual([
+      'browser.navigate',
+      'browser.read_page',
+    ]);
+  });
+
+  it('never reports a count the list does not account for', () => {
+    // Derived from one array rather than tracked alongside it, so there is no
+    // second counter to drift. A recording whose number says five and whose
+    // list shows four is a recording the person cannot check.
+    const recording = recorder();
+    recording.start('task_1');
+    for (const [index, tool] of [
+      'browser.navigate',
+      'browser.read_page',
+      'browser.click',
+    ].entries()) {
+      recording.observe(
+        observation({
+          tool,
+          toolCallId: `tc_${index}`,
+          ...(tool === 'browser.click'
+            ? { arguments: { elementId: 'e1-12' }, actedOn: actedOn() }
+            : { arguments: {} }),
+        }),
+      );
+      const summary = recording.summary();
+      expect(summary.steps).toHaveLength(summary.stepCount);
+    }
+  });
+
+  it('shows a step it could not capture while there is still time to redo it', () => {
+    // Previously a drop reached the user only in the result of stopping, which
+    // is after the moment when the step could have been taken again.
+    const recording = recorder();
+    recording.start('task_1');
+    recording.observe(observation({ tool: 'browser.read_page', arguments: {} }));
+    recording.observe(
+      observation({ tool: 'browser.click', arguments: { elementId: 'e1-12' }, toolCallId: 'tc_2' }),
+    );
+
+    const live = recording.summary();
+    expect(live.stepCount).toBe(1);
+    expect(live.skipped).toEqual([
+      {
+        afterStepId: 's1',
+        tool: 'browser.click',
+        reason: expect.stringContaining('could not be described'),
+      },
+    ]);
+  });
+
+  it('describes a step the same way before and after it is saved', () => {
+    // The point of showing a recording live is that it reads the same as the
+    // saved version will. Two descriptions of one action would be worse than
+    // none, because the person would have checked the wrong one.
+    const recording = recorder(TAINTED);
+    recording.start('task_1');
+    recording.observe(observation());
+    recording.observe(
+      observation({
+        tool: 'browser.type',
+        arguments: { elementId: 'e1-12', text: 'Chapter one, in which nothing happens at all.' },
+        toolCallId: 'tc_2',
+        actedOn: actedOn({ role: 'textbox', name: 'Body' }),
+      }),
+    );
+
+    const live = recording.summary();
+    const captured = recording.stop();
+    expect(captured?.summary.steps).toEqual(live.steps);
+  });
+
+  it('quotes nothing a tainted task read, in the live list either', () => {
+    // The live digest is produced from steps that went through the identical
+    // parameteriser, so it can show no value a saved one would not — but the
+    // live path is new, so the property is checked on it directly rather than
+    // argued from the stored one.
+    const secret = 'Chapter one, in which nothing happens at all.';
+    const recording = recorder(TAINTED);
+    recording.start('task_1');
+    recording.observe(observation({ tool: 'browser.read_page', arguments: {} }));
+    recording.observe(
+      observation({
+        tool: 'browser.type',
+        arguments: { elementId: 'e1-12', text: secret },
+        toolCallId: 'tc_2',
+        actedOn: actedOn({ role: 'textbox', name: 'Body' }),
+      }),
+    );
+
+    const serialised = JSON.stringify(recording.summary());
+    expect(serialised).not.toContain(secret);
+    expect(serialised).toContain('asked for at replay');
+  });
+});

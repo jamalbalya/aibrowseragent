@@ -46,6 +46,26 @@ Only the last arrow executes anything. Starting a recording, stopping one,
 saving it, renaming it, reviewing it and revalidating it are all storage and
 display operations; none of them runs a step.
 
+## While a recording is running
+
+The panel shows what has been captured, not just how much. Under
+`Steps (n)` / `Hide steps` is the same list the review surface shows after
+saving — the steps in order, each with where its arguments will come from, and
+the gaps in position — so a recording reads the same before and after it is
+stored.
+
+It is a list rather than a count because a count cannot answer the question you
+actually have while recording: _was that last thing the step I meant?_ It
+matters more here than it would elsewhere, because this recorder **drops** a
+step it cannot write down and keeps counting, so the number rises whether or
+not the right thing was captured. A gap now reaches you while the step can
+still be taken again, instead of only in the result of stopping.
+
+Showing it runs nothing and stores nothing. The list is derived from the
+session on each poll, and it carries no value that saving would not have
+carried: every argument in it went through the three controls below on the way
+in.
+
 ## What gets stored, and what does not
 
 Every captured argument goes through three **independent** controls, in a fixed

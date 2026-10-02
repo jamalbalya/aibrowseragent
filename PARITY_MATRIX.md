@@ -1461,6 +1461,21 @@ policy, permission and egress gates that adjudicated it when it was recorded.
 A recording is never registered, never appears in `skills.list` and is never
 model-selectable — replay is an explicit user action.
 
+A running recording now reports its steps rather than only a count of them.
+`workflow.recordStatus` carries the ordered steps and the gaps between them,
+described by the same mapping the saved review list uses, and the panel shows
+them under a collapsible control. The reason is in `CLAUDE_BENCHMARK.md` §0.3
+and it is not a specification clause: §49 describes recording as _record,
+perform, stop, save_ and says nothing about live feedback, so **no clause
+status changed for this** and none was invented. What changed is that the
+shipping comparison extension's own interface strings were read for the first
+time, and they describe a step list with a position indicator — while this
+build's panel carried a comment admitting that _"the step count is the only
+feedback that anything is being captured."_ A count is worse than neutral in
+this recorder, because a step it cannot write down is dropped while the count
+keeps rising. A drop now reaches the user while the step could still be taken
+again, instead of only in the result of stopping.
+
 Element interactions are recorded as specification §49 asks: a click stores a
 role and an accessible name, not a handle and not a selector. That data is
 tagged `PAGE_DERIVED` permanently — passing ARIA validation, secret detection

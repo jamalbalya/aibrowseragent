@@ -1133,6 +1133,16 @@ export interface PanelRequestMap {
       recording: boolean;
       taskId: string;
       stepCount: number;
+      /**
+       * What has been captured so far, in order, described exactly as the
+       * stored review list describes it.
+       *
+       * `stepCount` stays because it is the length of this list and the panel
+       * disables Stop on it; the list is what makes the count checkable by the
+       * person recording. Bounded by `MAX_STEPS_PER_SKILL`, so polling this
+       * route cannot grow without limit.
+       */
+      steps: WorkflowSummary['steps'][number][];
       skipped: { afterStepId: string | null; tool: string; reason: string }[];
     };
   };
