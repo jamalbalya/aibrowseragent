@@ -14,6 +14,7 @@ import type { ProviderConnection } from '@/providers/registry/provider-registry'
 import type { SitePolicyState } from '@/policy/site-policy';
 import type { PanelResponse } from '@/messaging/protocol';
 import { missingConnectors } from '@/sidepanel/connector-readiness';
+import { endpointsFor, knownEndpoint } from '@/providers/registry/known-endpoints';
 
 interface SettingsViewProps {
   readonly connection: ProviderConnection | null;
@@ -48,6 +49,15 @@ export function SettingsView({
   // endpoint does not need one, and pre-filling another provider's URL would
   // invite sending a key somewhere it does not belong.
   const [baseUrlOverride, setBaseUrlOverride] = useState<string | null>(null);
+  /**
+   * The known endpoint the user picked, if any.
+   *
+   * Only ever a *source of a default*. It is not stored on the account, not
+   * sent anywhere, and not consulted again once the Base URL field holds a
+   * value — the user can edit that field afterwards and this does not fight
+   * them for it.
+   */
+  const [endpointId, setEndpointId] = useState('');
   const [apiKey, setApiKey] = useState('');
   // The model field defaults to whatever the stored connection uses, and
   // switches to the user's choice once they pick one. Deriving it avoids an
@@ -396,6 +406,7 @@ export function SettingsView({
               // A URL typed for one provider must not be carried to the next:
               // the API key goes wherever this field points.
               setBaseUrlOverride(null);
+              setEndpointId('');
               setModels([]);
             }}
           >
@@ -407,6 +418,56 @@ export function SettingsView({
           </select>
         </label>
         {provider ? <p className="field__hint">{provider.description}</p> : null}
+
+        {/* Vendors that speak the protocol above, named so a user can find
+            their own account without knowing which protocol it is. Each one
+            only fills the editable field below; nothing here is a credential
+            and nothing is forced. There is no adapter behind any of them that
+            does not already exist. */}
+        {endpointsFor(providerId).length > 0 ? (
+          <>
+            <label className="field">
+              <span>Known endpoint (optional)</span>
+              <select
+                value={endpointId}
+                onChange={(event) => {
+                  const picked = knownEndpoint(event.target.value);
+                  setEndpointId(event.target.value);
+                  // Clearing the choice clears the default it supplied, and
+                  // leaves anything the user typed alone.
+                  if (picked) setBaseUrlOverride(picked.baseUrl);
+                  setModels([]);
+                }}
+              >
+                <option value="">Enter a base URL myself</option>
+                {endpointsFor(providerId).map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.displayName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {knownEndpoint(endpointId) ? (
+              <p className="field__hint">
+                {knownEndpoint(endpointId)!.note}
+                {knownEndpoint(endpointId)!.keyPage ? (
+                  <>
+                    {' '}
+                    {/* Opened by the user. Nothing here fetches it, and the
+                        extension never reads the account it leads to. */}
+                    <a
+                      href={knownEndpoint(endpointId)!.keyPage}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                    >
+                      Create a key
+                    </a>
+                  </>
+                ) : null}
+              </p>
+            ) : null}
+          </>
+        ) : null}
 
         <label className="field">
           <span>{provider?.baseUrlRequired === false ? 'Base URL (optional)' : 'Base URL'}</span>

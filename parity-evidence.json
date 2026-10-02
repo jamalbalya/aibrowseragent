@@ -3122,12 +3122,16 @@
     },
     "P-033": {
       "unit": [
-        "tests/unit/openai-compatible.test.ts",
         "tests/unit/anthropic.test.ts",
         "tests/unit/gemini.test.ts",
+        "tests/unit/known-endpoints.test.ts",
+        "tests/unit/openai-compatible.test.ts",
         "tests/unit/provider-registry.test.ts"
       ],
-      "integration": ["tests/integration/provider-switching.test.ts"],
+      "integration": [
+        "tests/integration/brain-routing.test.ts",
+        "tests/integration/provider-switching.test.ts"
+      ],
       "security": [
         "tests/security/provider-conformance.test.ts",
         "tests/security/provider-transport.test.ts"
@@ -3181,6 +3185,23 @@
           "evidence": [
             "tests/security/provider-switching-state.test.ts :: falls back to the conservative set when nothing was measured"
           ]
+        },
+        {
+          "id": "P-033-C6",
+          "specRef": "§17",
+          "requirement": "The connected account the user selected is the one that serves the request.",
+          "mandatory": true,
+          "status": "VERIFIED",
+          "evidence": [
+            "tests/integration/brain-routing.test.ts :: sends the selected account’s credential, endpoint and model",
+            "tests/integration/brain-routing.test.ts :: switches every subsequent request when the brain changes",
+            "tests/integration/brain-routing.test.ts :: reconnects the shared adapter on every resolution, so no credential lingers",
+            "tests/integration/brain-routing.test.ts :: keeps resolving the same account across repeated requests",
+            "tests/integration/brain-routing.test.ts :: refuses rather than falling back to the other connected account",
+            "tests/e2e/multi-account.spec.ts :: the selected account is the one that actually serves the agent’s request",
+            "tests/e2e/multi-account.spec.ts :: a task refuses when the selected account is disconnected, with no fallback"
+          ],
+          "note": "§17 requires provider routing to be user-controlled and forbids silent switching. Every clause before this one tested a *component* of that — the registry, the switch state, the resume guard, the capability scope — and none of them tested the claim itself: that the account the user picked is the account the provider hears from. The evidence here asserts on the credential the endpoint actually received, with two accounts at the same origin differing only in their key, which is the one observation that distinguishes \"the right account\" from \"the right provider\". Added because the claim had no clause, not to move a status: P-033 was already PASS and still is."
         },
         {
           "id": "P-033-C5",

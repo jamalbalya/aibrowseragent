@@ -180,6 +180,7 @@ import {
 } from '@/providers/accounts/account-model';
 import { migrateLegacyConnection } from '@/providers/accounts/migrate-legacy';
 import { connectionForBrain } from '@/providers/accounts/brain-projection';
+import { resolveBrainAccount, BrainUnavailable } from '@/providers/accounts/resolve-brain';
 import { protocolForLegacyProvider } from '@/providers/accounts/migrate-legacy';
 import {
   accountAfterCatalogue,
@@ -2108,65 +2109,39 @@ async function resolveFromAccount(
   account: ConnectedAccount,
   options: { readonly allowStale?: boolean } = {},
 ): Promise<ResolvedProvider> {
-  if (!account.modelId) {
-    throw new ProviderUnavailable(
-      `${account.displayName} has no model selected. Choose one in Settings.`,
+  // The decision itself is `resolveBrainAccount`, which lives in
+  // `@/providers/accounts/resolve-brain` so that the five refusals inside it
+  // can be called by a test rather than only reached by driving a browser.
+  // What stays here is the wiring that is genuinely the worker's: the
+  // credential store, the provider registry, the selection-refusal wording,
+  // and the one side effect — recording a rejected credential as a
+  // disconnection, which is an audited write and not part of a resolution.
+  try {
+    return await resolveBrainAccount(
+      account,
+      {
+        adapterFor: (providerId) => providerRegistry.get(providerId),
+        keyFor: (connectionId) => credentialStore.getConnectionKey(credentialKeyFor(connectionId)),
+        staleMessage: (modelId) =>
+          selectionRefusal({ kind: 'stale', modelId }) ??
+          'The selected model is no longer available.',
+      },
+      options,
     );
+  } catch (error) {
+    if (error instanceof BrainUnavailable) {
+      // Only a credential the provider actually refused is recorded as a
+      // disconnection. The other refusals are the user's own configuration —
+      // no model chosen, a stale selection, a key not on this device — and
+      // marking the account disconnected for one of those would overwrite a
+      // status nobody established.
+      if (error.refusal === 'CREDENTIAL_REJECTED') {
+        await noteProviderDisconnected(account.providerId, account.connectionId, error.message);
+      }
+      throw new ProviderUnavailable(error.message);
+    }
+    throw error;
   }
-  // A selection the last discovery did not offer stops here, before a key is
-  // read or a request is built. This is the block that makes "never
-  // substitute" more than an intention: there is no code path from a stale
-  // selection to a provider request, so nothing downstream has to remember not
-  // to guess. Only the discovery route itself passes `allowStale`, because it
-  // is what lets the user choose again.
-  if (account.modelStale === true && options.allowStale !== true) {
-    throw new ProviderUnavailable(
-      selectionRefusal({ kind: 'stale', modelId: account.modelId }) ??
-        'The selected model is no longer available.',
-    );
-  }
-  const apiKey = await credentialStore.getConnectionKey(credentialKeyFor(account.connectionId));
-  if (apiKey === undefined) {
-    throw new ProviderUnavailable(
-      account.statusReason ??
-        `${account.displayName} needs its API key reconnected on this device.`,
-    );
-  }
-
-  const adapter = providerRegistry.get(account.providerId);
-  // Only a measurement taken on *this* account and *this* model counts. One
-  // expression, used twice below, so the adapter and the runtime cannot come to
-  // disagree about whether a measurement applies.
-  const measured =
-    account.capabilityScope?.connectionId === account.connectionId &&
-    account.capabilityScope?.modelId === account.modelId
-      ? (account.capabilities ?? null)
-      : null;
-  const auth = await adapter.connect({
-    providerId: account.providerId,
-    ...(account.baseUrl === undefined ? {} : { baseUrl: account.baseUrl }),
-    apiKey,
-    model: account.modelId,
-    // Handed in so the adapter's pre-flight capability check reads the doctor's
-    // measurement rather than its own advertised placeholder. Omitted when
-    // nothing has been measured for this exact pair, which leaves the adapter
-    // reporting `unverified` and the request refused as such.
-    ...(measured === null ? {} : { measuredCapabilities: measured }),
-  });
-  if (!auth.authenticated) {
-    const reason =
-      auth.error?.userMessage ?? 'The connected account rejected its stored credentials.';
-    await noteProviderDisconnected(account.providerId, account.connectionId, reason);
-    throw new ProviderUnavailable(reason);
-  }
-
-  return {
-    adapter,
-    capabilities: measured ?? UNKNOWN_CAPABILITIES,
-    providerId: account.providerId,
-    connectionId: account.connectionId,
-    modelId: account.modelId,
-  };
 }
 
 async function resolveProvider(): Promise<ResolvedProvider> {
@@ -2181,8 +2156,18 @@ async function resolveProvider(): Promise<ResolvedProvider> {
   const connection = await settingsStore.getConnection();
 
   if (!settings.activeProviderId || !settings.activeModelId || !connection) {
+    // Two different situations, and they used to read as one. An installation
+    // with no accounts has nothing to select; an installation with accounts
+    // and no brain has a one-click fix. Telling the second user "no AI
+    // provider is connected" sends them to connect an account they already
+    // have — observed while writing the E2E case for a disconnected brain,
+    // where exactly that message came back with another account connected.
+    const connected = await accountStore.list();
     throw new ProviderUnavailable(
-      'No AI provider is connected. Open Settings and connect a provider first.',
+      connected.length > 0
+        ? 'No AI account is selected. Open Settings and choose which connected account the ' +
+            'agent should use.'
+        : 'No AI provider is connected. Open Settings and connect a provider first.',
     );
   }
 

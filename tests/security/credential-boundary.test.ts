@@ -25,6 +25,7 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { resolveBrainAccount } from '@/providers/accounts/resolve-brain';
 import { describe, expect, it } from 'vitest';
 
 const ROOT = new URL('../../src/', import.meta.url).pathname;
@@ -232,15 +233,40 @@ describe('TEST-SECURITY-059 — credential access matrix', () => {
     expect(http).toContain('technicalDetails: redact(text.slice(0, 200))');
   });
 
-  it('09 — credentials are keyed by connection, never by provider, on the account path', () => {
+  it('09 — credentials are keyed by connection, never by provider, on the account path', async () => {
+    // The property that makes two accounts on one provider incapable of
+    // reading each other: the lookup is by `connectionId`.
+    //
+    // **Observed rather than matched.** This read the worker's source text
+    // until the resolution moved into `resolve-brain.ts`; now the resolver is
+    // handed a credential lookup that records what it was asked for, and the
+    // assertion is on what it was asked for. A lookup keyed by provider would
+    // fail this whatever the source happened to say.
+    const asked: string[] = [];
+    await resolveBrainAccount(
+      {
+        connectionId: 'conn_particular',
+        providerId: 'openai-compatible',
+        displayName: 'An account',
+        modelId: 'model-a',
+      } as never,
+      {
+        adapterFor: () => ({ connect: () => Promise.resolve({ authenticated: true }) }) as never,
+        keyFor: (connectionId) => {
+          asked.push(connectionId);
+          return Promise.resolve('a-key');
+        },
+        staleMessage: () => 'stale',
+      },
+    );
+    expect(asked).toEqual(['conn_particular']);
+
+    // And the worker's wiring keys the store by connection, with no call on
+    // this path that could be handed a provider id.
     const worker = code(readFileSync(join(ROOT, 'background/service-worker.ts'), 'utf8'));
     const start = worker.indexOf('async function resolveFromAccount');
-    const body = worker.slice(start, worker.indexOf('\n}', start));
-
-    // The property that makes two accounts on one provider incapable of
-    // reading each other: the lookup is by `connectionId`, and there is no
-    // call on this path that could be handed a provider id.
-    expect(body).toContain('credentialKeyFor(account.connectionId)');
+    const body = worker.slice(start, worker.indexOf('\n}\n', start));
+    expect(body).toContain('credentialKeyFor(connectionId)');
     expect(body).not.toContain('getApiKey');
   });
 

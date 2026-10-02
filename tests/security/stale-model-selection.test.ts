@@ -26,6 +26,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { resolveBrainAccount, BrainUnavailable } from '@/providers/accounts/resolve-brain';
 import {
   modelSelectionState,
   selectionRefusal,
@@ -210,29 +211,103 @@ describe('TEST-STALEMODEL-001 — the state persists and clears', () => {
 describe('TEST-STALEMODEL-001 — the runtime cannot run on a stale selection', () => {
   const worker = readFileSync('src/background/service-worker.ts', 'utf8');
 
-  it('06 — both resolve paths refuse before a credential is read', () => {
-    // Asserted against the source because the alternative is to boot the
-    // worker. What matters is the *order*: the refusal is above the key read,
-    // so a stale selection never reaches a request builder at all and nothing
-    // downstream has to remember not to substitute.
-    const resolveStart = worker.indexOf('async function resolveFromAccount(');
-    expect(resolveStart).toBeGreaterThan(-1);
-    const resolveBody = worker.slice(resolveStart, worker.indexOf('\n}', resolveStart));
-    const refusal = resolveBody.indexOf('account.modelStale === true');
-    const keyRead = resolveBody.indexOf('credentialStore.getConnectionKey');
-    expect(refusal).toBeGreaterThan(-1);
-    expect(keyRead).toBeGreaterThan(-1);
-    expect(refusal).toBeLessThan(keyRead);
+  /** A resolver whose credential read and adapter connect are both observed. */
+  function watched(): {
+    deps: Parameters<typeof resolveBrainAccount>[1];
+    keyReads: string[];
+    connects: unknown[];
+  } {
+    const keyReads: string[] = [];
+    const connects: unknown[] = [];
+    return {
+      keyReads,
+      connects,
+      deps: {
+        adapterFor: () =>
+          ({
+            connect: (config: unknown) => {
+              connects.push(config);
+              return Promise.resolve({ authenticated: true });
+            },
+          }) as never,
+        keyFor: (connectionId) => {
+          keyReads.push(connectionId);
+          return Promise.resolve('a-key');
+        },
+        staleMessage: (modelId) => `"${modelId}" is no longer offered`,
+      },
+    };
+  }
+
+  const staleAccount = {
+    connectionId: 'conn_a',
+    providerId: 'openai-compatible',
+    displayName: 'An account',
+    modelId: 'cx/gpt-5.6-terra',
+    modelStale: true,
+  };
+
+  it('06 — the account path refuses before a credential is read', async () => {
+    // **Observed, not inferred from source order.** This case used to locate
+    // two strings in `service-worker.ts` and compare their indices, because
+    // booting the worker was not available. Since the resolution moved into
+    // `resolve-brain.ts` the ordering can be *measured*: the credential
+    // lookup and the adapter connect are both recorded, and a refusal that
+    // happened after either would show up here.
+    const { deps, keyReads, connects } = watched();
+
+    await expect(resolveBrainAccount(staleAccount as never, deps)).rejects.toThrow(
+      /no longer offered/,
+    );
+
+    // Nothing was read and nothing was connected. A stale selection does not
+    // reach a request builder at all, so nothing downstream has to remember
+    // not to substitute.
+    expect(keyReads).toEqual([]);
+    expect(connects).toEqual([]);
+  });
+
+  it('06b — the refusal is named, so a caller can tell it from a rejected key', async () => {
+    // The worker records a disconnection for exactly one refusal, and a
+    // stale selection is not it: marking the account disconnected here would
+    // overwrite a status nobody established.
+    const { deps } = watched();
+    const error = await resolveBrainAccount(staleAccount as never, deps).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(BrainUnavailable);
+    expect((error as BrainUnavailable).refusal).toBe('MODEL_STALE');
+
+    const handler = worker.slice(
+      worker.indexOf('async function resolveFromAccount('),
+      worker.indexOf('async function resolveProvider('),
+    );
+    expect(handler).toContain("error.refusal === 'CREDENTIAL_REJECTED'");
+    expect(handler).toContain('noteProviderDisconnected');
 
     // The pre-account slot refuses on the same flag.
     expect(worker).toContain('connection.modelStale === true');
   });
 
-  it('07 — only the discovery route may resolve a stale connection', () => {
-    // It has to: it is what lets the user choose again. Every other caller
-    // must get the refusal, so the escape hatch is one explicit option passed
-    // from one place.
-    expect(worker).toContain('options.allowStale !== true');
+  it('07 — only the discovery route may resolve a stale connection', async () => {
+    // It has to: it is what lets the user choose again. So the escape hatch is
+    // measured on the function — with the option it resolves, without it it
+    // refuses — and then counted in the worker, because the rule is that
+    // exactly one caller passes it.
+    const { deps, keyReads } = watched();
+    const resolved = await resolveBrainAccount(staleAccount as never, deps, {
+      allowStale: true,
+    });
+    expect(resolved.modelId).toBe('cx/gpt-5.6-terra');
+    expect(keyReads).toEqual(['conn_a']);
+
+    // Absent is the same as false: an omitted option must not be permissive.
+    const second = watched();
+    await expect(resolveBrainAccount(staleAccount as never, second.deps, {})).rejects.toThrow();
+
+    expect(readFileSync('src/providers/accounts/resolve-brain.ts', 'utf8')).toContain(
+      'options.allowStale !== true',
+    );
     const allowances = worker.match(/allowStale:\s*true/g) ?? [];
     expect(allowances).toHaveLength(1);
     const at = worker.indexOf('allowStale: true');

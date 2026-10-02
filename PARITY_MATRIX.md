@@ -874,6 +874,52 @@ the capability as specified — switch provider, keep the agent body — and bot
 the new evidence and the remaining limit are stated here rather than folded
 into the verdict.
 
+**A clause was added, and it is the one the row was missing.** §17 requires
+provider routing to be user-controlled and forbids silent switching. Four
+clauses tested _components_ of that — the registry, the switch state, the
+resume guard, the capability scope — and none tested the claim the product
+actually makes to a user: **the account you selected is the account that serves
+your request.** A build could pass all four and still send every turn with
+whichever key was connected first, because the failure that matters is not the
+wrong provider, it is the **right provider and the wrong account**: a personal
+key and a work key at one endpoint, where one adapter instance per protocol is
+shared and the previous account's credential is still in it.
+
+`P-033-C6` is that claim, asserted on the credential the endpoint actually
+received. Two accounts are connected at one origin differing only in their key;
+a task runs; the `Authorization` header the local provider was presented is the
+selected account's and not the other's; the brain is switched and the next
+task's headers change. In real Chromium, and again in integration against the
+real `AccountStore` and the real resolution with only the socket replaced.
+
+Making it assertable needed the resolution to be callable. It was fifty-five
+lines inside `service-worker.ts` holding five separate refusals — no model
+chosen, a model the last discovery did not offer, no credential on this device,
+a credential the provider rejected, a measurement scoped to a different pair —
+none of which any test could reach without booting a browser. It is now
+`src/providers/accounts/resolve-brain.ts`; eleven mutations against it are
+killed, and **five source-text guards that previously matched strings in the
+worker now call the code instead**, which is a stronger assertion than the one
+they replaced. No status moved: the row was PASS and still is.
+
+A smaller thing the same work found: with an account connected but none
+selected, a task was refused with _"No AI provider is connected"_ — which sends
+the user to connect a second account they do not need. The two situations are
+now distinguished, and the message names the one-click fix.
+
+**Connecting the account is also no longer a memory test.** Four adapters ship,
+one per _protocol_, which is correct and deliberate — `openai-compatible`
+carries Kimi, DeepSeek, Groq, OpenRouter, Mistral, xAI, Together and a local
+runner, and an adapter per vendor is the architecture this project rejected.
+The cost of that correctness fell on the user: somebody holding a Kimi key had
+to know Moonshot speaks the OpenAI protocol and type its base URL from memory.
+`known-endpoints.ts` is ten named defaults over the adapters that already
+exist — no new adapter, no new permission, no credential, and the base URL
+stays editable. Every entry is held to what the build will accept: the
+registry must know its provider, and the adapter's own `connect` must take its
+URL, so an entry this build would refuse fails a test rather than a user who
+has just pasted a key.
+
 ---
 
 ## Matrix

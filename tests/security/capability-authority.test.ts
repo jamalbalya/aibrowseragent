@@ -39,7 +39,12 @@ import {
   OPENAI_COMPATIBLE_PROVIDER_ID,
 } from '@/providers/adapters/openai-compatible';
 import { NINE_ROUTER_PROVIDER_ID } from '@/providers/adapters/nine-router-catalog';
-import { isUnverified, REQUESTABLE_CAPABILITIES } from '@/providers/core/types';
+import {
+  isUnverified,
+  REQUESTABLE_CAPABILITIES,
+  UNKNOWN_CAPABILITIES,
+} from '@/providers/core/types';
+import { measurementApplies } from '@/providers/accounts/resolve-brain';
 import { checkCapabilities } from '@/providers/core/capability-guard';
 import { ProviderRequestError } from '@/providers/core/provider-error';
 import type { CanonicalRequest, ModelCapabilities } from '@/providers/core/types';
@@ -373,17 +378,58 @@ describe('TEST-CAPAUTH-001 — a measurement is the authority, and it is scoped'
   });
 
   it('09 — the runtime only passes a measurement whose scope matches', () => {
-    // The first half of the rule, where the measurement is selected. Asserted
-    // against the source because booting the worker is not available here;
-    // what matters is that the same scoped expression feeds both the adapter
-    // and the runtime, so the two cannot come to disagree.
-    const worker = readFileSync('src/background/service-worker.ts', 'utf8');
-    const start = worker.indexOf('async function resolveFromAccount(');
-    const body = worker.slice(start, worker.indexOf('\n}', start));
-    expect(body).toContain('account.capabilityScope?.connectionId === account.connectionId');
-    expect(body).toContain('account.capabilityScope?.modelId === account.modelId');
-    expect(body).toContain('measuredCapabilities: measured');
-    expect(body).toContain('capabilities: measured ?? UNKNOWN_CAPABILITIES');
+    // **This used to read the worker's source text**, because booting the
+    // worker was not available here. The decision now lives in
+    // `resolve-brain.ts`, which can be *called* — so the rule is asserted by
+    // calling it, which is strictly stronger than matching a string, and the
+    // source check that remains is only about there being one expression
+    // rather than two that could drift.
+    const measured: ModelCapabilities = {
+      ...UNKNOWN_CAPABILITIES,
+      text: true,
+      streaming: true,
+      toolCalling: true,
+      unverified: [],
+    };
+    const base = {
+      connectionId: 'conn_a',
+      providerId: 'openai-compatible',
+      modelId: 'model-a',
+      capabilities: measured,
+    };
+
+    // Measured on this exact pair: it applies.
+    expect(
+      measurementApplies({
+        ...base,
+        capabilityScope: { connectionId: 'conn_a', modelId: 'model-a' },
+      } as never),
+    ).toBe(measured);
+
+    // Measured on another model of the same account, or on the same model of
+    // another account: it does not. A capability carried across either
+    // boundary reads as evidence, which is worse than having none.
+    for (const scope of [
+      { connectionId: 'conn_a', modelId: 'model-b' },
+      { connectionId: 'conn_b', modelId: 'model-a' },
+      { connectionId: 'conn_b', modelId: 'model-b' },
+    ]) {
+      expect(
+        measurementApplies({ ...base, capabilityScope: scope } as never),
+        JSON.stringify(scope),
+      ).toBeNull();
+    }
+
+    // No scope recorded at all is also no measurement. There is no default
+    // to fall through to, which is the point.
+    expect(measurementApplies({ ...base } as never)).toBeNull();
+
+    // And one expression feeds both the adapter and the returned
+    // capabilities, so the two cannot come to disagree.
+    const source = readFileSync('src/providers/accounts/resolve-brain.ts', 'utf8');
+    expect(source.split('measurementApplies(account)')).toHaveLength(2);
+    expect(source).toContain('measuredCapabilities: measured');
+    expect(source).toContain('capabilities: measured ?? UNKNOWN_CAPABILITIES');
   });
 
   it('10 — the doctor probes an unverified capability instead of skipping it', () => {

@@ -245,9 +245,47 @@ Switching affects the reasoning engine only. Browser tools, tab tools, debugger
 tools, task state, security policy, permission model, evidence and connectors
 are unchanged by construction — they never referenced the provider.
 
+## Which account actually runs
+
+Switching is one half of the question. The other is: of the accounts
+connected, which one serves the next request? That is the **AI brain**, chosen
+by the user, and `resolveBrainAccount` in
+`src/providers/accounts/resolve-brain.ts` is where the selection becomes a
+request.
+
+It is its own module because it holds five refusals, and each one is a
+selection quietly not being honoured if it goes wrong:
+
+| Refusal                   | When                                                        |
+| ------------------------- | ----------------------------------------------------------- |
+| `NO_MODEL_SELECTED`       | the account has no model chosen                             |
+| `MODEL_STALE`             | the last discovery did not offer the selected model         |
+| `NO_CREDENTIAL_ON_DEVICE` | no key is stored for this connection here                   |
+| `CREDENTIAL_REJECTED`     | the provider refused the stored key                         |
+| (no refusal, no claim)    | a measurement scoped to another account or model is dropped |
+
+Two properties are worth knowing:
+
+**The order of the checks is the control.** The two that need no secret come
+first, so a selection that cannot be used stops _before_ a key is read. There
+is no code path from a refused selection to a provider request, which is what
+makes "never substitute" structural rather than intended.
+
+**The adapter is reconnected on every resolution, never cached.** One adapter
+instance per protocol is shared, so the previous call may have connected it as
+a _different account_. Leaving the last account's credential in it is the
+cross-account leak the whole `connectionId` model exists to prevent — and the
+failure it produces is the right provider with the wrong account, which no
+provider-level test can see.
+
+`tests/integration/brain-routing.test.ts` and
+`tests/e2e/multi-account.spec.ts` assert this on **the credential the endpoint
+actually received**, with two accounts at one origin differing only in their
+key. That is the only observation that tells the two apart.
+
 ## Registered providers
 
-Three, all `kind: 'api'` and `authKind: 'api_key'`. Web providers are
+Four, all `kind: 'api'` and `authKind: 'api_key'`. Web providers are
 foundation only and none is registered, so none is selectable.
 
 | Provider            | Endpoint                           | Auth                              | Base URL |
@@ -255,6 +293,41 @@ foundation only and none is registered, so none is selectable.
 | `openai-compatible` | `POST /chat/completions`           | `Authorization: Bearer`           | required |
 | `anthropic`         | `POST /v1/messages`                | `x-api-key` + `anthropic-version` | optional |
 | `gemini`            | `POST /models/{m}:generateContent` | `x-goog-api-key`                  | optional |
+| `nine-router`       | `POST /chat/completions`           | `Authorization: Bearer`           | required |
+
+`nine-router` extends the Chat Completions adapter rather than duplicating it:
+only `listModels`, the identity and the capability floor are overridden, so
+there is no second network path.
+
+### One adapter per protocol, and the cost that fell on the user
+
+`openai-compatible` is not "OpenAI". Kimi (Moonshot), DeepSeek, Groq,
+OpenRouter, Mistral, xAI, Together and a local Ollama or LM Studio all speak
+it. An adapter per vendor is the architecture this project rejected, and that
+is still right.
+
+What it meant in practice is that somebody holding a Kimi key had to know
+Moonshot speaks the OpenAI protocol, choose a provider called
+"OpenAI-compatible", and type `https://api.moonshot.ai/v1` from memory. The
+capability existed and the connection was not discoverable, which for the
+person holding the key is the same as not having it.
+
+`src/providers/registry/known-endpoints.ts` closes that with **defaults and
+nothing else**: ten named endpoints that prefill the editable Base URL field.
+No new adapter, no new permission, no credential, no client id, and no model id
+— models are discovered from the endpoint, and a default here would be a claim
+about somebody else's catalogue that this file could not keep true.
+
+Every entry is held to what the build will accept, by test: the registry must
+know its `providerId`, and the adapter's own `connect` must take its URL. So an
+entry this build would refuse fails a test rather than a user who has just
+pasted a key. The https rule is the adapter's and is asserted in both
+directions — _"API keys are only sent over https. Use an https endpoint, or
+localhost for a local model server."_
+
+The two Moonshot regions are separate entries on purpose: `.ai` and `.cn` are
+different accounts and the keys are not interchangeable, so one entry telling
+the user to edit the host would silently fail for half of them.
 
 ### They are not three dialects of one protocol
 

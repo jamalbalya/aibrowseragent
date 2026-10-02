@@ -33,6 +33,7 @@ import {
 import type { AIProviderAdapter, ModelCapabilities } from '@/providers/core/types';
 import type { ProviderConnection } from '@/providers/registry/provider-registry';
 import { connectionAfterSwitch, isProviderSwitch } from '@/background/provider-switch';
+import { resolveBrainAccount } from '@/providers/accounts/resolve-brain';
 
 beforeAll(() => {
   (globalThis as unknown as { chrome: unknown }).chrome ??= {
@@ -142,13 +143,43 @@ describe('a switch does not carry a measurement with it', () => {
 });
 
 describe('an unmeasured provider claims nothing rather than the last answer', () => {
-  it('falls back to the conservative set when nothing was measured', () => {
-    const worker = read('src/background/service-worker.ts');
+  it('falls back to the conservative set when nothing was measured', async () => {
     // Both resolve paths fall back to the conservative set, and each names the
     // scoped measurement it checked first rather than the raw stored record —
     // a measurement only counts on the pair it was taken on.
+    //
+    // The account path is now **run** rather than read: the resolver is given
+    // a record whose measurement belongs to a different model, and what comes
+    // back must be the conservative set and not that measurement.
+    const resolved = await resolveBrainAccount(
+      {
+        connectionId: 'conn_a',
+        providerId: 'openai-compatible',
+        displayName: 'An account',
+        modelId: 'model-a',
+        capabilities: {
+          toolCalling: true,
+          streaming: true,
+          vision: true,
+          maxContextTokens: 9,
+          unverified: [],
+        },
+        capabilityScope: { connectionId: 'conn_a', modelId: 'model-b' },
+      } as never,
+      {
+        adapterFor: () => ({ connect: () => Promise.resolve({ authenticated: true }) }) as never,
+        keyFor: () => Promise.resolve('a-key'),
+        staleMessage: () => 'stale',
+      },
+    );
+    expect(resolved.capabilities).toEqual(UNKNOWN_CAPABILITIES);
+
+    // The legacy single-provider slot still lives in the worker.
+    const worker = read('src/background/service-worker.ts');
     expect(worker).toContain('slotMeasured ?? UNKNOWN_CAPABILITIES');
-    expect(worker).toContain('measured ?? UNKNOWN_CAPABILITIES');
+    expect(read('src/providers/accounts/resolve-brain.ts')).toContain(
+      'measured ?? UNKNOWN_CAPABILITIES',
+    );
 
     // Every boolean is conservative: unmeasured reads as "do not rely on it".
     for (const [field, value] of Object.entries(UNKNOWN_CAPABILITIES)) {
