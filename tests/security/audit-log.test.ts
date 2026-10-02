@@ -260,3 +260,126 @@ describe('export', () => {
     expect(serialised).not.toMatch(/Widget Catalogue|hunter2/);
   });
 });
+
+describe('reading the trail by every correlation a record carries', () => {
+  /**
+   * Why this group exists.
+   *
+   * The read route filtered on task and site, while a record also carries
+   * workflow, shortcut, schedule, run, connector and skill correlations. The
+   * gap was recorded honestly rather than hidden — *"a reader of the export
+   * can use them; a route caller cannot yet"* — and an audit trail whose
+   * questions can only be answered by exporting it and grepping is a trail the
+   * product cannot show anybody.
+   *
+   * What the cases below hold is the part that is easy to get subtly wrong: a
+   * record that does **not** carry the field must not match a query for it.
+   * The permissive reading — treat absent as matching — would make "show me
+   * what this connector did" return every event that has no connector, which
+   * is worse than no filter at all because it looks like an answer.
+   */
+  beforeEach(async () => {
+    await audit.record({
+      type: 'connector.operation',
+      taskId: 'task_a',
+      connectorId: 'jira',
+      operation: 'search_issues',
+      outcome: 'allowed',
+    });
+    await audit.record({
+      type: 'connector.operation',
+      taskId: 'task_b',
+      connectorId: 'github',
+      operation: 'search_issues',
+      outcome: 'allowed',
+    });
+    await audit.record({
+      type: 'permission.decided',
+      taskId: 'task_a',
+      tool: 'browser.navigate',
+      site: 'Example.com',
+      risk: 'R2',
+      outcome: 'allowed',
+    });
+  });
+
+  it('filters by connector, and returns nothing that has no connector', async () => {
+    const page = await audit.page({ connectorId: 'jira' });
+    expect(page.events).toHaveLength(1);
+    expect(page.total).toBe(1);
+    expect(page.events[0]?.connectorId).toBe('jira');
+
+    // The permission record carries no connector. It must not come back.
+    const dumped = JSON.stringify(page.events);
+    expect(dumped).not.toContain('browser.navigate');
+  });
+
+  it('matches exactly, so one connector is not another', async () => {
+    expect((await audit.page({ connectorId: 'github' })).total).toBe(1);
+    expect((await audit.page({ connectorId: 'jir' })).total).toBe(0);
+    expect((await audit.page({ connectorId: 'JIRA' })).total).toBe(0);
+    expect((await audit.page({ connectorId: 'not-a-connector' })).total).toBe(0);
+  });
+
+  it('combines filters, narrowing rather than widening', async () => {
+    expect((await audit.page({ taskId: 'task_a', connectorId: 'jira' })).total).toBe(1);
+    // Both must hold. A record matching one and not the other is not a match.
+    expect((await audit.page({ taskId: 'task_b', connectorId: 'jira' })).total).toBe(0);
+  });
+
+  it('still compares a site case-insensitively, because a host is', async () => {
+    // The one field that is not an identifier this extension minted.
+    expect((await audit.page({ site: 'example.com' })).total).toBe(1);
+    expect((await audit.page({ site: 'EXAMPLE.COM' })).total).toBe(1);
+  });
+
+  it('filters by every correlation the record type carries', async () => {
+    // Swept rather than listed one by one, so a correlation added to the
+    // record and forgotten in the filter fails here.
+    await audit.record({
+      type: 'workflow.replay',
+      taskId: 'task_c',
+      workflowId: 'wf_1',
+      outcome: 'allowed',
+    });
+    await audit.record({
+      type: 'skill.started',
+      taskId: 'task_d',
+      skillId: 'sk_1',
+      outcome: 'allowed',
+    });
+    await audit.record({
+      type: 'schedule.run_started',
+      taskId: 'task_e',
+      scheduleId: 'sch_1',
+      runId: 'run_1',
+      outcome: 'allowed',
+    });
+    await audit.record({
+      type: 'shortcut.launched',
+      taskId: 'task_f',
+      shortcutId: 'sc_1',
+      outcome: 'allowed',
+    });
+
+    const expected: readonly [string, string][] = [
+      ['workflowId', 'wf_1'],
+      ['skillId', 'sk_1'],
+      ['scheduleId', 'sch_1'],
+      ['runId', 'run_1'],
+      ['shortcutId', 'sc_1'],
+    ];
+    for (const [field, value] of expected) {
+      const page = await audit.page({ [field]: value });
+      expect(page.total, field).toBe(1);
+      // And a value nothing carries returns nothing, so the filter is doing
+      // the work rather than the page size.
+      expect((await audit.page({ [field]: 'nothing-has-this' })).total, field).toBe(0);
+    }
+  });
+
+  it('an empty query returns the whole trail, unfiltered', async () => {
+    const page = await audit.page({});
+    expect(page.total).toBe(3);
+  });
+});

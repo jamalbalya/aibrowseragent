@@ -667,12 +667,52 @@ function dropRedactedFields<T extends Record<string, unknown>>(event: T): T {
   return kept as T;
 }
 
+/**
+ * What a reader may filter the trail by.
+ *
+ * Every correlation a record carries, not just the two it started with. The
+ * gap this closes was recorded rather than hidden: *"the route filters on task
+ * and site, while a record also carries workflow, shortcut, schedule, run,
+ * connector and skill correlations. A reader of the export can use them; a
+ * route caller cannot yet."* An audit trail whose questions can only be asked
+ * by exporting it and grepping is a trail the product cannot show anybody.
+ *
+ * Every field is an exact match on an identifier the extension minted, except
+ * `site`, which is compared case-insensitively because a host is. None is a
+ * pattern, a range or an expression: a query language over the audit trail
+ * would be a second thing to get right, and the questions people actually ask
+ * are "what did this connector do" and "what happened in that scheduled run".
+ */
 export interface AuditQuery {
   readonly taskId?: string;
   readonly site?: string;
+  readonly workflowId?: string;
+  readonly skillId?: string;
+  readonly shortcutId?: string;
+  readonly scheduleId?: string;
+  readonly runId?: string;
+  readonly connectorId?: string;
   readonly offset?: number;
   readonly limit?: number;
 }
+
+/**
+ * The correlations a query may filter on, and the field each reads.
+ *
+ * A table rather than a chain of comparisons, so adding a correlation to the
+ * record and forgetting the filter is one missing entry rather than something
+ * nobody notices. `tests/unit/audit*` asserts that every optional identifier
+ * on the record is either in here or deliberately named as excluded.
+ */
+const EXACT_MATCH_FIELDS = [
+  'taskId',
+  'workflowId',
+  'skillId',
+  'shortcutId',
+  'scheduleId',
+  'runId',
+  'connectorId',
+] as const satisfies readonly (keyof AuditQuery)[];
 
 export interface AuditPage {
   readonly events: readonly AuditEvent[];
@@ -684,7 +724,16 @@ export interface AuditPage {
 }
 
 function matches(event: AuditEvent, query: AuditQuery): boolean {
-  if (query.taskId !== undefined && event.taskId !== query.taskId) return false;
+  for (const field of EXACT_MATCH_FIELDS) {
+    const wanted = query[field];
+    if (wanted === undefined) continue;
+    // An exact match on an identifier this extension minted. A record that
+    // does not carry the field at all does not match a query for it — which
+    // is the right answer: "show me what this connector did" must not return
+    // every event that has no connector.
+    if ((event as unknown as Record<string, unknown>)[field] !== wanted) return false;
+  }
+  // A host, so case does not distinguish two sites.
   if (query.site !== undefined && (event.site ?? '').toLowerCase() !== query.site.toLowerCase()) {
     return false;
   }

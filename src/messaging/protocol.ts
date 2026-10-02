@@ -875,7 +875,27 @@ export interface PanelRequestMap {
   'policy.removeSiteRule': { request: { site: string }; response: { state: SitePolicyState } };
 
   'audit.list': {
-    request: { limit?: number; taskId?: string; site?: string; offset?: number };
+    /**
+     * Every correlation a record carries, as an exact match.
+     *
+     * It used to be task and site only, while a record also carries workflow,
+     * shortcut, schedule, run, connector and skill — so "what did this
+     * connector do" was a question only answerable by exporting the trail and
+     * grepping it. Nothing here is a pattern or a range: a query language over
+     * the audit trail would be a second thing to get right.
+     */
+    request: {
+      limit?: number;
+      offset?: number;
+      taskId?: string;
+      site?: string;
+      workflowId?: string;
+      skillId?: string;
+      shortcutId?: string;
+      scheduleId?: string;
+      runId?: string;
+      connectorId?: string;
+    };
     response: {
       events: readonly AuditEvent[];
       total: number;

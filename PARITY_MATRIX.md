@@ -1293,6 +1293,22 @@ lifecycle, permission, egress, connector, file, skill, workflow and shortcut
 events — nine event types were declared from the start and never written,
 which is why the trail could say what was _decided_ but not what was _done_.
 
+**`P-038-C10` moves from PARTIAL to VERIFIED.** The read route filtered on task
+and site while a record also carried workflow, skill, shortcut, schedule, run
+and connector correlations — so "what did this connector do" was a question
+answerable only by exporting the trail and grepping it, which is not a trail
+the product can show anybody. It now filters on all of them. Each is an exact
+match on an identifier this extension minted, `site` stays case-insensitive
+because a host is, and nothing is a pattern or a range: a query language over
+the audit trail would be a second thing to get right, and the questions people
+actually ask are "what did this connector do" and "what happened in that
+scheduled run".
+
+The case worth reading is the permissive reading it avoids. A record that does
+**not** carry the field does not match a query for it — because returning every
+connector-less event in answer to a connector query looks like an answer and is
+not one. That is the mutation that is killed, along with two others.
+
 The trail observes and never authorises: nothing reads it to decide anything,
 and a write that fails is a gap in the record of an execution that already
 happened rather than a failed execution. Records are flat and bounded, hold

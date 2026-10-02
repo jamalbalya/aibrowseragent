@@ -4483,12 +4483,22 @@ router.on('policy.removeSiteRule', async ({ site }) => {
 
 router.on(
   'audit.list',
-  async ({ limit, taskId, site, offset }) =>
+  async (query) =>
     await auditLog.page({
-      ...(taskId === undefined ? {} : { taskId }),
-      ...(site === undefined ? {} : { site }),
-      ...(offset === undefined ? {} : { offset }),
-      ...(limit === undefined ? {} : { limit }),
+      // Every correlation the record carries, not just the two the route
+      // started with. Spread field by field rather than passing the request
+      // through, so a field added to the request cannot reach the store
+      // without somebody deciding it should.
+      ...(query.taskId === undefined ? {} : { taskId: query.taskId }),
+      ...(query.site === undefined ? {} : { site: query.site }),
+      ...(query.workflowId === undefined ? {} : { workflowId: query.workflowId }),
+      ...(query.skillId === undefined ? {} : { skillId: query.skillId }),
+      ...(query.shortcutId === undefined ? {} : { shortcutId: query.shortcutId }),
+      ...(query.scheduleId === undefined ? {} : { scheduleId: query.scheduleId }),
+      ...(query.runId === undefined ? {} : { runId: query.runId }),
+      ...(query.connectorId === undefined ? {} : { connectorId: query.connectorId }),
+      ...(query.offset === undefined ? {} : { offset: query.offset }),
+      ...(query.limit === undefined ? {} : { limit: query.limit }),
     }),
 );
 

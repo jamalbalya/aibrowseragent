@@ -3685,8 +3685,15 @@
           "specRef": "§38",
           "requirement": "The read route filters on every correlation the record carries.",
           "mandatory": false,
-          "status": "PARTIAL",
-          "note": "Non-mandatory because §38 does not specify the query surface. Stated rather than implied: the route filters on task and site, while a record also carries workflow, shortcut, schedule, run, connector and skill correlations. A reader of the export can use them; a route caller cannot yet."
+          "status": "VERIFIED",
+          "note": "Closed. The read route now filters on every correlation a record carries — task, site, workflow, skill, shortcut, schedule, run and connector — where it used to take task and site only, so \"what did this connector do\" was a question answerable only by exporting the trail and grepping it. Each is an exact match on an identifier this extension minted; `site` stays case-insensitive because a host is; and nothing is a pattern or a range, because a query language over the audit trail would be a second thing to get right. The case that matters most is the permissive reading this avoids: a record that does **not** carry the field does not match a query for it, since returning every connector-less event for a connector query looks like an answer and is not one. Promoted on evidence rather than on the implementation — three mutations, including that one, are killed.",
+          "evidence": [
+            "tests/security/audit-log.test.ts :: filters by connector, and returns nothing that has no connector",
+            "tests/security/audit-log.test.ts :: filters by every correlation the record type carries",
+            "tests/security/audit-log.test.ts :: matches exactly, so one connector is not another",
+            "tests/security/audit-log.test.ts :: combines filters, narrowing rather than widening",
+            "tests/security/audit-log.test.ts :: still compares a site case-insensitively, because a host is"
+          ]
         },
         {
           "id": "P-038-C11",
