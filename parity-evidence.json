@@ -2002,7 +2002,8 @@
       ],
       "security": [
         "tests/security/connector-framework.test.ts",
-        "tests/security/connector-security.test.ts"
+        "tests/security/connector-security.test.ts",
+        "tests/security/site-binding.test.ts"
       ],
       "e2e": ["tests/e2e/connector.spec.ts"],
       "clauses": [
@@ -2101,16 +2102,18 @@
           "requirement": "Tier 1 roadmap: Jira, Confluence, Google Sheets, Google Drive, Figma, GitHub.",
           "mandatory": true,
           "status": "EXTERNAL_REQUIRED",
-          "blocker": "**Two** of the six are implemented — GitHub and Figma — and the other four are not. The earlier blocker said each needs its own registered OAuth application; checked against each vendor’s documentation, that is false for three of them and would not have been enough for GitHub either. Atlassian 3LO (Jira, Confluence) requires a client_secret and supports no PKCE at all; Figma requires one even with PKCE; GitHub requires one for the web flow. This extension must not carry a secret, so none of those four is buildable as a sign-in connector here at any registration. Google’s Sheets and Drive are the two that could be: their Chrome and installed-app client types use PKCE with no secret, and need a registered client id. What the two implemented ones have in common is the mechanism that needs nothing from the owner — a token the user issues in their own account. docs/connectors.md has the table and the sources.",
+          "blocker": "**Three** of the six are implemented — GitHub, Figma and Jira — and the other three are not. Confluence shares Atlassian’s API and is now reachable by the same mechanism; Google Sheets and Drive would need a registered client id. What none of the three implemented ones needs is anything from whoever deploys this build: each is connected with a credential the user creates in their own account. Checked against each vendor’s documentation, a registered OAuth application would not have helped four of the six at all — GitHub’s web flow, Atlassian 3LO (which supports no PKCE either) and Figma all require a client_secret the extension must not carry. docs/connectors.md has the table and the sources.",
           "evidence": [
             "tests/e2e/connector.spec.ts :: an unknown connector is refused rather than invented",
             "tests/e2e/connector.spec.ts :: each connector’s tools are namespaced to it, with no cross-wiring",
             "tests/e2e/connector.spec.ts :: the second connector is registered too, with its own credential header",
+            "tests/e2e/connector.spec.ts :: the site-bound connector asks for a site, and refuses one it cannot bind",
             "tests/integration/figma-connector.test.ts :: is registrable, with a header name the validator accepts",
             "tests/integration/figma-connector.test.ts :: offers two reads and no write",
-            "tests/integration/figma-connector.test.ts :: sends X-Figma-Token and no Authorization header at all"
+            "tests/integration/figma-connector.test.ts :: sends X-Figma-Token and no Authorization header at all",
+            "tests/security/site-binding.test.ts :: offers two reads and no write"
           ],
-          "note": "Still external, and for a corrected reason. Jira is the next one that could work by the same mechanism and cannot yet: its API base is the user’s own *.atlassian.net site, so the connector’s reachable origin would have to come from the credential, and apiOrigins is fixed when a descriptor is registered. That is a framework change rather than an adapter, named here rather than attempted. Four of the six wait on a decision about mechanism, not on a form to fill in."
+          "note": "Still external, and what it waits on has narrowed again. Jira was previously recorded as blocked by the framework — its API base is the user’s own *.atlassian.net site while apiOrigins was fixed at registration. That framework change is done: the origin is parsed at connect time, stored **with** the credential, and is the single entry in the transport’s allowlist on every request, read fresh. It is a tightening rather than a loosening — a fixed descriptor may declare several origins; a bound one permits exactly one. tests/security/site-binding.test.ts holds it, including the adversarial cases for look-alike hosts, scheme and port changes, redirects to another tenant, and a credential whose binding has gone. What remains for this clause is three unwritten connectors and a credential for each."
         },
         {
           "id": "P-023-C10",

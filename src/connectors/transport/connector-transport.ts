@@ -94,9 +94,32 @@ const MAX_REDIRECTS = 3;
 
 export function createConnectorTransport(options: ConnectorTransportOptions): ConnectorTransport {
   const now = options.now ?? (() => Date.now());
-  const allowed = new Set(
+  /**
+   * The origins this connector may reach, for a connector whose descriptor
+   * declares them. Built once, as before.
+   */
+  const declared = new Set(
     options.descriptor.apiOrigins.map((origin) => new URL(origin).origin.toLowerCase()),
   );
+
+  /**
+   * The allowlist for one request.
+   *
+   * For a site-bound connector it is the **single** origin stored with the
+   * credential, read fresh on every request — so changing the site cannot
+   * leave a previous origin authorised, and a credential that has been
+   * discarded authorises nothing at all. For every other connector it is the
+   * descriptor's list, unchanged.
+   *
+   * Empty means nothing is permitted. That direction matters: a site-bound
+   * connector with no stored credential must reach nowhere, and an empty set
+   * is what `assertDeclared` refuses everything against.
+   */
+  const allowedFor = async (): Promise<ReadonlySet<string>> => {
+    if (options.descriptor.siteBinding === undefined) return declared;
+    const bound = await options.vault.boundOrigin(options.descriptor.id);
+    return bound === null ? new Set<string>() : new Set([bound.toLowerCase()]);
+  };
 
   /**
    * The one header this connector's credential travels in.
@@ -142,7 +165,7 @@ export function createConnectorTransport(options: ConnectorTransportOptions): Co
     return kept;
   };
 
-  const assertDeclared = (url: string): void => {
+  const assertDeclared = (url: string, allowed: ReadonlySet<string>): void => {
     let parsed: URL;
     try {
       parsed = new URL(url);
@@ -163,7 +186,10 @@ export function createConnectorTransport(options: ConnectorTransportOptions): Co
   return {
     async send(request: ConnectorRequest, context: ConnectorEgressContext): Promise<Response> {
       let url = request.url;
-      assertDeclared(url);
+      // Resolved before the credential is read, so a request to an origin this
+      // connector may not reach never gets as far as touching one.
+      const allowed = await allowedFor();
+      assertDeclared(url, allowed);
 
       const authorization = await options.vault.credentialHeaderValue(options.descriptor.id, now());
       if (authorization === null) {
@@ -253,8 +279,12 @@ export function createConnectorTransport(options: ConnectorTransportOptions): Co
           status: response.status,
         });
         // The hop is authorised on its own terms: a new destination, a new
-        // gate decision, and a refusal if it leaves the declared origins.
-        assertDeclared(target);
+        // gate decision, and a refusal if it leaves the permitted origins.
+        // Against the same set the first request was checked against, which
+        // for a site-bound connector is the one origin its credential is
+        // bound to — a redirect to another tenant's site is refused exactly
+        // like a redirect to another service.
+        assertDeclared(target, allowed);
         url = target;
       }
     },

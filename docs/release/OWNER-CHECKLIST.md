@@ -201,6 +201,148 @@ published screenshot cannot be taken back.
 
 ---
 
+## Security actions, and one that is overdue
+
+**S-1. Rotate the temporary 9Router API key — YOU, and treat it as exposed.**
+
+A temporary 9Router key was supplied to this repository for live integration
+testing on 2026-10-01. It was never committed, never printed, and every scan
+that checked for it carried a positive control — but it was pasted into a
+session and written to a file on this machine, so the only state in which it is
+not exposed is **revoked or rotated at the provider**.
+
+Deleting the file is not sufficient and never was:
+
+```
+rm /Users/jemz/code/jemz/aibrowseragent/.env.9router.local   # necessary, not sufficient
+```
+
+What closes it is rotating the credential in the 9Router instance that issued
+it. Until that happens, assume anything that key authorises is reachable by
+anyone who has seen it. This item exists in the repository rather than only in
+a session report because a reminder that lives in a transcript is a reminder
+that disappears — it had been raised four times and written down nowhere.
+
+Evidence to capture: nothing from the key itself. Record only the date it was
+rotated.
+
+**S-2. No OAuth client secret is in the extension — REPOSITORY COMPLETE.**
+
+Asserted rather than promised. `ConnectorOAuthConfig` has no field for one, and
+`tests/security/credential-boundary.test.ts` plus the release artifact scan hold
+the line. The backend holds `ABA_GOOGLE_CLIENT_SECRET`; the extension never
+sees it and could not use it.
+
+---
+
+## Google sign-in against the real Google — YOU
+
+Everything in the sign-in is implemented and covered by 34 cases in real
+Chromium against a controlled backend over real HTTPS with genuinely signed
+RS256 tokens: the flow, cancellation, session persistence, refresh, concurrent
+refresh, a worker restart, logout, and server-side revocation. One of those
+cases runs the whole journey and a task on the selected AI account.
+
+**What has never happened is a sign-in against Google's own endpoints.** That
+needs two things this repository cannot have: a backend reachable at an https
+origin, and a Google OAuth client registered to it. Both are yours. Nothing
+below is implemented on your behalf and no credential is invented.
+
+### G-1. Register a Google OAuth client
+
+1. In the Google Cloud console, create (or pick) a project and configure the
+   OAuth consent screen. **External**, and it may stay in _Testing_ with your
+   own address as a test user — this does not need verification to work for you.
+2. Create an OAuth **client id** of type **Web application**. Not "Chrome
+   extension": the code exchange happens on your backend, which is a web
+   server, and that is also why a client _secret_ exists and why it must never
+   reach the extension.
+3. Scopes: `openid`, `email`, `profile`. Nothing else. The backend asks for no
+   more and the extension asks for nothing at all.
+4. Authorised redirect URI — exactly one, and exactly this shape:
+
+   ```
+   https://<your-backend-origin>/v1/auth/google/redirect
+   ```
+
+   That path is `DEFAULT_PATHS.redirectPath` in `server/http/router.ts`. Google
+   redirects **to your backend**, never to the extension; the backend then
+   redirects once more to `/v1/auth/google/callback`, which is the URL the
+   extension watches for. A redirect URI pointing at a `chrome-extension://`
+   origin is wrong here and Google will refuse it.
+
+### G-2. Deploy the backend
+
+`server/` is a self-contained identity service that `src/` has never imported.
+It needs these environment variables, and the three marked secret belong in a
+secret store rather than a config map:
+
+| Variable                       | What it is                              | Secret  |
+| ------------------------------ | --------------------------------------- | ------- |
+| `ABA_PUBLIC_ORIGIN`            | the https origin the backend answers on | no      |
+| `ABA_ACCESS_TOKEN_SIGNING_KEY` | signs access tokens                     | **yes** |
+| `ABA_DATABASE_URL`             | database connection string              | **yes** |
+| `ABA_GOOGLE_CLIENT_ID`         | the client id from G-1                  | no      |
+| `ABA_GOOGLE_CLIENT_SECRET`     | the client secret from G-1              | **yes** |
+
+The Google pair is configured **as a group or not at all**: a backend without
+them is a working backend that simply cannot sign anybody in that way, and the
+routes that would are absent rather than broken. `server/config.ts` throws
+naming every missing variable at once rather than one per restart.
+
+Run the migrations in `server/migrations/` in order.
+
+### G-3. Build an extension that knows where the backend is
+
+The backend origin is inlined by Vite at build time, deliberately — an origin
+that could be set from a message would be an origin an attacker could set.
+There is no runtime setting for it and there must not be.
+
+```
+VITE_ABA_BACKEND_ORIGIN=https://<your-backend-origin> npm run build
+```
+
+It must be `https://` and an origin only. A build with no origin — which is
+what ships — reports `configured: false` and offers no sign-in button at all,
+rather than one that cannot work.
+
+### G-4. What to actually test, and what evidence to keep
+
+Load that build unpacked and work through this. Each line is a thing that has
+only ever been exercised against a controlled backend:
+
+| #   | Do this                                                | Met when                                                                |
+| --- | ------------------------------------------------------ | ----------------------------------------------------------------------- |
+| 1   | Open Settings → sign in with Google                    | Google's own consent screen appears, on `accounts.google.com`           |
+| 2   | Approve it                                             | the panel reports signed in, and names no token anywhere                |
+| 3   | **Dismiss** the Google window instead, on a second try | reported as cancelled; no session is created                            |
+| 4   | Connect an AI provider account and run a task          | the task runs — this is the regression that signing in used to break    |
+| 5   | Reopen the browser                                     | still signed in, without a second consent screen                        |
+| 6   | Sign out                                               | signed out, and every workflow, account, key and task is still there    |
+| 7   | Sign in again                                          | the **same** account, with no second device registered                  |
+| 8   | Stop the backend, then reload the panel                | still usable; the agent still runs tasks; the status says what is wrong |
+| 9   | Revoke the app at `myaccount.google.com/permissions`   | the next refresh fails and asks you to sign in, rather than retrying    |
+
+Evidence to capture, and **nothing else**: a screenshot of the panel signed in
+with the account name visible, a screenshot of step 8's status, and the dates.
+Do **not** capture or paste a token, a session id, an authorization code, a URL
+containing `code=` or `state=`, or the contents of `chrome.storage`. None of
+those is needed to establish that any of the nine happened.
+
+### G-5. If something fails
+
+A production configuration error should say so rather than fail obscurely.
+`auth.status` reports `configured: false` for a build with no origin, and the
+backend names every missing variable at startup. If step 1 produces a Google
+error page, the redirect URI in G-1 does not match
+`ABA_PUBLIC_ORIGIN` + `/v1/auth/google/redirect` exactly — compare them
+character by character, including the scheme and any trailing slash.
+
+Report what happened. A failure here is a finding about the repository, not
+about you.
+
+---
+
 ## Build and verify
 
 **10. Clean install — YOU, one command**

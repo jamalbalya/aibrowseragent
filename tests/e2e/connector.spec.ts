@@ -157,7 +157,10 @@ test('the second connector is registered too, with its own credential header', a
   // takes the whole worker down, which is the failure the first case in this
   // file exists for — and that the panel is told how to connect it.
   const { connectors } = await send('connector.list', {});
-  expect(connectors.map((entry) => entry.id).sort()).toEqual(['figma', 'github']);
+  // Three, and each is registered independently: a descriptor the validator
+  // rejects takes the whole worker down at module scope, which is the failure
+  // the first case in this file exists for.
+  expect(connectors.map((entry) => entry.id).sort()).toEqual(['figma', 'github', 'jira']);
 
   const figma = connectors.find((entry) => entry.id === 'figma')!;
   expect(figma.authKind).toBe('api_token');
@@ -182,6 +185,121 @@ test('the second connector is registered too, with its own credential header', a
   expect(figma.tokenHint!.help).toMatch(/read-only/i);
 });
 
+test('the site-bound connector asks for a site, and refuses one it cannot bind', async ({
+  send,
+}) => {
+  // Jira is the first connector whose API origin belongs to the user, and
+  // the whole question is whether that can be true without the credential
+  // authorising arbitrary origins. The unit and integration suites hold the
+  // rule; this is the real extension, the real routes and real storage.
+  const { connectors } = await send('connector.list', {});
+  const jira = connectors.find((entry) => entry.id === 'jira');
+
+  expect(jira).toBeDefined();
+  expect(jira!.authKind).toBe('api_token');
+  expect(jira!.configured).toBe(true);
+  expect(jira!.state).not.toBe('READY');
+
+  // The panel is told to ask for a site, with an example and never a default.
+  expect(jira!.siteBinding).toBeDefined();
+  expect(jira!.siteBinding!.hostSuffix).toBe('.atlassian.net');
+  expect(jira!.siteBinding!.example).toMatch(/^https:\/\/[a-z-]+\.atlassian\.net$/);
+  // And for the account the token belongs to, because Basic needs both halves.
+  expect(jira!.tokenHint?.accountLabel).toBeDefined();
+  expect(jira!.tokenHint?.help).toMatch(/read-only/i);
+
+  // Read-only: no write operation exists, rather than one that always refuses.
+  expect(jira!.operations.filter((operation) => operation.kind === 'write')).toEqual([]);
+});
+
+test('a site the worker will not bind leaves nothing stored', async ({ send, serviceWorker }) => {
+  // The adversarial set, driven through the real route. Each is a different
+  // origin from the user's own site, and each must be refused **before**
+  // anything is written — so a refusal that stored a credential bound to the
+  // wrong place would show up here.
+  const token = 'jira-probe-token-0000000000000000';
+  const attempts: readonly string[] = [
+    'https://atlassian.net.evil.test',
+    'https://team.atlassian.net.evil.test',
+    'http://team.atlassian.net',
+    'https://team.atlassian.net:8443',
+    'https://team.atlassian.net/rest/api/3',
+    'https://user:pass@team.atlassian.net',
+    'https://evil.test/?x=team.atlassian.net',
+    'https://atlassian.net',
+    'team.atlassian.net',
+    '',
+  ];
+
+  for (const site of attempts) {
+    const result = await send('connector.connectToken', {
+      connectorId: 'jira',
+      token,
+      site,
+      account: 'someone@example.test',
+    }).catch((error: unknown) => ({
+      state: 'THREW',
+      reason: error instanceof Error ? error.message : String(error),
+    }));
+    expect(result.state, site).not.toBe('READY');
+  }
+
+  const { connectors } = await send('connector.list', {});
+  expect(connectors.find((entry) => entry.id === 'jira')!.state).not.toBe('READY');
+
+  // Nothing was written: not the token, and not a binding to any of those
+  // origins. Read out of the real extension's own storage, both areas.
+  const stored = await serviceWorker.evaluate(async () => {
+    const [session, local] = await Promise.all([
+      chrome.storage.session.get(null),
+      chrome.storage.local.get(null),
+    ]);
+    return JSON.stringify({ session, local });
+  });
+  expect(stored).not.toContain(token);
+  expect(stored).not.toContain('evil.test');
+  expect(stored).not.toContain('boundOrigin');
+});
+
+test('a site-bound connector refuses a token with no site, and vice versa', async ({ send }) => {
+  // Each connector takes exactly the parts it needs. A missing one is a
+  // refusal the panel's button prevents, and sending one that is not wanted is
+  // refused rather than ignored — so a caller learns it is wrong.
+  await expect(
+    send('connector.connectToken', {
+      connectorId: 'jira',
+      token: 'x'.repeat(20),
+      account: 'someone@example.test',
+    }),
+  ).resolves.toMatchObject({ reason: 'site_invalid' });
+
+  await expect(
+    send('connector.connectToken', {
+      connectorId: 'jira',
+      token: 'x'.repeat(20),
+      site: 'https://team.atlassian.net',
+    }),
+  ).rejects.toThrow(/INVALID_ARGUMENT|needs the account/i);
+
+  // GitHub has no site binding, so a site for it is refused.
+  await expect(
+    send('connector.connectToken', {
+      connectorId: 'github',
+      token: 'x'.repeat(20),
+      site: 'https://team.atlassian.net',
+    }),
+  ).resolves.toMatchObject({ reason: 'site_invalid' });
+
+  // And no account, because GitHub needs only a token.
+  await expect(
+    send('connector.connectToken', {
+      connectorId: 'github',
+      token: 'x'.repeat(20),
+      account: 'someone@example.test',
+    }),
+  ).rejects.toThrow(/INVALID_ARGUMENT|needs only a token/i);
+});
+
 test('each connector’s tools are namespaced to it, with no cross-wiring', async ({ send }) => {
   const { tools } = await send('tools.list', {});
   const names = tools.map((tool) => tool.name);
@@ -190,6 +308,10 @@ test('each connector’s tools are namespaced to it, with no cross-wiring', asyn
   expect(names).toContain('github.search_issues');
   // Figma contributes no write tool at all — not one that exists and refuses.
   expect(names.filter((name) => name.startsWith('figma.'))).toHaveLength(2);
+  // Jira likewise: two reads, and no write tool at all.
+  expect(names).toContain('jira.search_issues');
+  expect(names).toContain('jira.read_issue');
+  expect(names.filter((name) => name.startsWith('jira.'))).toHaveLength(2);
 });
 
 test('reading needs no scope and writing does', async ({ send }) => {

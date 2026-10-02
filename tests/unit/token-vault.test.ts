@@ -53,6 +53,7 @@ describe('getting a credential out', () => {
     // what comes out of it goes into a header.
     const surface = Object.getOwnPropertyNames(TokenVault.prototype).sort();
     expect(surface).toEqual([
+      'boundOrigin',
       'clear',
       'constructor',
       'credentialHeaderValue',
@@ -63,6 +64,30 @@ describe('getting a credential out', () => {
       'summary',
       'updateAfterRefresh',
     ]);
+  });
+
+  it('hands back an origin, and no credential, from the binding accessor', async () => {
+    // `boundOrigin` was added for the connector whose API origin belongs to
+    // the user, and this guard is what made adding it a decision rather than
+    // a slip. It answers a different question from `summary` — "where may this
+    // go" rather than "what may the panel show" — and the thing that makes it
+    // safe is that an origin is all that comes out.
+    await vault.store('bound', {
+      accessToken: TOKEN,
+      tokenType: 'Basic',
+      scopes: [],
+      boundOrigin: 'https://team.atlassian.test',
+    });
+    expect(await vault.boundOrigin('bound')).toBe('https://team.atlassian.test');
+    expect(JSON.stringify(await vault.boundOrigin('bound'))).not.toContain(TOKEN);
+  });
+
+  it('answers null for a connector with no binding and for one it never saw', async () => {
+    // The two must be indistinguishable here, and both must mean
+    // nothing-permitted rather than everything-permitted — the transport turns
+    // `null` into an empty allowlist, which refuses every origin.
+    expect(await vault.boundOrigin('github')).toBeNull();
+    expect(await vault.boundOrigin('never-stored')).toBeNull();
   });
 
   it('is the only method whose result contains the token', async () => {

@@ -111,6 +111,13 @@ import { isIncomplete, type RecordedWorkflow } from '@/workflows/workflow-model'
 import { digestSteps } from '@/workflows/step-digest';
 import type { WorkflowSummary } from '@/messaging/protocol';
 import {
+  JiraConnector,
+  jiraDescriptor,
+  jiraTokenProbeUrl,
+  readJiraTokenProbe,
+  jiraBasicCredential,
+} from '@/connectors/adapters/jira';
+import {
   FigmaConnector,
   figmaDescriptor,
   figmaTokenProbeUrl,
@@ -855,8 +862,18 @@ const CONNECTOR_CLIENT_IDS: Readonly<Record<string, string>> = {};
  * it holds a label, a URL the *user* opens, and a line of help.
  */
 const CONNECTOR_TOKEN_HINTS: Readonly<
-  Record<string, { label: string; issuePage: string; help: string }>
+  Record<string, { label: string; issuePage: string; help: string; accountLabel?: string }>
 > = {
+  jira: {
+    label: 'Jira API token',
+    accountLabel: 'The email address of your Atlassian account',
+    issuePage: 'https://id.atlassian.com/manage-profile/security/api-tokens',
+    help:
+      'Create an API token in your own Atlassian account, and enter it with the email address ' +
+      'that account uses. Jira does not report what a token may do — it can see whatever you ' +
+      'can — so this connector is read-only: it searches issues and reads one with its ' +
+      'comments, and changes nothing. Atlassian Cloud sites only.',
+  },
   figma: {
     label: 'Figma personal access token',
     issuePage: 'https://www.figma.com/developers/api#access-tokens',
@@ -1250,7 +1267,78 @@ const figmaConnector = new FigmaConnector({
 });
 
 registerConnector(githubConnector);
+/**
+ * Jira Cloud, the first connector whose API origin belongs to the user.
+ *
+ * `api_token` because Atlassian OAuth 2.0 (3LO) requires a `client_secret` and
+ * supports no PKCE at all — the only one of the six Tier 1 services where both
+ * are true — so there is no flow this extension could ever complete. HTTP
+ * Basic with an email address and an API token the user creates needs nothing
+ * from anybody.
+ *
+ * The origin is parsed at connect time and stored with the credential; the
+ * transport's allowlist is that single origin on every request, read fresh.
+ * `site-binding.ts` has the rule and what it refuses.
+ */
+const jiraDescriptorValue = jiraDescriptor();
+
+const jiraSession = new ConnectorSession({
+  descriptor: jiraDescriptorValue,
+  vault: connectorTokens,
+  authFlow: new TabAuthFlow(chromeTabs()),
+  clientId: '',
+  exchange: exchangeConnectorToken,
+  introspect: async (credential) => {
+    // The probe goes to the user's own site, which is why it needs the origin
+    // the session has just validated — and why it cannot run before that
+    // validation. An unusable site is refused with no request leaving at all.
+    if (credential.boundOrigin === undefined) {
+      throw new Error('jira_probe_without_bound_origin');
+    }
+    const probe = await probeConnectorToken(jiraTokenProbeUrl(credential.boundOrigin), credential);
+    const body = probe.body !== null && typeof probe.body === 'object' ? probe.body : {};
+    return readJiraTokenProbe({
+      status: probe.status,
+      displayName: (body as { displayName?: unknown }).displayName,
+      emailAddress: (body as { emailAddress?: unknown }).emailAddress,
+    });
+  },
+  onStatusChange: (status) => {
+    void auditLog
+      .record({
+        type: 'connector.auth',
+        connectorId: status.connectorId,
+        connectorState: status.state,
+        outcome: status.state === 'READY' ? 'allowed' : 'info',
+        code: status.reason,
+        scopes: status.scopes,
+      })
+      .catch(() => undefined);
+    if (status.state === 'NEEDS_AUTH' && status.reason === 'grant_expired') {
+      void notifier.connectorAuthExpired(jiraDescriptorValue.displayName);
+    }
+  },
+});
+
+const jiraConnector = new JiraConnector({
+  descriptor: jiraDescriptorValue,
+  session: jiraSession,
+  transport: createConnectorTransport({
+    descriptor: jiraDescriptorValue,
+    vault: connectorTokens,
+    consent: consentStore,
+    onDecision: connectorEgressObserver,
+  }),
+  writes: connectorWrites,
+  egressFor: (taskId) => connectorEgressContexts.get(taskId),
+  // Read per call, never cached: a site that has been changed or a credential
+  // that has been discarded must not leave a previous origin in use. The
+  // transport checks the same binding again independently.
+  boundOrigin: () => connectorTokens.boundOrigin(jiraDescriptorValue.id),
+});
+
 registerConnector(figmaConnector);
+registerConnector(jiraConnector);
 
 /**
  * Security contexts for in-flight tasks.
@@ -2958,6 +3046,17 @@ router.on('connector.list', async () => {
       ...(descriptor.authKind === 'api_token' && CONNECTOR_TOKEN_HINTS[descriptor.id]
         ? { tokenHint: CONNECTOR_TOKEN_HINTS[descriptor.id]! }
         : {}),
+      // So the panel knows to ask for a site. A label and an example, never a
+      // default: nothing here decides where a credential goes.
+      ...(descriptor.siteBinding === undefined
+        ? {}
+        : {
+            siteBinding: {
+              label: descriptor.siteBinding.label,
+              example: descriptor.siteBinding.example,
+              hostSuffix: descriptor.siteBinding.hostSuffix,
+            },
+          }),
       operations: descriptor.operations.map((operation) => ({
         id: operation.id,
         kind: operation.kind,
@@ -3025,7 +3124,7 @@ router.on('connector.authorize', async ({ connectorId, includeWrite }) => {
   return { state: status.state, reason: status.reason, scopes: status.scopes };
 });
 
-router.on('connector.connectToken', async ({ connectorId, token }) => {
+router.on('connector.connectToken', async ({ connectorId, token, site, account }) => {
   const connector = connectorRegistry.get(connectorId);
   if (!connector) {
     throw new RouteError(createError('INVALID_ARGUMENT', `Unknown connector "${connectorId}".`));
@@ -3062,13 +3161,32 @@ router.on('connector.connectToken', async ({ connectorId, token }) => {
   // entry and a connector with no entry is refused above rather than silently
   // routed to the wrong session.
   const tokenSessions: Readonly<
-    Record<string, { session: ConnectorSession; tokenType: string | null }>
+    Record<
+      string,
+      {
+        session: ConnectorSession;
+        tokenType: string | null;
+        /** Composes the credential from the parts the user supplied. */
+        compose?: (token: string, account: string) => string;
+        /** True when this connector cannot be connected without an account. */
+        needsAccount?: boolean;
+      }
+    >
   > = {
     [githubDescriptorValue.id]: { session: githubSession, tokenType: 'Bearer' },
     // `null`, not `'Bearer'`: Figma reads `X-Figma-Token` and that header's
     // syntax is the token itself. A scheme prefix here would be an
     // unauthenticated request with the user's token attached to it.
     [figmaDescriptorValue.id]: { session: figmaSession, tokenType: null },
+    // `Basic`, over base64(email:token). Composed here because this is the one
+    // place that already holds both halves — a credential assembled in the
+    // panel would exist in one more place than it needs to.
+    [jiraDescriptorValue.id]: {
+      session: jiraSession,
+      tokenType: 'Basic',
+      compose: jiraBasicCredential,
+      needsAccount: true,
+    },
   };
 
   const owner = tokenSessions[connectorId];
@@ -3080,9 +3198,31 @@ router.on('connector.connectToken', async ({ connectorId, token }) => {
     );
   }
 
+  const suppliedAccount = (account ?? '').trim();
+  if (owner.needsAccount === true && suppliedAccount.length === 0) {
+    throw new RouteError(
+      createError('INVALID_ARGUMENT', 'No account was supplied.', {
+        userMessage: `${connector.descriptor.displayName} needs the account the token belongs to.`,
+      }),
+    );
+  }
+  if (owner.needsAccount !== true && suppliedAccount.length > 0) {
+    // A value with nowhere to go. Refused rather than ignored, so a panel
+    // sending one learns it is wrong instead of silently losing it.
+    throw new RouteError(
+      createError('INVALID_ARGUMENT', 'This connector does not take an account.', {
+        userMessage: `${connector.descriptor.displayName} needs only a token.`,
+      }),
+    );
+  }
+
   const outcome = await owner.session.connectWithToken({
-    token: supplied,
+    token: owner.compose === undefined ? supplied : owner.compose(supplied, suppliedAccount),
     tokenType: owner.tokenType,
+    // Passed through raw. The session parses and validates it, and refuses a
+    // site for a connector with no binding — so this route does not need to
+    // know which connectors have one.
+    ...(site === undefined ? {} : { site }),
   });
 
   const status = outcome.status;
@@ -3096,6 +3236,7 @@ router.on('connector.connectToken', async ({ connectorId, token }) => {
     // explaining. Both refuse every write.
     scopesKnown: outcome.scopesEstablished,
     ...(status.accountLabel === undefined ? {} : { accountLabel: status.accountLabel }),
+    ...(outcome.siteMessage === undefined ? {} : { siteMessage: outcome.siteMessage }),
   };
 });
 

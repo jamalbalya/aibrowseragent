@@ -128,6 +128,15 @@ export function SettingsView({
    * carry it, and the value never reaches any route but `connector.connectToken`.
    */
   const [tokenDrafts, setTokenDrafts] = useState<Record<string, string>>({});
+  /**
+   * The site and account a connector needs beside its token, per connector.
+   *
+   * Neither is a credential: a site is an address and an account is an email.
+   * They are held the same way as the token draft, and cleared only on
+   * success — see the handler for why a refusal keeps them.
+   */
+  const [siteDrafts, setSiteDrafts] = useState<Record<string, string>>({});
+  const [accountDrafts, setAccountDrafts] = useState<Record<string, string>>({});
   const [skills, setSkills] = useState<PanelResponse<'skill.list'>['skills']>([]);
   const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
 
@@ -253,10 +262,19 @@ export function SettingsView({
         setMessage({ tone: 'error', text: 'Paste the token before connecting.' });
         return;
       }
+      const site = (siteDrafts[connectorId] ?? '').trim();
+      const account = (accountDrafts[connectorId] ?? '').trim();
       setBusy('connector');
       setMessage(null);
+      let ok = false;
       try {
-        const result = await sendToBackground('connector.connectToken', { connectorId, token });
+        const result = await sendToBackground('connector.connectToken', {
+          connectorId,
+          token,
+          ...(site.length === 0 ? {} : { site }),
+          ...(account.length === 0 ? {} : { account }),
+        });
+        ok = result.state === 'READY';
         setMessage(
           result.state === 'READY'
             ? {
@@ -271,11 +289,14 @@ export function SettingsView({
             : {
                 tone: 'error',
                 text:
-                  result.reason === 'token_rejected'
+                  // A site problem is something the user can fix in the field
+                  // they just typed in, so it is said rather than generalised.
+                  result.siteMessage ??
+                  (result.reason === 'token_rejected'
                     ? 'That token was refused. Check it is current and try another.'
                     : result.reason === 'token_unverified'
                       ? 'The service could not be reached to check the token. Nothing was saved.'
-                      : `Not connected (${result.reason}).`,
+                      : `Not connected (${result.reason}).`),
               },
         );
         await refreshConnectors();
@@ -284,10 +305,18 @@ export function SettingsView({
       } finally {
         // Cleared on every path, including the error ones.
         setTokenDrafts((drafts) => ({ ...drafts, [connectorId]: '' }));
+        // The site and account are kept on a failure, deliberately: neither is
+        // a credential, both are usually right, and retyping a site address
+        // because a token was mistyped is the kind of thing that makes a
+        // person give up.
+        if (ok) {
+          setSiteDrafts((drafts) => ({ ...drafts, [connectorId]: '' }));
+          setAccountDrafts((drafts) => ({ ...drafts, [connectorId]: '' }));
+        }
         setBusy(null);
       }
     },
-    [refreshConnectors, tokenDrafts],
+    [refreshConnectors, tokenDrafts, siteDrafts, accountDrafts],
   );
 
   const disconnectConnector = useCallback(
@@ -662,7 +691,15 @@ export function SettingsView({
                     type="button"
                     className="button button--primary"
                     disabled={
-                      busy !== null || (tokenDrafts[connector.id] ?? '').trim().length === 0
+                      busy !== null ||
+                      (tokenDrafts[connector.id] ?? '').trim().length === 0 ||
+                      // A connector that needs a site or an account cannot be
+                      // connected without them, so the button says so rather
+                      // than producing a refusal the user has to read.
+                      (connector.siteBinding !== undefined &&
+                        (siteDrafts[connector.id] ?? '').trim().length === 0) ||
+                      (connector.tokenHint.accountLabel !== undefined &&
+                        (accountDrafts[connector.id] ?? '').trim().length === 0)
                     }
                     onClick={() => void connectWithToken(connector.id)}
                   >

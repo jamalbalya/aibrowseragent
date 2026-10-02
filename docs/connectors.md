@@ -145,12 +145,61 @@ operation that can only fail reads as a broken feature rather than an absent
 one, so there is none. If Figma later reports a token's scopes, a write becomes
 implementable on evidence.
 
-**Jira is the next one that could work this way, and does not yet.** Its API
-base is the user's own `*.atlassian.net` site, so the connector's reachable
-origin would have to come from the credential — and `apiOrigins` is fixed when
-a descriptor is registered, deliberately, because it is what the transport
-checks every request against. Making it per-connection is a framework change
-with a real security surface, and it is recorded here rather than improvised.
+### Jira, and the origin that belongs to the user
+
+This used to say Jira could not be built: _"its API base is the user's own
+`*.atlassian.net` site, so the connector's reachable origin would have to come
+from the credential — and `apiOrigins` is fixed when a descriptor is
+registered."_ That was accurate and it is now done. The framework change is
+`src/connectors/core/site-binding.ts`, and it is a **tightening**.
+
+Two obvious fixes were both wrong, and naming them is the point:
+
+- a **wildcard** origin would let one credential authorise any host;
+- an origin resolved from the **request** would let the caller choose where the
+  credential goes, which is the single decision the transport exists to keep.
+
+What it does instead: **the origin is bound to the credential.** Two
+independent checks, neither of which a caller can influence.
+
+1. **At connect time** the site the user typed is parsed, and refused unless it
+   is `https`, has no port, path, query, fragment or userinfo, and is a single
+   sub-domain of `.atlassian.net`. Refused rather than repaired — a parser that
+   helpfully prepended a scheme would be deciding where a credential goes.
+2. **At request time** the transport's existing origin check runs unchanged,
+   against an allowlist of exactly **one** entry: the bound origin, read fresh
+   from the credential record on every request.
+
+So a fixed descriptor may declare several origins and a bound one permits
+exactly one. A credential saved for one tenant can never be sent to another;
+changing the site replaces the credential, because they are one record;
+discarding the credential leaves **nothing** permitted rather than everything;
+and a redirect to another tenant is refused exactly like one to another
+service. `tests/security/site-binding.test.ts` holds all of that, including the
+look-alike hosts (`atlassian.net.evil.test`, `team.atlassian.net.evil.test`,
+the suffix hidden in a path or a query), the bare apex, scheme and port
+changes, and a session that is READY with its binding gone.
+
+**Atlassian Cloud only.** Data Center runs on arbitrary customer hosts, and
+supporting it would mean accepting any origin a user typed — the wildcard this
+design exists to avoid.
+
+**Why a token and not OAuth.** Atlassian 3LO requires a `client_secret` _and_
+supports no PKCE at all — the only one of the six Tier 1 services where both
+are true. There is no flow this build could ever complete for it. What works is
+what Atlassian documents for scripts: HTTP Basic with an email address and an
+API token the user creates. Atlassian's own documentation prefers 3LO for
+distributed integrations and says so; that preference is not available here.
+
+**Read-only, for the same reason Figma is.** Basic auth reports no scopes at
+all, so a write would declare one it could never establish and be refused every
+time. That is also the conservative answer to a real asymmetry: a Jira write is
+a comment on somebody's actual tracker, visible to a team and attributed to the
+user.
+
+The remaining Tier 1 gaps are Confluence — which shares Atlassian's API and is
+now reachable by the same mechanism — and Google Sheets and Drive, which would
+need a registered client id.
 
 ### Authorization code with PKCE (`oauth2`) — supported, and unreachable here
 

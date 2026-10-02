@@ -16,6 +16,7 @@ import type { AgentTool } from '@/tools/core/tool-types';
 import { isLoopbackHostname } from '@/security/origin/origin-validator';
 import type { DataSensitivity } from '@/security/exfiltration/exfiltration-guard';
 import type { RiskLevel } from '@/policy/risk-classifier';
+import type { SiteBinding } from './site-binding';
 
 export type ConnectorAuthKind = 'oauth2' | 'api_token' | 'basic' | 'none';
 
@@ -105,6 +106,16 @@ export interface ConnectorDescriptor {
    * before applying the credential last.
    */
   readonly credentialHeader?: string;
+  /**
+   * Present when the API origin is a fact about the credential, not the connector.
+   *
+   * Jira Cloud's API base is the customer's own `*.atlassian.net` site, so
+   * there is no origin a descriptor could declare. With this set, `apiOrigins`
+   * is empty and the transport's allowlist is the single origin bound to the
+   * stored credential — see `site-binding.ts` for the rule and why it is
+   * stronger than a fixed list rather than weaker.
+   */
+  readonly siteBinding?: SiteBinding;
   /** Present when `authKind` is `oauth2`. */
   readonly oauth?: ConnectorOAuthConfig;
   /** Why each scope is requested, shown to the user and kept in the docs. */
@@ -170,7 +181,26 @@ export function validateConnectorDescriptor(descriptor: ConnectorDescriptor): st
   const problems: string[] = [];
 
   if (descriptor.id.trim().length === 0) problems.push('a connector id is required');
-  if (descriptor.apiOrigins.length === 0) problems.push('at least one API origin is required');
+
+  // Exactly one source of truth for where this connector may reach. Both would
+  // be two allowlists that could disagree; neither would be no allowlist at
+  // all, and the transport would have nothing to check a request against.
+  if (descriptor.siteBinding === undefined) {
+    if (descriptor.apiOrigins.length === 0) problems.push('at least one API origin is required');
+  } else {
+    if (descriptor.apiOrigins.length > 0) {
+      problems.push('a site-bound connector declares no fixed API origin');
+    }
+    const suffix = descriptor.siteBinding.hostSuffix;
+    // A suffix, not a pattern. Anything else here would be a wildcard by
+    // another name, and the whole point is that there is no wildcard.
+    if (!suffix.startsWith('.') || suffix.length < 4 || !/^\.[a-z0-9.-]+$/.test(suffix)) {
+      problems.push(`"${suffix}" is not a usable host suffix`);
+    }
+    if (descriptor.siteBinding.example.length === 0) {
+      problems.push('a site-bound connector needs an example address to show the user');
+    }
+  }
 
   for (const origin of descriptor.apiOrigins) {
     let parsed: URL;

@@ -762,7 +762,14 @@ export interface PanelRequestMap {
           /** Where the user creates the token. Opened by the user, never fetched. */
           issuePage: string;
           help: string;
+          /** Present when the connector also needs the account the token belongs to. */
+          accountLabel?: string;
         };
+        /**
+         * Present when the API origin belongs to the user, so the panel knows
+         * to ask for it. Carries a label and an example, never a default.
+         */
+        siteBinding?: { label: string; example: string; hostSuffix: string };
         operations: { id: string; kind: 'read' | 'write'; description: string }[];
         scopeRationale: Readonly<Record<string, string>>;
       }[];
@@ -792,13 +799,35 @@ export interface PanelRequestMap {
    * because a connector whose reach is unknown refuses every write.
    */
   'connector.connectToken': {
-    request: { connectorId: string; token: string };
+    request: {
+      connectorId: string;
+      token: string;
+      /**
+       * The site address, for a connector whose API origin belongs to the user.
+       *
+       * Sent raw, exactly as typed. It is parsed and validated in the worker
+       * before anything is stored, and the parsed origin is bound to the
+       * credential — a connector with no site binding refuses one, and one
+       * with a binding refuses a request without it.
+       */
+      site?: string;
+      /**
+       * The account the token belongs to, for a service wanting `email:token`.
+       *
+       * Jira's Basic auth needs both halves. They are assembled into one
+       * credential in the worker rather than in the panel, so the composed
+       * value exists in one place.
+       */
+      account?: string;
+    };
     response: {
       state: string;
       reason: string;
       scopes: readonly string[];
       scopesKnown: boolean;
       accountLabel?: string;
+      /** Why a site address was refused, when one was. */
+      siteMessage?: string;
     };
   };
   'connector.disconnect': {

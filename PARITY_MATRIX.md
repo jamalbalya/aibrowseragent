@@ -1681,7 +1681,7 @@ successful connection and a real read or write still need a person with an
 account, and `docs/release/OWNER-CHECKLIST.md` section D is now a procedure
 that person can perform.
 
-PARTIAL also because two connectors are not a connector ecosystem. **Figma is
+PARTIAL also because three connectors are not a connector ecosystem. **Figma is
 the second**, and it is the second that needs nothing from the owner: no
 registered application, no client id, no deployed anything. A personal access
 token the user creates is the whole of it.
@@ -1706,12 +1706,43 @@ and be refused every time — an operation that can only fail reads as a broken
 feature rather than an absent one. If Figma ever reports a token's scopes, a
 write becomes implementable on evidence.
 
-Jira is the next one that could work the same way and cannot yet. Its API base
-is the user's own `*.atlassian.net` site, so the connector's reachable origin
-would have to come from the credential, and `apiOrigins` is fixed when a
-descriptor is registered. That is a framework change rather than an adapter,
-and it is named here rather than attempted. Confluence and Google Sheets are
-not implemented, and nothing returns a fake response for any of them.
+**Jira is the third, and it is the framework change that was named and then
+made.** This row used to say its API base is the user's own `*.atlassian.net`
+site, that the reachable origin would have to come from the credential, and
+that `apiOrigins` being fixed at registration made it a framework change rather
+than an adapter. All of that was accurate. `site-binding.ts` is that change,
+and it is a **tightening** rather than a loosening.
+
+Two obvious fixes were both wrong. A wildcard origin would let one credential
+authorise any host. An origin resolved from the request would let the caller
+choose where the credential goes — the single decision the transport exists to
+keep. What it does instead is bind the origin **to the credential**: parsed at
+connect time against a suffix the descriptor states, stored in the same record
+as the token, and the single entry in the transport's allowlist on every
+request, read fresh. A fixed descriptor may declare several origins; a bound
+one permits exactly one.
+
+The adversarial cases are the reason it is allowed to exist, and they are in
+`tests/security/site-binding.test.ts`: look-alike hosts with the suffix in the
+middle, at the end of a longer name, in a path and in a query; the bare apex,
+which is shared by everybody; a scheme change, a port, userinfo; a redirect to
+another tenant; a credential whose binding has gone, which must permit
+**nothing** rather than everything. Nineteen mutations against the boundary are
+killed — and four survived the first battery, each because a later check was
+standing in for the one under test, so the cases now pin **which** check fires.
+One of those four was a real gap: the adapter's own refusal was never
+exercised, because the session's `AUTH_REQUIRED` arrived first, and a mutation
+replacing it with a hard-coded origin would have sent a user's Basic credential
+to a host they never named.
+
+Jira is read-only for the same reason Figma is: Basic auth reports no scopes,
+so a write would declare one it could never establish and be refused every
+time. That is also the conservative answer to a real asymmetry — a Jira write
+is a comment on somebody's actual tracker, attributed to the user.
+
+Confluence shares Atlassian's API and is now reachable by the same mechanism;
+Google Sheets and Drive would need a registered client id. None is implemented,
+and nothing returns a fake response for any of them.
 
 What _was_ closed is narrower and worth naming precisely: the framework is now
 shown to hold more than one connector rather than assumed to. A second,

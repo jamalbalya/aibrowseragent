@@ -32,6 +32,7 @@ import {
 import { type TokenVault, type StoredTokens } from '@/connectors/oauth/token-vault';
 import type { AuthFlowPort } from '@/connectors/oauth/auth-flow-port';
 import type { ConnectorDescriptor } from './types';
+import { parseBoundSite } from './site-binding';
 
 const log = getLogger('security');
 
@@ -70,7 +71,9 @@ export type ConnectorStateReason =
   /** A user-supplied token the service would not accept. */
   | 'token_rejected'
   /** A user-supplied token the service could not be asked about. */
-  | 'token_unverified';
+  | 'token_unverified'
+  /** The site address a site-bound connector needs was missing or unusable. */
+  | 'site_invalid';
 
 export interface ConnectorStatus {
   readonly connectorId: string;
@@ -122,6 +125,15 @@ export interface TokenIntrospection {
 export interface TokenConnectOutcome {
   readonly status: ConnectorStatus;
   readonly scopesEstablished: boolean;
+  /**
+   * Why a site address was refused, when one was.
+   *
+   * Said plainly, because every refusal in `parseBoundSite` is something the
+   * user can fix in the field they just typed in — a missing `https://`, a
+   * path left on the end, the wrong host. A generic failure here would send
+   * them to check their token instead.
+   */
+  readonly siteMessage?: string;
 }
 
 /** A credential the user pasted, on its way to being checked. */
@@ -135,6 +147,15 @@ export interface SuppliedCredential {
    * `X-Figma-Token`. See `StoredTokens.tokenType`, which is where it lands.
    */
   readonly tokenType: string | null;
+  /**
+   * The site the user typed, for a site-bound connector.
+   *
+   * Raw, exactly as entered. It is parsed and validated by
+   * `connectWithToken` before anything is stored, and the **parsed origin** is
+   * what lands in the vault — never this string. A connector with no
+   * `siteBinding` must not supply one, and one with a binding must.
+   */
+  readonly site?: string;
 }
 
 export interface ConnectorSessionOptions {
@@ -164,7 +185,9 @@ export interface ConnectorSessionOptions {
    * Absent for a connector that has no `api_token` path, where
    * `connectWithToken` refuses.
    */
-  readonly introspect?: (credential: SuppliedCredential) => Promise<TokenIntrospection>;
+  readonly introspect?: (
+    credential: SuppliedCredential & { readonly boundOrigin?: string },
+  ) => Promise<TokenIntrospection>;
   readonly now?: () => number;
   readonly authorizationTimeoutMs?: number;
   readonly onStatusChange?: (status: ConnectorStatus) => void;
@@ -483,6 +506,34 @@ export class ConnectorSession {
       return { status: this.status, scopesEstablished: false };
     }
 
+    // The site, for a connector whose API origin is a fact about the
+    // credential. Parsed **before** the service is asked, because the origin
+    // is where the asking would be sent: an unusable site is refused without
+    // a request leaving at all.
+    const binding = this.options.descriptor.siteBinding;
+    let boundOrigin: string | undefined;
+    if (binding !== undefined) {
+      const parsed = parseBoundSite(credential.site ?? '', binding);
+      if (!parsed.ok) {
+        log.warn('A site-bound connector was given an unusable site.', {
+          connectorId: this.options.descriptor.id,
+          refusal: parsed.refusal,
+        });
+        this.transition('NEEDS_AUTH', 'site_invalid');
+        return { status: this.status, scopesEstablished: false, siteMessage: parsed.message };
+      }
+      boundOrigin = parsed.origin;
+    } else if (credential.site !== undefined) {
+      // A site for a connector that has no binding would be a value with
+      // nowhere to go and nothing checking it. Refused rather than ignored.
+      this.transition('NEEDS_AUTH', 'site_invalid');
+      return {
+        status: this.status,
+        scopesEstablished: false,
+        siteMessage: 'This connector does not take a site address.',
+      };
+    }
+
     // A connector already holding a token is the ordinary case for *replacing*
     // one, after the user rotated or revoked it. There is no READY ->
     // AUTHENTICATING edge, deliberately, so the replacement steps back through
@@ -497,7 +548,9 @@ export class ConnectorSession {
 
     let introspection: TokenIntrospection;
     try {
-      introspection = await this.options.introspect(credential);
+      introspection = await this.options.introspect(
+        boundOrigin === undefined ? credential : { ...credential, boundOrigin },
+      );
     } catch (error) {
       // Nothing is stored, and the reason distinguishes the two cases the user
       // would act on differently: a token the service refused, and a service
@@ -516,6 +569,7 @@ export class ConnectorSession {
     await this.options.vault.store(this.options.descriptor.id, {
       accessToken: credential.token,
       tokenType: credential.tokenType,
+      ...(boundOrigin === undefined ? {} : { boundOrigin }),
       // No refresh token and no expiry: a token the user created does not
       // expire on a schedule this build knows, and inventing one would make a
       // working connector stop working for no reason.

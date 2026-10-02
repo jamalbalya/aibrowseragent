@@ -55,6 +55,19 @@ export interface StoredTokens {
   readonly scopes: readonly string[];
   /** Non-secret label for the UI, e.g. an account name the service returned. */
   readonly accountLabel?: string;
+  /**
+   * The one origin this credential may be sent to, for a site-bound connector.
+   *
+   * Written here, with the credential, because that is what makes the binding
+   * real: the origin and the token are one record, so a token saved for one
+   * site can never be sent to another, and replacing the site replaces the
+   * credential. Absent for every connector whose origin its descriptor
+   * declares.
+   *
+   * Not a secret, and stored beside one — so it is reachable only through
+   * `boundOrigin` below, which hands back an origin and never a token.
+   */
+  readonly boundOrigin?: string;
 }
 
 /** What a caller outside the boundary is allowed to know about a connection. */
@@ -111,6 +124,25 @@ export class TokenVault {
     // ask for it. An absent or empty `tokenType` still means `Bearer`.
     if (tokens.tokenType === null) return tokens.accessToken;
     return `${tokens.tokenType || 'Bearer'} ${tokens.accessToken}`;
+  }
+
+  /**
+   * The origin this connector's credential is bound to, or `null`.
+   *
+   * A second accessor rather than a field on `summary`, because the transport
+   * needs it on a path where it must not also be handed anything else, and
+   * because a caller asking "where may this go" is asking a different question
+   * from "what may the panel show". It returns an origin: there is no token in
+   * it and no token can be derived from it.
+   *
+   * `null` both for a connector with no binding and for one with no stored
+   * credential at all. The transport treats the second as nothing-permitted
+   * rather than everything-permitted, which is why this cannot usefully be
+   * confused with "unbound".
+   */
+  async boundOrigin(connectorId: string): Promise<string | null> {
+    const tokens = await this.area.get<StoredTokens>(this.key(connectorId));
+    return tokens?.boundOrigin ?? null;
   }
 
   /** Whether the stored access token is usable right now. */
