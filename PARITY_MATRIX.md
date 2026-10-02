@@ -1276,6 +1276,24 @@ step data. Covered by two unit suites, an integration suite, a security suite
 covering the wave's twenty threat cases, and a real-Chromium E2E suite that
 measures the per-step approval property rather than asserting it.
 
+**Audited again this pass rather than rebuilt.** Eight of this capability's
+nine clauses are VERIFIED and the ninth is `EXTERNAL_REQUIRED` for the four
+services §44's reference skill spans; the 271 cases across its six suites were
+re-run and the engine was not touched. The one change is to what the user is
+told, not to what the engine does: the skills list now says when a connector a
+skill requires is not connected, instead of leaving that to be discovered by
+approving a run and watching step one fail. It is display only and reports no
+state as connected but `READY` — the decision about whether a connector call
+may happen stays in the connector's own preflight, because two places deciding
+it would be two answers that could drift. `src/sidepanel/connector-readiness.ts`
+is its own module for the same reason `step-digest.ts` is: a few branches
+inside a surface are branches no test can call.
+
+This matters more than it would have a week ago. `github.find_issue` has
+always declared `requiredConnectors: ['github']` and until now no user could
+satisfy it, because the connector could not be connected at all — see P-023.
+A bundled skill reaching a real service is now something a person can do.
+
 Skills can now be **switched off**, which is the half of the benchmark's
 enabled-by-default behaviour that was missing. The switch is the user's, it is
 durable, and it survives a worker eviction. What makes it a control rather

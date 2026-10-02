@@ -202,6 +202,28 @@ existing provider architecture and its guarded transport.
 model response from one, or touches a private provider endpoint. Nothing in
 this wave opens either.
 
+### When the connector a skill needs is not connected
+
+`requiredConnectors` is declared on the definition and validated at
+registration, and the runner does **not** pre-check it. That is deliberate: the
+connector's own preflight refuses an operation on a connector that is not
+`READY` before anything is sent, and refuses one whose granted scopes do not
+cover it, so a skill reaching an unconnected connector fails closed at the step
+that needs it. A second place deciding whether a connector were usable would be
+a second answer that could drift from the first.
+
+What the skills list in Settings does is **say so beforehand**: it names any
+required connector that is not currently connected, so the user finds out
+before approving a run rather than one step into it. Display only — it reports
+nothing as connected but `READY`, it grants nothing, and it stops nothing. The
+logic is in `src/sidepanel/connector-readiness.ts` rather than inside the view,
+so it can be called by a test.
+
+`github.find_issue` is the skill this is about, and until the connector could
+be connected at all it was a requirement nobody could satisfy. See
+`docs/connectors.md` for what changed and why the previous blocker was the
+wrong blocker.
+
 ## Budget, cancellation and failure
 
 A skill gets **no budget of its own** — it spends the task's, read live, because

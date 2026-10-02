@@ -13,6 +13,7 @@ import type { CapabilityReport } from '@/providers/capability-doctor/capability-
 import type { ProviderConnection } from '@/providers/registry/provider-registry';
 import type { SitePolicyState } from '@/policy/site-policy';
 import type { PanelResponse } from '@/messaging/protocol';
+import { missingConnectors } from '@/sidepanel/connector-readiness';
 
 interface SettingsViewProps {
   readonly connection: ProviderConnection | null;
@@ -667,6 +668,22 @@ export function SettingsView({
               ))}
               {skill.connectors.length > 0 ? `via ${skill.connectors.join(', ')}` : null}
             </p>
+            {/* Whether the connectors a skill needs are connected right now.
+                Display only, and deliberately: the thing that decides whether
+                a connector call may happen is the connector's own preflight,
+                which refuses an operation on a connector that is not READY
+                before anything is sent. A second place that decided it could
+                drift from the first, and a skill list is not where authority
+                belongs. What this fixes is only the order in which the user
+                finds out — before approving a run rather than one step into
+                it. */}
+            {missingConnectors(skill.connectors, connectors).length > 0 ? (
+              <p className="field__hint">
+                Needs {missingConnectors(skill.connectors, connectors).join(', ')}, which{' '}
+                {missingConnectors(skill.connectors, connectors).length === 1 ? 'is' : 'are'} not
+                connected. Running it will stop at the first step that needs it.
+              </p>
+            ) : null}
             {/* Turning one off removes it everywhere at once: the agent stops
                 being offered it, cannot run it by name, and a shortcut
                 pointing at it stops resolving. */}

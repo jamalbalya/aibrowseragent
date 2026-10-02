@@ -1972,11 +1972,11 @@
           "requirement": "Record the reference QA workflow spanning Jira, Confluence, Figma and Google Sheets.",
           "mandatory": true,
           "status": "EXTERNAL_REQUIRED",
-          "blocker": "§44 names this as the primary reference integration workflow for validating the multi-tool architecture, and none of the four connectors it spans exists — each blocked on its own OAuth application, per P-023-C8 and C9. So the multi-connector case is untested against anything real, and nothing simulates it.",
+          "blocker": "§44 names this as the primary reference integration workflow for validating the multi-tool architecture, and none of the four connectors it spans exists. The earlier wording said each was blocked on its own OAuth application; that was wrong and is corrected under P-023-C9. Two of the four — Jira and Confluence — could not be built as sign-in connectors here at any registration, because Atlassian 3LO requires a client_secret and supports no PKCE, and this extension must not carry a secret. Figma is the same. So the multi-connector case is untested against anything real, nothing simulates it, and what it waits on is connectors plus a credential each — not a form.",
           "evidence": [
             "tests/e2e/connector.spec.ts :: the authorization flow is refused, and says why rather than being offered"
           ],
-          "note": "Recording and replay are complete and evidenced for browser actions; what cannot be recorded is a workflow that spans services none of which can be connected. The gap is in the connectors, not in the recorder."
+          "note": "Recording and replay are complete and evidenced for browser actions; what cannot be recorded is a workflow that spans services none of which can be connected. The gap is in the connectors, not in the recorder — and since the connector mechanism was corrected, the GitHub connector can now be connected with a user-supplied token, so a single-service recording over a connector is reachable where none was before. §44 asks for four, and four is what this clause waits on."
         }
       ],
       "conditions": {
@@ -2125,7 +2125,11 @@
       }
     },
     "P-024": {
-      "unit": ["tests/unit/skill-model.test.ts", "tests/unit/skill-registry.test.ts"],
+      "unit": [
+        "tests/unit/connector-readiness.test.ts",
+        "tests/unit/skill-model.test.ts",
+        "tests/unit/skill-registry.test.ts"
+      ],
       "integration": ["tests/integration/skill-execution.test.ts"],
       "security": [
         "tests/security/skill-enablement.test.ts",
@@ -2228,11 +2232,11 @@
           "requirement": "The reference QA skill spanning four services.",
           "mandatory": true,
           "status": "EXTERNAL_REQUIRED",
-          "blocker": "The same blocker as P-022-C8: §44's reference skill spans Jira, Confluence, Figma and Google Sheets, and none of those connectors exists because none has a registered OAuth application. Four workflows ship and one writes, to the page's own origin at R2; a connector-writing skill is deliberately not the easiest path through a young feature, so writes to a service stay individually requested.",
+          "blocker": "The same blocker as P-022-C8: §44’s reference skill spans Jira, Confluence, Figma and Google Sheets, and none of those connectors exists. The earlier wording said none has a registered OAuth application; that was wrong, and three of the four could not be built as sign-in connectors here at any registration — see P-023-C9. Four workflows ship and one writes, to the page’s own origin at R2; a connector-writing skill is deliberately not the easiest path through a young feature, so writes to a service stay individually requested.",
           "evidence": [
             "tests/e2e/connector.spec.ts :: the authorization flow is refused, and says why rather than being offered"
           ],
-          "note": "The skill engine is complete and evidenced, including the clause that matters most — approving a run does not approve the actions inside it. What is missing is the four services §44's reference skill spans."
+          "note": "The skill engine is complete and evidenced — eight of this capability’s nine clauses are VERIFIED, including the one that matters most: approving a run does not approve the actions inside it. Nothing about this clause is a gap in the engine, and it was audited again rather than rebuilt. What is missing is the four services §44’s reference skill spans."
         }
       ],
       "conditions": {
