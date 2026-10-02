@@ -265,3 +265,32 @@ pinned, pin them where they can be checked — not here.
 What has not changed is the shape of the boundary: there is still no state
 between "packaged locally" and "live on the store" that this repository can
 reach, observe or advance on its own.
+
+### Is the current artifact ready for a new submission?
+
+**Technically yes, and the decision is not this repository's to make.** The
+current artifact is reproducible, deterministic over repeated packing,
+validated, and built from a tree where every gate passes. Its permission set
+and host access are byte-identical to the submitted one — no permission has
+been added since, which is the thing a reviewer looks at hardest.
+
+What has changed since the submission is capability and correctness, not
+posture: three connectors a user can actually connect, controls inside web
+components now visible and clickable, a defect fixed that stopped every task
+once somebody signed in with Google, and the account-selection routing proved
+rather than assumed.
+
+Two things to weigh before replacing a submission that is in review, and both
+are judgement rather than fact:
+
+- **Replacing an item under review restarts the review.** If the pending one is
+  close to a verdict, waiting costs nothing and resubmitting costs the queue
+  position.
+- **The pending artifact contains the sign-in defect.** A reviewer who signs in
+  with Google and then runs a task will find it refused with "Stored state needs
+  to be reviewed before work can continue". That is a plausible review path and
+  it reads as a broken extension.
+
+Those point in opposite directions. The second is the stronger argument and it
+is still the owner's call, because only the owner can see the queue. Nothing
+here submits, replaces or withdraws anything.

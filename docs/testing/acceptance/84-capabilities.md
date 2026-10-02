@@ -386,7 +386,7 @@ not a procedure.
 - FAILS IF: a second call runs without prompting, or an unattended run reaches
   an MCP tool.
 - HUMAN_EXECUTION_REQUIRED: every MCP call prompts, on every call, and a decline performs nothing.
-- WHY AUTOMATION IS INSUFFICIENT: Adding a server, discovery, registration, the R3 classification and removal are automated (`mcp.spec.ts`). A tool _call_ is not: the policy engine's origin check refuses a plain-http destination, so a loopback server's tools can be discovered here and never run. Executing this needs an MCP server on https at an origin somebody else operates, which is `P-026-C2` and blocker A-6.
+- WHY AUTOMATION IS INSUFFICIENT: Adding a server, discovery, registration, the R3 classification and removal are automated (`mcp.spec.ts`). A tool _call_ is not: the policy engine's origin check refuses a plain-http destination, so a loopback server's tools can be discovered here and never run. Executing this needs an MCP server on https at an origin somebody else operates. The **clause** `P-026-C2` is VERIFIED against exactly such a server — a public, credential-free one, driven through the production path — so what remains is a person executing this procedure rather than an external thing to obtain. The external blocker A-6 that this used to cite has been removed from `BLOCKER-CERTIFICATION.md` for that reason.
 
 ## P-027 — Permission modes
 

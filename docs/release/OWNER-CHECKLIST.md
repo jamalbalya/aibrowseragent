@@ -175,7 +175,7 @@ origin.
 `84-P-026` — every MCP call prompts, on every call. It needs an **MCP server on
 https at an origin somebody else operates**: the policy engine refuses a
 plain-http destination, so a loopback server's tools discover here and can never
-be run. This is blocker A-6, and it is the same thing `P-026-C2` asks for.
+be run. `P-026-C2` itself is **VERIFIED** — a public credential-free remote MCP server was reached through the production path — so this is not waiting on anything to obtain. What it waits on is you, pointing Settings at such a server and watching the prompts. `BLOCKER-CERTIFICATION.md` has the lead.
 
 A lead rather than an instruction, because nothing here has verified it: public
 unauthenticated MCP endpoints are advertised — `https://mcpplaygroundonline.com/mcp-complex-server`

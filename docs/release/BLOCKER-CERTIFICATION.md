@@ -19,22 +19,60 @@ Work that cannot proceed without something no amount of engineering here
 produces: a credential, an account, a third party, or an origin somebody else
 operates.
 
-| #   | Blocked                                                                       | What is missing                                                           | Clause     |
-| --- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ---------- |
-| A-1 | A connector used against a real service                                       | A third-party OAuth application, registered by an account holder          | `P-023-C8` |
-| A-2 | The Tier 1 connector roadmap — Jira, Confluence, Sheets, Drive, Figma, GitHub | Six services and their OAuth applications                                 | `P-023-C9` |
-| A-3 | The §44 reference QA workflow                                                 | Jira, Confluence, Figma and Sheets, with a **write** to Jira              | `P-022-C8` |
-| A-4 | The §44 reference QA skill                                                    | The same four services                                                    | `P-024-C9` |
-| A-5 | Provider validation against live endpoints                                    | Paid credentials at OpenAI, Anthropic and Google                          | `P-033-C5` |
-| A-6 | A **remote** MCP server                                                       | An origin somebody else operates                                          | `P-026-C2` |
-| A-7 | Managed-plugin authenticity                                                   | An organization, for `chrome.storage.managed`                             | `P-025-C7` |
-| A-8 | Chrome Web Store submission                                                   | A developer account, a payment, and an agreement a person can be bound by | Phases V–X |
+| #   | Blocked                                                                       | What is missing                                                                    | Clause        |
+| --- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------- |
+| #   | Blocked                                                                       | What is missing                                                                    | Clause        |
+| --- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------          | ----------    |
+| A-1 | A connector used against a real service                                       | **A token from the owner's own account.** Not a registered application — see below | `P-023-C8`    |
+| A-2 | The Tier 1 connector roadmap — Jira, Confluence, Sheets, Drive, Figma, GitHub | Three of the six are written; the other three, plus a credential for each          | `P-023-C9`    |
+| A-3 | The §44 reference QA workflow                                                 | Jira, Confluence, Figma and Sheets, with a **write** to Jira                       | `P-022-C8`    |
+| A-4 | The §44 reference QA skill                                                    | The same four services                                                             | `P-024-C9`    |
+| A-5 | Provider validation against live endpoints                                    | Paid credentials at OpenAI, Anthropic and Google                                   | `P-033-C5`    |
+| A-7 | Managed-plugin authenticity                                                   | An organization, for `chrome.storage.managed`                                      | `P-025-C7`    |
+| A-8 | Chrome Web Store submission                                                   | A developer account, a payment, and an agreement a person can be bound by          | Phases V–X    |
+| A-9 | A live Google sign-in                                                         | A deployed backend and a Google OAuth client registered to it                      | — (no clause) |
 
-**A-1 and A-2 are doubly blocked**, and the second lock matters more than the
-first: supplying them from here would mean inventing OAuth credentials or
-inventing production connectors, both of which are on this project's locked
-prohibition list. Even with credentials in hand, a connector written against a
-service nobody has exercised is not evidence.
+**A-6 is gone, because it was resolved.** It was _"a remote MCP server — an
+origin somebody else operates"_, and the paragraphs below it argued at length
+that the clause had to stay external. It did not: `P-026-C2` is **VERIFIED**. A
+public, documented, credential-free remote MCP server answered a conformant
+`initialize` through the production path, and the blocker's second half —
+_"and any credential it requires"_ — had never been checked. The argument that
+followed it is kept below as a record of the reasoning, because it was careful
+and it was wrong, and the way it was wrong is the most useful thing in this
+document.
+
+**A-1 and A-2 were misdescribed, and the correction changes what the owner
+should do.** Both said the missing thing was a registered OAuth application.
+Checked against each vendor's own documentation, that is false: GitHub's web
+application flow requires a `client_secret`, Atlassian 3LO requires one and
+supports no PKCE at all, and Figma requires one even with PKCE — and this
+extension must not carry a secret, so **no registration would have unblocked
+any of them**. It went unnoticed because with no client id the flow is refused
+before it starts, so nothing ever reached the step that needs the secret.
+
+What actually unblocks A-1 is a token the owner creates in their own account,
+which takes minutes and needs no registration at all. Three connectors now
+accept one — GitHub, Figma and Jira — and
+`docs/release/OWNER-CHECKLIST.md` section D is the procedure. A-2 still needs
+three more connectors written _and_ a credential for each, so it stays, but it
+is no longer "doubly blocked" in the way this document claimed: writing them is
+ordinary work and the second lock was never a lock.
+
+**A-9 is new and has no clause.** No specification section asks for a live
+Google sign-in, so nothing in the parity matrix is waiting on it — but the
+product promises a Google login, and it has only ever been exercised against a
+controlled backend. It is listed here because an owner reading this table to
+find out what is left should find it.
+
+### The A-6 argument, kept as a record of being wrong
+
+Everything from here to the end of this section was written when `P-026-C2` was
+external, and it concluded that the clause had to stay that way. It is kept
+rather than deleted because the reasoning is careful, specific and mistaken,
+and a table of blockers is exactly the document that benefits from showing how
+one of its own entries fell over. The clause is now VERIFIED; a public
+credential-free server was reached through the production path.
 
 **A-6 was re-examined for a public server, and it stays external.** The question
 asked was whether a free, unauthenticated, publicly operated MCP endpoint would
