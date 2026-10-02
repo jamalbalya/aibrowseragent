@@ -446,7 +446,11 @@
         "tests/security/advanced-forms-security.test.ts",
         "tests/security/field-sensitivity.test.ts"
       ],
-      "e2e": ["tests/e2e/agent-task.spec.ts", "tests/e2e/advanced-forms.spec.ts"],
+      "e2e": [
+        "tests/e2e/advanced-forms.spec.ts",
+        "tests/e2e/agent-task.spec.ts",
+        "tests/e2e/shadow-dom.spec.ts"
+      ],
       "clauses": [
         {
           "id": "P-006-C1",
@@ -554,7 +558,17 @@
           "requirement": "Field classification inside a shadow root or a cross-origin subframe.",
           "mandatory": false,
           "status": "PARTIAL",
-          "note": "Recorded as non-mandatory because §5.2 does not name it, and stated rather than hidden: neither is walked by the page model. It bounds what the agent can do as much as what it can see — an element it cannot find is an element it cannot write to — and the classifier fails closed by reporting UNKNOWN, which costs a confirmation rather than running silently."
+          "note": "Two halves, and they have come apart. **Shadow roots are now walked**: the page model follows open shadow roots, so a control inside a web component is found, classified and clickable — which it was not, and on a page built from custom elements the model previously saw no controls at all. Safe without a permission change because the classifier has always returned the conservative class for `isInShadowRoot`, so a field inside one costs a confirmation rather than running silently; that branch is now exercised by real data instead of reserved for a day that had not come. A closed root exposes no `shadowRoot` and is unreachable by construction. **The cross-origin subframe half is unchanged**: it needs `all_frames: true` on `<all_urls>`, which is a permission this build refuses and which is recorded as divergence 12 in CLAUDE_BENCHMARK.md. So the clause stays PARTIAL rather than being promoted on half its subject — and it is non-mandatory because §5.2 does not name either.",
+          "evidence": [
+            "tests/unit/semantic-tree.test.ts :: finds a control inside an open shadow root",
+            "tests/unit/semantic-tree.test.ts :: marks a field inside a shadow root, which is what makes this safe",
+            "tests/unit/semantic-tree.test.ts :: reaches nothing inside a closed shadow root, because nothing can",
+            "tests/unit/semantic-tree.test.ts :: follows a nested shadow tree, and stops",
+            "tests/e2e/shadow-dom.spec.ts :: controls inside open shadow roots are in the page model",
+            "tests/e2e/shadow-dom.spec.ts :: a field inside a shadow root is marked, which is what makes this safe",
+            "tests/e2e/shadow-dom.spec.ts :: the agent can click a button inside a shadow root",
+            "tests/e2e/shadow-dom.spec.ts :: shadow traversal added no permission and no host access"
+          ]
         }
       ],
       "conditions": {

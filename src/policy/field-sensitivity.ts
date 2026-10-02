@@ -186,10 +186,17 @@ const API_SECRET_HINT =
 export function classifyField(observation: FieldObservation | undefined): FieldClass {
   if (observation === undefined) return SAFE_FALLBACK_CLASS;
 
-  // Out of reach of the page model this build actually walks. Neither is
-  // produced today — `all_frames` is false and shadow roots are not traversed
-  // — and both are honoured anyway, so that the day either becomes reachable
-  // it arrives as a refusal rather than as a silent `ORDINARY`.
+  // A field this build can see but cannot classify with confidence.
+  //
+  // `isInShadowRoot` is now **produced**: open shadow roots are traversed, so
+  // this branch is exercised by real data rather than reserved for a day that
+  // had not come. It is what makes traversing them safe — a field inside a
+  // web component costs a confirmation rather than running silently, and the
+  // page model gained the ability to see those fields without the classifier
+  // gaining any confidence about them.
+  //
+  // `isInSubframe` is still not produced: `all_frames` is false. Honoured
+  // anyway, for the same reason this one was.
   if (observation.isInShadowRoot || observation.isInSubframe) return SAFE_FALLBACK_CLASS;
 
   const type = observation.fieldType;

@@ -403,3 +403,129 @@ describe('visibleText', () => {
     expect(visibleText(document, 200).length).toBeLessThanOrEqual(200);
   });
 });
+
+describe('open shadow roots are part of the page', () => {
+  /**
+   * Why this group exists.
+   *
+   * `querySelectorAll` does not cross a shadow boundary, so on a page built
+   * from web components the model saw an empty document — no buttons, no
+   * fields, nothing to act on — and the agent's answer was that the page had
+   * no controls. That is a large and growing fraction of real sites.
+   *
+   * The reason it is safe to fix is not in this file: the field classifier has
+   * always returned the conservative class for `isInShadowRoot`, so every
+   * field found inside one costs a confirmation rather than running silently.
+   * The case below asserts that flag is actually set, because that is the
+   * hinge the safety hangs on.
+   */
+  function host(id: string, inner: string, mode: ShadowRootMode = 'open'): HTMLElement {
+    const element = document.createElement('div');
+    element.id = id;
+    document.body.append(element);
+    element.attachShadow({ mode }).innerHTML = inner;
+    return element;
+  }
+
+  it('finds a control inside an open shadow root', () => {
+    setBody('<button id="light">Light</button>');
+    host('wrapper', '<button id="shadowed">Shadowed</button>');
+
+    const page = extractSemanticPage(document, new ElementRegistry());
+    const names = page.elements.map((element) => element.name);
+    expect(names).toContain('Light');
+    expect(names).toContain('Shadowed');
+  });
+
+  it('reaches nothing inside a closed shadow root, because nothing can', () => {
+    // Not a policy — a closed root exposes no `shadowRoot` property at all,
+    // so there is no branch in the collector that could reach into one. The
+    // case is here so that a future change which somehow did would fail.
+    setBody('');
+    host('closed-host', '<button id="hidden">Invisible</button>', 'closed');
+
+    const page = extractSemanticPage(document, new ElementRegistry());
+    expect(page.elements.map((element) => element.name)).not.toContain('Invisible');
+  });
+
+  it('marks a field inside a shadow root, which is what makes this safe', () => {
+    // The hinge. `classifyField` returns the conservative class for this flag,
+    // so a field the model can now see is a field it must confirm before
+    // writing to. A traversal that found the field and reported the flag as
+    // false would have quietly widened what runs without a prompt.
+    setBody('');
+    host('form-host', '<input id="inner" type="text" name="whatever">');
+
+    const page = extractSemanticPage(document, new ElementRegistry());
+    const field = page.fields.find((observation) => observation.nameHint === 'whatever');
+    expect(field).toBeDefined();
+    expect(field!.isInShadowRoot).toBe(true);
+
+    // And a field in the light DOM is not marked, so the flag means something.
+    setBody('<input id="plain" type="text" name="plain">');
+    const plainPage = extractSemanticPage(document, new ElementRegistry());
+    const plain = plainPage.fields.find((observation) => observation.nameHint === 'plain');
+    expect(plain?.isInShadowRoot).toBe(false);
+  });
+
+  it('follows a nested shadow tree, and stops', () => {
+    // Web components nest. A page is free to nest them deep enough to cost a
+    // stack, so the depth is bounded — and the bound is asserted rather than
+    // trusted, by building past it and checking what comes back.
+    setBody('');
+    const outer = document.createElement('div');
+    document.body.append(outer);
+    let current = outer.attachShadow({ mode: 'open' });
+    for (let level = 0; level < 20; level += 1) {
+      const next = document.createElement('div');
+      const button = document.createElement('button');
+      button.textContent = `Level ${level}`;
+      current.append(button, next);
+      current = next.attachShadow({ mode: 'open' });
+    }
+
+    const page = extractSemanticPage(document, new ElementRegistry());
+    const found = page.elements.map((element) => element.name);
+    // The shallow levels are reached.
+    expect(found).toContain('Level 0');
+    expect(found).toContain('Level 3');
+    // And the deep ones are not, rather than the walk continuing for ever.
+    expect(found).not.toContain('Level 19');
+  });
+
+  it('lists a host’s shadow content after the host, in one document order', () => {
+    // Handles are minted in collection order, and `nth` on an element binding
+    // counts in that order — so it has to be stable rather than convenient.
+    setBody('<button id="first">First</button>');
+    host('middle', '<button id="inner">Inner</button>');
+    const last = document.createElement('button');
+    last.textContent = 'Last';
+    document.body.append(last);
+
+    const page = extractSemanticPage(document, new ElementRegistry());
+    const order = page.elements.map((element) => element.name);
+    expect(order.indexOf('First')).toBeLessThan(order.indexOf('Inner'));
+    expect(order.indexOf('Inner')).toBeLessThan(order.indexOf('Last'));
+  });
+
+  it('lists each element exactly once', () => {
+    // The collector merges a selector pass with a host walk, and an element
+    // reachable by both is one element.
+    setBody('<button id="a">A</button>');
+    host('h', '<button id="b">B</button><input id="c" name="c">');
+
+    const page = extractSemanticPage(document, new ElementRegistry());
+    const ids = page.elements.map((element) => element.elementId);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(page.elements.filter((element) => element.name === 'B')).toHaveLength(1);
+  });
+
+  it('still honours the element cap with shadow content in the page', () => {
+    setBody('');
+    const inner = Array.from({ length: 40 }, (_, i) => `<button>S${i}</button>`).join('');
+    host('many', inner);
+
+    const page = extractSemanticPage(document, new ElementRegistry(), { maxElements: 5 });
+    expect(page.elements).toHaveLength(5);
+  });
+});

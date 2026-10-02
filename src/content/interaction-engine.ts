@@ -111,6 +111,65 @@ export function scrollIntoView(element: Element): void {
  * screen — this answers "not obscured". The check exists to stop a specific
  * false success, and an unmeasurable page must not become an unusable one.
  */
+/** How far a hit test follows open shadow roots, and composed ancestors. */
+const MAX_COMPOSED_DEPTH = 32;
+
+/**
+ * The deepest element painted at a point, following open shadow roots.
+ *
+ * `document.elementFromPoint` **retargets at a shadow boundary**: for a point
+ * over a button inside a web component it returns the component's host, not
+ * the button. That is correct per the specification and it is what broke the
+ * reachability check — `host.contains(innerButton)` is false, because
+ * `Node.contains` walks the light tree only, so a perfectly clickable control
+ * inside any web component was reported as covered by something.
+ *
+ * Found by driving a real page of custom elements in Chromium, after the page
+ * model learned to see inside them: the agent could list the button and then
+ * refused to click it. Each `ShadowRoot` has its own `elementFromPoint`, so
+ * descending is the whole fix.
+ *
+ * Closed roots expose no `shadowRoot`, so the descent stops at one — which is
+ * the right answer, since nothing inside one is addressable anyway.
+ */
+function deepestAt(owner: Document, x: number, y: number): Element | null {
+  let hit = owner.elementFromPoint(x, y);
+  for (let depth = 0; depth < MAX_COMPOSED_DEPTH; depth += 1) {
+    const root = hit?.shadowRoot;
+    if (!root || typeof root.elementFromPoint !== 'function') return hit;
+    const deeper = root.elementFromPoint(x, y);
+    // `null` means the point is inside the host but over nothing in its
+    // shadow content; the host is then the honest answer. `deeper === hit` is
+    // not reachable through a root but is guarded anyway, because a loop that
+    // depends on it not happening is a loop.
+    if (deeper === null || deeper === hit) return hit;
+    hit = deeper;
+  }
+  return hit;
+}
+
+/**
+ * Whether `node` is `ancestor` or sits inside it, **across** shadow boundaries.
+ *
+ * `Node.contains` stops at a boundary in both directions, which is why it was
+ * not enough: a hit inside a component is not `contains`-ed by anything in the
+ * light tree, and a slotted node's assigned position is in a different tree
+ * again. Walking up through `parentNode` and through a root's `host` follows
+ * the composed path, which is what "is the thing I am pointing at part of this
+ * control" actually means.
+ */
+function composedContains(ancestor: Element, node: Element): boolean {
+  let current: Node | null = node;
+  for (let depth = 0; depth < MAX_COMPOSED_DEPTH && current !== null; depth += 1) {
+    if (current === ancestor) return true;
+    const parent: Node | null = current.parentNode;
+    // At a shadow root, continue from its host. `ShadowRoot.host` is the only
+    // way out of a shadow tree, and a root's `parentNode` is null.
+    current = parent ?? (current as ShadowRoot).host ?? null;
+  }
+  return false;
+}
+
 export function isObscured(element: Element): boolean {
   const owner = element.ownerDocument;
   if (typeof owner?.elementFromPoint !== 'function') return false;
@@ -132,10 +191,17 @@ export function isObscured(element: Element): boolean {
 
   let measured = 0;
   for (const [x, y] of points) {
-    const topmost = owner.elementFromPoint(x, y);
+    const topmost = deepestAt(owner, x, y);
     if (topmost === null) continue;
     measured += 1;
-    if (topmost === element || element.contains(topmost) || topmost.contains(element)) {
+    // Composed in both directions: something inside the element (a button's
+    // own `<span>`, or its shadow content), and something wrapping it (a
+    // `<label>`, or the host of the tree it lives in).
+    if (
+      topmost === element ||
+      composedContains(element, topmost) ||
+      composedContains(topmost, element)
+    ) {
       return false;
     }
   }

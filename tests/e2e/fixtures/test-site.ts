@@ -174,6 +174,66 @@ const PAGES: Record<string, string> = {
 </body></html>`,
 
   // Redirects cross-origin, to exercise origin drift.
+  /**
+   * A page built the way a real design system builds one: web components,
+   * with the controls inside **open** shadow roots.
+   *
+   * jsdom's shadow DOM is an implementation of the spec; Chromium's is the
+   * one that ships. A page model that worked in jsdom and not here would be a
+   * page model that worked nowhere that matters, which is why this exists at
+   * all rather than only in the unit suite.
+   *
+   * One closed root as well, so "cannot reach it" is observed rather than
+   * assumed — a closed root exposes no `shadowRoot` property, and this is the
+   * only way to check that in the engine that enforces it.
+   */
+  '/shadow': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Shadow Controls</title></head>
+<body>
+  <h1>Shadow Controls</h1>
+  <button id="light-button">Light Button</button>
+  <my-panel id="open-panel"></my-panel>
+  <my-nested id="nested-panel"></my-nested>
+  <my-sealed id="sealed-panel"></my-sealed>
+  <div id="clicked"></div>
+  <script>
+    document.addEventListener('click', (event) => {
+      const path = event.composedPath();
+      const target = path.find((node) => node instanceof Element && node.id);
+      if (target && target.id !== 'clicked') {
+        document.getElementById('clicked').textContent += target.id + ' ';
+      }
+    }, true);
+
+    class MyPanel extends HTMLElement {
+      constructor() {
+        super();
+        this.attachShadow({ mode: 'open' }).innerHTML =
+          '<button id="shadow-button">Shadow Button</button>' +
+          '<input id="shadow-field" name="shadow_note" type="text">';
+      }
+    }
+    class MyNested extends HTMLElement {
+      constructor() {
+        super();
+        const root = this.attachShadow({ mode: 'open' });
+        const inner = document.createElement('div');
+        root.append(inner);
+        inner.attachShadow({ mode: 'open' }).innerHTML =
+          '<button id="deep-button">Deep Button</button>';
+      }
+    }
+    class MySealed extends HTMLElement {
+      constructor() {
+        super();
+        this.attachShadow({ mode: 'closed' }).innerHTML =
+          '<button id="sealed-button">Sealed Button</button>';
+      }
+    }
+    customElements.define('my-panel', MyPanel);
+    customElements.define('my-nested', MyNested);
+    customElements.define('my-sealed', MySealed);
+  </script>
+</body></html>`,
   '/redirect': 'REDIRECT',
 
   /**

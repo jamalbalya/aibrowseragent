@@ -462,6 +462,93 @@ export function describeActedOn(
 }
 
 /** Builds a semantic snapshot of a document. */
+/**
+ * How deep an open shadow tree is followed.
+ *
+ * A bound rather than a belief. Web components nest, and a page is free to
+ * nest them as deep as it likes — including, by accident or otherwise, deep
+ * enough to cost a stack. Eight is past anything a real design system builds
+ * and far short of anything expensive.
+ */
+const MAX_SHADOW_DEPTH = 8;
+
+/**
+ * Every interactive element, including those inside **open** shadow roots.
+ *
+ * ## Why this is not just `querySelectorAll`
+ *
+ * `querySelectorAll` does not cross a shadow boundary, so on any page built
+ * from web components the page model saw an empty document — no buttons, no
+ * fields, nothing to act on. That is a large and growing fraction of real
+ * sites, and the agent's answer was that the page had no controls.
+ *
+ * ## Why this is safe to do, and costs no permission
+ *
+ * **Open** shadow roots only. A closed one exposes no `shadowRoot` property at
+ * all, so there is nothing here that reaches into one — this is the same
+ * access any script on the page already has, and it crosses no origin. The
+ * manifest is unchanged: `all_frames` is still false and a cross-origin
+ * subframe is still out of reach, which is a different boundary and stays
+ * where it is.
+ *
+ * And the field classifier already handles what this produces. It has always
+ * read `isInShadowRoot` and returned the conservative class for it —
+ * *"honoured anyway, so that the day either becomes reachable it arrives as a
+ * refusal rather than as a silent ORDINARY"*. That day is this change: every
+ * field found inside a shadow root classifies as `UNKNOWN`, which costs a
+ * confirmation rather than running silently. The rule stops being dead code
+ * and starts being exercised by real data.
+ *
+ * ## Order, and why it matters
+ *
+ * Document order, with a host's shadow content placed immediately after the
+ * host. Element handles are minted in the order they are collected, so a
+ * reader of the page model sees controls in roughly the order they appear on
+ * screen — and `nth` on an element binding counts in this order, which is why
+ * it has to be stable rather than convenient.
+ */
+export function collectInteractive(root: Document | ShadowRoot, depth = 0): Element[] {
+  const found: Element[] = [];
+  for (const element of root.querySelectorAll(INTERACTIVE_SELECTOR)) {
+    found.push(element);
+  }
+
+  if (depth >= MAX_SHADOW_DEPTH) return found;
+
+  // Hosts are searched separately, because a host is not itself matched by the
+  // interactive selector in the general case and its shadow content would
+  // otherwise never be reached.
+  const ordered: Element[] = [];
+  for (const node of root.querySelectorAll('*')) {
+    ordered.push(node);
+    // `shadowRoot` is null for a closed root, so there is no branch here that
+    // reaches into one.
+    const shadow = (node as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+    if (shadow) ordered.push(...collectInteractive(shadow, depth + 1));
+  }
+
+  // Merged into one document-ordered list without duplicates: an element
+  // matched by the selector above and reached again through the host walk is
+  // one element.
+  const seen = new Set<Element>(found);
+  const result: Element[] = [];
+  for (const node of ordered) {
+    if (seen.has(node)) {
+      result.push(node);
+      seen.delete(node);
+    } else if (node.matches(INTERACTIVE_SELECTOR)) {
+      // Only reachable for an element inside a shadow root, whose own
+      // `querySelectorAll` found it at its own level.
+      result.push(node);
+    }
+  }
+  // Anything the host walk did not reach — which is nothing in practice, and
+  // is appended rather than dropped so a future change cannot silently lose
+  // an element.
+  for (const node of found) if (seen.has(node)) result.push(node);
+  return result;
+}
+
 export function extractSemanticPage(
   doc: Document,
   registry: ElementRegistry,
@@ -472,7 +559,7 @@ export function extractSemanticPage(
   const frameId = options.frameId ?? 'main';
 
   const generation = registry.beginSnapshot();
-  const candidates = [...doc.querySelectorAll(INTERACTIVE_SELECTOR)];
+  const candidates = collectInteractive(doc);
   const elements: SemanticElement[] = [];
   const fields: FieldObservation[] = [];
 
@@ -565,10 +652,12 @@ export function observeField(element: Element, handle: string, frameId: string):
     formActionSite: formActionSite(element),
     nameHint: hint(element.getAttribute('name')),
     idHint: hint(element.getAttribute('id')),
-    // `all_frames` is false and shadow roots are not traversed, so neither of
-    // these is reachable in this build. They are reported rather than assumed
-    // so that the worker's rule about them is exercised by real data the day
-    // either becomes reachable, instead of being dead code until then.
+    // `isInShadowRoot` is now **reachable**: open shadow roots are traversed,
+    // so this is real data rather than the dead field it was. The classifier
+    // has always returned the conservative class for it, which is what makes
+    // traversing them safe — a field inside one costs a confirmation rather
+    // than running silently. `isInSubframe` is still unreachable: `all_frames`
+    // is false, and that is a different boundary which stays where it is.
     isInShadowRoot: element.getRootNode() !== element.ownerDocument,
     isInSubframe: frameId !== 'main',
   };

@@ -1015,6 +1015,42 @@ tool and had to be clicked. That was written before `browser.set_checked`
 shipped and was never updated; it is corrected here rather than left to
 mislead a reader deciding what is left to build.
 
+**Controls inside web components now work, and that was a real gap rather than
+a theoretical one.** `querySelectorAll` does not cross a shadow boundary, so on
+a page built from custom elements the page model saw an empty document — no
+buttons, no fields — and the agent's honest answer was that the page had no
+controls. A large and growing fraction of real sites are built that way. Open
+shadow roots are now walked, bounded in depth, in one document order; a closed
+root exposes no `shadowRoot` and is unreachable by construction.
+
+It needed **no permission change**, and that is the whole reason it was
+available: this is the same access any script on the page already has, and it
+crosses no origin. What makes it safe is a rule that was already written —
+`classifyField` has always returned the conservative class for
+`isInShadowRoot`, so a field the model can now see is one it must confirm
+before writing to. The comment beside that branch said it was honoured _"so
+that the day either becomes reachable it arrives as a refusal rather than as a
+silent ORDINARY"_. That day is this change, and the branch stopped being dead
+code.
+
+Driving it in a real browser found a second defect, on the action path rather
+than the reading path. `document.elementFromPoint` **retargets at a shadow
+boundary** — for a point over a button inside a component it returns the
+component's host — and the reachability check compared with `Node.contains`,
+which walks the light tree only. So every control inside every web component
+reported as _"something is covering this element"_: visible in the model,
+refused on click. The check now descends open shadow roots at the hit point and
+compares along the composed path in both directions. The case that caught it is
+`shadow-dom.spec.ts :: the agent can click a button inside a shadow root`, and
+it reads the page's own `composedPath()` to confirm the click landed on the
+inner button rather than the host.
+
+`P-006-C10` stays **PARTIAL** rather than being promoted, because it names two
+things and only one moved: the cross-origin subframe half needs
+`all_frames: true` on `<all_urls>`, which this build refuses and which is
+recorded as divergence 12 in `CLAUDE_BENCHMARK.md`. Half a clause met is not a
+clause met.
+
 Date, time, datetime-local, month, week, colour, range and number now have a
 dedicated tool, `browser.set_value`, and a multi-select has
 `browser.select_many`. They are separate from `browser.type` because these
