@@ -197,9 +197,42 @@ time. That is also the conservative answer to a real asymmetry: a Jira write is
 a comment on somebody's actual tracker, visible to a team and attributed to the
 user.
 
-The remaining Tier 1 gaps are Confluence — which shares Atlassian's API and is
-now reachable by the same mechanism — and Google Sheets and Drive, which would
-need a registered client id.
+### Confluence — the fourth, and the first to share a site
+
+Confluence is on the same `*.atlassian.net` site as Jira, takes the same email
+and API token, and binds its origin the same way — importing the host suffix
+from the Jira adapter rather than retyping it, because two constants that must
+agree are one constant. It needed an adapter and nothing in the framework,
+which is the first direct evidence that the site-bound connector is a mechanism
+rather than one adapter with a general-sounding name.
+
+**The same token is entered twice, on purpose.** A credential record holds one
+token and one bound origin, and `connectorId` is what the consent pin, the
+audit trail and the write guard key on. One record shared between two
+connectors would make "which connector may reach where" a question with two
+answers. So connecting Jira authorises nothing for Confluence, each binds its
+own origin and the two may differ, and disconnecting one leaves the other
+connected.
+
+It differs from Jira in two ways, and both are the service's shape:
+
+- **Search is GET.** Confluence's v1 search has no POST form, so the CQL
+  travels in a query string where Jira's JQL travels in a body. The query is
+  percent-encoded and read back through a URL parser in the tests, because a
+  query string is the part of a request that things nobody here controls will
+  log.
+- **Page bodies are markup.** Confluence storage format is XHTML with macro
+  elements in it. It is reduced to text by removing tags and decoding the five
+  XML entities — the ampersand last, so a doubly-encoded entity cannot become a
+  tag again — rather than by handing a stranger's document to a parser.
+  `<script>` and `<style>` contents are dropped whole, not because anything
+  would run them but because they are not prose.
+
+**Read-only, and for a third reason beyond Figma's and Jira's:** Basic
+authentication reports no scopes at all.
+
+The remaining Tier 1 gaps are Google Sheets and Drive, which unlike the other
+four would need a registered client id.
 
 ### Authorization code with PKCE (`oauth2`) — supported, and unreachable here
 
@@ -416,7 +449,7 @@ attacker-influenced text.
 ## What this build cannot do
 
 **No OAuth application is registered for this project, and for three of the
-listed services one would not help.** See the table above. A connector without
+listed services — GitHub, Atlassian and Figma — one would not help.** See the table above. A connector without
 a client id reports itself as unconfigured and refuses to start a flow, and the
 side panel says so rather than offering a button that cannot work.
 

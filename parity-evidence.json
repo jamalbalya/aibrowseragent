@@ -1986,11 +1986,11 @@
           "requirement": "Record the reference QA workflow spanning Jira, Confluence, Figma and Google Sheets.",
           "mandatory": true,
           "status": "EXTERNAL_REQUIRED",
-          "blocker": "§44 names this as the primary reference integration workflow for validating the multi-tool architecture, and none of the four connectors it spans exists. The earlier wording said each was blocked on its own OAuth application; that was wrong and is corrected under P-023-C9. Two of the four — Jira and Confluence — could not be built as sign-in connectors here at any registration, because Atlassian 3LO requires a client_secret and supports no PKCE, and this extension must not carry a secret. Figma is the same. So the multi-connector case is untested against anything real, nothing simulates it, and what it waits on is connectors plus a credential each — not a form.",
+          "blocker": "§44 names this as the primary reference integration workflow for validating the multi-tool architecture, and it spans Jira, Confluence, Figma and Google Sheets. **Three of those four now exist** — Jira, Confluence and Figma — which is a correction to the previous wording here, which said none of them did. What is missing is Google Sheets, which unlike the other three cannot be connected with a user-created token and needs a registered client id. The earlier wording also said each was blocked on its own OAuth application; that was wrong and is corrected under P-023-C9. So the four-service case waits on one more connector plus a credential for each of the four, and nothing here simulates it.",
           "evidence": [
             "tests/e2e/connector.spec.ts :: the authorization flow is refused, and says why rather than being offered"
           ],
-          "note": "Recording and replay are complete and evidenced for browser actions; what cannot be recorded is a workflow that spans services none of which can be connected. The gap is in the connectors, not in the recorder — and since the connector mechanism was corrected, the GitHub connector can now be connected with a user-supplied token, so a single-service recording over a connector is reachable where none was before. §44 asks for four, and four is what this clause waits on."
+          "note": "Recording and replay are complete and evidenced for browser actions. What cannot be recorded is a workflow spanning four services when one of them has no connector — a recording over three of the four is reachable, and a recording over one connector already is, but the clause asks for §44’s four and that is what it waits on. The gap is in the connectors, not in the recorder, and it has narrowed from four missing to one."
         }
       ],
       "conditions": {
@@ -2116,18 +2116,23 @@
           "requirement": "Tier 1 roadmap: Jira, Confluence, Google Sheets, Google Drive, Figma, GitHub.",
           "mandatory": true,
           "status": "EXTERNAL_REQUIRED",
-          "blocker": "**Three** of the six are implemented — GitHub, Figma and Jira — and the other three are not. Confluence shares Atlassian’s API and is now reachable by the same mechanism; Google Sheets and Drive would need a registered client id. What none of the three implemented ones needs is anything from whoever deploys this build: each is connected with a credential the user creates in their own account. Checked against each vendor’s documentation, a registered OAuth application would not have helped four of the six at all — GitHub’s web flow, Atlassian 3LO (which supports no PKCE either) and Figma all require a client_secret the extension must not carry. docs/connectors.md has the table and the sources.",
+          "blocker": "**Four** of the six are implemented — GitHub, Figma, Jira and Confluence — and the other two are not: Google Sheets and Google Drive would each need a registered client id. Confluence was the cheapest of the remaining four because it shares Atlassian’s API and its site binding with Jira, and it imports that binding’s host suffix rather than retyping it. What none of the four implemented ones needs is anything from whoever deploys this build: each is connected with a credential the user creates in their own account. Checked against each vendor’s documentation, a registered OAuth application would not have helped four of the six at all — GitHub’s web flow, Atlassian 3LO (which supports no PKCE either) and Figma all require a client_secret the extension must not carry. docs/connectors.md has the table and the sources.",
           "evidence": [
             "tests/e2e/connector.spec.ts :: an unknown connector is refused rather than invented",
             "tests/e2e/connector.spec.ts :: each connector’s tools are namespaced to it, with no cross-wiring",
             "tests/e2e/connector.spec.ts :: the second connector is registered too, with its own credential header",
             "tests/e2e/connector.spec.ts :: the site-bound connector asks for a site, and refuses one it cannot bind",
+            "tests/e2e/connector.spec.ts :: two connectors share a site and nothing else, in the real extension",
             "tests/integration/figma-connector.test.ts :: is registrable, with a header name the validator accepts",
             "tests/integration/figma-connector.test.ts :: offers two reads and no write",
             "tests/integration/figma-connector.test.ts :: sends X-Figma-Token and no Authorization header at all",
-            "tests/security/site-binding.test.ts :: offers two reads and no write"
+            "tests/integration/confluence-connector.test.ts :: builds every URL from the stored origin rather than a compiled one",
+            "tests/integration/confluence-connector.test.ts :: refuses when the session is ready but the binding is gone, sending nothing",
+            "tests/security/site-binding.test.ts :: offers two reads and no write",
+            "tests/security/site-binding.test.ts :: is registrable, read-only, and bound to the same host suffix",
+            "tests/security/site-binding.test.ts :: connecting Jira authorises nothing for Confluence"
           ],
-          "note": "Still external, and what it waits on has narrowed again. Jira was previously recorded as blocked by the framework — its API base is the user’s own *.atlassian.net site while apiOrigins was fixed at registration. That framework change is done: the origin is parsed at connect time, stored **with** the credential, and is the single entry in the transport’s allowlist on every request, read fresh. It is a tightening rather than a loosening — a fixed descriptor may declare several origins; a bound one permits exactly one. tests/security/site-binding.test.ts holds it, including the adversarial cases for look-alike hosts, scheme and port changes, redirects to another tenant, and a credential whose binding has gone. What remains for this clause is three unwritten connectors and a credential for each."
+          "note": "Still external, and what it waits on has narrowed again: from four missing services to two, both of them Google’s and both needing a registered client id rather than a user-created token. The fourth connector also answered a question the third could not: two connectors on one site keep separate credentials and separate bindings, so connecting one authorises nothing for the other — measured in the real extension, not argued. A credential for each implemented connector is still owner-held, which is P-023-C8."
         },
         {
           "id": "P-023-C10",
@@ -2258,11 +2263,11 @@
           "requirement": "The reference QA skill spanning four services.",
           "mandatory": true,
           "status": "EXTERNAL_REQUIRED",
-          "blocker": "The same blocker as P-022-C8: §44’s reference skill spans Jira, Confluence, Figma and Google Sheets, and none of those connectors exists. The earlier wording said none has a registered OAuth application; that was wrong, and three of the four could not be built as sign-in connectors here at any registration — see P-023-C9. Four workflows ship and one writes, to the page’s own origin at R2; a connector-writing skill is deliberately not the easiest path through a young feature, so writes to a service stay individually requested.",
+          "blocker": "The same blocker as P-022-C8, and narrowed the same way: §44’s reference skill spans Jira, Confluence, Figma and Google Sheets, and three of those four connectors now exist. The previous wording here said none existed, and that it was each one’s missing OAuth application — both wrong; see P-023-C9. Google Sheets is the one that remains, and it is the one that needs a registered client id rather than a user-created token. Four workflows ship and one writes, to the page’s own origin at R2; a connector-writing skill is deliberately not the easiest path through a young feature, so writes to a service stay individually requested.",
           "evidence": [
             "tests/e2e/connector.spec.ts :: the authorization flow is refused, and says why rather than being offered"
           ],
-          "note": "The skill engine is complete and evidenced — eight of this capability’s nine clauses are VERIFIED, including the one that matters most: approving a run does not approve the actions inside it. Nothing about this clause is a gap in the engine, and it was audited again rather than rebuilt. What is missing is the four services §44’s reference skill spans."
+          "note": "The skill engine is complete and evidenced — eight of this capability’s nine clauses are VERIFIED, including the one that matters most: approving a run does not approve the actions inside it. Nothing about this clause is a gap in the engine. What is missing is one of the four services §44’s reference skill spans, where it used to be all four."
         }
       ],
       "conditions": {

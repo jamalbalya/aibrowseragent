@@ -5,11 +5,20 @@
 
 Nine items. Read [README.md](README.md) first.
 
-**"Every connector" means one connector here.** This repository implements
-GitHub (`src/connectors/adapters/github.ts`) and nothing else. Jira,
-Confluence, Figma and Google Sheets — which §85 D and E name — do not exist,
-and this package does not pretend the framework's coverage is coverage of
-them.
+**"Every connector" means four connectors here.** This repository implements
+GitHub, Figma, Jira and Confluence (`src/connectors/adapters/`). Google
+Sheets — which §85 E also names — does not exist, and this package does not
+pretend the framework's coverage is coverage of it.
+
+This paragraph used to say _"one connector here … and nothing else"_. The nine
+items below are still written for GitHub, because GitHub is the only one of the
+four with a **write**: the other three are read-only, and not out of caution —
+Figma reports nothing about what a token may do, and Atlassian Basic
+authentication reports no scopes at all, so a declared write could never be
+established and would be refused every time. `88-write` is therefore not
+available on them. Section D-2 of `docs/release/OWNER-CHECKLIST.md` is the
+procedure for running the other eight items against Figma, Jira or
+Confluence.
 
 **The second thing to know before reading any verdict below.** No token from
 anybody's account is held here, so no real grant has ever been performed. What

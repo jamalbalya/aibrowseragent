@@ -280,7 +280,7 @@ and host access are byte-identical to the submitted one — no permission has
 been added since, which is the thing a reviewer looks at hardest.
 
 What has changed since the submission is capability and correctness, not
-posture: three connectors a user can actually connect, controls inside web
+posture: four connectors a user can actually connect, controls inside web
 components now visible and clickable, a defect fixed that stopped every task
 once somebody signed in with Google, and the account-selection routing proved
 rather than assumed.
@@ -292,7 +292,7 @@ are judgement rather than fact:
   close to a verdict, waiting costs nothing and resubmitting costs the queue
   position.
 - **Capability.** The current artifact can do things the pending one cannot:
-  three connectors a user can connect, controls inside web components, and the
+  four connectors a user can connect, controls inside web components, and the
   account-selection routing proved rather than assumed.
 
 Nothing here submits, replaces or withdraws anything, and the call is the

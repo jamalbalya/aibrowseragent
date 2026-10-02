@@ -41,7 +41,8 @@ store cannot read another's keys.
 
 ## What leaves the browser, and to where
 
-Exactly seven destination families, and no others:
+Exactly seven destination families, and no others — Jira and Confluence share
+the Atlassian row because they share a site, with a separate credential each:
 
 | Destination                                                             | Carries                                                       | When                                    |
 | ----------------------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------- |
@@ -50,10 +51,11 @@ Exactly seven destination families, and no others:
 | `generativelanguage.googleapis.com`                                     | the same                                                      | the user chose this provider            |
 | `api.github.com`                                                        | connector requests, with a token the user created             | the user connected the GitHub connector |
 | `api.figma.com`                                                         | connector requests, with a token the user created             | the user connected the Figma connector  |
-| the user's own `*.atlassian.net` site, and **only that one**            | connector requests, with a token the user created             | the user connected the Jira connector   |
+| the user's own `*.atlassian.net` site, and **only that one**            | connector requests, with a token the user created             | the user connected Jira or Confluence   |
 | the page the user is working on                                         | typed values, clicks, file uploads                            | the task is acting on that page         |
 
-The Jira row is the only destination that is not fixed in the build. The user
+The Atlassian row is the only destination that is not fixed in the build, and
+Jira and Confluence each bind their own credential to it independently. The user
 enters their site, it is validated as an `https` origin on `atlassian.net` with
 no port, path, query or userinfo, and it is stored **with** the credential — so
 the transport's allowlist for that connector is that one origin on every

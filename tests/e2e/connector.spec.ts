@@ -157,10 +157,17 @@ test('the second connector is registered too, with its own credential header', a
   // takes the whole worker down, which is the failure the first case in this
   // file exists for — and that the panel is told how to connect it.
   const { connectors } = await send('connector.list', {});
-  // Three, and each is registered independently: a descriptor the validator
+  // Four, and each is registered independently: a descriptor the validator
   // rejects takes the whole worker down at module scope, which is the failure
-  // the first case in this file exists for.
-  expect(connectors.map((entry) => entry.id).sort()).toEqual(['figma', 'github', 'jira']);
+  // the first case in this file exists for. The exact set rather than a count,
+  // so a connector added without being described anywhere a user reads fails
+  // here as well as in `public-copy-connectors.test.ts`.
+  expect(connectors.map((entry) => entry.id).sort()).toEqual([
+    'confluence',
+    'figma',
+    'github',
+    'jira',
+  ]);
 
   const figma = connectors.find((entry) => entry.id === 'figma')!;
   expect(figma.authKind).toBe('api_token');
@@ -259,6 +266,59 @@ test('a site the worker will not bind leaves nothing stored', async ({ send, ser
   expect(stored).not.toContain(token);
   expect(stored).not.toContain('evil.test');
   expect(stored).not.toContain('boundOrigin');
+});
+
+test('two connectors share a site and nothing else, in the real extension', async ({
+  send,
+  serviceWorker,
+}) => {
+  // Confluence takes the same site and the same kind of credential as Jira,
+  // which is the case where one stored binding for "Atlassian" would have been
+  // the tempting shortcut. The unit suites hold the rule; this is the real
+  // worker, the real routes and real storage, which is where a shared record
+  // would actually show up.
+  const { connectors } = await send('connector.list', {});
+  const confluence = connectors.find((entry) => entry.id === 'confluence');
+
+  expect(confluence).toBeDefined();
+  expect(confluence!.authKind).toBe('api_token');
+  expect(confluence!.configured).toBe(true);
+  expect(confluence!.state).not.toBe('READY');
+  // Its own binding, with the same suffix as Jira's because the site is the
+  // same one. The suffix is imported from the Jira adapter rather than
+  // retyped, so these two cannot drift apart.
+  expect(confluence!.siteBinding!.hostSuffix).toBe('.atlassian.net');
+  expect(confluence!.tokenHint?.accountLabel).toBeDefined();
+  expect(confluence!.operations.filter((operation) => operation.kind === 'write')).toEqual([]);
+
+  // The same deceptive sites, refused through the Confluence route this time:
+  // the rule is one function, and this proves the fourth connector reaches it
+  // rather than carrying a copy that was nearly right.
+  const token = 'confluence-probe-token-00000000000';
+  for (const site of [
+    'https://team.atlassian.net.evil.test',
+    'http://team.atlassian.net',
+    'https://team.atlassian.net/wiki',
+    'https://atlassian.net',
+  ]) {
+    const result = await send('connector.connectToken', {
+      connectorId: 'confluence',
+      token,
+      site,
+      account: 'someone@example.test',
+    }).catch(() => ({ state: 'THREW' }));
+    expect(result.state, site).not.toBe('READY');
+  }
+
+  const stored = await serviceWorker.evaluate(async () => {
+    const [session, local] = await Promise.all([
+      chrome.storage.session.get(null),
+      chrome.storage.local.get(null),
+    ]);
+    return JSON.stringify({ session, local });
+  });
+  expect(stored).not.toContain(token);
+  expect(stored).not.toContain('evil.test');
 });
 
 test('a site-bound connector refuses a token with no site, and vice versa', async ({ send }) => {

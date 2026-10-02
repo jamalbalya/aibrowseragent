@@ -58,6 +58,13 @@ import {
   JIRA_CONNECTOR_ID,
   JIRA_HOST_SUFFIX,
 } from '@/connectors/adapters/jira';
+import {
+  confluenceDescriptor,
+  confluenceTokenProbeUrl,
+  readConfluenceTokenProbe,
+  stripStorageMarkup,
+  CONFLUENCE_CONNECTOR_ID,
+} from '@/connectors/adapters/confluence';
 import { ToolError } from '@/types/result';
 import { MockConnectorService } from '../fixtures/connector-harness';
 import type { AgentTool, ToolExecutionContext } from '@/tools/core/tool-types';
@@ -760,5 +767,227 @@ describe('08 — rich text a stranger wrote is flattened, bounded, and never run
       content: Array.from({ length: 10_000 }, () => ({ type: 'text', text: 'x'.repeat(100) })),
     };
     expect(flattenAdf(wide).length).toBeLessThan(100_000);
+  });
+});
+
+describe('09 — two connectors on one site keep separate credentials', () => {
+  /**
+   * Jira and Confluence live on the same `*.atlassian.net` site and take the
+   * same email-and-API-token pair, so a user connecting both types the same
+   * thing twice. This group is why that is the right trade rather than an
+   * oversight.
+   *
+   * A credential record holds one token and one bound origin, and
+   * `connectorId` is what the consent pin, the audit trail and the write guard
+   * key on. Sharing one record between two connectors would make "which
+   * connector may reach where" a question with two answers — and the case that
+   * matters is the one below: connecting one must not authorise the other.
+   */
+  let confluenceVault: TokenVault;
+  let confluenceSession: ConnectorSession;
+  let confluenceTransport: ConnectorTransport;
+
+  const egress = (connectorId: string) => ({
+    taskId: TASK,
+    taintState: freshTaint(),
+    taintSalt: 'ab'.repeat(32),
+    saltEpoch: 1,
+    taintSignature: 's',
+    connectorId,
+    operationId: 'read_page',
+  });
+
+  beforeEach(() => {
+    // One vault, as the worker has: both connectors' records live in it,
+    // keyed by connector id.
+    confluenceVault = vault;
+    const descriptor = confluenceDescriptor();
+    confluenceSession = new ConnectorSession({
+      descriptor,
+      vault: confluenceVault,
+      authFlow: new UnusedFlow(),
+      clientId: '',
+      exchange: () => Promise.reject(new Error('no exchange')),
+      now: () => NOW,
+      introspect: () =>
+        Promise.resolve(readConfluenceTokenProbe({ status: 200, displayName: 'Someone' })),
+    });
+    confluenceTransport = createConnectorTransport({
+      descriptor,
+      vault: confluenceVault,
+      consent: new ConsentStore(),
+      fetchImpl: service.fetchImpl,
+      now: () => NOW,
+    });
+  });
+
+  it('connecting Jira authorises nothing for Confluence', async () => {
+    await connect(SITE);
+    expect(await vault.boundOrigin(JIRA_CONNECTOR_ID)).toBe(SITE);
+    // The same site, and no credential for this connector — so nothing is
+    // permitted, which is the direction that matters.
+    expect(await vault.boundOrigin(CONFLUENCE_CONNECTOR_ID)).toBeNull();
+    await expect(
+      confluenceTransport.send(
+        { url: `${SITE}/wiki/rest/api/content/1`, method: 'GET' },
+        egress(CONFLUENCE_CONNECTOR_ID),
+      ),
+    ).rejects.toThrow(/not configured to reach/);
+    expect(service.seen).toEqual([]);
+  });
+
+  it('each one binds its own origin, and they may differ', async () => {
+    // Two Atlassian sites, one per connector. Nothing merges them.
+    await connect(SITE);
+    await confluenceSession.connectWithToken({
+      token: jiraBasicCredential(EMAIL, TOKEN),
+      tokenType: 'Basic',
+      site: OTHER_SITE,
+    });
+    expect(await vault.boundOrigin(JIRA_CONNECTOR_ID)).toBe(SITE);
+    expect(await vault.boundOrigin(CONFLUENCE_CONNECTOR_ID)).toBe(OTHER_SITE);
+
+    // And each refuses the other's.
+    await expect(
+      transport.send(
+        { url: `${OTHER_SITE}/rest/api/3/myself`, method: 'GET' },
+        egress(JIRA_CONNECTOR_ID),
+      ),
+    ).rejects.toThrow(/not configured to reach/);
+    await expect(
+      confluenceTransport.send(
+        { url: `${SITE}/wiki/rest/api/content/1`, method: 'GET' },
+        egress(CONFLUENCE_CONNECTOR_ID),
+      ),
+    ).rejects.toThrow(/not configured to reach/);
+  });
+
+  it('disconnecting one leaves the other connected', async () => {
+    await connect(SITE);
+    await confluenceSession.connectWithToken({
+      token: jiraBasicCredential(EMAIL, TOKEN),
+      tokenType: 'Basic',
+      site: SITE,
+    });
+    await connector.revoke();
+
+    expect(await vault.boundOrigin(JIRA_CONNECTOR_ID)).toBeNull();
+    expect(await vault.boundOrigin(CONFLUENCE_CONNECTOR_ID)).toBe(SITE);
+  });
+
+  it('is registrable, read-only, and bound to the same host suffix', () => {
+    const descriptor = confluenceDescriptor();
+    expect(validateConnectorDescriptor(descriptor)).toEqual([]);
+    expect(descriptor.apiOrigins).toEqual([]);
+    // Imported from the Jira adapter rather than retyped: two constants that
+    // must agree are one constant.
+    expect(descriptor.siteBinding?.hostSuffix).toBe(JIRA_HOST_SUFFIX);
+    expect(descriptor.operations.filter((operation) => operation.kind === 'write')).toEqual([]);
+    for (const operation of descriptor.operations) {
+      expect(operation.requiredScopes, operation.id).toEqual([]);
+    }
+  });
+
+  it('refuses the same deceptive sites Jira does, because the rule is shared', () => {
+    const binding = confluenceDescriptor().siteBinding!;
+    for (const bad of [
+      'https://atlassian.net.evil.test',
+      'https://team.atlassian.net.evil.test',
+      'http://team.atlassian.net',
+      'https://team.atlassian.net:8443',
+      'https://team.atlassian.net/wiki',
+      'https://atlassian.net',
+    ]) {
+      expect(parseBoundSite(bad, binding).ok, bad).toBe(false);
+    }
+    expect(parseBoundSite('https://team.atlassian.net', binding).ok).toBe(true);
+  });
+
+  it('refuses a 401 and a 403 with different sentences, like Jira', () => {
+    const thrown = (status: number): Error => {
+      try {
+        readConfluenceTokenProbe({ status });
+      } catch (error) {
+        return error as Error;
+      }
+      throw new Error('expected a refusal');
+    };
+    expect(thrown(401).name).toBe('TokenRejected');
+    expect(thrown(403).name).toBe('TokenRejected');
+    expect(thrown(401).message).not.toBe(thrown(403).message);
+    // Confluence blocks on site access where Jira blocks on a challenge, and
+    // the message says so rather than being copied across.
+    expect(thrown(403).message).toMatch(/access to the site/i);
+    expect(readConfluenceTokenProbe({ status: 200 }).scopes).toBeNull();
+  });
+
+  it('probes the current-user endpoint, which reads no page', () => {
+    expect(confluenceTokenProbeUrl(SITE)).toBe(`${SITE}/wiki/rest/api/user/current`);
+    expect(confluenceTokenProbeUrl(`${SITE}/`)).toBe(`${SITE}/wiki/rest/api/user/current`);
+  });
+});
+
+describe('10 — Confluence storage markup is reduced to text, never interpreted', () => {
+  it('keeps the words and drops the tags, including Confluence macros', () => {
+    expect(
+      stripStorageMarkup(
+        '<p>Hello <strong>there</strong></p><ac:structured-macro ac:name="info"/>',
+      ),
+    ).toBe('Hello there');
+  });
+
+  it('drops script and style contents entirely', () => {
+    // Not because it would run — nothing here is a parser and nothing is
+    // inserted into a document — but because the contents are not prose and
+    // handing them to a model is handing it noise to interpret.
+    const stripped = stripStorageMarkup(
+      '<p>Keep</p><script>var secret = 1;</script><style>.a{color:red}</style>',
+    );
+    expect(stripped).toBe('Keep');
+    expect(stripped).not.toContain('secret');
+    expect(stripped).not.toContain('color');
+  });
+
+  it('decodes entities, and the ampersand last so nothing becomes a tag', () => {
+    // `&amp;lt;p&amp;gt;` is a doubly-encoded tag. Decoding `&amp;` first
+    // would turn it into `&lt;p&gt;` and then into `<p>`, which is markup
+    // reappearing after it was supposed to be gone.
+    expect(stripStorageMarkup('a &amp;lt;p&amp;gt; b')).toBe('a &lt;p&gt; b');
+    expect(stripStorageMarkup('&lt;b&gt; &quot;x&quot; &#39;y&#39;')).toBe('<b> "x" \'y\'');
+  });
+
+  it('leaves no space before punctuation where an inline tag was', () => {
+    // Every tag becomes a space, so emphasis closing before a full stop used
+    // to leave one: `<strong>monthly</strong>.` read back as "monthly .".
+    // Bold or linked words at the end of a sentence are ordinary prose, so
+    // this was every such sentence.
+    expect(stripStorageMarkup('<p>It rotates <strong>monthly</strong>.</p>')).toBe(
+      'It rotates monthly.',
+    );
+    expect(stripStorageMarkup('<p>See <a href="x">the page</a>, then <em>stop</em>!</p>')).toBe(
+      'See the page, then stop!',
+    );
+    // And a space the author typed between words is still a space.
+    expect(stripStorageMarkup('<p>one two</p><p>three</p>')).toBe('one two three');
+  });
+
+  it('returns nothing for an empty or absent body rather than guessing', () => {
+    expect(stripStorageMarkup('')).toBe('');
+    expect(stripStorageMarkup('<p></p>')).toBe('');
+  });
+
+  it('costs a bounded amount on hostile input', () => {
+    // A tag-stripping pattern is the shape that goes quadratic on the wrong
+    // input. `[^>]*` cannot backtrack across a `>`, which is what keeps this
+    // linear — asserted by running it rather than argued.
+    const hostile = `<${'a'.repeat(50_000)}`;
+    const started = Date.now();
+    expect(() => stripStorageMarkup(hostile)).not.toThrow();
+    expect(Date.now() - started).toBeLessThan(1_000);
+
+    const many = '<p>x</p>'.repeat(20_000);
+    const second = Date.now();
+    expect(stripStorageMarkup(many).length).toBeGreaterThan(0);
+    expect(Date.now() - second).toBeLessThan(1_000);
   });
 });

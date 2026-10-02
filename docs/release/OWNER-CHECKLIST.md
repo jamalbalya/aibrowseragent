@@ -70,18 +70,25 @@ manual half. Not needed to publish.
 
 **8. Execute the remaining manual acceptance — YOU**
 
-**Thirty-one procedures need a person.** That is the whole list, and it is
+**Thirty-two procedures need a person.** That is the whole list, and it is
 ordered below so that one sitting covers as much of it as your credentials
 allow. Every one has written steps; follow the reference in its row.
 
-This number moved twice and both moves are recorded rather than smoothed over.
-The §84 condition-3 census added twenty-two procedures, because condition 3 had
-never been answered per capability. Sixteen of those were then **executed** as
-real-Chromium tests and are gone from your list; six remain here. Executing one
-of them found a defect that stranded every looping task, which is the reason the
-distinction between _written_ and _executed_ is worth this much fuss.
+This number has moved three times and every move is recorded rather than
+smoothed over. The §84 condition-3 census added twenty-two procedures, because
+condition 3 had never been answered per capability. Sixteen of those were then
+**executed** as real-Chromium tests and are gone from your list; six remain
+here. Executing one of them found a defect that stranded every looping task,
+which is the reason the distinction between _written_ and _executed_ is worth
+this much fuss.
 
-### A. With one API key — twenty-five of the thirty-one
+The third move is this one, and it went **up**. `85-D` — fetch an issue and
+prefer the Jira connector over scraping the page — used to be impossible for
+anybody, because there was no Jira connector. There is one now, so the item
+left "nobody can do this" and joined your list. A number going up because a
+capability arrived is the honest direction for it to move.
+
+### A. With one API key — twenty-five of the thirty-two
 
 Any one of OpenAI-compatible, Anthropic or Gemini. Do these first: they are the
 bulk of the list and they share one browsing session.
@@ -162,11 +169,11 @@ of `chrome.runtime.getURL('oauth/callback.html')` for your installed build,
 and `web_accessible_resources` in the manifest must list the authorization
 origin.
 
-### D-2. With a Figma or Jira token — the same five, on another service
+### D-2. With a Figma, Jira or Confluence token — the same five, on another service
 
 The five procedures in D are written for GitHub because GitHub is the one with
-a write. Two more connectors now accept a token you create yourself, and
-running D on either is worth doing: it is the same framework against a
+a write. Three more connectors now accept a token you create yourself, and
+running D on any of them is worth doing: it is the same framework against a
 different service, which is the only way to find out whether "the framework
 holds more than one connector" is true of anything but the tests.
 
@@ -188,6 +195,13 @@ Figma; use GitHub for it.
 the **email address of your Atlassian account** and **your own site address** —
 `https://your-team.atlassian.net`, with nothing after it.
 
+`85-D` is the acceptance item this unblocks, and it is the one that moved onto
+your list rather than off it: _get an issue and summarise its requirements,
+preferring the Jira connector if one is configured._ Run it by opening a web
+page that shows one of your own issues and asking for that issue — then watch
+whether the agent reads it through the connector or scrapes the page it has
+open. The connector is the pass.
+
 The site address is the interesting part to test, and it is worth being
 deliberate about:
 
@@ -201,17 +215,38 @@ deliberate about:
 
 Jira is read-only for the same reason Figma is.
 
+**Confluence.** The **same token works**, and that is the point of connecting
+it. Use the one you already created at
+<https://id.atlassian.com/manage-profile/security/api-tokens>, with the same
+email address and the same site address, and paste it in Settings →
+Connectors → Confluence. Then ask the agent to search pages with CQL and to
+read one.
+
+Entering the same token twice is deliberate, and the thing worth testing is
+what it buys:
+
+1. Connect **Jira only**, then ask the agent to read a Confluence page. It must
+   refuse, because connecting one authorises nothing for the other — each
+   connector holds its own credential bound to its own site address.
+2. Connect both, then disconnect Jira. Confluence must still work.
+3. Try the wrong site address on Confluence too — `http://`, a path on the end,
+   somebody else's team name. The refusals are the same ones, because the rule
+   is one function both connectors reach rather than a copy in each.
+
+Confluence is read-only, and for a third reason: Basic authentication reports
+no scopes at all, so a declared write could never be established.
+
 **What to record.** Which service, which procedures, what happened, and the
 date. Not the token, not the base64 of it, and not a screenshot showing the
 field with anything in it.
 
 ### E. Not executable by anybody, and not waiting on you
 
-| Procedure      | Why                                                                                                                                                                                                                                                                                                                                   |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `84-P-025`     | P-025 Plugins is not implemented, and is off the parity critical path                                                                                                                                                                                                                                                                 |
-| `85-D`, `85-E` | They name Jira, Confluence, Figma and Sheets, and need **all four at once** for one workflow. Jira and Figma now exist and are connectable with a token you create (D-2); Confluence and Sheets do not. So these moved from "no connector exists" to "two of four exist" — still not executable, and for a smaller reason than before |
-| `89-06`        | The iframe exclusion is behaviour, not a gap: the agent has no handle inside a cross-origin frame                                                                                                                                                                                                                                     |
+| Procedure      | Why                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `84-P-025`     | P-025 Plugins is not implemented, and is off the parity critical path                                                                                                                                                                                                                                                                                                                                                              |
+| `85-D`, `85-E` | They name Jira, Confluence, Figma and Sheets, and need **all four at once** for one workflow. Three of the four now exist and are connectable with a token you create (D-2); Google Sheets does not, and it is the one that would need a registered client id rather than a user-created token. So these moved from "no connector exists" to "three of four exist" — still not executable, and now for one reason rather than four |
+| `89-06`        | The iframe exclusion is behaviour, not a gap: the agent has no handle inside a cross-origin frame                                                                                                                                                                                                                                                                                                                                  |
 
 ### One more that is separate, and unavoidable
 

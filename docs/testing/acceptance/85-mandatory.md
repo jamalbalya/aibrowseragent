@@ -157,26 +157,44 @@ later by someone who was not there.
 > Get PROJ-123 and summarize its requirements. Must prefer Jira connector if
 > configured.
 
-**Verdict: `NOT POSSIBLE HERE`.**
+**Verdict: `MANUAL`.**
 
-- REASON: This repository implements one connector, GitHub
-  (`src/connectors/adapters/github.ts`). There is no Jira connector, so there
-  is nothing to prefer and nothing to configure. `PROJ-123` cannot be fetched.
+**This item used to be impossible here,** on the grounds that _"this repository
+implements one connector, GitHub"_ and that item D would stay that way _"until
+a Jira connector exists"_. It exists
+(`src/connectors/adapters/jira.ts`), so the verdict changes on the condition
+this document itself set. What is left is a credential, which is an owner
+action rather than a capability gap.
 
-This is a capability gap, not an external blocker. Nothing outside the
-repository prevents a Jira connector being written; it has not been written.
-`PARITY_MATRIX.md` is where that gap is tracked, and it is not softened here.
+- PROCEDURE:
+  1. Create an Atlassian API token at
+     <https://id.atlassian.com/manage-profile/security/api-tokens>.
+  2. Connect Jira in Settings → Connectors with your email address and your own
+     site address.
+  3. Open a web page showing one of your issues, and ask the agent to get that
+     issue and summarise its requirements.
+  4. Watch which tool it uses.
+- CRITERION: the agent reads the issue through `jira.search_issues` or
+  `jira.read_issue` rather than scraping the page it has open.
+- FAILS IF: it scrapes the page while a configured connector could have
+  answered, or it reaches any origin other than the site you entered.
+- HUMAN_EXECUTION_REQUIRED: an API token from a real Atlassian account, which
+  this repository holds none of.
+- WHY AUTOMATION IS INSUFFICIENT: the preference is between two routes to the
+  same fact, and only one of them exists without a credential. Everything
+  underneath is automated — the connector's registration, its binding, its
+  tools in the model's registry, and the refusal when it is not connected.
+
+`PROJ-123` itself is a placeholder for whichever issue key the executor has.
+The specification's literal key is not fetchable by anybody.
 
 The _shape_ the item is really testing — that a configured connector is
-preferred over scraping the same information out of a web page — is covered
-for the connector that does exist:
+preferred over scraping the same information out of a web page — is covered by
+mechanism, and that is still not the same as executing item D:
 
 - EVIDENCE: tests/e2e/connector.spec.ts :: connector tools are in the registry the model is offered
 - EVIDENCE: tests/e2e/connector.spec.ts :: a model-driven connector call is refused while the connector is not connected
 - EVIDENCE: tests/e2e/connector.spec.ts :: reading needs no scope and writing does
-
-That is evidence about connector _mechanism_, and it is not evidence for item
-D. Item D stays `NOT POSSIBLE HERE` until a Jira connector exists.
 
 ---
 
@@ -190,19 +208,27 @@ D. Item D stays `NOT POSSIBLE HERE` until a Jira connector exists.
 
 **Verdict: `NOT POSSIBLE HERE`.**
 
-- REASON: Four of the services this item names — Jira, Confluence, Figma and
-  Google Sheets — have no connector in this repository. The item cannot be
-  executed end to end, and no part of it can be reported as met.
+- REASON: Google Sheets, one of the four services this item names, has no
+  connector in this repository, and the item needs all four at once. It cannot
+  be executed end to end. The other three now exist, which is a correction to
+  the previous wording here — it said all four were missing, and that stopped
+  being true when Jira, Figma and Confluence were written.
 
-Six of the ten things it must exercise do exist and are covered:
+A second reason survives the connectors: the item requires a **Jira write**,
+and the Jira connector is read-only because Basic authentication reports no
+scopes, so a declared write could never be established. That is not waiting on
+a credential.
+
+Nine of the ten things it must exercise now exist; one of them cannot be
+executed and one is read-only by design:
 
 | Must exercise     | Status here                                                                       |
 | ----------------- | --------------------------------------------------------------------------------- |
-| Jira              | No connector                                                                      |
-| Confluence        | No connector                                                                      |
-| Figma             | No connector                                                                      |
+| Jira              | Implemented (`src/connectors/adapters/jira.ts`); needs an owner token             |
+| Confluence        | Implemented (`src/connectors/adapters/confluence.ts`); needs an owner token       |
+| Figma             | Implemented (`src/connectors/adapters/figma.ts`); needs an owner token            |
 | Sheets            | No connector                                                                      |
-| Jira write        | No connector                                                                      |
+| Jira write        | Not offered: Basic auth reports no scopes, so a write could never be established  |
 | skill             | Implemented; `tests/e2e/skills.spec.ts`, 18 tests                                 |
 | browser           | Implemented; `tests/e2e/agent-task.spec.ts`, 10 tests                             |
 | debugger          | Implemented; `tests/e2e/mv3-lifecycle.spec.ts`                                    |

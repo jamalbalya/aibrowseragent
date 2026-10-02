@@ -598,8 +598,8 @@ is a different question from whether a _third-party operator_ is needed.
 | `P-026-C3` local MCP                                        | a local MCP server                                                                               | **Was wrong.** The MCP project's own reference server is an npm package speaking Streamable HTTP over loopback. Now VERIFIED, and running it found two defects.                                                                                                                                                                                                                                                                          |
 | `P-026-C2` remote MCP                                       | an origin somebody else operates                                                                 | **Was wrong too.** The question was right and the answer assumed operators cost something. Public, credential-free hosted MCP servers exist; one was reached over the public internet and the clause is now VERIFIED.                                                                                                                                                                                                                    |
 | `P-023-C8` a connector used against a real service          | a real service and its OAuth application                                                         | Genuinely external, and doubly so: inventing OAuth credentials is on this project's locked prohibition list. Re-asked with the method above and it still holds — `ConnectorAuthKind` does admit `none`, so a credential-free public API could be connected, but C8's subject is the **authorization** that has never run against a real service, and a connector that authorizes nothing sidesteps the clause rather than satisfying it. |
-| `P-023-C9` the Tier 1 connector roadmap                     | six named services                                                                               | Genuinely external. Writing connector definitions without their services would be inventing production connectors, also prohibited.                                                                                                                                                                                                                                                                                                      |
-| `P-022-C8` / `P-024-C9` the reference QA workflow and skill | §44's scenario names Jira, Confluence, Figma, Sheets, a Jira **write** and the permission system | Genuinely external. The clause requires executing against four services, not authoring a definition.                                                                                                                                                                                                                                                                                                                                     |
+| `P-023-C9` the Tier 1 connector roadmap                     | six named services                                                                               | Genuinely external, and narrowing. **Four of the six are now written** — GitHub, Figma, Jira and Confluence — each connected with a credential the user creates in their own account. The two that remain are Google's, and both need a registered client id. Writing the remaining definitions without their services would be inventing production connectors, which is prohibited.                                                    |
+| `P-022-C8` / `P-024-C9` the reference QA workflow and skill | §44's scenario names Jira, Confluence, Figma, Sheets, a Jira **write** and the permission system | Genuinely external. **Three of the four connectors now exist**; Google Sheets is the one that does not, and it is the one needing a registered client id. The clause requires executing against four services, not authoring a definition, so it still waits — on one connector and a credential each rather than on four connectors.                                                                                                    |
 | `P-033-C5` live commercial provider endpoints               | the vendors' paid APIs                                                                           | Genuinely external.                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 One option was considered and **rejected** rather than silently skipped: running an
@@ -1733,7 +1733,7 @@ successful connection and a real read or write still need a person with an
 account, and `docs/release/OWNER-CHECKLIST.md` section D is now a procedure
 that person can perform.
 
-PARTIAL also because three connectors are not a connector ecosystem. **Figma is
+PARTIAL also because four connectors are not a connector ecosystem. **Figma is
 the second**, and it is the second that needs nothing from the owner: no
 registered application, no client id, no deployed anything. A personal access
 token the user creates is the whole of it.
@@ -1757,6 +1757,46 @@ reported scopes a write would declare `file_comments:write`, never satisfy it,
 and be refused every time — an operation that can only fail reads as a broken
 feature rather than an absent one. If Figma ever reports a token's scopes, a
 write becomes implementable on evidence.
+
+**Confluence is the fourth**, and it is the only one so far that was cheap. It
+shares Atlassian's API, its credential shape and its site binding with Jira, so
+what it needed was an adapter and nothing in the framework — which is the first
+direct evidence that the site-bound connector built for Jira is a mechanism
+rather than one adapter with a general-sounding name.
+
+It is worth having for the question it answers that three could not: **two
+connectors wanting the same site**. A user connecting both types the same email
+and token twice, which looks like an oversight and is the opposite of one. A
+credential record holds one token and one bound origin, and `connectorId` is
+what the consent pin, the audit trail and the write guard key on; one record
+shared between two connectors would make "which connector may reach where" a
+question with two answers. So connecting Jira authorises nothing for
+Confluence, each binds its own origin and the two may differ, and disconnecting
+one leaves the other connected — measured in the real extension through the real
+routes and real storage, which is where a shared record would have shown up.
+The binding's host suffix is **imported** from the Jira adapter rather than
+retyped, because two constants that must agree are one constant; a mutation
+retyping it is killed.
+
+It differs from Jira in two ways, both the service's shape rather than a
+preference. Confluence's v1 search has **no POST form**, so its CQL travels in
+a query string where Jira's JQL travels in a body — worth a case of its own,
+because a query string is the part of a request that things nobody here
+controls will log. And its page bodies are **markup**: Confluence storage
+format is XHTML with macro elements in it, reduced to text by removing tags and
+decoding the five XML entities rather than by parsing a stranger's document.
+Handing markup to a model is handing it something to interpret.
+
+Twenty mutations against the adapter are killed, with a passing baseline and a
+positive control on the run. Two of them had to be killed by building a state
+no ordinary test reaches: the adapter's own refusal when nothing is connected
+and the shared runtime's are **byte-identical** — same code, same message, same
+user message — so a test with nothing connected is satisfied by whichever fires
+first and the adapter's guard is never exercised. A credential stored with no
+binding makes the session READY while the origin is absent, which is the only
+state where the adapter is the sole thing between a user's credential and a
+host they never named. The same mutation survived for the same reason on Jira,
+which is why it was looked for here.
 
 **Jira is the third, and it is the framework change that was named and then
 made.** This row used to say its API base is the user's own `*.atlassian.net`

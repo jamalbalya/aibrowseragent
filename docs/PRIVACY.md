@@ -66,10 +66,10 @@ you first.
 **Changing provider re-asks.** A task is bound to the provider and model you
 started it with. Switching either does not inherit the previous approval.
 
-**Data sent to a service you connected.** Three services can be connected —
-**GitHub**, **Figma** and **Jira** — and only if you choose to. The agent can
-read from one you connected and, for GitHub, write to it if the token you
-supplied permits that. Those requests pass the same authorization gate as
+**Data sent to a service you connected.** Four services can be connected —
+**GitHub**, **Figma**, **Jira** and **Confluence** — and only if you choose to.
+The agent can read from one you connected and, for GitHub, write to it if the
+token you supplied permits that. Those requests pass the same authorization gate as
 everything else, so a task that has read a confidential page and then tries to
 send it to a connected service asks you first. Nothing about the connection
 lets it skip that.
@@ -80,16 +80,22 @@ in. The extension registers no application with any of them and holds no secret
 of its own. The token is stored by the extension, sent only to that service, and
 never written to logs, evidence, audit records, task data or model prompts.
 
-**Figma and Jira are read-only.** Neither service tells this extension what a
-token is allowed to do, so rather than attempting a change and failing, the
-extension offers no way to make one. Figma reads a file's structure and its
-comments; Jira searches issues and reads one with its comments.
+**Figma, Jira and Confluence are read-only.** None of these services tells this
+extension what a token is allowed to do, so rather than attempting a change and
+failing, the extension offers no way to make one. Figma reads a file's structure
+and its comments; Jira searches issues and reads one with its comments;
+Confluence searches pages and reads one as text.
 
-**For Jira, you also enter your own site address.** It must be an `https`
-address on `atlassian.net`, and the extension binds your token to that exact
-address: the token can never be sent anywhere else, and changing the address
-means entering the token again. That is why the field is there — so the
+**For Jira and Confluence, you also enter your own site address.** It must be an
+`https` address on `atlassian.net`, and the extension binds your token to that
+exact address: the token can never be sent anywhere else, and changing the
+address means entering the token again. That is why the field is there — so the
 extension knows the one place your credential may go, rather than guessing.
+
+Jira and Confluence are the same Atlassian site and take the same kind of
+token, and you still enter it twice. That is deliberate: each connector keeps
+its own credential and its own single permitted address, so neither can reach
+where the other was authorised to.
 
 Every permission the extension asks a service for is listed in the side panel
 with the reason it is needed.

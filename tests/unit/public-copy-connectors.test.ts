@@ -28,33 +28,56 @@
  * misled about.
  */
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { githubDescriptor } from '@/connectors/adapters/github';
+import { readFileSync, readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { figmaDescriptor } from '@/connectors/adapters/figma';
 import { jiraDescriptor } from '@/connectors/adapters/jira';
+import type { ConnectorDescriptor } from '@/connectors/core/types';
+
+const ADAPTERS = resolve(import.meta.dirname, '../../src/connectors/adapters');
 
 /**
- * Every connector this build ships, by display name.
+ * Every connector this build ships, discovered from the adapter directory.
  *
- * From the factories, so adding a fourth and forgetting the copy is a failure
- * rather than a silent inaccuracy. The redirect URI is a required argument for
- * GitHub's and is irrelevant here.
+ * **The first version of this file kept a hand-written list of three
+ * factories**, and its comment claimed the set was "derived from the descriptor
+ * factories". It was not. A fourth adapter was added and this file passed
+ * unchanged — the exact staleness it exists to prevent, in the guard against
+ * that staleness.
+ *
+ * So the directory is the source. Every module under `adapters/` that exports a
+ * `<name>Descriptor` function is a connector, and a fifth one appears here
+ * without anybody remembering to add it. The one argument any of them needs is
+ * supplied below; a factory that needs a different one fails loudly here rather
+ * than being skipped.
  */
-const CONNECTORS = [
-  // `authKind` as the shipped worker configures it. The factory defaults to
-  // `oauth2`, because the OAuth configuration on the descriptor is correct and
-  // is what a deployment holding a client secret elsewhere would use — but no
-  // such deployment exists, so the shipped build passes `api_token`. That the
-  // *extension* reports it is asserted where it can be:
-  // `connector.spec.ts :: the connector is registered, and says how it can be
-  // connected`. This file is about the copy.
-  githubDescriptor({ redirectUri: 'https://example.test/callback', authKind: 'api_token' }),
-  figmaDescriptor(),
-  jiraDescriptor(),
-];
+async function shippedConnectors(): Promise<ConnectorDescriptor[]> {
+  const modules = readdirSync(ADAPTERS).filter(
+    (name) => name.endsWith('.ts') && !name.endsWith('.test.ts'),
+  );
+  const found: ConnectorDescriptor[] = [];
 
-/** Services the copy says are absent. Named here, and checked against reality. */
-const DISCLAIMED = ['Confluence', 'Google Sheets'];
+  for (const file of modules) {
+    const loaded: Record<string, unknown> = await import(`${ADAPTERS}/${file}`);
+    for (const [name, value] of Object.entries(loaded)) {
+      if (!/Descriptor$/.test(name) || typeof value !== 'function') continue;
+      const factory = value as (options?: unknown) => ConnectorDescriptor;
+      // GitHub's needs a redirect URI and an auth kind; the others take
+      // nothing. Passing an options object to a factory that ignores it is
+      // harmless, which is what lets one call cover all of them.
+      found.push(factory({ redirectUri: 'https://example.test/callback', authKind: 'api_token' }));
+    }
+  }
+  return found;
+}
+
+/**
+ * The catalogue entries are not connectors, and must not be counted as them.
+ *
+ * `known-endpoints.ts` names ten AI provider endpoints. They live elsewhere and
+ * are a different thing; this guard is about connectors.
+ */
+const DISCLAIMED = ['Google Sheets'];
 
 const PUBLIC_COPY = [
   'docs/release/store-listing.md',
@@ -67,11 +90,14 @@ function copy(path: string): string {
 }
 
 describe('every shipped connector is named in the public copy', () => {
-  it('names all three, in every document a reader reaches', () => {
-    expect(CONNECTORS).toHaveLength(3);
+  it('names every one of them, in every document a reader reaches', async () => {
+    const connectors = await shippedConnectors();
+    // A floor rather than an exact count: the number is allowed to grow, and
+    // the point is that the copy grows with it.
+    expect(connectors.length).toBeGreaterThanOrEqual(4);
     for (const path of PUBLIC_COPY) {
       const text = copy(path);
-      for (const descriptor of CONNECTORS) {
+      for (const descriptor of connectors) {
         expect(text, `${path} does not name ${descriptor.displayName}`).toContain(
           descriptor.displayName,
         );
@@ -79,10 +105,10 @@ describe('every shipped connector is named in the public copy', () => {
     }
   });
 
-  it('claims no connector that does not exist', () => {
+  it('claims no connector that does not exist', async () => {
     // The direction that produced the worst sentence: the listing said there
     // was no Jira or Figma integration, confidently, after both had shipped.
-    const shipped = new Set(CONNECTORS.map((descriptor) => descriptor.displayName));
+    const shipped = new Set((await shippedConnectors()).map((d) => d.displayName));
     for (const absent of DISCLAIMED) {
       expect(shipped.has(absent), `${absent} is disclaimed but is shipped`).toBe(false);
     }
@@ -107,7 +133,7 @@ describe('every shipped connector is named in the public copy', () => {
 });
 
 describe('the copy describes how a connector is actually connected', () => {
-  it('says a token, not an OAuth authorization, because that is what happens', () => {
+  it('says a token, not an OAuth authorization, because that is what happens', async () => {
     // All three use a credential the user creates in their own account. The
     // data-flow table described "access and refresh tokens" obtained "after
     // the user authorizes", which was a different mechanism entirely — and no
@@ -115,11 +141,15 @@ describe('the copy describes how a connector is actually connected', () => {
     // one.
     // Every one of them, as shipped. Figma and Jira have no other mode; see
     // the note on `CONNECTORS` for GitHub.
-    for (const descriptor of CONNECTORS) {
+    for (const descriptor of await shippedConnectors()) {
       expect(descriptor.authKind, descriptor.displayName).toBe('api_token');
     }
-    // And the two that could not be anything else, asserted without passing
-    // an argument — so this is a fact about them rather than about the call.
+    // And two that could not be anything else, asserted without passing an
+    // argument — so this is a fact about them rather than about the call.
+    // GitHub's factory defaults to `oauth2`, because its OAuth configuration
+    // is correct and is what a deployment holding a client secret elsewhere
+    // would use; the shipped worker passes `api_token`, which
+    // `connector.spec.ts` asserts on the real extension.
     expect(figmaDescriptor().authKind).toBe('api_token');
     expect(jiraDescriptor().authKind).toBe('api_token');
 
@@ -131,13 +161,13 @@ describe('the copy describes how a connector is actually connected', () => {
     expect(privacy.toLowerCase()).toMatch(/token you create in your own account/);
   });
 
-  it('says which connectors are read-only, and they are', () => {
+  it('says which connectors are read-only, and they are', async () => {
     // A reader deciding whether this is useful to them needs it, and it is a
     // consequence of the service reporting no scopes rather than a choice.
-    const readOnly = CONNECTORS.filter((descriptor) =>
-      descriptor.operations.every((operation) => operation.kind === 'read'),
-    ).map((descriptor) => descriptor.displayName);
-    expect(readOnly.sort()).toEqual(['Figma', 'Jira']);
+    const readOnly = (await shippedConnectors())
+      .filter((descriptor) => descriptor.operations.every((operation) => operation.kind === 'read'))
+      .map((descriptor) => descriptor.displayName);
+    expect(readOnly.sort()).toEqual(['Confluence', 'Figma', 'Jira']);
 
     const listing = copy('docs/release/store-listing.md');
     for (const name of readOnly) {
@@ -147,11 +177,16 @@ describe('the copy describes how a connector is actually connected', () => {
     }
   });
 
-  it('discloses the one destination that is not fixed in the build', () => {
+  it('discloses the destinations that are not fixed in the build', async () => {
     // Jira's origin comes from the user. A privacy document that listed only
     // fixed destinations would be describing a different extension.
-    const siteBound = CONNECTORS.filter((descriptor) => descriptor.siteBinding !== undefined);
-    expect(siteBound.map((descriptor) => descriptor.displayName)).toEqual(['Jira']);
+    const siteBound = (await shippedConnectors()).filter(
+      (descriptor) => descriptor.siteBinding !== undefined,
+    );
+    expect(siteBound.map((descriptor) => descriptor.displayName).sort()).toEqual([
+      'Confluence',
+      'Jira',
+    ]);
 
     const flows = copy('docs/release/data-flows.md');
     expect(flows).toContain('atlassian.net');

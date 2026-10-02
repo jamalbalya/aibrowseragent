@@ -77,6 +77,17 @@ OpenAI-compatible adapter.
 **REQUIRED FOR PARITY, NOT FOR STAGE 2:** execute §85–§89 once the relevant
 phases exist, and record the results here.
 
+**Superseded, 2026-10-03.** The two paragraphs above describe the Stage 2
+scope and are kept as that record. They are no longer the current state: the
+three provider adapters exist, and so do four connectors — GitHub, Figma, Jira
+and Confluence — each connected with a token the user creates in their own
+account. Of the services §85 D and E name, only Google Sheets has no connector.
+§85 D is now executable by anybody with an Atlassian API token rather than by
+nobody. The current record is
+[`PARITY_MATRIX.md`](../PARITY_MATRIX.md) and
+[`docs/testing/acceptance/`](testing/acceptance/MATRIX.md); this file is not
+where to read it.
+
 ## Open: no project-owned provider credentials are configured
 
 Live provider E2E was not executed because no project-owned provider

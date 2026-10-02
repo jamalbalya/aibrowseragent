@@ -17,8 +17,8 @@ Web Store account was accessed.
 |                 | Previously submitted                              | Current candidate                                                  |
 | --------------- | ------------------------------------------------- | ------------------------------------------------------------------ |
 | Version         | `0.1.0`                                           | `0.1.0`                                                            |
-| SHA-256         | **not recorded — see below**                      | `098520e83f19edc34511cba5f23ae118820e79d129415e969cf58cfe45537e59` |
-| Bytes           | not recorded                                      | 281,405                                                            |
+| SHA-256         | **not recorded — see below**                      | `78e5cb0ce13a55f66ecdb1fd42b2b59d17fc03dd274ece941aeecc4dd958d6fa` |
+| Bytes           | not recorded                                      | 282,474                                                            |
 | Entries         | not recorded                                      | 13                                                                 |
 | Source commit   | not recorded                                      | the commit this file was committed in                              |
 | Submission date | not recorded; reported as on or before 2026-10-01 | not submitted                                                      |
@@ -133,13 +133,62 @@ All run on the tree this candidate was built from, on Node 22.23.3.
 | Check                         | Result                                                                                              |
 | ----------------------------- | --------------------------------------------------------------------------------------------------- |
 | `npm run verify`              | pass — format, lint, typecheck, tests, build, package, parity, acceptance, notices                  |
-| Unit / integration / security | 4,345 passed, 34 skipped, 177 files                                                                 |
-| Real-Chromium E2E             | see the commit message for the count run against this tree                                          |
+| Unit / integration / security | 4,389 passed, 34 skipped, 180 files                                                                 |
+| Real-Chromium E2E             | 506 passed, in 8.4 minutes, against this tree                                                       |
 | `npm audit --omit=dev`        | 0 vulnerabilities                                                                                   |
 | Reproducibility               | deterministic over repeated packing, digest verified with `sha256sum -c`                            |
 | Parity                        | 36 PASS / 3 PARTIAL / 1 NOT-STARTED across 40 capabilities                                          |
 | Acceptance                    | 12 documents, 342 citations, all resolving                                                          |
 | Artifact scan                 | no `eval`, no `new Function`, no `Runtime.evaluate`, no remote script source, no key-shaped strings |
+
+---
+
+## 4a. The core journey, step by step
+
+The product's claim is one sequence: sign in for product identity, connect an
+AI provider account separately, choose which one is active, and have the agent
+use **that** one. Each step below names the measurement that covers it in the
+shipped build, so a reader can check a step rather than take a verdict. Every
+citation is a real-Chromium case unless it says otherwise.
+
+| #   | Step                                       | Shipped build                                                                           | Measured by                                                                                                  |
+| --- | ------------------------------------------ | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 1   | Install, and the panel opens beside a page | works                                                                                   | `extension-load.spec.ts :: the side panel mounts and reports no provider before one is configured`           |
+| 2   | First launch offers work, not a sign-up    | works                                                                                   | `standalone-ux.spec.ts :: first launch offers work, not a sign-up`                                           |
+| 3   | Sign in with Google                        | **absent, not broken** — no backend origin is compiled in, so the option is not offered | `auth-google.spec.ts :: sign-in refuses when no backend is configured, rather than reaching out`             |
+| 4   | Connect an AI provider account             | works                                                                                   | `provider-connection.spec.ts :: connecting an account through Settings leaves something that can run a task` |
+| 5   | A connection that was never checked        | usable, and marked unverified rather than assumed                                       | `provider-connection.spec.ts :: an account connected but never checked is still the one a task uses`         |
+| 6   | Hold two accounts at once                  | works, with separate credentials                                                        | `multi-account.spec.ts :: two accounts on one endpoint coexist with separate credentials`                    |
+| 7   | Choose which account is active             | works, and survives a worker restart                                                    | `multi-account.spec.ts :: accounts and the brain survive in real storage across a restart`                   |
+| 8   | **The chosen one is the one that runs**    | works                                                                                   | `multi-account.spec.ts :: the selected account is the one that actually serves the agent’s request`          |
+| 9   | Run a browser task                         | works                                                                                   | `agent-task.spec.ts :: reads a real page and reports a summary with evidence`                                |
+| 10  | Connect a connector and use it             | four exist; a real token is owner-held                                                  | `connector.spec.ts` (25 cases); live use is §5 below                                                         |
+| 11  | See what was done                          | works                                                                                   | `audit.spec.ts :: a genuine browser action leaves a record in the trail`                                     |
+| 12  | All of it with no backend at all           | works                                                                                   | `local-first.spec.ts :: workflows, shortcuts and workspaces all work with no backend at all`                 |
+
+Three things this review establishes that are worth stating plainly.
+
+**Step 3 is the only step the shipped build does not perform, and it is absent
+rather than half-working.** The panel reports the configured state instead of
+offering a button that cannot work. The full journey _with_ sign-in — steps 3
+through 8 in one run, ending in a task served by the selected account — is
+measured in `auth-google-protocol.spec.ts :: 03b`, against `dist-auth`, the
+fixture build with a backend origin inlined. That is a test artifact and has
+never been uploaded anywhere. What has never been exercised is a real Google
+OAuth client; see §5.
+
+**Steps 4 and 8 are separate on purpose, and tested separately.** Signing in
+with Google grants no access to anybody's AI subscription, and `03b` asserts
+that directly: immediately after a successful sign-in the account list is empty
+and no account is active. A build that quietly derived one from the other would
+pass step 8 and be wrong about the product.
+
+**Step 8 is asserted by observing which account served the request**, not by
+reading the selector back. The negative half is also pinned: with the selected
+account disconnected a task refuses rather than falling back to another one
+(`multi-account.spec.ts :: a task refuses when the selected account is
+disconnected, with no fallback`). A fallback would be the defect that makes
+account selection meaningless, so its absence is measured rather than assumed.
 
 ---
 
@@ -193,9 +242,9 @@ Ten minutes, in this order.
    repository state that nothing is published, and they would all need
    correcting.
 4. **If it is still pending**, decide on capability alone — there is no defect
-   in it a reviewer can reach (§3). The question is whether the three
-   connectors, the web-component support and the proved account routing are
-   worth restarting the review for.
+   in it a reviewer can reach (§3). The question is whether the four
+   connectors, the web-component support and the proved account routing (§4a)
+   are worth restarting the review for.
 5. **If you choose to replace it**, run `npm run release` yourself and upload
    `release/ai-browser-agent-0.1.0.zip`. Verify the digest with
    `cd release && sha256sum -c ai-browser-agent-0.1.0.zip.sha256` before

@@ -250,9 +250,16 @@ launched: it cannot quit that browser and reattach to the same profile, and it
 cannot reload the extension out from under its own connection. Each is written
 and each takes a few minutes.
 
-**§85 D and E remain NOT POSSIBLE HERE** — they name Jira, Confluence, Figma
-and Google Sheets, and this repository implements one connector. That is a
-capability gap, not a credential gap, and no credential would unblock it.
+**§85 E remains NOT POSSIBLE HERE** — it names Jira, Confluence, Figma and
+Google Sheets and needs all four at once. Three of the four now exist; Google
+Sheets does not, and the item also requires a Jira write that Basic
+authentication cannot establish a scope for. That is a capability gap, not a
+credential gap, and no credential would unblock it.
+
+**§85 D no longer belongs with it.** It needed a Jira connector, which now
+exists, so it is `BLOCKED — SERVICE TOKEN`: one Atlassian API token away from
+executable. This paragraph used to hold both items and to say this repository
+implements one connector; it implements four.
 
 ---
 

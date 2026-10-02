@@ -128,25 +128,32 @@ a procedure, and whether it ships at all is owner decision C-1 in
 
 ## §85 — Mandatory acceptance
 
-| ID        | Capability                                      | Prerequisite                             | Exact action required                                                          | Automated coverage                                                             | Manual status          | Evidence                                                                                | Owner action                                      |
-| --------- | ----------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ | ---------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| 85-A-auto | Navigation, read, type, click, extraction       | none                                     | —                                                                              | `PASS` — 4 E2E cases in real Chromium                                          | n/a                    | `agent-task.spec.ts`, `extension-load.spec.ts`                                          | none                                              |
-| 85-A-1    | Whether the summary is accurate and useful      | a vendor API key                         | Configure a provider, run the A-1 prompt, compare the summary against the page | not assertable                                                                 | `BLOCKED — CREDENTIAL` | [85-mandatory.md](85-mandatory.md) A-1                                                  | supply one API key                                |
-| 85-B-auto | Tab discovery, switching, context separation    | none                                     | —                                                                              | `PASS` — multi-tab, tab groups, per-task isolation, taint per task             | n/a                    | `extension-load.spec.ts`, `agent-task.spec.ts`, `audit.spec.ts`, `exfiltration.test.ts` | none                                              |
-| 85-B-1    | A three-tab comparison                          | a vendor API key                         | Open three comparable pages, ask for a comparison, close one mid-task          | two tabs covered, not three                                                    | `BLOCKED — CREDENTIAL` | [85-mandatory.md](85-mandatory.md) B-1                                                  | supply one API key                                |
-| 85-C-auto | DOM, console, network and UI-state capture      | none                                     | —                                                                              | `PASS` — real debugger against a real tab, allowlist enforced                  | n/a                    | `mv3-lifecycle.spec.ts`, `security.spec.ts`                                             | none                                              |
-| 85-C-1    | Whether the diagnosis is correct                | a vendor API key                         | Stage a genuinely broken Save, ask for the cause, compare                      | not assertable                                                                 | `BLOCKED — CREDENTIAL` | [85-mandatory.md](85-mandatory.md) C-1                                                  | supply one API key; stage the broken page         |
-| 85-D      | Fetch PROJ-123, prefer the Jira connector       | **a Jira connector that does not exist** | Build a Jira connector                                                         | none, and none possible                                                        | `NOT IMPLEMENTED`      | [85-mandatory.md](85-mandatory.md) D                                                    | decide whether to build it; no credential helps   |
-| 85-E      | Jira + Confluence + Figma + Sheets QA workflow  | **four connectors that do not exist**    | Build four connectors                                                          | skill, browser, debugger, evidence and permission halves covered               | `NOT IMPLEMENTED`      | [85-mandatory.md](85-mandatory.md) E                                                    | decide whether to build them; no credential helps |
-| 85-F-auto | Same tools and policy across three adapters     | none                                     | —                                                                              | `PASS` — all three over real sockets against local servers in each wire format | n/a                    | `provider-switching.spec.ts` (10 cases)                                                 | none                                              |
-| 85-F-1    | The same workflow against real vendor endpoints | **three** vendor API keys                | Run the identical prompt on each; compare tools, prompts and answer            | local servers only                                                             | `BLOCKED — CREDENTIAL` | [85-mandatory.md](85-mandatory.md) F-1                                                  | supply OpenAI + Anthropic + Gemini keys           |
+| ID        | Capability                                      | Prerequisite                             | Exact action required                                                          | Automated coverage                                                                                   | Manual status             | Evidence                                                                                | Owner action                                        |
+| --------- | ----------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| 85-A-auto | Navigation, read, type, click, extraction       | none                                     | —                                                                              | `PASS` — 4 E2E cases in real Chromium                                                                | n/a                       | `agent-task.spec.ts`, `extension-load.spec.ts`                                          | none                                                |
+| 85-A-1    | Whether the summary is accurate and useful      | a vendor API key                         | Configure a provider, run the A-1 prompt, compare the summary against the page | not assertable                                                                                       | `BLOCKED — CREDENTIAL`    | [85-mandatory.md](85-mandatory.md) A-1                                                  | supply one API key                                  |
+| 85-B-auto | Tab discovery, switching, context separation    | none                                     | —                                                                              | `PASS` — multi-tab, tab groups, per-task isolation, taint per task                                   | n/a                       | `extension-load.spec.ts`, `agent-task.spec.ts`, `audit.spec.ts`, `exfiltration.test.ts` | none                                                |
+| 85-B-1    | A three-tab comparison                          | a vendor API key                         | Open three comparable pages, ask for a comparison, close one mid-task          | two tabs covered, not three                                                                          | `BLOCKED — CREDENTIAL`    | [85-mandatory.md](85-mandatory.md) B-1                                                  | supply one API key                                  |
+| 85-C-auto | DOM, console, network and UI-state capture      | none                                     | —                                                                              | `PASS` — real debugger against a real tab, allowlist enforced                                        | n/a                       | `mv3-lifecycle.spec.ts`, `security.spec.ts`                                             | none                                                |
+| 85-C-1    | Whether the diagnosis is correct                | a vendor API key                         | Stage a genuinely broken Save, ask for the cause, compare                      | not assertable                                                                                       | `BLOCKED — CREDENTIAL`    | [85-mandatory.md](85-mandatory.md) C-1                                                  | supply one API key; stage the broken page           |
+| 85-D      | Fetch PROJ-123, prefer the Jira connector       | an Atlassian API token                   | Connect Jira with your own token and site, then ask for one of your issues     | the connector, its binding and its tools in the registry are covered                                 | `BLOCKED — SERVICE TOKEN` | [85-mandatory.md](85-mandatory.md) D                                                    | create one API token                                |
+| 85-E      | Jira + Confluence + Figma + Sheets QA workflow  | **a Sheets connector, and a Jira write** | Build a Sheets connector; a Jira write needs scopes Basic auth cannot report   | three of its four connectors exist; skill, browser, debugger, evidence and permission halves covered | `NOT IMPLEMENTED`         | [85-mandatory.md](85-mandatory.md) E                                                    | decide whether to build Sheets; no credential helps |
+| 85-F-auto | Same tools and policy across three adapters     | none                                     | —                                                                              | `PASS` — all three over real sockets against local servers in each wire format                       | n/a                       | `provider-switching.spec.ts` (10 cases)                                                 | none                                                |
+| 85-F-1    | The same workflow against real vendor endpoints | **three** vendor API keys                | Run the identical prompt on each; compare tools, prompts and answer            | local servers only                                                                                   | `BLOCKED — CREDENTIAL`    | [85-mandatory.md](85-mandatory.md) F-1                                                  | supply OpenAI + Anthropic + Gemini keys             |
 
-**§85 D and E are `NOT IMPLEMENTED`, not credential-blocked.** They name Jira,
-Confluence, Figma and Google Sheets. This repository implements one connector,
-GitHub. Handing over every credential in the world would not make them
-runnable; the code does not exist. That is a capability gap tracked in
-`PARITY_MATRIX.md`, and it is the one item on this page that a purchase cannot
-fix.
+**§85 E is `NOT IMPLEMENTED`, not credential-blocked.** It names Jira,
+Confluence, Figma and Google Sheets and needs all four at once. Three now
+exist; Google Sheets does not, and the item also requires a Jira **write** that
+Basic authentication cannot establish a scope for. Handing over every
+credential in the world would not make it runnable. That is a capability gap
+tracked in `PARITY_MATRIX.md`, and it is the one item on this page that a
+purchase cannot fix.
+
+**§85 D has moved.** This paragraph used to hold D alongside E, on the grounds
+that _"this repository implements one connector, GitHub"_. Four connectors now
+exist, Jira among them, so D is `BLOCKED — SERVICE TOKEN`: executable by
+anybody with an Atlassian API token, which is section D-2 of
+`docs/release/OWNER-CHECKLIST.md`.
 
 ---
 
@@ -234,17 +241,25 @@ feature gets described as a missing credential.
 
 ### B. Individual connectors
 
-| Connector     | Implementation                                    | Status                                               |
-| ------------- | ------------------------------------------------- | ---------------------------------------------------- |
-| GitHub        | implemented (`src/connectors/adapters/github.ts`) | framework `PASS`; live use `BLOCKED — SERVICE TOKEN` |
-| Jira          | **does not exist**                                | `NOT IMPLEMENTED`                                    |
-| Confluence    | **does not exist**                                | `NOT IMPLEMENTED`                                    |
-| Figma         | **does not exist**                                | `NOT IMPLEMENTED`                                    |
-| Google Sheets | **does not exist**                                | `NOT IMPLEMENTED`                                    |
+| Connector     | Implementation                                        | Status                                               |
+| ------------- | ----------------------------------------------------- | ---------------------------------------------------- |
+| GitHub        | implemented (`src/connectors/adapters/github.ts`)     | framework `PASS`; live use `BLOCKED — SERVICE TOKEN` |
+| Figma         | implemented (`src/connectors/adapters/figma.ts`)      | framework `PASS`; live use `BLOCKED — SERVICE TOKEN` |
+| Jira          | implemented (`src/connectors/adapters/jira.ts`)       | framework `PASS`; live use `BLOCKED — SERVICE TOKEN` |
+| Confluence    | implemented (`src/connectors/adapters/confluence.ts`) | framework `PASS`; live use `BLOCKED — SERVICE TOKEN` |
+| Google Sheets | **does not exist**                                    | `NOT IMPLEMENTED`                                    |
 
-The four absent connectors are `NOT IMPLEMENTED`. They are not waiting on an
-OAuth application. Registering one for Jira would produce a client id with
-nothing to use it.
+Google Sheets is the one that remains `NOT IMPLEMENTED`, and it is the only one
+of the five where a registered client id would actually be the thing needed:
+Google's Chrome client type takes no secret. For the other four it never was —
+GitHub's web flow, Atlassian 3LO and Figma all require a `client_secret` this
+extension must not hold, so each is connected with a token the user creates in
+their own account instead. `docs/connectors.md` has the table and the sources.
+
+This paragraph used to say _"the four absent connectors are NOT IMPLEMENTED"_
+and that registering an application for Jira _"would produce a client id with
+nothing to use it"_. The second half was right for the wrong reason, and the
+first stopped being true.
 
 ### C. OAuth application requirement — GitHub only
 

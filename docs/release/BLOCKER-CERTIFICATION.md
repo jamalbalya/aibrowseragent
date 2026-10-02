@@ -24,9 +24,9 @@ operates.
 | #   | Blocked                                                                       | What is missing                                                                    | Clause        |
 | --- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------          | ----------    |
 | A-1 | A connector used against a real service                                       | **A token from the owner's own account.** Not a registered application — see below | `P-023-C8`    |
-| A-2 | The Tier 1 connector roadmap — Jira, Confluence, Sheets, Drive, Figma, GitHub | Three of the six are written; the other three, plus a credential for each          | `P-023-C9`    |
-| A-3 | The §44 reference QA workflow                                                 | Jira, Confluence, Figma and Sheets, with a **write** to Jira                       | `P-022-C8`    |
-| A-4 | The §44 reference QA skill                                                    | The same four services                                                             | `P-024-C9`    |
+| A-2 | The Tier 1 connector roadmap — Jira, Confluence, Sheets, Drive, Figma, GitHub | Four of the six are written; the other two are Google's and need a client id       | `P-023-C9`    |
+| A-3 | The §44 reference QA workflow                                                 | Three of its four services exist; Sheets does not, plus a **write** to Jira        | `P-022-C8`    |
+| A-4 | The §44 reference QA skill                                                    | The same four services, of which Sheets is now the only one missing                | `P-024-C9`    |
 | A-5 | Provider validation against live endpoints                                    | Paid credentials at OpenAI, Anthropic and Google                                   | `P-033-C5`    |
 | A-7 | Managed-plugin authenticity                                                   | An organization, for `chrome.storage.managed`                                      | `P-025-C7`    |
 | A-8 | Chrome Web Store submission                                                   | A developer account, a payment, and an agreement a person can be bound by          | Phases V–X    |
@@ -52,12 +52,13 @@ any of them**. It went unnoticed because with no client id the flow is refused
 before it starts, so nothing ever reached the step that needs the secret.
 
 What actually unblocks A-1 is a token the owner creates in their own account,
-which takes minutes and needs no registration at all. Three connectors now
-accept one — GitHub, Figma and Jira — and
+which takes minutes and needs no registration at all. Four connectors now
+accept one — GitHub, Figma, Jira and Confluence — and
 `docs/release/OWNER-CHECKLIST.md` section D is the procedure. A-2 still needs
-three more connectors written _and_ a credential for each, so it stays, but it
+two more connectors written _and_ a credential for each, so it stays, but it
 is no longer "doubly blocked" in the way this document claimed: writing them is
-ordinary work and the second lock was never a lock.
+ordinary work and the second lock was never a lock. The two that remain are
+Google's, and those are the ones where a client id genuinely is the blocker.
 
 **A-9 is new and has no clause.** No specification section asks for a live
 Google sign-in, so nothing in the parity matrix is waiting on it — but the

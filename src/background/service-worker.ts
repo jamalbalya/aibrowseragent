@@ -111,6 +111,12 @@ import { isIncomplete, type RecordedWorkflow } from '@/workflows/workflow-model'
 import { digestSteps } from '@/workflows/step-digest';
 import type { WorkflowSummary } from '@/messaging/protocol';
 import {
+  ConfluenceConnector,
+  confluenceDescriptor,
+  confluenceTokenProbeUrl,
+  readConfluenceTokenProbe,
+} from '@/connectors/adapters/confluence';
+import {
   JiraConnector,
   jiraDescriptor,
   jiraTokenProbeUrl,
@@ -864,6 +870,16 @@ const CONNECTOR_CLIENT_IDS: Readonly<Record<string, string>> = {};
 const CONNECTOR_TOKEN_HINTS: Readonly<
   Record<string, { label: string; issuePage: string; help: string; accountLabel?: string }>
 > = {
+  confluence: {
+    label: 'Atlassian API token',
+    accountLabel: 'The email address of your Atlassian account',
+    issuePage: 'https://id.atlassian.com/manage-profile/security/api-tokens',
+    help:
+      'The same kind of token Jira uses, and the same site — if you connected Jira you will ' +
+      'paste the same two values again, because each connector keeps its own credential and ' +
+      'its own reachable address. Read-only: it searches pages and reads one as text, and ' +
+      'changes nothing. Atlassian Cloud sites only.',
+  },
   jira: {
     label: 'Jira API token',
     accountLabel: 'The email address of your Atlassian account',
@@ -1338,7 +1354,71 @@ const jiraConnector = new JiraConnector({
 });
 
 registerConnector(figmaConnector);
+/**
+ * Confluence Cloud, the fourth connector and the last one that was reachable.
+ *
+ * The same site as Jira, the same credential kind, and a separate credential
+ * record — because one record holds one token and one bound origin, and
+ * `connectorId` is what the consent pin, the audit trail and the write guard
+ * key on. See the adapter for why sharing one would make "which connector may
+ * reach where" a question with two answers.
+ */
+const confluenceDescriptorValue = confluenceDescriptor();
+
+const confluenceSession = new ConnectorSession({
+  descriptor: confluenceDescriptorValue,
+  vault: connectorTokens,
+  authFlow: new TabAuthFlow(chromeTabs()),
+  clientId: '',
+  exchange: exchangeConnectorToken,
+  introspect: async (credential) => {
+    if (credential.boundOrigin === undefined) {
+      throw new Error('confluence_probe_without_bound_origin');
+    }
+    const probe = await probeConnectorToken(
+      confluenceTokenProbeUrl(credential.boundOrigin),
+      credential,
+    );
+    const body = probe.body !== null && typeof probe.body === 'object' ? probe.body : {};
+    return readConfluenceTokenProbe({
+      status: probe.status,
+      displayName: (body as { displayName?: unknown }).displayName,
+      email: (body as { email?: unknown }).email,
+    });
+  },
+  onStatusChange: (status) => {
+    void auditLog
+      .record({
+        type: 'connector.auth',
+        connectorId: status.connectorId,
+        connectorState: status.state,
+        outcome: status.state === 'READY' ? 'allowed' : 'info',
+        code: status.reason,
+        scopes: status.scopes,
+      })
+      .catch(() => undefined);
+    if (status.state === 'NEEDS_AUTH' && status.reason === 'grant_expired') {
+      void notifier.connectorAuthExpired(confluenceDescriptorValue.displayName);
+    }
+  },
+});
+
+const confluenceConnector = new ConfluenceConnector({
+  descriptor: confluenceDescriptorValue,
+  session: confluenceSession,
+  transport: createConnectorTransport({
+    descriptor: confluenceDescriptorValue,
+    vault: connectorTokens,
+    consent: consentStore,
+    onDecision: connectorEgressObserver,
+  }),
+  writes: connectorWrites,
+  egressFor: (taskId) => connectorEgressContexts.get(taskId),
+  boundOrigin: () => connectorTokens.boundOrigin(confluenceDescriptorValue.id),
+});
+
 registerConnector(jiraConnector);
+registerConnector(confluenceConnector);
 
 /**
  * Security contexts for in-flight tasks.
@@ -3183,6 +3263,14 @@ router.on('connector.connectToken', async ({ connectorId, token, site, account }
     // panel would exist in one more place than it needs to.
     [jiraDescriptorValue.id]: {
       session: jiraSession,
+      tokenType: 'Basic',
+      compose: jiraBasicCredential,
+      needsAccount: true,
+    },
+    // The same composition as Jira, because it is the same Atlassian
+    // credential — and a separate session, because it is a separate record.
+    [confluenceDescriptorValue.id]: {
+      session: confluenceSession,
       tokenType: 'Basic',
       compose: jiraBasicCredential,
       needsAccount: true,
