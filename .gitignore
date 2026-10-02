@@ -18,6 +18,9 @@ coverage/
 !.env.example
 *.log
 .vite/
+# Vitest's reporter output directory, created by `--reporter=json`. A build
+# artifact, never a source file.
+.vitest/
 
 test-results/
 playwright-report/

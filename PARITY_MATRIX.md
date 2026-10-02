@@ -804,18 +804,31 @@ than being absorbed into a verdict.
 
 ### P-033 Provider switching — what PASS means here
 
-Three adapters ship and all three pass one shared conformance suite; switching between them is
-exercised in integration and, in real Chromium, against local servers speaking
-the Anthropic, Gemini and Chat Completions protocols. Every ordered pair is
-tested, and each switch is shown to carry nothing with it: the egress
-consent pin binds a canonical provider destination and a model, so changing
-either invalidates the authorization rather than inheriting it, and the
+**Four** adapters ship and all four pass one shared 21-case conformance suite,
+over real sockets against local servers. Switching between them is exercised in
+integration; in **real Chromium** the socket round trips cover three of the four
+— the Anthropic, Gemini and Chat Completions protocols — and the fourth,
+`nine-router`, speaks Chat Completions through a gateway and is covered there by
+registry and descriptor assertions rather than by a round trip of its own.
+Every ordered pair is tested, and each switch is shown to carry nothing with it:
+the egress consent pin binds a canonical provider destination and a model, so
+changing either invalidates the authorization rather than inheriting it, and the
 refusal is reported as blocked — never as a retryable network fault.
-What has **not** happened is a request to a commercial provider: no
-project-owned credentials are configured in this environment, so live provider
-E2E is blocked externally. The row is PASS on the capability as specified —
-switch provider, keep the agent body — and that limitation is stated here
-rather than folded into the verdict.
+
+A request to a live commercial endpoint **has** now happened, which this
+section previously said had not. `tests/integration/nine-router-live.test.ts`
+drives the production pipeline — registry, guarded transport, adapter, egress
+gate, consent store, audit log, capability doctor — against a 9Router gateway
+the owner runs, fronting a real ChatGPT account: discovery, selection, the pin,
+a completion that came back, and a capability measurement. The suite is opt-in
+on two environment variables and skips without them, so it does not run in CI.
+
+What still has **not** happened is a request through the **native** `anthropic`
+or `gemini` adapters, or to `api.openai.com` directly rather than through a
+gateway — those need vendor keys this project does not hold. The row is PASS on
+the capability as specified — switch provider, keep the agent body — and both
+the new evidence and the remaining limit are stated here rather than folded
+into the verdict.
 
 ---
 
@@ -1594,11 +1607,12 @@ minimum:
    question left; exposing an MCP **server** needs an inbound channel every one
    of which is prohibited, and is not asked for.
 3. ~~At least three provider adapters passing the same suite, proving P-033
-   rather than asserting it.~~ **Done.** Three adapters —
-   `openai-compatible`, `anthropic`, `gemini` — pass one 21-case conformance
-   suite, and switching between them runs in real Chromium against servers
-   speaking each provider's real protocol. Live commercial endpoints remain
-   unexercised (see P-033 below).
+   rather than asserting it.~~ **Done.** **Four** adapters —
+   `openai-compatible`, `anthropic`, `gemini`, `nine-router` — pass one 21-case
+   conformance suite, and switching between them runs in real Chromium against
+   servers speaking each provider's real protocol. One live commercial endpoint
+   has since been exercised through the owner's own gateway; the native vendor
+   endpoints remain unexercised (see P-033 below).
 4. The acceptance tests from specification §85–89 executed and recorded.
 
 Progress against this list belongs in this file, updated in the same commit as

@@ -49,6 +49,8 @@ function documents(dir: string): string[] {
   return out;
 }
 
+import { API_PROVIDER_IDS } from '@/providers/registry/api-providers';
+
 const MARKDOWN = ['README.md', 'PARITY_MATRIX.md', ...documents('docs')];
 
 describe('the repository does not claim a publication that has not happened', () => {
@@ -296,5 +298,90 @@ describe('the release artifact is packaged deterministically', () => {
 
   it('says in its own output that nothing has been published', () => {
     expect(PACKAGER).toContain('has NOT been submitted or published anywhere');
+  });
+});
+
+describe('the parity records know what the build actually registers', () => {
+  /**
+   * A provider added without reaching the parity records is a record that
+   * understates the product, and this repository has just had one.
+   *
+   * `nine-router` was registered in `ccb113e` and four commits later neither
+   * `PARITY_MATRIX.md` nor `parity-evidence.json` mentioned it: the matrix still
+   * said "Three adapters ship and all three pass one shared conformance suite",
+   * and P-033-C5 still asserted "what has not happened is a request to a
+   * commercial endpoint" after one had. Both were true when written, and both
+   * had quietly stopped being true — which is the failure mode this file exists
+   * to catch, in the direction nobody watches: a claim that is too *small*.
+   *
+   * The registry is the source of truth, read rather than restated.
+   */
+  const PARITY = read('PARITY_MATRIX.md');
+  const EVIDENCE = read('parity-evidence.json');
+
+  it('names every registered provider in the parity matrix', () => {
+    for (const id of API_PROVIDER_IDS) {
+      expect(PARITY, `PARITY_MATRIX.md does not mention ${id}`).toContain(id);
+    }
+  });
+
+  it('counts adapters the way the registry does, wherever it counts them', () => {
+    // The specific stale sentence, generalised: any claim about how many
+    // adapters *ship* or *pass the conformance suite* has to agree with the
+    // registry. Claims about how many **vendor keys** the §85-F scenario needs
+    // are a different statement and are deliberately not matched — 9Router is a
+    // gateway the owner runs, not a fourth vendor, so "three vendor keys for
+    // three adapters" remains the right requirement there.
+    const words = ['one', 'two', 'three', 'four', 'five', 'six'];
+    const expected = words[API_PROVIDER_IDS.length - 1];
+    expect(expected, 'provider count outgrew this list').toBeDefined();
+    // Guard the guard: an off-by-one here would compare against the wrong word
+    // and fail for the right records.
+    expect(words[3]).toBe('four');
+    expect(API_PROVIDER_IDS.length).toBeGreaterThanOrEqual(4);
+
+    for (const [label, raw] of [
+      ['PARITY_MATRIX.md', PARITY],
+      ['parity-evidence.json', EVIDENCE],
+    ] as const) {
+      // Struck-through text is superseded history, kept on purpose — the
+      // roadmap item "~~At least three provider adapters passing the same
+      // suite~~ **Done.**" is a record of what was once asked for, and
+      // rewriting it would destroy the thing that makes it a record. Matching
+      // it would forbid the honesty, the same way forbidding the words "Chrome
+      // Web Store" would forbid the statements above that it is not published.
+      const text = raw.replace(/~~[\s\S]*?~~/g, '');
+      const claims = [
+        ...text.matchAll(
+          /\b(one|two|three|four|five|six)\b[^.\n]{0,40}?adapters?\s+(?:ship|pass)/gi,
+        ),
+        ...text.matchAll(/all\s+\b(one|two|three|four|five|six)\b\s+adapters/gi),
+      ].map((match) => match[1]!.toLowerCase());
+      for (const claim of claims) {
+        expect(claim, `${label} claims ${claim} adapters; the registry has ${expected}`).toBe(
+          expected,
+        );
+      }
+    }
+  });
+
+  it('does not still say a commercial endpoint has never been reached', () => {
+    // The clause's own note carried that sentence after it had stopped being
+    // true. It is a factual claim about what has happened, so it belongs under
+    // the same rule as every other claim in this suite.
+    expect(EVIDENCE).not.toMatch(/has not happened is a request to a commercial endpoint/i);
+    expect(PARITY).not.toMatch(/has \*\*not\*\* happened is a request to a commercial provider/i);
+    // And the evidence that replaced it is cited, so the correction is
+    // checkable rather than asserted.
+    expect(EVIDENCE).toContain('nine-router-live.test.ts');
+  });
+
+  it('still says plainly what has not been reached', () => {
+    // Correcting the stale half must not quietly drop the limit that remains:
+    // the native vendor endpoints are unexercised and need keys nobody here
+    // holds. A row that loses its blocker reads as complete.
+    expect(EVIDENCE).toMatch(/native anthropic or gemini adapters/i);
+    expect(EVIDENCE).toMatch(/api\.openai\.com directly/i);
+    expect(PARITY).toMatch(/native\*{0,2} `?anthropic`?\s*\n?\s*or `?gemini`?/i);
   });
 });
