@@ -167,7 +167,7 @@ All run on the tree this candidate was built from, on Node 22.23.3.
 | ----------------------------- | --------------------------------------------------------------------------------------------------- |
 | `npm run verify`              | pass — format, lint, typecheck, tests, build, package, parity, acceptance, notices                  |
 | Unit / integration / security | 4,519 passed, 34 skipped, 185 files                                                                 |
-| Real-Chromium E2E             | 524 passed, in 8.3 minutes, against this tree                                                       |
+| Real-Chromium E2E             | 525 passed, in 9.4 minutes, against this tree                                                       |
 | `npm audit --omit=dev`        | 0 vulnerabilities                                                                                   |
 | Reproducibility               | deterministic over repeated packing, digest verified with `sha256sum -c`                            |
 | Parity                        | 36 PASS / 3 PARTIAL / 1 NOT-STARTED across 40 capabilities                                          |

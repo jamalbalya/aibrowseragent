@@ -3080,6 +3080,7 @@
         "tests/integration/task-manager.test.ts"
       ],
       "e2e": [
+        "tests/e2e/browser-restart.spec.ts",
         "tests/e2e/handle-recovery.spec.ts",
         "tests/e2e/mv3-lifecycle.spec.ts",
         "tests/e2e/task-pause.spec.ts"
