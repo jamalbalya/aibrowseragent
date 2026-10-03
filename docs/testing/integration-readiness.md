@@ -394,35 +394,51 @@ the real extension in real Chromium.
 "LIVE-VERIFIED (browser)" is deliberately qualified. It means the Chrome API was
 really called and really answered. It says nothing about any provider.
 
-### One known limitation, examined and deliberately left
+### A limitation I overstated, now measured
 
-**A retired model stays selected after it has failed.** `modelStale` — the
-mechanism that refuses a selection before spending a request on it — is set
-only by **discovery**, when the chosen id is absent from the catalogue. A
-retired Gemini model is _present_ in the catalogue; that is the whole problem.
-So nothing records what the worker learned when the task failed, and the panel
-goes on showing a dead model as the selected brain.
+**This section used to claim more than was true, and the correction is the
+point.** It said a retired model "stays selected after it has failed", with
+nothing recording what the worker had learned, and concluded that closing it
+properly needed a protocol change not worth making blind.
 
-This was investigated and **not fixed**, which is a decision rather than an
-omission:
+Reading the code again, and then running it, says otherwise. The chain already
+exists:
 
-- The signal is not distinguishable where it would have to be read. A provider
-  rejecting the model and this build's own capability guard refusing an
-  **unverified** capability are separate categories (`unsupported_capability`
-  and `capability_unverified`) that deliberately map to one `ErrorCode`,
-  `MODEL_UNSUPPORTED`, and the category does not survive the conversion to an
-  `AgentError`. The task lifecycle sees one code for both.
-- Acting on that code would therefore also mark a model stale for having an
-  unmeasured capability — making a perfectly good model unusable until the
-  next discovery. That is a worse defect than the one being fixed.
-- And the harm is bounded: the refusal now says _"this model is still listed
-  but Google has retired it for this account — choose a different model"_, so
-  the user is told the right thing on the first failure. Marking it stale would
-  save a second attempt by somebody who ignored the first message.
+1. A doctor run on a retired model ends `FAILED` — its `model` check _passes_,
+   because the model is genuinely in the vendor's list, and the `text` check is
+   what fails.
+2. `doctorVerdict` maps `FAILED` to `status: 'failed'` and keeps the summary as
+   `statusReason`.
+3. `ConnectedAccounts.tsx` renders that reason as a warning on the account row.
 
-Closing it properly means carrying the provider's category to the lifecycle,
-the same way `retryAfterMs` is now read off the thrown error rather than off
-`AgentError`. That is a protocol change and it is not worth making blind.
+Verified end to end against the live vendor on 4 October 2026, through the
+extension's own account routes:
+
+```
+retired model: readiness=FAILED  summary="This model is still listed but Google
+                                 has retired it for this account. Choose a
+                                 different model…"
+retired row:   status=failed     reason=(the same sentence)
+```
+
+So the worker does write down what it learned, and the panel does show it. What
+is genuinely still true, and all that is:
+
+- **The vendor's model list cannot be filtered.** Google lists
+  `gemini-2.5-flash`, `gemini-2.5-pro` and `gemini-2.5-flash-lite` and refuses
+  to run them. Knowing which of a catalogue a credential can use means probing
+  each one, which spends the user's quota on a question the first real task
+  answers for free.
+- **`modelStale` is still set only by discovery.** A retired model is in the
+  catalogue, so it is never marked stale, so the next task is _attempted_
+  rather than refused in advance. That costs one failed request after the
+  warning is already on screen — and it is the right trade: the alternative
+  fights with discovery over the same flag, and a model wrongly marked stale is
+  an account that cannot run at all.
+
+The lesson worth keeping is about the earlier write-up rather than the code. It
+reasoned from one file — `modelStale` is not set, therefore nothing is recorded
+— and stopped. Three files along, something was.
 
 ### Two reach limits that no amount of testing closes
 

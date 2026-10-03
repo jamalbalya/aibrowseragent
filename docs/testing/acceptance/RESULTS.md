@@ -483,6 +483,38 @@ ABA_LIVE_MODEL=gpt-4.1-nano npx vitest run tests/integration/provider-live.test.
   narrow condition does not misfire on real traffic.
 - Verdict after fix: EXECUTED — MET
 
+### §84 — a retired model, through the extension's own routes — 2026-10-04 — EXECUTED — MET
+
+- Commit: `f29bad0`
+- Vendor: Google Gemini API; model `gemini-2.5-flash`, which the vendor lists
+  and refuses to run.
+- **Why it was run:** a previous write-up recorded this as a known limitation,
+  saying a retired model _"stays selected after it has failed"_ with nothing
+  recording what the worker had learned. That reasoned from one file —
+  `modelStale` is set only by discovery, and a retired model is in the
+  catalogue, so it is never marked stale — and stopped there.
+- Observed, through `accounts.runDoctor` inside the extension:
+  - `readiness: FAILED`. The doctor's `model` check **passes**, because the
+    model genuinely is in the vendor's list; the `text` check is what fails.
+  - The account row then reads `status: failed` with
+    `statusReason: "This model is still listed but Google has retired it for
+this account. Choose a different model — a current one from the list will
+work."`
+  - `ConnectedAccounts.tsx` renders that reason as a warning, so the panel
+    shows it.
+- So the chain exists and joins up: the worker writes down what it learned and
+  the panel displays it. The earlier limitation was **overstated** and the
+  write-up has been corrected.
+- What remains true, and is all that does: the vendor's list cannot be filtered
+  without probing every entry at the user's expense, and because the model is
+  in the catalogue it is never marked stale — so the next task is attempted
+  rather than refused in advance, costing one failed request after the warning
+  is already on screen. That is the better trade: the alternative fights
+  discovery over the same flag, and a model wrongly marked stale is an account
+  that cannot run at all.
+- Evidence: `tests/e2e/live-provider-in-browser.spec.ts`, phase 4b.
+- Verdict: EXECUTED — MET
+
 ### §87 — the anthropic protocol path of the live harness — 2026-10-03 — EXECUTED — BLOCKED (no key)
 
 - Commit: `efafc48`

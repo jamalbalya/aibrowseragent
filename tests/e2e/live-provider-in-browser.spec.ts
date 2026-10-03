@@ -281,6 +281,65 @@ test('the account journey, end to end, against real vendors', async ({
   expect(JSON.stringify(onOther).includes(KEY)).toBe(false);
   expect(JSON.stringify(onOther).includes(OTHER_KEY)).toBe(false);
 
+  // ---- Phase 4b: a model the vendor lists and has retired ---------------
+  //
+  // **The question this answers**, which was documented as a known limitation
+  // and framed too pessimistically. Google's model list leads with
+  // `gemini-2.5-flash`, `gemini-2.5-pro` and `gemini-2.5-flash-lite`, all of
+  // which answer 404 *"no longer available to new users"*. They are therefore
+  // selectable, and nothing can stop them being listed — the vendor lists
+  // them.
+  //
+  // What was written down was that such a model "stays selected after it has
+  // failed", with nothing recording what the worker learned. Reading the code
+  // again says otherwise: a doctor run on it ends `FAILED`, `doctorVerdict`
+  // maps that to `status: 'failed'` with the summary as `statusReason`, and
+  // `ConnectedAccounts.tsx` renders that reason as a warning. So the chain
+  // exists. This phase is whether it actually joins up against the real
+  // vendor, because reading three files in a row is how a chain is believed
+  // rather than known.
+  const retired = await send('accounts.connect', {
+    providerId: 'gemini',
+    apiKey: KEY,
+    displayName: 'Retired model (live)',
+  });
+  expect(retired.account).not.toBeNull();
+  const retiredId = retired.account!.connectionId;
+  // Deliberately **not** `setBrain`. `accounts.runDoctor` takes the connection
+  // and model directly, so measuring a model does not require selecting it —
+  // and an earlier version of this phase did select it, which made the brain
+  // the retired account and left it null when the phase disconnected it. The
+  // later assertion about which account the brain survives on then failed, on
+  // my own sequencing rather than on the product.
+  const retiredReport = await send('accounts.runDoctor', {
+    connectionId: retiredId,
+    modelId: 'gemini-2.5-flash',
+  });
+  process.stdout.write(
+    `[E2ELIVE] retired model: readiness=${retiredReport.report.readiness} ` +
+      `summary=${JSON.stringify(retiredReport.report.summary.slice(0, 90))}\n`,
+  );
+
+  // It is listed, so it measures — and it measures as broken.
+  expect(retiredReport.report.readiness).toBe('FAILED');
+
+  const afterDoctor = await send('accounts.list', {});
+  const row = afterDoctor.accounts.find((a) => a.connectionId === retiredId);
+  process.stdout.write(
+    `[E2ELIVE] retired row: status=${row?.status} reason=${JSON.stringify(
+      (row?.statusReason ?? '').slice(0, 90),
+    )}\n`,
+  );
+
+  // The worker wrote down what it learned, and the panel reads this row.
+  expect(row?.status).toBe('failed');
+  expect(row?.statusReason ?? '').not.toHaveLength(0);
+  // And the reason is the actionable one, not "check it against the model
+  // list" — the list is where the model came from.
+  expect(row?.statusReason).not.toMatch(/check it against the model list/i);
+
+  await send('accounts.disconnect', { connectionId: retiredId });
+
   // ---- Phase 5: disconnecting the first account -------------------------
   await send('accounts.disconnect', { connectionId });
   const after = await send('accounts.list', {});

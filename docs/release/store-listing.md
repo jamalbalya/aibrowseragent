@@ -268,6 +268,49 @@ is about Google's definition rather than about this code; what has changed is
 that it can no longer produce a form/policy mismatch, and nothing downstream is
 waiting on it.
 
+### Wording you can use, whichever way you answer
+
+Factual sentences, for the justification box beside the answer. They describe
+what the extension does and take no position on the question — so the same
+facts support either answer, which is the point.
+
+**If you answer "No":**
+
+> The extension does not collect authentication information. It has no login
+> of its own and creates no account. An API key the user obtains from their own
+> AI provider, and — for a Google-authorized Gemini connection — the OAuth
+> access and refresh tokens issued to that user, are stored in the browser's
+> own extension storage on the user's device and sent only to the provider they
+> belong to, as request headers. None of it is transmitted to the developer or
+> to any third party, and nothing is collected from the user's accounts.
+
+**If you answer "Yes":**
+
+> The extension stores authentication information supplied by the user: an API
+> key the user obtains from their own AI provider, and — for a Google-authorized
+> Gemini connection — the OAuth access and refresh tokens issued to that user.
+> Both are held in the browser's own extension storage on the user's device and
+> sent only to the provider they belong to, as request headers. Neither is
+> transmitted to the developer or to any third party, and the extension has no
+> login of its own.
+
+**What makes the two answers both defensible**, stated once so the choice is
+informed rather than arbitrary:
+
+| Reading                                                                               | Rests on                                                                                                                                                                                              |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **No** — nothing is _collected_                                                       | Chrome's examples are _"logins, passwords, and authentication cookies"_. The user's own API key is none of those, nothing is gathered _from_ their accounts, and there is no login to this extension. |
+| **Yes** — an OAuth token is authentication information, and the extension handles one | Chrome's guidance names _"having login functionality, even if using a third-party system like Google authentication"_, and this build does run a Google authorization flow for Gemini.                |
+
+Both sentences above are true of the implementation and verifiable from it:
+`tests/security/credential-boundary.test.ts` holds that no credential reaches
+the audit trail, evidence, a task record, a log, a model prompt or a URL, and
+`docs/release/data-flows.md` lists every destination a credential is sent to.
+
+**This repository does not pick one.** The question is about Google's
+definition rather than about this code, the form is submitted by the owner, and
+a declaration nobody chose is worse than either answer.
+
 Supporting detail is in [`data-flows.md`](data-flows.md), category by
 category.
 

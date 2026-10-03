@@ -317,6 +317,27 @@ If it answers, the question is closed. If Google refuses, the message is the
 finding — the extension already turns the two refusals it can anticipate into
 sentences naming the fix, and anything else should be reported verbatim.
 
+## Provider by provider: what connects, and how models are found
+
+The twelve questions the account audit asks, answered in one place from the
+implementation rather than from intent. "Live" means a real request to the
+vendor has been made and recorded.
+
+| Question                                                  | Answer                                                                                                                                                                                                                                                |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Which providers can be connected today                    | Four, one per **protocol**: `openai-compatible`, `anthropic`, `gemini`, `nine-router`. `known-endpoints.ts` names vendors that speak one of them, as defaults and nothing more.                                                                       |
+| Which connection methods each supports                    | A pasted credential for all four. A Google authorization for `gemini` only, and only in a build carrying a client id — which no published build has.                                                                                                  |
+| OAuth, API key, or other                                  | API key: all four. OAuth: `gemini`, implemented and never exercised against a real grant. No provider has any other mechanism.                                                                                                                        |
+| Live or static model discovery                            | **Live, for all four.** Every adapter reports `modelListing: true`, and `known-endpoints.ts` states it is not _"a model list — models are discovered from the endpoint, never declared here"_. There is no static catalogue to go stale.              |
+| Account-specific where the provider distinguishes         | Yes — the list is whatever that credential's own `/models` call returns. Measured: 44 from a Gemini key, 466 from one gateway, 127 from `api.openai.com`, 35 from another gateway.                                                                    |
+| Can unavailable models appear selectable                  | **Yes, and it cannot be prevented.** Google lists three models it refuses to run. What happens then is measured: the doctor reports `FAILED`, the account row reads `failed` with the reason, and the panel shows it. See `integration-readiness.md`. |
+| Does reconnecting preserve or update the right connection | A reconnection mints a new `connectionId`; the old row is removed by `accounts.disconnect`. The one dead end there — an expired authorization producing a duplicate row — was closed earlier and `ConnectedAccounts.tsx` records why.                 |
+| Is model selection persisted                              | Yes, on the account record, and it survives a real service-worker termination — asserted in `multi-account.spec.ts` and again live in the browser.                                                                                                    |
+| Does switching providers update the brain consistently    | Yes, and **verified between two different vendors**: after `accounts.setBrain`, the next task records the second vendor's `providerId` and completes.                                                                                                 |
+| Are provider failures handled clearly                     | Each has its own sentence and its own retryability. Revoked and rejected credentials, an exhausted quota, a retired model, an unreadable reply and a rate limit are five distinct outcomes, four of them found by running against real vendors.       |
+| Does any UI imply unimplemented capability                | Audited: no. `AuthorizationMethods.tsx` refuses to show one _Connect with Google_ button above a list of providers, reasoning in-source that it _"would imply that one Google consent reaches all of them"_.                                          |
+| Is there a mandatory product login                        | No. `standalone-ux.spec.ts` asserts the normal path never asks, and the whole provider journey runs with no product sign-in.                                                                                                                          |
+
 ## The journey's order, and the defect that made it impossible
 
 The journey in §1 is: connect, see what this credential can actually reach,
