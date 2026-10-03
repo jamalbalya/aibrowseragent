@@ -187,47 +187,53 @@ own documentation.
 
 | ID    | Item                   | Automated (local)                   | Manual (real vendor)   | Evidence                                                              |
 | ----- | ---------------------- | ----------------------------------- | ---------------------- | --------------------------------------------------------------------- |
-| 87-01 | connect                | `PASS`                              | `BLOCKED — CREDENTIAL` | `provider-integration.spec.ts`, `provider-switching.spec.ts`          |
-| 87-02 | validate               | `PASS`                              | `BLOCKED — CREDENTIAL` | `capability-doctor.test.ts` (17 cases)                                |
-| 87-03 | list models            | `PASS`                              | `BLOCKED — CREDENTIAL` | `capability-doctor.test.ts`                                           |
-| 87-04 | text generation        | `PASS`                              | `BLOCKED — CREDENTIAL` | `provider-switching.spec.ts`, `anthropic.test.ts`, `gemini.test.ts`   |
-| 87-05 | streaming              | `PASS`                              | `BLOCKED — CREDENTIAL` | `openai-compatible.test.ts` (split chunks, CRLF, unterminated frame)  |
-| 87-06 | tool calling           | `PASS`                              | `BLOCKED — CREDENTIAL` | `provider-switching.spec.ts`, `provider-integration.spec.ts`          |
+| 87-01 | connect                | `PASS`                              | `LIVE 2026-10-03`      | `provider-integration.spec.ts`, `provider-switching.spec.ts`          |
+| 87-02 | validate               | `PASS`                              | `LIVE 2026-10-03`      | `capability-doctor.test.ts` (17 cases)                                |
+| 87-03 | list models            | `PASS`                              | `LIVE 2026-10-03`      | `capability-doctor.test.ts`                                           |
+| 87-04 | text generation        | `PASS`                              | `LIVE 2026-10-03`      | `provider-switching.spec.ts`, `anthropic.test.ts`, `gemini.test.ts`   |
+| 87-05 | streaming              | `PASS`                              | `LIVE 2026-10-03`      | `openai-compatible.test.ts` (split chunks, CRLF, unterminated frame)  |
+| 87-06 | tool calling           | `PASS`                              | `LIVE 2026-10-03`      | `provider-switching.spec.ts`, `provider-integration.spec.ts`          |
 | 87-07 | multiple tool calls    | `PASS`                              | `BLOCKED — CREDENTIAL` | `sustained-task.test.ts` (18 turns, 36 calls)                         |
-| 87-08 | vision                 | `PASS` (encoding + capability gate) | `BLOCKED — CREDENTIAL` | `openai-compatible.test.ts`, `agent-task.spec.ts`                     |
-| 87-09 | invalid credentials    | `PASS`                              | `BLOCKED — CREDENTIAL` | `provider-integration.spec.ts`, `capability-doctor.test.ts`           |
+| 87-08 | vision                 | `PASS` (encoding + capability gate) | `LIVE 2026-10-03`      | `openai-compatible.test.ts`, `agent-task.spec.ts`                     |
+| 87-09 | invalid credentials    | `PASS`                              | `LIVE 2026-10-03`      | `provider-integration.spec.ts`, `capability-doctor.test.ts`           |
 | 87-10 | expired auth           | `PASS`                              | `BLOCKED — CREDENTIAL` | `token-vault.test.ts` (an API key is revoked, not expired — see note) |
-| 87-11 | rate limiting          | `PASS`                              | `BLOCKED — CREDENTIAL` | `provider-integration.spec.ts`, `budget-retry.test.ts`                |
-| 87-12 | unsupported capability | `PASS`                              | `BLOCKED — CREDENTIAL` | `provider-integration.spec.ts`, `provider-switching.spec.ts`          |
+| 87-11 | rate limiting          | `PASS`                              | `LIVE 2026-10-03`      | `provider-integration.spec.ts`, `budget-retry.test.ts`                |
+| 87-12 | unsupported capability | `PASS`                              | `LIVE 2026-10-03`      | `provider-integration.spec.ts`, `provider-switching.spec.ts`          |
 
-### Nine of the twelve no longer need a person
+### Ten of the twelve have now been executed live
 
-The statuses above stay `BLOCKED — CREDENTIAL`, because a status records what
-happened and nothing here has been run against a vendor. What changed is the
-_effort_: `tests/integration/provider-live.test.ts` is an opt-in harness that
-speaks all four protocols, and one command with one key now exercises most of
-this table automatically.
+Written before any credential existed, this section predicted that nine of the
+twelve could be automated and three would stay manual. The prediction was
+nearly right and wrong in an instructive place.
 
-| Item                         | Covered by the harness | Where                                                        |
-| ---------------------------- | ---------------------- | ------------------------------------------------------------ |
-| 87-01 connect                | yes                    | case A2                                                      |
-| 87-02 validate               | yes                    | case A2, `validateConnection`                                |
-| 87-03 list models            | yes                    | the module-scope probe, asserted in A1                       |
-| 87-04 text generation        | yes                    | case C1                                                      |
-| 87-05 streaming              | yes                    | case C2                                                      |
-| 87-06 tool calling           | yes                    | case B1 (the doctor) and case D1                             |
-| 87-07 multiple tool calls    | **no**                 | D1 takes one call over two turns, not many                   |
-| 87-08 vision                 | yes, as a doctor check | case B1 reports the vision probe's verdict                   |
-| 87-09 invalid credentials    | yes                    | case E2, with the credential absent from the error           |
-| 87-10 expired auth           | **no**                 | needs a credential that actually expires                     |
-| 87-11 rate limiting          | **no**                 | needs the account to actually be rate limited                |
-| 87-12 unsupported capability | partly                 | B1 reports each check's own verdict, including `unsupported` |
+On 3 October 2026 the harness ran against two real services — Google's Gemini
+API with a free AI Studio key, and a commercial gateway speaking Chat
+Completions. Ten rows above now read `LIVE 2026-10-03`.
 
-So three of the twelve genuinely need a person or an unusual condition. The
-other nine need a key and one command, and the harness also covers something no
-procedure in this table asks for: a real **tool result** sent back for another
-turn, which is the first thing a task does that no probe here has ever done
-against a real endpoint. See
+| Item                         | Live result                                                                                                                                                                                                     |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 87-01 connect                | both services                                                                                                                                                                                                   |
+| 87-02 validate               | both                                                                                                                                                                                                            |
+| 87-03 list models            | 44 models from Gemini, 466 from the gateway                                                                                                                                                                     |
+| 87-04 text generation        | on the gateway; Gemini's free quota ran out first                                                                                                                                                               |
+| 87-05 streaming              | both — and this is where defect 2 was found                                                                                                                                                                     |
+| 87-06 tool calling           | both — and this is where defect 1 was found                                                                                                                                                                     |
+| 87-07 multiple tool calls    | **not done.** One call over two turns is not many                                                                                                                                                               |
+| 87-08 vision                 | Gemini's probe passed; the gateway's free models declined, which is a fact about them                                                                                                                           |
+| 87-09 invalid credentials    | both, with the credential absent from the error                                                                                                                                                                 |
+| 87-10 expired auth           | **not done.** Needs a credential that actually expires                                                                                                                                                          |
+| 87-11 rate limiting          | **done, and not by design.** Free tiers rate-limit constantly, so this was unavoidable rather than arranged — and it found a defect: `Retry-After` was parsed, recorded, and never read when scheduling a retry |
+| 87-12 unsupported capability | both, as observed per-check verdicts                                                                                                                                                                            |
+
+So the prediction got 87-11 backwards. It was listed as needing "the account to
+actually be rate limited", as though that were hard to arrange; on a free tier
+it is hard to avoid, and every live run hit it. Two rows genuinely remain, and
+both need a condition rather than a key: many tool calls in one task, and a
+credential that expires while in use.
+
+The run also exercised something no procedure in this table asks for: a model
+the endpoint **lists and refuses to run**. Google's first three generative
+entries are retired. See
 [integration-readiness.md](../integration-readiness.md).
 
 ### Minimum credentials required

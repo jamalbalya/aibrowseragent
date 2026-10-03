@@ -196,11 +196,36 @@ const CLIENT_PROBLEM_CODES: ReadonlySet<string> = new Set([
   'unauthorized_client',
 ]);
 
-const CLIENT_MISMATCH_REASON =
-  'Google did not accept this build’s OAuth client. The client is registered to one ' +
-  'extension id, and this build’s id is different — an unpacked build and a published one ' +
-  'never share one. See docs/release/OWNER-CHECKLIST.md section G-6, or connect with a ' +
-  'Gemini API key instead.';
+/**
+ * What to say when Google refuses this build's OAuth client.
+ *
+ * The sentence used to name the cause and stop there, which left the owner to
+ * work out the one fact that fixes it. The redirect URI is derived from the
+ * extension id, the extension knows its own id exactly, and the Google console
+ * wants that string pasted in verbatim — so a message that withholds it sends
+ * somebody to `chrome://extensions` to copy an id and assemble a URL by hand,
+ * from a diagnostic that could simply have told them.
+ *
+ * `redirectUri` is passed rather than computed here because this module never
+ * touches `chrome.*`: the id reaches it through the prepared authorization,
+ * which is also the only place it is known to be the id the request actually
+ * used.
+ */
+function clientMismatchReason(redirectUri: string | undefined): string {
+  const base =
+    'Google did not accept this build’s OAuth client. The client is registered to one ' +
+    'extension id, and this build’s id is different — an unpacked build and a published one ' +
+    'never share one. ';
+  const which =
+    redirectUri === undefined
+      ? ''
+      : `Register this exact redirect URI on the client: ${redirectUri} `;
+  return (
+    base +
+    which +
+    'See docs/release/OWNER-CHECKLIST.md section G-6, or connect with a Gemini API key instead.'
+  );
+}
 
 /**
  * Reads a callback, or says exactly why it was refused.
@@ -249,7 +274,11 @@ export function readGoogleCallback(
     // no, and they are separated here because the fix differs and belongs to
     // somebody else.
     if (CLIENT_PROBLEM_CODES.has(refused)) {
-      return { ok: false, failure: 'CLIENT_MISMATCH', reason: CLIENT_MISMATCH_REASON };
+      return {
+        ok: false,
+        failure: 'CLIENT_MISMATCH',
+        reason: clientMismatchReason(pending.redirectUri),
+      };
     }
     return {
       ok: false,
@@ -517,7 +546,11 @@ export class GoogleProviderAuth {
       // authorization code back. Matched against a known set and discarded;
       // what the user sees is this build's sentence.
       if (namesAClientProblem(response.body)) {
-        return { ok: false, failure: 'CLIENT_MISMATCH', reason: CLIENT_MISMATCH_REASON };
+        return {
+          ok: false,
+          failure: 'CLIENT_MISMATCH',
+          reason: clientMismatchReason(this.options.redirectUri),
+        };
       }
       return {
         ok: false,

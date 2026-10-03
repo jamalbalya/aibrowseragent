@@ -82,6 +82,13 @@ interface WirePart {
   inlineData?: { mimeType?: string; data?: string };
   functionCall?: { name?: string; args?: unknown };
   functionResponse?: { name?: string; response?: unknown };
+  /**
+   * An opaque token Google attaches beside a `functionCall` and requires back.
+   *
+   * A sibling field on the Part, not inside `functionCall`. Replaying a call
+   * without it is refused — see `CanonicalToolCall.providerSignature`.
+   */
+  thoughtSignature?: string;
 }
 
 interface WireContent {
@@ -555,7 +562,8 @@ export class GeminiAdapter implements AIProviderAdapter {
           accumulator.appendText(part.text);
           yield { type: 'text_delta', delta: part.text };
         }
-        if (part.functionCall) accumulator.addFunctionCall(part.functionCall);
+        // The whole part: the signature is a sibling of `functionCall`.
+        if (part.functionCall) accumulator.addFunctionCall(part);
       }
       if (candidate?.finishReason) accumulator.setFinishReason(candidate.finishReason);
       if (chunk.usageMetadata) {
@@ -626,7 +634,8 @@ function buildBody(request: CanonicalRequest): Record<string, unknown> {
         functionDeclarations: request.tools.map((tool) => ({
           name: tool.name,
           description: tool.description,
-          parameters: tool.parameters,
+          // Translated, not passed through: see `toWireSchema`.
+          parameters: toWireSchema(tool.parameters),
         })),
       },
     ];
@@ -634,6 +643,120 @@ function buildBody(request: CanonicalRequest): Record<string, unknown> {
   }
 
   return body;
+}
+
+/**
+ * Fields Google's `Schema` type actually has.
+ *
+ * Gemini's `functionDeclarations[].parameters` is not JSON Schema. It is
+ * Google's `Schema` message — an OpenAPI 3.0 subset — and it is parsed by
+ * protobuf JSON, which **rejects an unknown field** rather than ignoring it.
+ * A canonical tool schema carrying one gets the whole request refused:
+ *
+ *   400 Invalid JSON payload received. Unknown name "additionalProperties"
+ *   at 'tools[0].function_declarations[0].parameters': Cannot find field.
+ *
+ * That is not a hypothetical. The capability doctor's own probe tool declares
+ * `additionalProperties: false`, which is ordinary and correct JSON Schema and
+ * which every other provider here accepts. So on Gemini the tool-calling probe
+ * failed every time, the model was reported `CHAT_ONLY`, and **the browser
+ * agent could not run on Gemini at all** — on the one provider this build
+ * supports a Google authorization for. No mocked test could find it, because a
+ * fixture accepts whatever we send it.
+ *
+ * An allow-list rather than a deny-list of the four fields found to be
+ * rejected, because the question is not "which spellings have I tried" but
+ * "which fields does the type have", and Google documents that. A field left
+ * out silently loosens a constraint, which the tool's own argument validation
+ * still catches; a field wrongly kept refuses the request outright and takes
+ * the whole tool with it.
+ *
+ * Verified live against `gemini-flash-latest`: `title`, `default`, `enum`,
+ * `minLength` and `format` are accepted; `additionalProperties`, `$schema`,
+ * `const` and `examples` are each rejected by name. Note `example` singular is
+ * Google's spelling and `examples` plural is JSON Schema's — the plural is the
+ * one that fails, which is exactly the kind of difference a translation layer
+ * exists to absorb.
+ */
+const GEMINI_SCHEMA_FIELDS = new Set([
+  'type',
+  'format',
+  'title',
+  'description',
+  'nullable',
+  'enum',
+  'items',
+  'properties',
+  'required',
+  'propertyOrdering',
+  'default',
+  'example',
+  'anyOf',
+  'minimum',
+  'maximum',
+  'minItems',
+  'maxItems',
+  'minLength',
+  'maxLength',
+  'minProperties',
+  'maxProperties',
+  'pattern',
+]);
+
+/** Sub-schemas that are themselves schemas, and so recurse. */
+const SCHEMA_VALUED = new Set(['items']);
+/** Sub-schemas held in a map of schemas. */
+const SCHEMA_MAP_VALUED = new Set(['properties']);
+/** Sub-schemas held in a list of schemas. */
+const SCHEMA_LIST_VALUED = new Set(['anyOf']);
+
+/**
+ * A canonical tool schema as Google's `Schema` type.
+ *
+ * Recursive, because a rejected field nested three levels down refuses the
+ * request just as completely as one at the top. `type` arrays — JSON Schema's
+ * `["string", "null"]` — become a single type plus `nullable`, which is how
+ * the same idea is spelled here.
+ */
+function toWireSchema(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(toWireSchema);
+  if (value === null || typeof value !== 'object') return value;
+
+  const source = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+
+  for (const [key, entry] of Object.entries(source)) {
+    if (!GEMINI_SCHEMA_FIELDS.has(key)) continue;
+
+    if (key === 'type' && Array.isArray(entry)) {
+      const types = entry.filter((t): t is string => typeof t === 'string');
+      const concrete = types.filter((t) => t !== 'null');
+      if (concrete.length > 0) out.type = concrete[0];
+      if (types.length !== concrete.length) out.nullable = true;
+      continue;
+    }
+    if (SCHEMA_VALUED.has(key)) {
+      out[key] = toWireSchema(entry);
+      continue;
+    }
+    if (SCHEMA_LIST_VALUED.has(key)) {
+      out[key] = Array.isArray(entry) ? entry.map(toWireSchema) : toWireSchema(entry);
+      continue;
+    }
+    if (SCHEMA_MAP_VALUED.has(key)) {
+      if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) continue;
+      out[key] = Object.fromEntries(
+        Object.entries(entry as Record<string, unknown>).map(([name, sub]) => [
+          name,
+          toWireSchema(sub),
+        ]),
+      );
+      continue;
+    }
+    out[key] = entry;
+  }
+
+  return out;
 }
 
 function toWireMode(choice: CanonicalRequest['toolChoice']): string {
@@ -683,8 +806,15 @@ function toWirePart(part: CanonicalContent): Record<string, unknown> | null {
     case 'image':
       return { inlineData: { mimeType: part.mimeType, data: part.data } };
     case 'tool_call':
-      // No id field exists; the name is the correlation key.
-      return { functionCall: { name: part.name, args: part.arguments } };
+      // No id field exists; the name is the correlation key. The signature is
+      // a sibling of `functionCall`, not a field inside it, and omitting it is
+      // a 400 on the turn that sends the tool result back.
+      return {
+        functionCall: { name: part.name, args: part.arguments },
+        ...(part.providerSignature === undefined
+          ? {}
+          : { thoughtSignature: part.providerSignature }),
+      };
     case 'tool_result':
       return {
         functionResponse: {
@@ -729,10 +859,11 @@ function parseGenerateResponse(body: WireGenerateResponse): CanonicalResponse {
     .filter((t): t is string => typeof t === 'string')
     .join('');
 
+  // Filtered on the **part**, not on `functionCall`, because the signature is
+  // a sibling field: mapping to `part.functionCall` first threw it away.
   const toolCalls = parts
-    .map((part) => part.functionCall)
-    .filter((call): call is NonNullable<WirePart['functionCall']> => call !== undefined)
-    .map((call, index) => toCanonicalToolCall(call, index));
+    .filter((part) => part.functionCall !== undefined)
+    .map((part, index) => toCanonicalToolCall(part.functionCall!, index, part.thoughtSignature));
 
   return {
     text,
@@ -763,13 +894,18 @@ function parseGenerateResponse(body: WireGenerateResponse): CanonicalResponse {
 function toCanonicalToolCall(
   call: NonNullable<WirePart['functionCall']>,
   index: number,
+  signature?: string,
 ): CanonicalToolCall {
   const name = call.name ?? '';
   const toolCallId = `fc_${index}_${name || 'unnamed'}`;
   const args = call.args;
+  // Carried through every return below, because a call replayed without it is
+  // refused and the shape of the arguments has nothing to do with that.
+  const signed =
+    signature === undefined || signature.length === 0 ? {} : { providerSignature: signature };
 
   if (args === undefined || args === null) {
-    return { toolCallId, name, arguments: {} };
+    return { toolCallId, name, arguments: {}, ...signed };
   }
   if (typeof args !== 'object' || Array.isArray(args)) {
     return {
@@ -777,9 +913,10 @@ function toCanonicalToolCall(
       name,
       arguments: {},
       parseError: 'Tool arguments must be a JSON object.',
+      ...signed,
     };
   }
-  return { toolCallId, name, arguments: args as Record<string, unknown> };
+  return { toolCallId, name, arguments: args as Record<string, unknown>, ...signed };
 }
 
 function mapFinishReason(
@@ -817,14 +954,21 @@ class GeminiStreamAccumulator {
   private finishReason: string | undefined;
   private promptTokens = 0;
   private completionTokens = 0;
-  private readonly calls: NonNullable<WirePart['functionCall']>[] = [];
+  /**
+   * The whole part, not just its `functionCall`.
+   *
+   * `thoughtSignature` sits beside `functionCall` rather than inside it, so
+   * keeping only the call discarded the one field a later turn is refused
+   * without.
+   */
+  private readonly calls: WirePart[] = [];
 
   appendText(delta: string): void {
     this.text += delta;
   }
 
-  addFunctionCall(call: NonNullable<WirePart['functionCall']>): void {
-    this.calls.push(call);
+  addFunctionCall(part: WirePart): void {
+    this.calls.push(part);
   }
 
   setFinishReason(reason: string): void {
@@ -841,7 +985,9 @@ class GeminiStreamAccumulator {
   }
 
   finish(): CanonicalResponse {
-    const toolCalls = this.calls.map((call, index) => toCanonicalToolCall(call, index));
+    const toolCalls = this.calls.map((part, index) =>
+      toCanonicalToolCall(part.functionCall ?? {}, index, part.thoughtSignature),
+    );
     return {
       text: this.text,
       toolCalls,
@@ -856,16 +1002,39 @@ class GeminiStreamAccumulator {
  *
  * With no report, the defaults are what this adapter implements for the
  * generative model families on this surface; with one, the supported
- * generation methods and token limits are authoritative.
+ * generation methods and token limits are authoritative — with one exception,
+ * measured rather than assumed.
+ *
+ * ## Why `streamGenerateContent` is not read from the list
+ *
+ * It used to be, and it was wrong. `supportedGenerationMethods` on this
+ * endpoint no longer carries `streamGenerateContent` for any current model:
+ * a live `GET /v1beta/models` reports
+ * `['generateContent', 'countTokens', 'createCachedContent', 'batchGenerateContent']`
+ * for `gemini-flash-latest`, while `POST .../gemini-flash-latest:streamGenerateContent?alt=sse`
+ * answers 200 with SSE frames.
+ *
+ * Reading the absence as a denial made this adapter advertise
+ * `streaming: false` for **every** Gemini model. The capability guard then
+ * refused the request, which meant the capability doctor's streaming probe
+ * could never run — so the one mechanism in this build that would have caught
+ * the mistake was the mechanism the mistake disabled. Gemini streaming was
+ * off, everywhere, and nothing said so.
+ *
+ * So the presence of `generateContent` is taken as positive evidence and the
+ * absence of its streaming sibling as no evidence at all. That is this
+ * adapter's advertised baseline; the doctor's real probe is what settles it,
+ * which is the arrangement every other capability here already has.
  */
 function capabilitiesFromModel(model: string, reported: WireModel): ModelCapabilities {
   const methods = reported.supportedGenerationMethods;
   const known = Array.isArray(methods) && methods.length > 0;
   const generative = !NON_GENERATIVE_HINTS.some((hint) => model.toLowerCase().includes(hint));
+  const text = known ? methods.includes('generateContent') : generative;
 
   return {
-    text: known ? methods.includes('generateContent') : generative,
-    streaming: known ? methods.includes('streamGenerateContent') : generative,
+    text,
+    streaming: text,
     toolCalling: generative,
     parallelToolCalling: generative,
     vision: generative,
@@ -949,6 +1118,37 @@ function namesTheQuotaProject(detail: string | undefined): boolean {
   );
 }
 
+/**
+ * Whether Google is saying the model is retired rather than misspelled.
+ *
+ * Both arrive as `NOT_FOUND`, and the fix is the opposite in each case. A
+ * misspelled id should send the user to the model list. A retired one must
+ * not: it **is** in the list. Live, `GET /v1beta/models` offers
+ * `gemini-2.5-flash`, `gemini-2.5-pro` and `gemini-2.5-flash-lite` as its
+ * first three generative entries, and a `generateContent` call on each answers
+ * 404 *"This model … is no longer available to new users."*
+ *
+ * So the shared sentence — *"Check it against the model list"* — was being
+ * shown in the one case where checking the list confirms the user was right
+ * and leaves them believing this extension is broken.
+ *
+ * Matched on Google's own phrases rather than echoed, for the same reason
+ * `namesTheQuotaProject` is: a provider's error body is
+ * attacker-influenceable in general and can echo a credential, so what is read
+ * is whether a known phrase is *present* and the sentence shown is this
+ * build's.
+ */
+function namesARetiredModel(detail: string | undefined): boolean {
+  if (detail === undefined) return false;
+  const lowered = detail.toLowerCase();
+  return (
+    lowered.includes('no longer available') ||
+    lowered.includes('has been deprecated') ||
+    lowered.includes('is deprecated') ||
+    lowered.includes('has been retired')
+  );
+}
+
 function failureFromError(
   error: WireError,
   retry: number | undefined,
@@ -980,7 +1180,10 @@ function failureFromError(
             'Language API is not enabled on its project.'
           : 'The key was accepted but is not permitted to use this model.'
         : category === 'unsupported_capability'
-          ? 'The model id was not found. Check it against the model list.'
+          ? namesARetiredModel(detail)
+            ? 'This model is still listed but Google has retired it for this account. Choose a ' +
+              'different model — a current one from the list will work.'
+            : 'The model id was not found. Check it against the model list.'
           : category === 'rate_limited'
             ? retry === undefined
               ? 'The provider is rate limiting requests. Try again shortly.'

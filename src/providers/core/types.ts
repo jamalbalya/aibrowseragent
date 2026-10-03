@@ -24,6 +24,8 @@ export type CanonicalContent =
       readonly toolCallId: string;
       readonly name: string;
       readonly arguments: Record<string, unknown>;
+      /** See `CanonicalToolCall.providerSignature`. */
+      readonly providerSignature?: string;
     }
   | {
       readonly type: 'tool_result';
@@ -83,6 +85,30 @@ export interface CanonicalToolCall {
   readonly arguments: Record<string, unknown>;
   /** Present when the provider returned arguments that were not valid JSON. */
   readonly parseError?: string;
+  /**
+   * An opaque token the provider attached to this call and requires back.
+   *
+   * Never interpreted, never logged, never shown. It exists because Gemini
+   * requires one: a `functionCall` part comes back with a `thoughtSignature`,
+   * and a later turn that replays the call without it is refused —
+   *
+   *   400 Function call is missing a thought_signature in functionCall parts.
+   *   This is required for tools to work correctly.
+   *
+   * The adapter used to drop it, which meant a Gemini conversation could make
+   * exactly **one** tool call and then failed on the turn that sent the result
+   * back. The capability doctor could not see it: its probe is a single turn,
+   * and a single turn is the only thing that worked.
+   *
+   * It is carried on the canonical model rather than cached inside the adapter
+   * because the adapter is reconnected for every task — a cache would not
+   * survive the first worker restart, and the conversation is where the fact
+   * belongs. It travels only back to the provider that issued it: a task
+   * records the provider and model it began on and §60 forbids continuing it
+   * on another, so there is no path by which one provider's token reaches a
+   * different one.
+   */
+  readonly providerSignature?: string;
 }
 
 export interface CanonicalResponse {

@@ -13,6 +13,16 @@ export interface RetryPolicy {
   readonly maxDelayMs: number;
   /** Multiplier applied per attempt. */
   readonly factor: number;
+  /**
+   * The longest a provider may tell us to wait and still be waited for.
+   *
+   * Server guidance is honoured, not obeyed. A task has a budget — ten minutes
+   * by default — and sleeping most of it to make one more attempt spends the
+   * person's time to arrive at the same place. Past this ceiling the honest
+   * answer is to stop and say how long the provider asked for, which is
+   * something they can act on.
+   */
+  readonly maxServerDelayMs: number;
 }
 
 export const DEFAULT_RETRY_POLICY: RetryPolicy = {
@@ -20,6 +30,7 @@ export const DEFAULT_RETRY_POLICY: RetryPolicy = {
   baseDelayMs: 400,
   maxDelayMs: 8000,
   factor: 2,
+  maxServerDelayMs: 60_000,
 };
 
 export interface RetryDecision {
@@ -54,7 +65,24 @@ export function decideRetry(
  * decides `retryable`, and the backoff below is unchanged for everyone.
  */
 export function decideRetryFor(
-  classification: { readonly code: ErrorCode; readonly retryable: boolean },
+  classification: {
+    readonly code: ErrorCode;
+    readonly retryable: boolean;
+    /**
+     * What the provider said to wait, in milliseconds, if it said anything.
+     *
+     * **This used not to be read.** `delayFromRetryAfter` parsed the header,
+     * `providerFailure` recorded it, and the comment below this interface
+     * claimed it overrode our backoff — while the only thing that reached this
+     * function was a code and a boolean. So a provider saying *"retry in 47
+     * seconds"* got an 8-second exponential backoff, another 429, and a task
+     * that burned its three attempts in about fifteen seconds and failed.
+     *
+     * Live free-tier accounts rate-limit constantly, which is how the gap
+     * became visible: every provider run in this session hit a 429.
+     */
+    readonly retryAfterMs?: number;
+  },
   attempt: number,
   policy: RetryPolicy = DEFAULT_RETRY_POLICY,
   random: () => number = Math.random,
@@ -68,6 +96,29 @@ export function decideRetryFor(
       shouldRetry: false,
       delayMs: 0,
       reason: `Retry limit reached (${policy.maxAttempts} attempts).`,
+    };
+  }
+
+  // Server guidance wins where there is any, because it is the one party that
+  // knows when the limit lifts. No jitter on it: the provider named a time,
+  // and smearing it is how a client arrives early and is refused again.
+  const stated = classification.retryAfterMs;
+  if (stated !== undefined && Number.isFinite(stated) && stated >= 0) {
+    if (stated > policy.maxServerDelayMs) {
+      return {
+        shouldRetry: false,
+        delayMs: 0,
+        reason:
+          `${code}; the provider asked to wait ${Math.ceil(stated / 1000)}s, which is longer ` +
+          `than this task will hold for.`,
+      };
+    }
+    return {
+      shouldRetry: true,
+      delayMs: Math.round(stated),
+      reason:
+        `${code}; waiting the ${Math.ceil(stated / 1000)}s the provider asked for ` +
+        `(attempt ${attempt + 1} of ${policy.maxAttempts}).`,
     };
   }
 

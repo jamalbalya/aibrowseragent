@@ -174,6 +174,57 @@ describe('the suite covers every registered API provider', () => {
 });
 
 describe.each(API_PROVIDER_CASES)('%s', (_id, pack) => {
+  // 0. tool-schema translation is per-provider and must stay that way
+  it('translates a tool schema for its own wire format and nobody else’s', async () => {
+    // The invariant this guards, and why it is here rather than in one
+    // adapter's own tests.
+    //
+    // Gemini's `parameters` is Google's `Schema` message, parsed by protobuf
+    // JSON, which rejects an unknown field by name: a canonical schema
+    // carrying `additionalProperties` got the whole request refused, so Gemini
+    // tool calling failed every time and the agent could not run on it. The
+    // fix translates the schema **in the Gemini adapter**.
+    //
+    // Generalising that fix would be a plausible tidy-up and would break
+    // OpenAI: its strict function calling *requires* `additionalProperties:
+    // false`, and stripping it there turns strict mode off silently. So the
+    // two behaviours are pinned together, in the one suite that asks every
+    // provider the same question, and a provider that started stripping or
+    // started passing through would fail here.
+    const rec = recorder(pack);
+    const adapter = await connected(pack, rec.transport);
+    rec.script(() => pack.text('done'));
+
+    await adapter.generate({
+      systemInstruction: '',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      egress: context(pack),
+      tools: [
+        {
+          type: 'function',
+          name: 'probe',
+          description: 'A tool whose schema uses ordinary JSON Schema.',
+          parameters: {
+            type: 'object',
+            additionalProperties: false,
+            properties: { status: { type: 'string' } },
+            required: ['status'],
+          },
+        },
+      ],
+    });
+
+    const body = JSON.stringify(rec.bodies().at(-1) ?? {});
+    if (pack.factory.id === 'gemini') {
+      // Google rejects it by name; anything sent is a 400 for the whole
+      // request, tool and all.
+      expect(body).not.toContain('additionalProperties');
+    } else {
+      // Everyone else accepts it, and OpenAI's strict mode needs it.
+      expect(body).toContain('additionalProperties');
+    }
+  });
+
   // 1. provider identity
   it('reports a stable identity that matches its factory', async () => {
     const adapter = await connected(pack, recorder(pack).transport);

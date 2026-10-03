@@ -6,6 +6,7 @@ import { DEFAULT_BUDGET, checkBudget } from '@/agent/budget/budget';
 import {
   DEFAULT_RETRY_POLICY,
   decideRetry,
+  decideRetryFor,
   delayFromRetryAfter,
 } from '@/agent/recovery/retry-policy';
 import { emptyUsage } from '@/tasks/task-model';
@@ -64,7 +65,13 @@ describe('decideRetry', () => {
     const decision = decideRetry(
       'NETWORK_ERROR',
       1,
-      { maxAttempts: 20, baseDelayMs: 1000, maxDelayMs: 5000, factor: 10 },
+      {
+        maxAttempts: 20,
+        baseDelayMs: 1000,
+        maxDelayMs: 5000,
+        factor: 10,
+        maxServerDelayMs: 60_000,
+      },
       () => 1,
     );
     expect(decision.delayMs).toBeLessThanOrEqual(5000);
@@ -130,5 +137,113 @@ describe('delayFromRetryAfter', () => {
     expect(delayFromRetryAfter(null)).toBeNull();
     expect(delayFromRetryAfter(undefined)).toBeNull();
     expect(delayFromRetryAfter('soon')).toBeNull();
+  });
+});
+
+describe('server retry guidance', () => {
+  /**
+   * The gap this closes, found by running against real free-tier accounts:
+   * `delayFromRetryAfter` parsed the header, `providerFailure` recorded it, and
+   * the comment on the parser said it *"overrides our backoff"* — while the
+   * only thing reaching `decideRetryFor` was a code and a boolean. A provider
+   * saying "retry in 47 seconds" got an 8-second backoff, another 429, and a
+   * task that spent its three attempts in about fifteen seconds and failed.
+   */
+
+  it('waits exactly as long as the provider asked, with no jitter', () => {
+    const decision = decideRetryFor(
+      { code: 'RATE_LIMITED', retryable: true, retryAfterMs: 20_000 },
+      1,
+      DEFAULT_RETRY_POLICY,
+      () => 0,
+    );
+    expect(decision.shouldRetry).toBe(true);
+    // Not 400ms of exponential backoff, and not smeared by jitter: the
+    // provider named a time, and arriving early is how a client is refused
+    // again.
+    expect(decision.delayMs).toBe(20_000);
+    expect(decision.reason).toMatch(/20s the provider asked for/);
+  });
+
+  it('uses its own backoff when the provider said nothing', () => {
+    // The control: the parsed header is optional, and most failures carry
+    // none. Those must keep the jittered exponential behaviour.
+    const low = decideRetryFor(
+      { code: 'NETWORK_ERROR', retryable: true },
+      1,
+      DEFAULT_RETRY_POLICY,
+      () => 0,
+    );
+    const high = decideRetryFor(
+      { code: 'NETWORK_ERROR', retryable: true },
+      1,
+      DEFAULT_RETRY_POLICY,
+      () => 1,
+    );
+    expect(low.delayMs).toBeLessThan(high.delayMs);
+    expect(low.reason).toMatch(/is transient/);
+  });
+
+  it('stops rather than sleeping longer than the task will hold for', () => {
+    // Honoured, not obeyed. A task has a ten-minute budget, and sleeping five
+    // of them to make one more attempt spends the person's time to arrive at
+    // the same place — so the honest answer is to stop and say how long the
+    // provider wanted.
+    const decision = decideRetryFor(
+      { code: 'RATE_LIMITED', retryable: true, retryAfterMs: 15 * 60 * 1000 },
+      1,
+      DEFAULT_RETRY_POLICY,
+      () => 0,
+    );
+    expect(decision.shouldRetry).toBe(false);
+    expect(decision.delayMs).toBe(0);
+    expect(decision.reason).toMatch(/asked to wait 900s/);
+    expect(decision.reason).toMatch(/longer than this task will hold for/);
+  });
+
+  it('honours the boundary in both directions', () => {
+    const at = decideRetryFor(
+      {
+        code: 'RATE_LIMITED',
+        retryable: true,
+        retryAfterMs: DEFAULT_RETRY_POLICY.maxServerDelayMs,
+      },
+      1,
+    );
+    const over = decideRetryFor(
+      {
+        code: 'RATE_LIMITED',
+        retryable: true,
+        retryAfterMs: DEFAULT_RETRY_POLICY.maxServerDelayMs + 1,
+      },
+      1,
+    );
+    expect(at.shouldRetry).toBe(true);
+    expect(over.shouldRetry).toBe(false);
+  });
+
+  it('does not let guidance resurrect a failure that is never retried', () => {
+    // A `Retry-After` on a 403 is not an invitation. The retryable decision
+    // comes first and guidance only shapes the wait.
+    const decision = decideRetryFor(
+      { code: 'PERMISSION_DENIED', retryable: false, retryAfterMs: 1000 },
+      1,
+    );
+    expect(decision.shouldRetry).toBe(false);
+    expect(decision.reason).toMatch(/not a transient failure/);
+  });
+
+  it('ignores guidance that is not a usable number', () => {
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, -5]) {
+      const decision = decideRetryFor(
+        { code: 'RATE_LIMITED', retryable: true, retryAfterMs: bad },
+        1,
+        DEFAULT_RETRY_POLICY,
+        () => 0,
+      );
+      expect(decision.shouldRetry, String(bad)).toBe(true);
+      // Fell through to our own backoff rather than sleeping for NaN.
+      expect(decision.reason, String(bad)).toMatch(/is transient/);
+    }
   });
 });

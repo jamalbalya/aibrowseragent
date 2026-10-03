@@ -652,3 +652,122 @@ describe('system instruction', () => {
     expect(provider.requests[0]?.systemInstruction).toContain('Manual');
   });
 });
+
+describe('a provider-issued token on a tool call', () => {
+  it('is carried into the turn that sends the tool result back', async () => {
+    // **The defect this pins, found live on Gemini.** A `functionCall` comes
+    // back with an opaque `thoughtSignature`, and Google refuses a later turn
+    // that replays the call without it:
+    //
+    //   400 Function call is missing a thought_signature in functionCall
+    //   parts. This is required for tools to work correctly.
+    //
+    // The adapter was fixed to parse and re-emit it, and the conversation
+    // still failed — because *this* mapping rebuilt the assistant turn field
+    // by field and dropped it. So a Gemini conversation could make exactly
+    // **one** tool call, and every turn after it was refused.
+    //
+    // The capability doctor could not see this: its tool probe is a single
+    // turn, and a single turn is the only thing that worked.
+    const provider = new FakeProvider([
+      {
+        text: '',
+        toolCalls: [
+          {
+            toolCallId: 'tc_1',
+            name: 'browser_read_page',
+            arguments: {},
+            providerSignature: 'opaque-token-from-the-provider',
+          },
+        ],
+        finishReason: 'tool_call',
+        usage: { promptTokens: 10, completionTokens: 5 },
+      },
+      textResponse('done'),
+    ]);
+
+    await runtimeFor(recorder()).run({
+      task: makeTask(),
+      provider,
+      capabilities: FULL_CAPABILITIES,
+      signal: new AbortController().signal,
+      tabId: 1,
+    });
+
+    // The second request is the one carrying the tool result, and the
+    // assistant turn inside it must still hold the token.
+    const second = provider.requests[1];
+    expect(second, 'the runtime never made a second request').toBeDefined();
+    const replayed = second!.messages
+      .flatMap((message) => message.content)
+      .filter((part) => part.type === 'tool_call');
+    expect(replayed).toHaveLength(1);
+    expect(replayed[0]).toMatchObject({
+      name: 'browser_read_page',
+      providerSignature: 'opaque-token-from-the-provider',
+    });
+  });
+
+  it('does not let the token reach a step record, which is persisted', async () => {
+    // A provider-issued token is provider-internal data that travels back to
+    // the provider that issued it and nowhere else. Step records are written
+    // to storage and shown to the user, so it must not land there — the same
+    // rule `credential-boundary.test.ts` holds for keys, applied to a value
+    // that is not a credential but is not ours to keep either.
+    const rec = recorder();
+    const provider = new FakeProvider([
+      {
+        text: '',
+        toolCalls: [
+          {
+            toolCallId: 'tc_1',
+            name: 'browser_read_page',
+            arguments: {},
+            providerSignature: 'opaque-token-from-the-provider',
+          },
+        ],
+        finishReason: 'tool_call',
+        usage: { promptTokens: 10, completionTokens: 5 },
+      },
+      textResponse('done'),
+    ]);
+
+    const output = await runtimeFor(rec).run({
+      task: makeTask(),
+      provider,
+      capabilities: FULL_CAPABILITIES,
+      signal: new AbortController().signal,
+      tabId: 1,
+    });
+
+    // It went out to the provider...
+    expect(JSON.stringify(provider.requests)).toContain('opaque-token-from-the-provider');
+    // ...and nowhere a person or the disk will see it.
+    expect(JSON.stringify(output.result)).not.toContain('opaque-token-from-the-provider');
+    expect(JSON.stringify(rec.activities)).not.toContain('opaque-token-from-the-provider');
+  });
+
+  it('omits the field entirely when the provider issued none', async () => {
+    // The control. Three of the four protocols have no such token, and
+    // sending `providerSignature: undefined` into a wire body is how an
+    // adapter ends up serialising a null field a provider rejects.
+    const provider = new FakeProvider([
+      toolCallResponse('browser_read_page', {}),
+      textResponse('done'),
+    ]);
+
+    await runtimeFor(recorder()).run({
+      task: makeTask(),
+      provider,
+      capabilities: FULL_CAPABILITIES,
+      signal: new AbortController().signal,
+      tabId: 1,
+    });
+
+    const replayed = provider.requests[1]!.messages.flatMap((message) => message.content).filter(
+      (part) => part.type === 'tool_call',
+    );
+    expect(replayed).toHaveLength(1);
+    expect(Object.keys(replayed[0]!)).not.toContain('providerSignature');
+  });
+});

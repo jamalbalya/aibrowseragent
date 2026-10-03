@@ -118,7 +118,7 @@ services. Not needed to publish.
 
 **8. Execute the remaining manual acceptance — YOU**
 
-**Thirty-two procedures need a person.** That is the whole list, and it is
+**Twenty-two procedures need a person.** That is the whole list, and it is
 ordered below so that one sitting covers as much of it as your credentials
 allow. Every one has written steps; follow the reference in its row.
 
@@ -136,7 +136,24 @@ anybody, because there was no Jira connector. There is one now, so the item
 left "nobody can do this" and joined your list. A number going up because a
 capability arrived is the honest direction for it to move.
 
-### A. With one API key — twenty-five of the thirty-two
+The fourth move is **thirty-two down to twenty-two**, and it is the largest.
+Ten of the twelve §87 provider procedures were executed against live services
+on 3 October 2026 — Google's Gemini API on a free AI Studio key, and a
+commercial gateway speaking Chat Completions. Connect, validate, list models,
+text generation, streaming, tool calling, vision, an invalid credential, rate
+limiting and an unsupported capability are all now observed rather than
+awaited, and they are gone from your list.
+
+That is the whole of row 6 below bar two items, and the reason it is worth this
+much fuss is what those runs found. Three defects that had passed every one of
+the 4,500 mocked cases in this repository, because a fixture accepts whatever
+you send it — and one of them meant **the browser agent could not run on Gemini
+at all**. `docs/testing/integration-readiness.md` has them. The two items that
+remain are 87-07 (many tool calls inside one task) and 87-10 (a credential that
+expires while in use), and both need a condition to arrange rather than a key
+to buy.
+
+### A. With one API key — fifteen of the twenty-two
 
 Any one of OpenAI-compatible, Anthropic or Gemini. Do these first: they are the
 bulk of the list and they share one browsing session.
@@ -158,20 +175,20 @@ genuinely rate limited), so those three stay yours. The breakdown is in
 external surface is in
 [integration-readiness.md](../testing/integration-readiness.md).
 
-| Order | Procedure         | What it establishes                                                                                                                                                                                                                                                                                                                                       |
-| ----- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1     | `84-P-001`        | The panel opens beside the page and never obscures or reflows it — the one claim about Chrome's own side-panel chrome                                                                                                                                                                                                                                     |
-| 2     | `85-A-1`          | Whether the summary of a real page is accurate and useful                                                                                                                                                                                                                                                                                                 |
-| 3     | `85-B-1`          | A genuine three-tab comparison, with one tab closed mid-task                                                                                                                                                                                                                                                                                              |
-| 4     | `85-C-1`          | Whether the diagnosis of a staged broken Save is correct                                                                                                                                                                                                                                                                                                  |
-| 5     | `84-P-008`        | Whether an answer really depended on the screenshot                                                                                                                                                                                                                                                                                                       |
-| 6     | `87-01` … `87-12` | The twelve provider items against the vendor's own endpoint rather than a local server                                                                                                                                                                                                                                                                    |
-| 7     | `84-P-019`        | Clicking the notification brings you to the panel at the right place                                                                                                                                                                                                                                                                                      |
-| 8     | `84-P-020`        | A schedule survives a full browser restart. **Narrowed:** the restart mechanism is now automated — a connected provider and its model selection are read back by a new browser process — so what is left is the _schedule_ specifically, which no automated test can create because every target it could use is correctly refused for unattended running |
-| 9     | `91-D-3`          | Granting the optional `downloads` permission through Chrome's own dialog                                                                                                                                                                                                                                                                                  |
-| 10    | `90-10`           | A dropped connection retries and then stops cleanly rather than hanging                                                                                                                                                                                                                                                                                   |
-| 11    | `90-09`           | An extension reload: a torn-down content script is reported clearly                                                                                                                                                                                                                                                                                       |
-| 12    | `90-08`           | A full browser quit and reopen — and the connector correctly needing re-authorization                                                                                                                                                                                                                                                                     |
+| Order | Procedure        | What it establishes                                                                                                                                                                                                                                                                                                                                       |
+| ----- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | `84-P-001`       | The panel opens beside the page and never obscures or reflows it — the one claim about Chrome's own side-panel chrome                                                                                                                                                                                                                                     |
+| 2     | `85-A-1`         | Whether the summary of a real page is accurate and useful                                                                                                                                                                                                                                                                                                 |
+| 3     | `85-B-1`         | A genuine three-tab comparison, with one tab closed mid-task                                                                                                                                                                                                                                                                                              |
+| 4     | `85-C-1`         | Whether the diagnosis of a staged broken Save is correct                                                                                                                                                                                                                                                                                                  |
+| 5     | `84-P-008`       | Whether an answer really depended on the screenshot                                                                                                                                                                                                                                                                                                       |
+| 6     | `87-07`, `87-10` | The two provider items that survived the live run: many tool calls inside one task, and a credential that expires while in use. The other ten were executed live on 2026-10-03 — see [MATRIX.md](../testing/acceptance/MATRIX.md)                                                                                                                         |
+| 7     | `84-P-019`       | Clicking the notification brings you to the panel at the right place                                                                                                                                                                                                                                                                                      |
+| 8     | `84-P-020`       | A schedule survives a full browser restart. **Narrowed:** the restart mechanism is now automated — a connected provider and its model selection are read back by a new browser process — so what is left is the _schedule_ specifically, which no automated test can create because every target it could use is correctly refused for unattended running |
+| 9     | `91-D-3`         | Granting the optional `downloads` permission through Chrome's own dialog                                                                                                                                                                                                                                                                                  |
+| 10    | `90-10`          | A dropped connection retries and then stops cleanly rather than hanging                                                                                                                                                                                                                                                                                   |
+| 11    | `90-09`          | An extension reload: a torn-down content script is reported clearly                                                                                                                                                                                                                                                                                       |
+| 12    | `90-08`          | A full browser quit and reopen — and the connector correctly needing re-authorization                                                                                                                                                                                                                                                                     |
 
 Leave 8, 11 and 12 until last in the session: each one ends the browser state
 the earlier items are using.
@@ -492,6 +509,34 @@ and no deployment**: it is what lets a user press _Connect with Google_ and give
 the agent a Gemini credential to run on. You can do this and skip G-1 entirely.
 
 Twenty minutes. The fiddly part is the extension id, so that is step 1.
+
+**Before you start: you may not need this at all.** On 3 October 2026 the
+Gemini **API key** path was exercised against the real
+`generativelanguage.googleapis.com` and works end to end — 44 models
+discovered, tool calling and streaming measured by the capability doctor. So a
+working Gemini brain is available today for the price of a key from AI Studio,
+with no Cloud project, no OAuth client and no extension id to pin. G-6 buys one
+thing on top of that: a user connecting their own Google account without
+handling a key. It is a convenience, not a dependency, and nothing in the
+release waits on it.
+
+Two things that live run settled, which this section used to leave you to find
+out the hard way:
+
+- **Google serves `:streamGenerateContent` on models whose `/models` entry no
+  longer lists it.** The adapter used to read that absence as a denial and turn
+  streaming off for every Gemini model. Fixed; mentioned here because if you
+  ever compare the model list against what works, they will not agree.
+- **Google's model list leads with three models it has retired.**
+  `gemini-2.5-flash`, `gemini-2.5-pro` and `gemini-2.5-flash-lite` are all
+  offered and all answer `404 … no longer available to new users`. Pick a
+  `-latest` or a `3.x` id. The extension now says so when you hit one, instead
+  of sending you to check the list that just offered it.
+
+**And if the client is ever refused:** the extension now prints the exact
+redirect URI it used in the failure message, so you can paste it straight into
+the Google console rather than reconstructing it from the id on the
+`chrome://extensions` card.
 
 **What is repository work and already done:** the authorization flow, the PKCE
 exchange, token renewal, the quota-project header, every refusal message, the

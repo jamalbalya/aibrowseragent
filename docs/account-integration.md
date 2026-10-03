@@ -317,7 +317,30 @@ If it answers, the question is closed. If Google refuses, the message is the
 finding — the extension already turns the two refusals it can anticipate into
 sentences naming the fix, and anything else should be reported verbatim.
 
-## What has not been exercised live
+## What has been exercised live
+
+On 3 October 2026 this journey was driven against the real Gemini API with a
+real key, which is what the table below used to say had never happened for any
+part of it.
+
+| Step                                      | Result                                                                                                                                                                                                                                      |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connect with a Gemini API key             | Works. `x-goog-api-key`, 200.                                                                                                                                                                                                               |
+| Discover the models the connection offers | Works. 44 generative models through the adapter's own `listModels`.                                                                                                                                                                         |
+| Select one and measure it                 | Works. The capability doctor measured `tools=pass streaming=pass vision=pass` against the live endpoint.                                                                                                                                    |
+| Run the agent on it                       | **Was impossible, and is now fixed.** Every tool schema in this build carries `additionalProperties`, which Google's `Schema` type rejects by name — so tool calling failed, Gemini reported `CHAT_ONLY`, and the agent was disabled on it. |
+| A bearer token on an API-key endpoint     | Refused, as designed: `401 … Expected OAuth 2 access token`. The two credential schemes are genuinely not interchangeable, which this build already assumed and can now say it has checked.                                                 |
+
+Two further things the endpoint taught, both now handled:
+
+- Google **lists models it will not run** — `gemini-2.5-flash`,
+  `gemini-2.5-pro` and `gemini-2.5-flash-lite` are the first three generative
+  entries and each answers `404 … no longer available to new users`. Nothing in
+  this build pre-selects a model, so nobody is steered onto one; and the
+  refusal now says the model is retired rather than telling the user to check
+  the list that offered it.
+- Google **serves `:streamGenerateContent` on models whose entry omits it**, so
+  the absence of that method is no longer read as a denial.
 
 ## What has not been exercised live
 

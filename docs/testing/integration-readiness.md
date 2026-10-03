@@ -25,19 +25,51 @@ evidence:
 | **BLOCKED**          | Cannot be verified here: needs a credential, an account, a paid service, or an owner-only decision.                                                                    |
 | **MISSING**          | Not implemented, or implemented and known defective.                                                                                                                   |
 
-**No row in this document is LIVE-VERIFIED.** That is the honest headline, and
-it is stated once here rather than being left to be inferred from the table.
+**Two provider rows are now LIVE-VERIFIED, and that changed on 3 October 2026.**
+It is stated here rather than left to be inferred, and so is the shape of it:
+Gemini and a generic OpenAI-compatible endpoint have been exercised with real
+credentials against real services, including a complete agentic turn — a model
+calling a tool, the tool's result going back, and an answer that could only
+have come from reading it. Anthropic has not, because no key for it exists
+here.
+
+Going live cost three defects' worth of embarrassment and was worth every
+penny. Each of the three had passed every mocked test in this repository,
+because a fixture accepts whatever you send it:
+
+1. **Gemini tool calling never worked at all.** Canonical tool schemas carry
+   `additionalProperties: false` — ordinary JSON Schema, accepted by every
+   other provider here, declared by the capability doctor's own probe tool.
+   Gemini's `parameters` is Google's `Schema` message parsed by protobuf JSON,
+   which _rejects_ an unknown field: `400 Unknown name "additionalProperties"
+… Cannot find field.` So the tool probe failed every time, Gemini reported
+   `CHAT_ONLY`, and the browser agent could not run on the one provider this
+   build supports a Google authorization for.
+2. **Gemini streaming was off everywhere.** `supportedGenerationMethods` no
+   longer lists `streamGenerateContent` for any current model, while
+   `POST …:streamGenerateContent?alt=sse` answers 200 with SSE frames. Reading
+   that absence as a denial made the adapter advertise `streaming: false`, the
+   capability guard refuse the request, and the doctor's streaming probe never
+   run — the one mechanism that would have caught it was the mechanism it
+   disabled.
+3. **A retired model was sent to the list that offered it.** Google's
+   `/v1beta/models` leads with `gemini-2.5-flash`, `gemini-2.5-pro` and
+   `gemini-2.5-flash-lite`, and a `generateContent` call on each answers
+   `404 … no longer available to new users`. Every `NOT_FOUND` got _"The model
+   id was not found. Check it against the model list"_ — advice that, in this
+   case, confirms the user was right and leaves them believing the extension is
+   broken.
 
 ## AI providers
 
-| Surface                      | Status                                | Evidence                                                                                                                                                                                               | What is unproven                                                                                                            |
-| ---------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
-| `openai-compatible` protocol | MOCK-INTEGRATION                      | `tests/unit/openai-compatible.test.ts` (28); `tests/e2e/provider-integration.spec.ts` against a local Chat Completions server, over real sockets from inside the extension                             | That OpenAI, or any commercial gateway, answers as that server does                                                         |
-| `anthropic` protocol         | UNIT                                  | `tests/unit/anthropic.test.ts` (41)                                                                                                                                                                    | Every byte on the wire. No request has left this machine for `api.anthropic.com`                                            |
-| `gemini` protocol            | UNIT                                  | `tests/unit/gemini.test.ts` (32); `tests/integration/google-account-journey.test.ts` (27)                                                                                                              | As above, for `generativelanguage.googleapis.com`                                                                           |
-| `nine-router` protocol       | MOCK-INTEGRATION, with a live harness | `tests/unit/nine-router-catalog.test.ts` (15), `tests/integration/nine-router-pipeline.test.ts` (19), `tests/e2e/nine-router.spec.ts`; and `tests/integration/nine-router-live.test.ts` (opt-in, real) | Nothing, once the live harness is run — it is the only provider that has one that has been exercised against a real gateway |
-| Capability doctor            | MOCK-INTEGRATION                      | `tests/unit/capability-doctor.test.ts` (23)                                                                                                                                                            | That a commercial model's refusals arrive in the shapes the fixtures use                                                    |
-| Any provider, end to end     | BLOCKED                               | —                                                                                                                                                                                                      | Needs a credential. `tests/integration/provider-live.test.ts` is the command; see **Validation strategy**                   |
+| Surface                      | Status                                | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | What is unproven                                                                                                                                                                      |
+| ---------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `openai-compatible` protocol | LIVE-VERIFIED (gateway)               | `tests/unit/openai-compatible.test.ts` (28); `tests/e2e/provider-integration.spec.ts` against a local server; **and live against `openrouter.ai` on 2026-10-03 via `provider-live.test.ts`** — 466 models discovered, doctor **AGENT_READY** with `tools=pass streaming=pass text=pass context=pass`                                                                                                                                                                                  | `api.openai.com` itself, directly rather than through a gateway. Two free models declined vision and structured output, which is a fact about them                                    |
+| `anthropic` protocol         | UNIT                                  | `tests/unit/anthropic.test.ts` (41)                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Every byte on the wire. No request has left this machine for `api.anthropic.com`, because no Anthropic key exists here. This is the one provider row no amount of local work can move |
+| `gemini` protocol            | LIVE-VERIFIED                         | `tests/unit/gemini.test.ts` (41); `tests/integration/google-account-journey.test.ts` (27); **and live against `generativelanguage.googleapis.com` on 2026-10-03** — `gemini-flash-lite-latest` reached **AGENT_READY** with all twelve doctor checks passing, and the full two-turn tool round trip completed: the model called the tool, the result was sent back, and the answer carried a value that appears only in that result. All four defects above were found and fixed here | Nothing on this adapter. The remaining Gemini gap is the **OAuth** credential path, which needs a client id and is a separate row below                                               |
+| `nine-router` protocol       | MOCK-INTEGRATION, with a live harness | `tests/unit/nine-router-catalog.test.ts` (15), `tests/integration/nine-router-pipeline.test.ts` (19), `tests/e2e/nine-router.spec.ts`; and `tests/integration/nine-router-live.test.ts` (opt-in, real)                                                                                                                                                                                                                                                                                | Nothing, once the live harness is run — it is the only provider that has one that has been exercised against a real gateway                                                           |
+| Capability doctor            | LIVE-VERIFIED                         | `tests/unit/capability-doctor.test.ts` (23); and its full probe sequence run against two real endpoints, reaching `AGENT_READY` on one and measuring eight capabilities on the other                                                                                                                                                                                                                                                                                                  | Anthropic's refusal shapes                                                                                                                                                            |
+| Any provider, end to end     | LIVE-VERIFIED for two of four         | `tests/integration/provider-live.test.ts`, run against Gemini (all nine cases) and OpenRouter                                                                                                                                                                                                                                                                                                                                                                                         | Anthropic (no key) and `api.openai.com` directly (a key exists but the run would be paid, and this project holds to free tiers)                                                       |
 
 ### The question behind this table
 
@@ -68,16 +100,33 @@ green connection screen is not a working product.
    resolution passing the task budget. Pinned by
    `tests/security/google-provider-auth.test.ts` and three cases in
    `tests/integration/google-account-journey.test.ts`.
-7. **A tool result the provider rejects.** Not observed, and the most plausible
-   remaining candidate. The capability doctor proves tool calling with a
-   _single_ turn — one tiny tool, one call back. A task then does something the
-   doctor never does: it sends the tool's **result** and asks for another turn.
-   That turn is where the three protocols diverge most, and until
-   `provider-live.test.ts` is run against a real endpoint it is unproven
-   against any of them. It is case D of that file.
+7. **A tool the provider rejects outright.** This was listed here as "the most
+   plausible remaining candidate", suspecting the _second_ turn, where the
+   three protocols diverge most. The live run found **both**, which is worse
+   than the guess and vindicates it twice over. The first turn was refused
+   because the canonical schema carried `additionalProperties` (defect 1); once
+   that was fixed the second turn was refused for want of a `thoughtSignature`
+   (defect 4). An earlier draft of this paragraph said "the second turn was
+   fine on the protocol that got far enough to try it" — written before any
+   protocol had got far enough, and wrong.
+8. **A model that is listed and cannot be run.** Also not on this list before,
+   and the first three entries Google offers are all of them. Defect 3 above.
+9. **A provider that says how long to wait and is ignored.** Found by being
+   rate-limited repeatedly on real free tiers. `delayFromRetryAfter` parsed
+   `Retry-After`, `providerFailure` recorded it, and the comment on the parser
+   claimed it _"overrides our backoff"_ — while the only thing reaching
+   `decideRetryFor` was a code and a boolean. A provider asking for 47 seconds
+   got an 8-second exponential backoff, another 429, and a task that spent its
+   three attempts in about fifteen seconds. Now honoured up to a ceiling, and
+   past the ceiling the task stops and says how long was asked for, because
+   sleeping five minutes of a ten-minute budget to make one more attempt spends
+   the person's time to arrive at the same place.
 
 Numbers 1 to 6 are structural: there is no path from a refused selection to a
-provider request. Number 7 is not, and it is the reason the live harness exists.
+provider request. Numbers 7 to 9 were not, and all three were found in the
+first hour of having real credentials. That ratio is the argument for the live
+harness, and it is worth stating plainly: a 4,500-case suite and 525
+real-Chromium cases did not find any of them, and could not have.
 
 ## Google provider authorization
 
@@ -170,20 +219,56 @@ ABA_LIVE_MODEL=…       # optional; discovered when omitted
   npx vitest run tests/integration/provider-live.test.ts
 ```
 
-Eight cases: real discovery, real connection, the capability doctor's verdict on
+Two runs that have actually been made, recorded so they can be repeated:
+
+```bash
+# Gemini, free tier. Found all three defects listed at the top of this file.
+ABA_LIVE_PROTOCOL=gemini ABA_LIVE_MODEL=gemini-flash-latest
+
+# A commercial gateway speaking Chat Completions. Reached AGENT_READY.
+ABA_LIVE_PROTOCOL=openai-compatible \
+ABA_LIVE_BASE_URL=https://openrouter.ai/api/v1 \
+ABA_LIVE_MODEL=nvidia/nemotron-3.5-lightning:free
+```
+
+Pass the key in the process environment, never on the command line: an argument
+is visible in `ps`.
+
+Nine cases: real discovery, real connection, the capability doctor's verdict on
 a real model, a real completion, a real stream, **a real two-turn tool round
-trip**, and two cases asserting the credential does not come back out — after
-first asserting that it really went out.
+trip**, a model the endpoint lists and refuses to run, and two cases asserting
+the credential does not come back out — after first asserting that it really
+went out.
 
 This **spends money**, a few small requests' worth, and only when those
-variables are set. Nothing in `verify` runs it. One provider's worth of key
-moves that provider's row from UNIT to LIVE-VERIFIED, and nothing else's.
+variables are set. Nothing in `verify` runs it.
 
-The harness itself has been exercised: all eight cases were run against a local
-Chat Completions stand-in and passed, and two mutations — a stand-in that
-ignores the tool result, and this build's redaction removed — were each caught
-by the case meant to catch them. That is a check on the harness, not a provider
-verification, and it is not evidence about any commercial endpoint.
+Three things the first real runs taught the harness itself, each of which had
+made it report a defect that was not one:
+
+- **It took `ids[0]`.** Being listed is not being usable, which
+  `nine-router-live.test.ts` already recorded about a gateway and this file did
+  not carry over. Google's first three generative entries are all retired, so
+  the harness picked a dead model and reported six failures. It now finds a
+  model by asking, preferring one that accepts a tool, and keeps the first
+  unusable one it meets as evidence for case C3.
+- **It ran under vitest's 5-second default.** A real completion routinely
+  exceeds it and the doctor — eight sequential round trips — always does. Live
+  cases now carry 120s, and the doctor 240s.
+- **It treated a rate limit as a verdict.** A free-tier key runs out partway
+  through nine cases making a couple of dozen real requests, and a 429 on case
+  E1 says nothing about whether the credential leaks into the audit trail. A
+  rate limit is now reported **INCONCLUSIVE**, loudly, and nothing else is: an
+  authentication failure, a malformed request, a retired model and a wrong
+  answer all stay failures.
+
+A run where every case prints INCONCLUSIVE has established nothing, and says
+so six times. Read the output, not the exit code.
+
+The harness was also exercised against a local Chat Completions stand-in, with
+two mutations — a stand-in that ignores the tool result, and this build's
+redaction removed — each caught by the case meant to catch it. That is a check
+on the harness, not a provider verification.
 
 ### The safest practical Google authorization check
 
@@ -204,6 +289,24 @@ extension id. The lowest-risk order is:
 
 Until step 4 happens, the Google row stays BLOCKED, and no document in this
 repository should say otherwise.
+
+### Chrome Web Store package integrity
+
+Two checks were added after noticing that nothing enforced either.
+
+- **No value from the developer's own `.env` may appear in the artifact.**
+  Shape-independent, and that is the point: on the machine this was written on,
+  `.env` held five live provider keys, and `validate-release.mjs` now compares
+  each against every file in `dist/`, naming the variable and never its value.
+  Vite only inlines `VITE_`-prefixed variables, so today none of them can reach
+  the bundle — which is a property of a build tool's configuration, exactly the
+  kind of thing that holds until someone adds a `define`, reads `process.env`
+  directly, or prefixes a secret with `VITE_` by mistake. Verified in both
+  directions by injecting a real key into `dist/` and watching the build fail.
+- **Google's newer key format is now detected.** The credential patterns knew
+  `AIza…` and not `AQ.…`, which is the format of the keys actually in use. A
+  detector that knows one of a provider's two formats reports clean on the
+  other.
 
 ### What should never be used as validation
 

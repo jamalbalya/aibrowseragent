@@ -619,6 +619,12 @@ describe('06b — a misconfigured client is reported as that, not as the user’
       expect(result.ok === false && result.reason).toMatch(/G-6/);
       // And offers the path that does work in the meantime.
       expect(result.ok === false && result.reason).toMatch(/API key/i);
+      // **And hands over the one value that fixes it.** Naming the cause and
+      // stopping there left the owner to open chrome://extensions, copy an id
+      // and assemble a URL by hand — from a diagnostic that knows the answer,
+      // because the redirect URI is what the request was made with. The Google
+      // console wants this string pasted in verbatim.
+      expect(result.ok === false && result.reason).toContain(REDIRECT);
     }
 
     // A user saying no is still a user saying no.

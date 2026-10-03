@@ -212,6 +212,11 @@ const SECRET_PATTERNS = [
   { id: 'openai-key', re: /\bsk-[A-Za-z0-9_-]{20,}/ },
   { id: 'anthropic-key', re: /\bsk-ant-[A-Za-z0-9_-]{20,}/ },
   { id: 'google-api-key', re: /\bAIza[A-Za-z0-9_-]{30,}/ },
+  // Google's newer AI Studio key format. Added because a real one was seen
+  // locally and the `AIza` rule above does not match it — a detector that
+  // knows one of a provider's two formats is a detector that reports clean on
+  // the other.
+  { id: 'google-ai-studio-key', re: /\bAQ\.[A-Za-z0-9_-]{30,}/ },
   { id: 'github-token', re: /\bgh[pousr]_[A-Za-z0-9]{30,}/ },
   { id: 'aws-access-key-id', re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/ },
   { id: 'slack-token', re: /\bxox[abposr]-[A-Za-z0-9-]{10,}/ },
@@ -223,6 +228,86 @@ const SECRET_PATTERNS = [
     re: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\r\n]+[A-Za-z0-9+/=\r\n]{40,}/,
   },
 ];
+
+/**
+ * Nothing from the developer's own `.env` may appear in the artifact.
+ *
+ * Shape-independent, and that is the point. The patterns above know the
+ * credential formats somebody thought of; this knows the credentials actually
+ * sitting on the machine that produced the build. On the machine this was
+ * written on, `.env` held five live provider keys — Gemini, OpenAI, DeepSeek
+ * and OpenRouter — none of which is a secret this project wants anywhere near
+ * `dist/`, and one of which the `AIza` rule above did not match.
+ *
+ * Vite only inlines `VITE_`-prefixed variables, so today none of them can
+ * reach the bundle. That is a property of a build tool's configuration, which
+ * is exactly the kind of thing that holds until someone adds a `define`, reads
+ * `process.env` directly, or prefixes a secret with `VITE_` by mistake. The
+ * check costs one pass over thirteen files and it is the difference between
+ * believing that and knowing it.
+ *
+ * The three documented `VITE_ABA_*` values are excluded: they are inlined on
+ * purpose, they are not secrets, and `.env.extension.example` says why no
+ * secret can be configured this way at all.
+ */
+const INLINED_ON_PURPOSE = new Set([
+  'VITE_ABA_GOOGLE_PROVIDER_CLIENT_ID',
+  'VITE_ABA_GOOGLE_QUOTA_PROJECT',
+  'VITE_ABA_BACKEND_ORIGIN',
+]);
+
+const envFile = resolve(root, '.env');
+if (existsSync(envFile)) {
+  const local = [];
+  for (const line of readFileSync(envFile, 'utf8').split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0 || trimmed.startsWith('#')) continue;
+    const split = trimmed.indexOf('=');
+    if (split <= 0) continue;
+    const key = trimmed.slice(0, split).trim();
+    if (INLINED_ON_PURPOSE.has(key)) continue;
+    const value = trimmed
+      .slice(split + 1)
+      .trim()
+      .replace(/^["']|["']$/g, '');
+    // Short values are words, not credentials, and would match everywhere.
+    if (value.length >= 16) local.push(key);
+  }
+
+  if (local.length > 0) {
+    const values = new Map();
+    for (const line of readFileSync(envFile, 'utf8').split('\n')) {
+      const split = line.indexOf('=');
+      if (split <= 0) continue;
+      const key = line.slice(0, split).trim();
+      if (!local.includes(key)) continue;
+      values.set(
+        key,
+        line
+          .slice(split + 1)
+          .trim()
+          .replace(/^["']|["']$/g, ''),
+      );
+    }
+    let leaked = 0;
+    for (const full of files) {
+      const rel = relative(dist, full).split('\\').join('/');
+      if (statSync(full).size > 8 * 1024 * 1024) continue;
+      const content = readFileSync(full, 'utf8');
+      for (const [key] of values) {
+        // Compared, never printed: the message names the variable, not its
+        // value, because this output goes into reports and terminals.
+        if (content.includes(values.get(key))) {
+          fail(`The local .env value of ${key} appears in ${rel}.`);
+          leaked += 1;
+        }
+      }
+    }
+    if (leaked === 0) {
+      note(`No local .env value reached the build (${values.size} checked).`);
+    }
+  }
+}
 
 // An absolute path from the machine that produced the build. Harmless to
 // Chrome, but it leaks a directory layout and usually a username.

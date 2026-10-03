@@ -269,8 +269,19 @@ export class AgentRuntime {
         // stops. The adapter's own classification is honoured, because two
         // failures can share a code and differ on whether waiting helps — and
         // because a refusal by the egress gate must never be retried.
+        //
+        // `retryAfterMs` is read off the thrown error rather than off
+        // `agentError`, because that is where it survives: the provider parses
+        // `Retry-After` onto its own failure and the conversion to an
+        // `AgentError` does not carry it. It used to be read nowhere at all,
+        // so a provider naming a wait got our exponential backoff instead and
+        // a rate-limited task burned its attempts arriving early each time.
+        const stated = (error as { retryAfterMs?: unknown }).retryAfterMs;
         const retry = decideRetryFor(
-          agentError,
+          {
+            ...agentError,
+            ...(typeof stated === 'number' ? { retryAfterMs: stated } : {}),
+          },
           usage.retries + 1,
           DEFAULT_RETRY_POLICY,
           this.random,
@@ -344,6 +355,17 @@ export class AgentRuntime {
             toolCallId: call.toolCallId,
             name: call.name,
             arguments: call.arguments,
+            // Opaque, provider-issued, and required back on the next turn.
+            // Dropping it here is what made a Gemini conversation able to take
+            // exactly **one** tool call before every following turn was
+            // refused with "Function call is missing a thought_signature".
+            // The adapter parsed it and this mapping threw it away, which is
+            // the hazard of rebuilding a value field by field: a field added
+            // to `CanonicalToolCall` is silently lost here unless somebody
+            // remembers. `tests/unit/agent-tool-turn.test.ts` is the reminder.
+            ...(call.providerSignature === undefined
+              ? {}
+              : { providerSignature: call.providerSignature }),
           })),
         ],
       });

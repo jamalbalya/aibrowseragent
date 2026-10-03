@@ -179,43 +179,49 @@ function taskEgress(modelId: string): EgressContext {
 }
 
 /**
- * The probe runs at module scope, not in `beforeAll`.
+ * How long a live case may take.
  *
- * `it.skipIf(...)` is evaluated while the file is being *collected*, so a flag
- * set in a hook is still `false` when every guard is read and the whole file
- * silently skips. This is the lesson `nine-router-live.test.ts` records, and
- * repeating the mistake here would cost a live run that looked green.
+ * Vitest's default is five seconds, which is right for a unit test and wrong
+ * for every case in this file: a real completion often exceeds it and the
+ * capability doctor — eight sequential round trips — always does. The first
+ * live run lost the doctor and the streaming case to that default and reported
+ * them as failures of this build, which they were not.
  */
-const probe = await (async (): Promise<{ ids: string[]; model: string }> => {
-  if (!CONFIGURED) return { ids: [], model: '' };
-  const { adapter } = harness();
-  const connected = await adapter.connect(config(WANTED_MODEL || 'probe-placeholder'));
-  // A model id is required to connect on two of the three protocols, so the
-  // placeholder above is what lets discovery happen before one is known. It is
-  // never used for a completion.
-  if (!connected.authenticated && WANTED_MODEL.length === 0) return { ids: [], model: '' };
-  let ids: string[] = [];
+const LIVE_TIMEOUT_MS = 120_000;
+const DOCTOR_TIMEOUT_MS = 240_000;
+
+/**
+ * A rate limit is not a verdict on this build.
+ *
+ * A free-tier key will run out partway through a run of this file — nine cases
+ * make a couple of dozen real requests — and a 429 arriving on case E1 says
+ * nothing whatever about whether the credential leaks into the audit trail.
+ * Reporting it as a failure is how a run that proved seven things gets read as
+ * a run that found a defect.
+ *
+ * So a rate limit is reported as **inconclusive**, loudly, and the case stops
+ * there. Nothing else is: an authentication failure, a malformed request, a
+ * retired model and a wrong answer all remain failures, because each of those
+ * is a fact about this build or about the account, and both are what the file
+ * is for.
+ */
+function rateLimited(error: unknown): boolean {
+  const failure = (error as { failure?: { error?: { code?: string } } }).failure;
+  return failure?.error?.code === 'RATE_LIMITED';
+}
+
+/** Runs a live call, or declares the case inconclusive if the account is throttled. */
+async function live<T>(what: string, call: () => Promise<T>): Promise<T | null> {
   try {
-    ids = (await adapter.listModels()).map((model) => model.id);
-  } catch {
-    ids = [];
+    return await call();
+  } catch (error) {
+    if (rateLimited(error)) {
+      process.stdout.write(`[PROVLIVE] INCONCLUSIVE — ${what}: the account is rate limited.\n`);
+      return null;
+    }
+    throw error;
   }
-  // An explicit choice wins; otherwise the first id the endpoint itself named.
-  const model = WANTED_MODEL.length > 0 ? WANTED_MODEL : (ids[0] ?? '');
-  return { ids, model };
-})();
-
-const liveIds = probe.ids;
-const MODEL = probe.model;
-const LIVE = CONFIGURED && MODEL.length > 0;
-
-process.stdout.write(
-  !CONFIGURED
-    ? '[PROVLIVE] skipped: ABA_LIVE_PROTOCOL / ABA_LIVE_API_KEY not set.\n'
-    : !LIVE
-      ? `[PROVLIVE] skipped: ${PROTOCOL} named no usable model.\n`
-      : `[PROVLIVE] live: ${PROTOCOL}, ${liveIds.length} model(s) discovered, using ${MODEL}.\n`,
-);
+}
 
 /** One tiny tool, and the result that is sent back for it. */
 const WEATHER_TOOL: CanonicalToolSchema = {
@@ -240,6 +246,116 @@ function request(partial: Partial<CanonicalRequest>): CanonicalRequest {
   };
 }
 
+/**
+ * The probe runs at module scope, not in `beforeAll`.
+ *
+ * `it.skipIf(...)` is evaluated while the file is being *collected*, so a flag
+ * set in a hook is still `false` when every guard is read and the whole file
+ * silently skips. This is the lesson `nine-router-live.test.ts` records, and
+ * repeating the mistake here would cost a live run that looked green.
+ */
+const probe = await (async (): Promise<{
+  ids: string[];
+  model: string;
+  unusable: string;
+  unusableMessage: string;
+}> => {
+  const empty = { ids: [], model: '', unusable: '', unusableMessage: '' };
+  if (!CONFIGURED) return empty;
+  const { adapter } = harness();
+  const connected = await adapter.connect(config(WANTED_MODEL || 'probe-placeholder'));
+  // A model id is required to connect on two of the three protocols, so the
+  // placeholder above is what lets discovery happen before one is known. It is
+  // never used for a completion.
+  if (!connected.authenticated && WANTED_MODEL.length === 0) return empty;
+  let ids: string[] = [];
+  try {
+    ids = (await adapter.listModels()).map((model) => model.id);
+  } catch {
+    ids = [];
+  }
+
+  // An explicit choice is taken as given: the person naming it is saying they
+  // know this account can run it.
+  if (WANTED_MODEL.length > 0) return { ...empty, ids, model: WANTED_MODEL };
+
+  // Otherwise: **being listed is not the same as being usable**, and finding
+  // that out is one of the things only a real service can tell you. This is
+  // the lesson `nine-router-live.test.ts` records about a gateway, and the
+  // first version of this file did not carry it over — it took `ids[0]` and
+  // then reported six failures that were not this build's fault.
+  //
+  // The live evidence that settled it: Google's own `/v1beta/models` offers
+  // `gemini-2.5-flash`, `gemini-2.5-pro` and `gemini-2.5-flash-lite` as its
+  // first three generative entries, and a `generateContent` call on each
+  // answers 404 *"no longer available to new users"*. The first three.
+  //
+  // So a model is found by asking. Capped at eight and with the smallest
+  // possible body, because every attempt spends the person's quota.
+  //
+  // And "runnable" is itself two questions, because the interesting cases here
+  // are about tools. A first pass found `gemma-4-26b-a4b-it` — the first id
+  // this account could run — which answers text and rejects function calling
+  // outright, so the tool round trip had nothing to test. So a model that
+  // accepts a tool is preferred, and a text-only one is kept as the fallback.
+  let model = '';
+  let textOnly = '';
+  let unusable = '';
+  let unusableMessage = '';
+  for (const id of ids.slice(0, 8)) {
+    const candidate = harness().adapter;
+    const auth = await candidate.connect(config(id));
+    if (!auth.authenticated) continue;
+    const ask = (tools: boolean): CanonicalRequest => ({
+      systemInstruction: '',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      maxOutputTokens: 8,
+      ...(tools ? { tools: [WEATHER_TOOL], toolChoice: 'auto' as const } : {}),
+      egress: taskEgress(id),
+    });
+    try {
+      await candidate.generate(ask(false));
+    } catch (error) {
+      // Listed, and this account cannot run it. Recorded as it is found rather
+      // than probed for separately, so the case below costs no extra calls —
+      // and discovered by *asking*, never by recognising a name.
+      if (unusable.length === 0) {
+        unusable = id;
+        const failure = (error as { failure?: { error?: { userMessage?: string } } }).failure;
+        unusableMessage = failure?.error?.userMessage ?? '';
+      }
+      continue;
+    }
+    try {
+      await candidate.generate(ask(true));
+      model = id;
+      break;
+    } catch {
+      // Runs, but will not take a tool. Usable for everything except the one
+      // thing this file exists to exercise, so it is the fallback.
+      if (textOnly.length === 0) textOnly = id;
+    }
+  }
+  return { ids, model: model || textOnly, unusable, unusableMessage };
+})();
+
+const liveIds = probe.ids;
+const MODEL = probe.model;
+const UNUSABLE = probe.unusable;
+const UNUSABLE_MESSAGE = probe.unusableMessage;
+const LIVE = CONFIGURED && MODEL.length > 0;
+/** Live *and* with a listed model this account may not run. */
+const HAS_UNUSABLE = LIVE && UNUSABLE.length > 0;
+
+process.stdout.write(
+  !CONFIGURED
+    ? '[PROVLIVE] skipped: ABA_LIVE_PROTOCOL / ABA_LIVE_API_KEY not set.\n'
+    : !LIVE
+      ? `[PROVLIVE] skipped: ${PROTOCOL} listed ${liveIds.length} model(s), none runnable.\n`
+      : `[PROVLIVE] live: ${PROTOCOL}, ${liveIds.length} model(s) listed, using ${MODEL}` +
+        (UNUSABLE.length > 0 ? `; ${UNUSABLE} is listed but not runnable.\n` : '.\n'),
+);
+
 // ---------------------------------------------------------------------------
 // A — discovery and connection, against the real endpoint
 // ---------------------------------------------------------------------------
@@ -254,24 +370,32 @@ describe('TEST-LIVE-001 — A: connecting', () => {
     ).toBe(true);
   });
 
-  it.skipIf(!LIVE)('A2 — the real credential authenticates', async () => {
-    const { adapter, headers } = harness();
-    const result = await adapter.connect(config(MODEL));
-    expect(result.authenticated, result.error?.message ?? '').toBe(true);
+  it.skipIf(!LIVE)(
+    'A2 — the real credential authenticates',
+    async () => {
+      const { adapter, headers } = harness();
+      const result = await adapter.connect(config(MODEL));
+      expect(result.authenticated, result.error?.message ?? '').toBe(true);
 
-    const health = await adapter.validateConnection();
-    expect(health.reachable, health.error?.message ?? '').toBe(true);
+      const health = await adapter.validateConnection();
+      if (health.error?.code === 'RATE_LIMITED') {
+        process.stdout.write('[PROVLIVE] INCONCLUSIVE — A2 probe: the account is rate limited.\n');
+        return;
+      }
+      expect(health.reachable, health.error?.message ?? '').toBe(true);
 
-    // The credential really did go out — which is what makes the absences
-    // asserted in section E mean something.
-    const sent = headers.map((set) =>
-      Object.fromEntries(Object.entries(set).map(([k, v]) => [k.toLowerCase(), v])),
-    );
-    expect(
-      sent.some((set) => Object.values(set).some((value) => value.includes(API_KEY))),
-      'no request carried the credential',
-    ).toBe(true);
-  });
+      // The credential really did go out — which is what makes the absences
+      // asserted in section E mean something.
+      const sent = headers.map((set) =>
+        Object.fromEntries(Object.entries(set).map(([k, v]) => [k.toLowerCase(), v])),
+      );
+      expect(
+        sent.some((set) => Object.values(set).some((value) => value.includes(API_KEY))),
+        'no request carried the credential',
+      ).toBe(true);
+    },
+    LIVE_TIMEOUT_MS,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -279,28 +403,42 @@ describe('TEST-LIVE-001 — A: connecting', () => {
 // ---------------------------------------------------------------------------
 
 describe('TEST-LIVE-001 — B: the capability doctor, for real', () => {
-  it.skipIf(!LIVE)('B1 — reports an observed verdict, whatever it is', async () => {
-    const { adapter } = harness();
-    await adapter.connect(config(MODEL));
-    const report = await new CapabilityDoctor().run(adapter, MODEL, { timeoutMs: 60_000 });
+  it.skipIf(!LIVE)(
+    'B1 — reports an observed verdict, whatever it is',
+    async () => {
+      const { adapter } = harness();
+      await adapter.connect(config(MODEL));
+      const report = await new CapabilityDoctor().run(adapter, MODEL, { timeoutMs: 60_000 });
 
-    // Not asserted to be AGENT_READY. A chat-only model is a true answer about
-    // a real model, and a test that demanded otherwise would be asserting the
-    // owner's choice of model rather than this build's behaviour. What is
-    // asserted is that the verdict was *observed*: every check either ran or
-    // said why it did not.
-    process.stdout.write(
-      `[PROVLIVE] ${MODEL}: ${report.readiness} — ` +
-        report.checks.map((check) => `${check.id}=${check.status}`).join(' ') +
-        '\n',
-    );
-    expect(report.checks.length).toBeGreaterThan(0);
-    for (const check of report.checks) {
-      expect(['pass', 'fail', 'skipped', 'unsupported']).toContain(check.status);
-      if (check.status !== 'pass') expect(check.detail.length).toBeGreaterThan(0);
-    }
-    expect(report.capabilities.unverified).not.toContain('toolCalling');
-  });
+      // A throttled account cannot be measured, and a report full of
+      // rate-limit failures is not a verdict on the model. Checked on the
+      // connection probe specifically: that is the first round trip, so if it
+      // was refused for quota nothing after it ran either.
+      const connection = report.checks.find((check) => check.id === 'connection');
+      if (connection !== undefined && /429|rate limit/i.test(connection.detail)) {
+        process.stdout.write('[PROVLIVE] INCONCLUSIVE — B1 doctor: the account is rate limited.\n');
+        return;
+      }
+
+      // Not asserted to be AGENT_READY. A chat-only model is a true answer about
+      // a real model, and a test that demanded otherwise would be asserting the
+      // owner's choice of model rather than this build's behaviour. What is
+      // asserted is that the verdict was *observed*: every check either ran or
+      // said why it did not.
+      process.stdout.write(
+        `[PROVLIVE] ${MODEL}: ${report.readiness} — ` +
+          report.checks.map((check) => `${check.id}=${check.status}`).join(' ') +
+          '\n',
+      );
+      expect(report.checks.length).toBeGreaterThan(0);
+      for (const check of report.checks) {
+        expect(['pass', 'fail', 'skipped', 'unsupported']).toContain(check.status);
+        if (check.status !== 'pass') expect(check.detail.length).toBeGreaterThan(0);
+      }
+      expect(report.capabilities.unverified).not.toContain('toolCalling');
+    },
+    DOCTOR_TIMEOUT_MS,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -308,32 +446,78 @@ describe('TEST-LIVE-001 — B: the capability doctor, for real', () => {
 // ---------------------------------------------------------------------------
 
 describe('TEST-LIVE-001 — C: generating', () => {
-  it.skipIf(!LIVE)('C1 — a real completion comes back with text and usage', async () => {
-    const { adapter } = harness();
-    await adapter.connect(config(MODEL));
-    const response = await adapter.generate(
-      request({ messages: [{ role: 'user', content: [{ type: 'text', text: 'Say: ready.' }] }] }),
-    );
-    expect(response.text.length).toBeGreaterThan(0);
-    expect(response.usage.promptTokens).toBeGreaterThan(0);
-  });
+  it.skipIf(!LIVE)(
+    'C1 — a real completion comes back with text and usage',
+    async () => {
+      const { adapter } = harness();
+      await adapter.connect(config(MODEL));
+      const response = await live('C1 completion', () =>
+        adapter.generate(
+          request({
+            messages: [{ role: 'user', content: [{ type: 'text', text: 'Say: ready.' }] }],
+          }),
+        ),
+      );
+      if (response === null) return;
+      expect(response.text.length).toBeGreaterThan(0);
+      expect(response.usage.promptTokens).toBeGreaterThan(0);
+    },
+    LIVE_TIMEOUT_MS,
+  );
 
-  it.skipIf(!LIVE)('C2 — streaming produces events and a final response', async () => {
-    const { adapter } = harness();
-    await adapter.connect(config(MODEL));
-    if (adapter.stream === undefined) return;
+  it.skipIf(!LIVE)(
+    'C2 — streaming produces events and a final response',
+    async () => {
+      const { adapter } = harness();
+      await adapter.connect(config(MODEL));
+      if (adapter.stream === undefined) return;
 
-    let sawDone = false;
-    let text = '';
-    for await (const event of adapter.stream(
-      request({ messages: [{ role: 'user', content: [{ type: 'text', text: 'Count: 1 2 3.' }] }] }),
-    )) {
-      if (event.type === 'text_delta') text += event.delta;
-      if (event.type === 'error') throw new Error(event.error.message);
-      if (event.type === 'done') sawDone = true;
-    }
-    expect(sawDone).toBe(true);
-    expect(text.length).toBeGreaterThan(0);
+      let sawDone = false;
+      let text = '';
+      for await (const event of adapter.stream(
+        request({
+          messages: [{ role: 'user', content: [{ type: 'text', text: 'Count: 1 2 3.' }] }],
+        }),
+      )) {
+        if (event.type === 'text_delta') text += event.delta;
+        if (event.type === 'error') {
+          if (event.error.code === 'RATE_LIMITED') {
+            process.stdout.write('[PROVLIVE] INCONCLUSIVE — C2 stream: rate limited.\n');
+            return;
+          }
+          throw new Error(event.error.message);
+        }
+        if (event.type === 'done') sawDone = true;
+      }
+      expect(sawDone).toBe(true);
+      expect(text.length).toBeGreaterThan(0);
+    },
+    LIVE_TIMEOUT_MS,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// C2b — a model the endpoint lists that this account cannot run
+// ---------------------------------------------------------------------------
+
+describe('TEST-LIVE-001 — C2b: listed is not runnable', () => {
+  it.skipIf(!HAS_UNUSABLE)('C3 — the refusal sends the user somewhere that helps', () => {
+    // This is the case a mock cannot produce, because a fixture lists what it
+    // intends to serve. A real catalogue is the union of what the endpoint
+    // *names*; entitlement is a separate question the endpoint answers at
+    // request time.
+    //
+    // What is asserted is not that the request failed — it did, that is the
+    // premise — but that the sentence the user is shown is **actionable**. The
+    // first version of this build said *"Check it against the model list"* for
+    // every `NOT_FOUND`, which in this exact case tells the user to go and
+    // confirm that they were right, and leaves them believing the extension is
+    // broken. The model is in the list. That is the whole problem.
+    process.stdout.write(`[PROVLIVE] ${UNUSABLE} refused with: ${UNUSABLE_MESSAGE}\n`);
+    expect(UNUSABLE_MESSAGE.length).toBeGreaterThan(0);
+    expect(UNUSABLE_MESSAGE).not.toMatch(/check it against the model list/i);
+    // It must point at the fix, which is choosing another model.
+    expect(UNUSABLE_MESSAGE.toLowerCase()).toContain('model');
   });
 });
 
@@ -343,85 +527,103 @@ describe('TEST-LIVE-001 — C: generating', () => {
 // ---------------------------------------------------------------------------
 
 describe('TEST-LIVE-001 — D: a tool result, and the turn after it', () => {
-  it.skipIf(!LIVE)('D1 — a real two-turn tool round trip completes', async () => {
-    const { adapter, bodies } = harness();
-    await adapter.connect(config(MODEL));
+  it.skipIf(!LIVE)(
+    'D1 — a real two-turn tool round trip completes',
+    async () => {
+      const { adapter, bodies } = harness();
+      await adapter.connect(config(MODEL));
 
-    const first = await adapter.generate(
-      request({
-        messages: [
-          {
-            role: 'user',
-            content: [{ type: 'text', text: 'What is the temperature in Jakarta right now?' }],
-          },
-        ],
-        tools: [WEATHER_TOOL],
-        toolChoice: 'auto',
-      }),
-    );
-
-    // A model that declines to call the tool has told us something true about
-    // itself, and there is no second turn to take. Reported rather than
-    // failed: this file tests this build's handling of a real provider, not
-    // the provider's willingness to use a tool.
-    if (first.toolCalls.length === 0) {
-      process.stdout.write(`[PROVLIVE] ${MODEL} did not call the tool; D1 has nothing to send.\n`);
-      expect(first.text.length).toBeGreaterThan(0);
-      return;
-    }
-
-    const call = first.toolCalls[0]!;
-    expect(call.name).toBe('get_temperature');
-    expect(call.parseError, 'the provider returned unparseable tool arguments').toBeUndefined();
-
-    // The second turn. This is the shape each protocol builds differently, and
-    // until now nothing has sent one to a real endpoint.
-    const second = await adapter.generate(
-      request({
-        messages: [
-          {
-            role: 'user',
-            content: [{ type: 'text', text: 'What is the temperature in Jakarta right now?' }],
-          },
-          {
-            role: 'assistant',
-            content: [
+      const first = await live('D1 first turn', () =>
+        adapter.generate(
+          request({
+            messages: [
               {
-                type: 'tool_call',
-                toolCallId: call.toolCallId,
-                name: call.name,
-                arguments: call.arguments,
+                role: 'user',
+                content: [{ type: 'text', text: 'What is the temperature in Jakarta right now?' }],
               },
             ],
-          },
-          {
-            role: 'tool',
-            content: [
+            tools: [WEATHER_TOOL],
+            toolChoice: 'auto',
+          }),
+        ),
+      );
+      if (first === null) return;
+
+      // A model that declines to call the tool has told us something true about
+      // itself, and there is no second turn to take. Reported rather than
+      // failed: this file tests this build's handling of a real provider, not
+      // the provider's willingness to use a tool.
+      if (first.toolCalls.length === 0) {
+        process.stdout.write(
+          `[PROVLIVE] ${MODEL} did not call the tool; D1 has nothing to send.\n`,
+        );
+        expect(first.text.length).toBeGreaterThan(0);
+        return;
+      }
+
+      const call = first.toolCalls[0]!;
+      expect(call.name).toBe('get_temperature');
+      expect(call.parseError, 'the provider returned unparseable tool arguments').toBeUndefined();
+
+      // The second turn. This is the shape each protocol builds differently, and
+      // until now nothing has sent one to a real endpoint.
+      const second = await live('D1 second turn', () =>
+        adapter.generate(
+          request({
+            messages: [
               {
-                type: 'tool_result',
-                toolCallId: call.toolCallId,
-                name: call.name,
-                content: JSON.stringify({ celsius: 31 }),
-                isError: false,
+                role: 'user',
+                content: [{ type: 'text', text: 'What is the temperature in Jakarta right now?' }],
+              },
+              {
+                role: 'assistant',
+                content: [
+                  {
+                    type: 'tool_call',
+                    toolCallId: call.toolCallId,
+                    name: call.name,
+                    arguments: call.arguments,
+                    // Carried, exactly as the runtime carries it. Rebuilding the call
+                    // without this is what the provider refuses — and this harness
+                    // made that mistake too before it caught it.
+                    ...(call.providerSignature === undefined
+                      ? {}
+                      : { providerSignature: call.providerSignature }),
+                  },
+                ],
+              },
+              {
+                role: 'tool',
+                content: [
+                  {
+                    type: 'tool_result',
+                    toolCallId: call.toolCallId,
+                    name: call.name,
+                    content: JSON.stringify({ celsius: 31 }),
+                    isError: false,
+                  },
+                ],
               },
             ],
-          },
-        ],
-        tools: [WEATHER_TOOL],
-      }),
-    );
+            tools: [WEATHER_TOOL],
+          }),
+        ),
+      );
+      if (second === null) return;
 
-    // The provider accepted the result and answered from it. "31" is in the
-    // tool output and nowhere else in the conversation, so an answer carrying
-    // it is an answer that read the result rather than one that ignored it.
-    expect(second.text.length).toBeGreaterThan(0);
-    expect(second.text).toMatch(/31/);
+      // The provider accepted the result and answered from it. "31" is in the
+      // tool output and nowhere else in the conversation, so an answer carrying
+      // it is an answer that read the result rather than one that ignored it.
+      expect(second.text.length).toBeGreaterThan(0);
+      expect(second.text).toMatch(/31/);
 
-    // And the result really was in the request body, under whichever key this
-    // protocol uses for it.
-    const lastBody = bodies.at(-1) ?? '';
-    expect(lastBody).toMatch(/tool_result|functionResponse|"role":"tool"/);
-  });
+      // And the result really was in the request body, under whichever key this
+      // protocol uses for it.
+      const lastBody = bodies.at(-1) ?? '';
+      expect(lastBody).toMatch(/tool_result|functionResponse|"role":"tool"/);
+    },
+    LIVE_TIMEOUT_MS,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -429,31 +631,42 @@ describe('TEST-LIVE-001 — D: a tool result, and the turn after it', () => {
 // ---------------------------------------------------------------------------
 
 describe('TEST-LIVE-001 — E: the credential stays in the header', () => {
-  it.skipIf(!LIVE)('E1 — it is absent from the audit trail', async () => {
-    const { adapter, log } = harness();
-    await adapter.connect(config(MODEL));
-    await adapter.generate(
-      request({ messages: [{ role: 'user', content: [{ type: 'text', text: 'Say: ok.' }] }] }),
-    );
+  it.skipIf(!LIVE)(
+    'E1 — it is absent from the audit trail',
+    async () => {
+      const { adapter, log } = harness();
+      await adapter.connect(config(MODEL));
+      const sent = await live('E1 completion', () =>
+        adapter.generate(
+          request({ messages: [{ role: 'user', content: [{ type: 'text', text: 'Say: ok.' }] }] }),
+        ),
+      );
+      if (sent === null) return;
 
-    const entries = await log.list(100);
-    expect(entries.length).toBeGreaterThan(0);
-    // Compared, never interpolated: a failure message must not print it.
-    expect(JSON.stringify(entries).includes(API_KEY)).toBe(false);
-  });
+      const entries = await log.list(100);
+      expect(entries.length).toBeGreaterThan(0);
+      // Compared, never interpolated: a failure message must not print it.
+      expect(JSON.stringify(entries).includes(API_KEY)).toBe(false);
+    },
+    LIVE_TIMEOUT_MS,
+  );
 
-  it.skipIf(!LIVE)('E2 — it is absent from a real rejection', async () => {
-    const { adapter, log } = harness();
-    // A credential that is wrong in a way only the provider can judge. Built
-    // from the real one so it is the same shape, and never valid.
-    const connected = await adapter.connect({ ...config(MODEL), apiKey: `${API_KEY}-invalid` });
-    if (!connected.authenticated) {
-      expect(JSON.stringify(connected.error ?? {}).includes(API_KEY)).toBe(false);
-      return;
-    }
-    const health = await adapter.validateConnection();
-    expect(health.reachable).toBe(false);
-    expect(JSON.stringify(health.error ?? {}).includes(API_KEY)).toBe(false);
-    expect(JSON.stringify(await log.list(100)).includes(API_KEY)).toBe(false);
-  });
+  it.skipIf(!LIVE)(
+    'E2 — it is absent from a real rejection',
+    async () => {
+      const { adapter, log } = harness();
+      // A credential that is wrong in a way only the provider can judge. Built
+      // from the real one so it is the same shape, and never valid.
+      const connected = await adapter.connect({ ...config(MODEL), apiKey: `${API_KEY}-invalid` });
+      if (!connected.authenticated) {
+        expect(JSON.stringify(connected.error ?? {}).includes(API_KEY)).toBe(false);
+        return;
+      }
+      const health = await adapter.validateConnection();
+      expect(health.reachable).toBe(false);
+      expect(JSON.stringify(health.error ?? {}).includes(API_KEY)).toBe(false);
+      expect(JSON.stringify(await log.list(100)).includes(API_KEY)).toBe(false);
+    },
+    LIVE_TIMEOUT_MS,
+  );
 });

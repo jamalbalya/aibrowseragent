@@ -27,10 +27,28 @@ operates.
 | A-2 | The Tier 1 connector roadmap — Jira, Confluence, Sheets, Drive, Figma, GitHub | Four of the six are written; the other two are Google's and need a client id       | `P-023-C9`    |
 | A-3 | The §44 reference QA workflow                                                 | Three of its four services exist; Sheets does not, plus a **write** to Jira        | `P-022-C8`    |
 | A-4 | The §44 reference QA skill                                                    | The same four services, of which Sheets is now the only one missing                | `P-024-C9`    |
-| A-5 | Provider validation against live endpoints                                    | Paid credentials at OpenAI, Anthropic and Google                                   | `P-033-C5`    |
+| A-5 | Provider validation against live endpoints                                    | **Narrowed.** An Anthropic key, and a paid call to `api.openai.com` — see below    | `P-033-C5`    |
 | A-7 | Managed-plugin authenticity                                                   | An organization, for `chrome.storage.managed`                                      | `P-025-C7`    |
 | A-8 | Chrome Web Store submission                                                   | A developer account, a payment, and an agreement a person can be bound by          | Phases V–X    |
 | A-9 | A live Google sign-in                                                         | A deployed backend and a Google OAuth client registered to it                      | — (no clause) |
+
+**A-5 narrowed, and the premise was wrong.** It read _"Paid credentials at
+OpenAI, Anthropic and Google"_. Google's is **not paid**: an AI Studio API key
+on the free tier reaches `generativelanguage.googleapis.com`, and on 3 October
+2026 it did — 44 models discovered through the adapter, the capability doctor
+measuring `tools=pass streaming=pass vision=pass`. A commercial gateway
+speaking Chat Completions reached `AGENT_READY` on the same day. Those two runs
+found three defects that every mocked test in the repository had passed, one of
+which meant **the browser agent could not run on Gemini at all**
+(`docs/testing/integration-readiness.md`).
+
+The lesson is the one A-6 taught and this row did not learn: _"paid"_ was an
+assumption inside the blocker, not a fact about the vendor. What is actually
+left is an Anthropic key, which this project does not have, and a direct call
+to `api.openai.com`, which would be paid — a key for it exists on the
+development machine and was deliberately not used, because this project holds
+to free tiers. The clause stays `EXTERNAL_REQUIRED` for that reason and not
+`PARTIAL`: `PARTIAL` would say the remainder could be finished here.
 
 **A-6 is gone, because it was resolved.** It was _"a remote MCP server — an
 origin somebody else operates"_, and the paragraphs below it argued at length

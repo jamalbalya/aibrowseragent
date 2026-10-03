@@ -471,9 +471,22 @@ describe('capability discovery', () => {
     expect(capabilities.maxOutputTokens).toBe(8_192);
   });
 
-  it('reports streaming as unavailable when the endpoint does not list it', async () => {
-    // The honest outcome: the doctor and the capability guard both read this,
-    // so a model that cannot stream is refused rather than silently degraded.
+  it('does not report streaming as unavailable merely because it is unlisted', async () => {
+    // **This test asserted the opposite, and it was wrong.** It read a missing
+    // `streamGenerateContent` as proof that the model cannot stream, which was
+    // a reasonable reading of a field that used to carry it.
+    //
+    // It does not any more. Live, `GET /v1beta/models` reports
+    //   ['generateContent','countTokens','createCachedContent','batchGenerateContent']
+    // for gemini-flash-latest, while `POST …:streamGenerateContent?alt=sse`
+    // answers 200 with SSE frames. So the old assertion made this adapter
+    // advertise `streaming: false` for every current Gemini model, the
+    // capability guard refused the request, and the capability doctor's
+    // streaming probe could never run — the one mechanism that would have
+    // caught it was the mechanism it disabled.
+    //
+    // The absence is now no evidence either way, and the doctor's real probe
+    // is what settles it. See `capabilitiesFromModel`.
     const fetchMock = vi.fn(() =>
       Promise.resolve(
         jsonResponse({ ...MODEL_DESCRIPTOR, supportedGenerationMethods: ['generateContent'] }),
@@ -481,7 +494,7 @@ describe('capability discovery', () => {
     );
     const adapter = await connected(fetchMock);
     const capabilities = await adapter.getCapabilities('gemini-test-model');
-    expect(capabilities.streaming).toBe(false);
+    expect(capabilities.streaming).toBe(true);
   });
 
   it('falls back to conservative defaults when discovery fails', async () => {
@@ -579,5 +592,376 @@ describe('factory', () => {
       defaultUrl: GEMINI_DEFAULT_BASE_URL,
     });
     expect(geminiFactory.requiresGuardedTransport).toBe(true);
+  });
+});
+
+describe('what live Gemini refused, and what it served anyway', () => {
+  /**
+   * Three defects that only a real endpoint could show, each pinned here
+   * against the exact evidence that found it.
+   */
+
+  it('sends no schema field Google’s Schema type does not have', async () => {
+    // The defect: `functionDeclarations[].parameters` is Google's `Schema`
+    // message parsed by protobuf JSON, which **rejects** an unknown field
+    // rather than ignoring it. A canonical tool schema declaring
+    // `additionalProperties: false` — ordinary JSON Schema, accepted by every
+    // other provider here, and declared by the capability doctor's own probe
+    // tool — got the whole request refused with
+    //   400 Unknown name "additionalProperties" … Cannot find field.
+    // So Gemini tool calling failed every time, the doctor reported
+    // CHAT_ONLY, and the browser agent could not run on Gemini at all.
+    let sent = '';
+    const adapter = new GeminiAdapter(
+      passthroughTransport(
+        vi.fn((_url: string, init: RequestInit) => {
+          sent = typeof init.body === 'string' ? init.body : '';
+          return Promise.resolve(okResponse());
+        }) as unknown as typeof fetch,
+      ),
+    );
+    await adapter.connect(CONFIG);
+    await adapter.generate({
+      systemInstruction: '',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      egress: egress(),
+      tools: [
+        {
+          type: 'function',
+          name: 'probe',
+          description: 'A tool whose schema uses ordinary JSON Schema.',
+          parameters: {
+            type: 'object',
+            $schema: 'http://json-schema.org/draft-07/schema#',
+            additionalProperties: false,
+            title: 'Probe args',
+            properties: {
+              status: { type: 'string', description: 'why', const: 'ok', examples: ['ok'] },
+              nested: {
+                type: 'object',
+                additionalProperties: false,
+                properties: { deep: { type: 'string', const: 'x' } },
+              },
+              list: { type: 'array', items: { type: 'string', examples: ['a'] } },
+              either: { anyOf: [{ type: 'string', const: 'a' }, { type: 'number' }] },
+            },
+            required: ['status'],
+          },
+        },
+      ],
+    });
+
+    const body = JSON.parse(sent) as {
+      tools: { functionDeclarations: { parameters: unknown }[] }[];
+    };
+    const parameters = JSON.stringify(body.tools[0]!.functionDeclarations[0]!.parameters);
+    // Every one of these was rejected by name, live, on gemini-flash-latest.
+    for (const rejected of ['additionalProperties', '$schema', 'const', 'examples']) {
+      expect(parameters, `${rejected} must not be sent`).not.toContain(rejected);
+    }
+    // Nested, in a list item and inside anyOf — a rejected field three levels
+    // down refuses the request just as completely as one at the top.
+    expect(parameters).not.toContain('"x"');
+    // And the fields the type does have are still there.
+    for (const kept of ['title', 'properties', 'required', 'description', 'items', 'anyOf']) {
+      expect(parameters, `${kept} must survive`).toContain(kept);
+    }
+  });
+
+  it('maps a nullable JSON Schema type onto Google’s spelling of it', async () => {
+    let sent = '';
+    const adapter = new GeminiAdapter(
+      passthroughTransport(
+        vi.fn((_url: string, init: RequestInit) => {
+          sent = typeof init.body === 'string' ? init.body : '';
+          return Promise.resolve(okResponse());
+        }) as unknown as typeof fetch,
+      ),
+    );
+    await adapter.connect(CONFIG);
+    await adapter.generate({
+      systemInstruction: '',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      egress: egress(),
+      tools: [
+        {
+          type: 'function',
+          name: 'probe',
+          description: 'd',
+          parameters: {
+            type: 'object',
+            properties: { maybe: { type: ['string', 'null'] } },
+          },
+        },
+      ],
+    });
+    const body = JSON.parse(sent) as {
+      tools: { functionDeclarations: { parameters: { properties: Record<string, unknown> } }[] }[];
+    };
+    expect(body.tools[0]!.functionDeclarations[0]!.parameters.properties.maybe).toEqual({
+      type: 'string',
+      nullable: true,
+    });
+  });
+
+  it('does not deny streaming because the model list stopped mentioning it', async () => {
+    // Live, `GET /v1beta/models` reports
+    //   ['generateContent','countTokens','createCachedContent','batchGenerateContent']
+    // for gemini-flash-latest — no `streamGenerateContent` — while
+    // `POST …:streamGenerateContent?alt=sse` answers 200 with SSE frames.
+    //
+    // Reading that absence as a denial made this adapter advertise
+    // `streaming: false` for every Gemini model. The capability guard then
+    // refused the request, so the doctor's streaming probe could never run:
+    // the one mechanism that would have caught the mistake was the mechanism
+    // the mistake disabled.
+    const adapter = new GeminiAdapter(
+      passthroughTransport(
+        vi.fn(() =>
+          Promise.resolve(
+            jsonResponse({
+              models: [
+                {
+                  name: 'models/gemini-flash-latest',
+                  supportedGenerationMethods: [
+                    'generateContent',
+                    'countTokens',
+                    'createCachedContent',
+                    'batchGenerateContent',
+                  ],
+                },
+              ],
+            }),
+          ),
+        ),
+      ),
+    );
+    await adapter.connect({ ...CONFIG, model: 'gemini-flash-latest' });
+    const capabilities = await adapter.getCapabilities('gemini-flash-latest');
+    expect(capabilities.text).toBe(true);
+    expect(capabilities.streaming).toBe(true);
+  });
+
+  it('still denies both when the model is not a generative one', async () => {
+    // The control: the fix must not turn streaming on for everything. An
+    // embedding model reports neither.
+    const adapter = new GeminiAdapter(
+      passthroughTransport(
+        vi.fn(() =>
+          Promise.resolve(
+            jsonResponse({
+              models: [
+                { name: 'models/text-embedding-004', supportedGenerationMethods: ['embedContent'] },
+              ],
+            }),
+          ),
+        ),
+      ),
+    );
+    await adapter.connect({ ...CONFIG, model: 'text-embedding-004' });
+    const capabilities = await adapter.getCapabilities('text-embedding-004');
+    expect(capabilities.text).toBe(false);
+    expect(capabilities.streaming).toBe(false);
+  });
+
+  it('tells a user whose model is listed but retired to pick another one', async () => {
+    // Live, Google's `/v1beta/models` offers gemini-2.5-flash, gemini-2.5-pro
+    // and gemini-2.5-flash-lite as its first three generative entries, and a
+    // generateContent call on each answers 404 "no longer available to new
+    // users". The shared NOT_FOUND sentence — "Check it against the model
+    // list" — was therefore shown in the one case where checking the list
+    // confirms the user was right and leaves them believing this extension is
+    // broken.
+    const adapter = new GeminiAdapter(
+      passthroughTransport(
+        vi.fn(() =>
+          Promise.resolve(
+            jsonResponse(
+              {
+                error: {
+                  code: 404,
+                  status: 'NOT_FOUND',
+                  message:
+                    'This model models/gemini-2.5-flash is no longer available to new users. ' +
+                    'Please update your code to use models/gemini-3.8-flash.',
+                },
+              },
+              404,
+            ),
+          ),
+        ),
+      ),
+    );
+    await adapter.connect({ ...CONFIG, model: 'gemini-2.5-flash' });
+    await expect(
+      adapter.generate({
+        systemInstruction: '',
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        egress: egress(),
+      }),
+    ).rejects.toSatisfy((error: unknown) => {
+      const shown = (error as ProviderRequestError).failure.error.userMessage ?? '';
+      expect(shown).not.toMatch(/check it against the model list/i);
+      expect(shown).toMatch(/retired/i);
+      expect(shown).toMatch(/choose a different model/i);
+      return true;
+    });
+  });
+
+  it('still sends a misspelled id to the model list', async () => {
+    // The control, and the reason the retired case had to be separated rather
+    // than the sentence simply reworded: a 404 that is *not* about retirement
+    // is a wrong id, and the model list is exactly where to look.
+    const adapter = new GeminiAdapter(
+      passthroughTransport(
+        vi.fn(() =>
+          Promise.resolve(
+            jsonResponse(
+              { error: { code: 404, status: 'NOT_FOUND', message: 'models/nope is not found.' } },
+              404,
+            ),
+          ),
+        ),
+      ),
+    );
+    await adapter.connect({ ...CONFIG, model: 'nope' });
+    await expect(
+      adapter.generate({
+        systemInstruction: '',
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        egress: egress(),
+      }),
+    ).rejects.toSatisfy((error: unknown) => {
+      const shown = (error as ProviderRequestError).failure.error.userMessage ?? '';
+      expect(shown).toMatch(/check it against the model list/i);
+      return true;
+    });
+  });
+});
+
+describe('the thought signature Google requires back', () => {
+  it('parses it from a functionCall part and sends it back beside the call', async () => {
+    // Live, `gemini-flash-lite-latest` returns a `functionCall` part with a
+    // sibling `thoughtSignature`, and the turn that sends the tool result back
+    // is refused without it:
+    //   400 Function call is missing a thought_signature in functionCall parts.
+    // So a conversation could make exactly one tool call and then died.
+    const bodies: string[] = [];
+    const adapter = new GeminiAdapter(
+      passthroughTransport(
+        vi.fn((_url: string, init: RequestInit) => {
+          if (typeof init.body === 'string') bodies.push(init.body);
+          return Promise.resolve(
+            okResponse([
+              {
+                functionCall: { name: 'get_temperature', args: { city: 'Jakarta' } },
+                thoughtSignature: 'opaque-signature-under-test',
+              },
+            ]),
+          );
+        }) as typeof fetch,
+      ),
+    );
+    await adapter.connect(CONFIG);
+
+    const first = await adapter.generate({
+      systemInstruction: '',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      egress: egress(),
+    });
+
+    // Parsed onto the canonical call, not discarded.
+    expect(first.toolCalls[0]?.providerSignature).toBe('opaque-signature-under-test');
+
+    // And sent back as a **sibling** of `functionCall`, not inside it: Google
+    // rejects an unknown field inside the call.
+    await adapter.generate({
+      systemInstruction: '',
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+        { role: 'assistant', content: [{ ...first.toolCalls[0]!, type: 'tool_call' }] },
+      ],
+      egress: egress(),
+    });
+
+    const sent = JSON.parse(bodies.at(-1)!) as {
+      contents: { parts: Record<string, unknown>[] }[];
+    };
+    const part = sent.contents[1]!.parts[0]!;
+    expect(part.thoughtSignature).toBe('opaque-signature-under-test');
+    expect(part.functionCall).toMatchObject({ name: 'get_temperature' });
+    expect(Object.keys(part.functionCall as object)).not.toContain('thoughtSignature');
+  });
+
+  it('keeps it through a stream, where the part is accumulated rather than mapped', async () => {
+    // The streaming path held only `part.functionCall`, so the sibling field
+    // was thrown away there even after the non-streaming path was fixed.
+    const adapter = new GeminiAdapter(
+      passthroughTransport(
+        vi.fn(() =>
+          Promise.resolve(
+            sseResponse([
+              `data: ${JSON.stringify({
+                candidates: [
+                  {
+                    content: {
+                      role: 'model',
+                      parts: [
+                        {
+                          functionCall: { name: 'get_temperature', args: { city: 'Jakarta' } },
+                          thoughtSignature: 'streamed-signature',
+                        },
+                      ],
+                    },
+                    finishReason: 'STOP',
+                  },
+                ],
+              })}\n\n`,
+            ]),
+          ),
+        ),
+      ),
+    );
+    await adapter.connect(CONFIG);
+
+    const events: CanonicalEvent[] = [];
+    for await (const event of adapter.stream({
+      systemInstruction: '',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      egress: egress(),
+    })) {
+      events.push(event);
+    }
+    const done = events.find((event) => event.type === 'done');
+    expect(done?.type === 'done' && done.response.toolCalls[0]?.providerSignature).toBe(
+      'streamed-signature',
+    );
+  });
+
+  it('sends no signature field at all when the provider issued none', async () => {
+    // The control, and it matters on the wire: a `thoughtSignature: undefined`
+    // serialises to nothing in JSON but an empty string would not, and Google
+    // rejects what it does not expect.
+    const bodies: string[] = [];
+    const adapter = new GeminiAdapter(
+      passthroughTransport(
+        vi.fn((_url: string, init: RequestInit) => {
+          if (typeof init.body === 'string') bodies.push(init.body);
+          return Promise.resolve(okResponse());
+        }) as typeof fetch,
+      ),
+    );
+    await adapter.connect(CONFIG);
+    await adapter.generate({
+      systemInstruction: '',
+      messages: [
+        {
+          role: 'assistant',
+          content: [{ type: 'tool_call', toolCallId: 'x', name: 'f', arguments: {} }],
+        },
+      ],
+      egress: egress(),
+    });
+    expect(bodies.at(-1)).not.toContain('thoughtSignature');
   });
 });
