@@ -371,6 +371,37 @@ implementation and verifiable from
 the recommendation above is a recommendation, and a declaration nobody chose
 would be worse than either answer.
 
+#### What changed on 4 October 2026: the Google path is registered, the artifact still is not
+
+The owner registered a Google OAuth client and put its id in `.env`. That moves
+one fact in the table above from hypothetical to real, and leaves another in
+place, and the difference decides nothing by itself — but it does mean **the
+declaration and the artifact have to be chosen together.** Measured, not
+assumed:
+
+| Fact                                                            | Evidence                                                                                                 |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| A Google OAuth client now exists and Google recognises it       | The authorization endpoint answers this client id with `redirect_uri_mismatch`, not `invalid_client`     |
+| A build configured with it **does** offer _Connect with Google_ | `accounts.authMethods` returns `configured: true` in real Chromium (`google-provider-auth.spec.ts`)      |
+| The **release artifact** still carries no client id             | `validate-release` reports _"no client id"_; the zip is byte-identical to the one built before this work |
+
+So for the artifact as it stands today, an installer cannot reach the OAuth
+path at all, and the only credential the extension handles for them is an API
+key they paste — which is the one credential for which "No" was ever arguable.
+For a build that carries the client id, the extension handles a Google **access
+and refresh token**, and the case for "No" loses the only ground it had.
+
+**The recommendation does not change: answer "Yes".** It is now firmer rather
+than different. Reasons 1 and 2 above — handling includes transmitting and
+using, and local storage is not an exemption — never depended on the Google
+path, and they apply to the API key alone. Reason 3 now applies to a build the
+owner can actually produce.
+
+**What this does add is a sequencing constraint.** If the submitted artifact
+ever carries the client id, "Yes" stops being a judgement and becomes the only
+defensible answer. Deciding the declaration before deciding which build is
+submitted gets those two out of order.
+
 ### One other answer worth taking deliberately: "Collects web history"
 
 Recorded as **No**, and that is probably right — but the third policy statement
@@ -389,8 +420,14 @@ bad description of that.
 **Why "No" is still the better answer.** Three facts, each checkable:
 
 - **The extension cannot read browsing history at all.** `history` is not in
-  the manifest, nothing in the source touches `chrome.history`, and the string
-  does not appear in the built bundles. That is not merely printed and hoped
+  the manifest (neither required nor optional), and `chrome.history` appears
+  nowhere — not in the source, and zero times in the built bundles. The
+  narrower claim is deliberate: an earlier draft of this line said the _string_
+  "history" does not appear in the bundles, and that was wrong. It does, in
+  `sidepanel.js`, as a CSS class name (`history`, `history__list`,
+  `history__item`), a React transition type, and the panel's own list of the
+  user's **tasks**. None of those is a browsing record, and overstating a
+  checkable fact is how a true conclusion acquires a false reason. That is not merely printed and hoped
   for: several Chromium tests read `chrome.runtime.getManifest()` in the live
   worker and assert the **exact sorted permission list**, so adding `history`
   fails the suite rather than slipping past a reviewer's eye.

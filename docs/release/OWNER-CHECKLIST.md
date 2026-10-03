@@ -636,6 +636,74 @@ unavailable when no client id is compiled in. **What only you can do:** the
 three things below that touch a Google account and a Cloud project. Nothing in
 this repository can register a client, enable an API, or hold your credential.
 
+#### Where this stands on 4 October 2026 — measured, not assumed
+
+You registered a client and put its id in `.env`. Two of the three steps below
+moved; one provably did not.
+
+| Step                              | State                      | How it was established                                                                                                            |
+| --------------------------------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| 1. The extension id on the client | **Still open**             | Google answers this build's redirect with `redirect_uri_mismatch`, exactly as it answers a fabricated one                         |
+| 2. Project, API, consent, scope   | **Cannot be checked here** | All four live in a console this repository has no access to                                                                       |
+| 3. The build reads the client id  | **Done**                   | `check-extension-env.mjs` reports it configured; the id is inlined into `dist/service-worker.js`; real Chromium offers the button |
+
+**The id you registered is real.** An unauthenticated request to Google's
+authorization endpoint — no sign-in, no consent, nothing granted — answers a
+fabricated client id with `invalid_client` ("The OAuth client was not found")
+and answers yours with `redirect_uri_mismatch`. Google knows your client. What
+it does not yet accept is this build's redirect.
+
+**One thing had to be changed to make step 3 work, and it was not your value.**
+The id was in `.env` under the name `google_oauth_client`. Vite inlines only
+`VITE_`-prefixed variables, so it never reached the build and the check
+reported _"Google provider authorization: NOT configured"_ — true, and
+indistinguishable from never having registered a client. The variable is now
+`VITE_ABA_GOOGLE_PROVIDER_CLIENT_ID`; the value was not touched. It could not
+simply be duplicated under both names: `validate-release.mjs` scans the
+artifact for every `.env` value that is not inlined on purpose, so a second
+name holding the same public id would be reported as a leaked credential.
+`check-extension-env.mjs` now says so out loud when a client-id-shaped value
+sits under a name the build cannot read.
+
+#### To finish step 1, pick which build you are registering
+
+**For this development build**, the id is `adlhcckkpfffadmcdmaenodikcfolmfj`
+and the redirect to register is
+
+```text
+https://adlhcckkpfffadmcdmaenodikcfolmfj.chromiumapp.org/
+```
+
+That id comes from the `dist/` path and was confirmed against a real browser,
+not computed and hoped for. It changes if you move or rename the directory.
+
+**For a published build** the id does not exist yet — the Web Store assigns it
+at publication — so this cannot be done before submitting. Google pins a Chrome
+Extension client to one id, so a published build needs its own client or its id
+added to a second one.
+
+**Two things to decide before a public build carries any of this**, neither of
+which is a repository question:
+
+1. **Google verification.** While the app is unverified only listed test users
+   can complete the flow. That is fine for you; it is not fine for strangers.
+2. **The quota project must not be shipped.** `VITE_ABA_GOOGLE_QUOTA_PROJECT`
+   is sent as `x-goog-user-project` on every OAuth-authorized call, and Google
+   requires the caller to hold `serviceusage.services.use` on the project named
+   — _"The serviceusage.services.use permission is required to set a project as
+   the quota project, or use that quota project in a request"_
+   (<https://docs.cloud.google.com/docs/quotas/set-quota-project>). An installer
+   holds no role on your project, so shipping it refuses their connections for a
+   reason that reads as their fault. It is the right value for a build you run
+   yourself and the wrong one for a build you distribute. `validate-release`
+   now prints which of the two you are holding.
+
+**The released artifact is unaffected by all of this.** Built with `.env` set
+aside it is still
+`b09109896dc65a33fb8d7a5c065df7281b4de786e6014b115190f69f4195541a`, 291,869
+bytes, 13 entries — byte-identical to the previously recorded one, and carrying
+no client id.
+
 #### 1. Decide which extension id you are registering, and get it
 
 Google pins an OAuth client of this type to **one** extension id. An unpacked

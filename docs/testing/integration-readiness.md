@@ -372,6 +372,59 @@ extension as authorized. It now asks Google to withdraw the grant first,
 because the local removal destroys the token needed to ask, and a disconnect
 still always disconnects whatever the answer.
 
+#### First live contact with Google's OAuth endpoint — 4 October 2026
+
+The owner registered a client and supplied its id. **The headline above does
+not change: no grant has been performed, and no token has ever been issued to
+this build.** What did happen is narrower and worth recording precisely,
+because it is the first time Google's own servers have answered anything about
+this project's OAuth configuration.
+
+An unauthenticated GET to `https://accounts.google.com/o/oauth2/v2/auth`,
+carrying the real client id, a PKCE S256 challenge, the `cloud-platform` scope
+and a **deliberately unregistered** `chromiumapp.org` redirect. No credential,
+no sign-in, no consent, nothing granted — the request is refused by design, and
+_which_ refusal comes back is the measurement.
+
+| Client id sent                           | Google's answer                                                    |
+| ---------------------------------------- | ------------------------------------------------------------------ |
+| A fabricated `…googleusercontent.com` id | `invalid_client` — _"The OAuth client was not found"_              |
+| **The owner's real client id**           | **`redirect_uri_mismatch`** — _"Error 400: redirect_uri_mismatch"_ |
+
+**What this establishes.** The client id in `.env` is a real client that Google
+recognises, and it is a client type that validates redirect URIs by exact
+match. So the value is not a typo, and the id itself is not what will go wrong.
+
+**One further thing it did establish, by asking again with a real redirect.**
+This build's own extension id is `adlhcckkpfffadmcdmaenodikcfolmfj` — computed
+from the `dist/` path, then confirmed against a real browser, which reports it
+as the service worker's host. Its redirect URI,
+`https://adlhcckkpfffadmcdmaenodikcfolmfj.chromiumapp.org/`, is answered with
+`redirect_uri_mismatch` **identically to a fabricated id**. So the client is
+registered to some other extension id, and G-6 step 1 is still open. That is a
+useful negative: it is the difference between "the OAuth client is configured"
+and "the OAuth client is configured for this build", and only the second makes
+_Connect with Google_ work.
+
+**What it does not establish, and must not be read as.** It is not a grant, not
+a token, and not a working flow. It says nothing about whether the Generative
+Language API is enabled on the project, whether the consent screen carries the
+`cloud-platform` scope, or whether the owner is listed as a test user — all
+three sit inside a console this repository cannot see. Every row in the table
+above still reads **Never** under "a real grant", correctly.
+
+**It did also validate something the code only unit-tested.**
+`CLIENT_PROBLEM_CODES` matches `invalid_client`, `unauthorized_client` and
+`redirect_uri_mismatch`, and that set had never been compared against the real
+endpoint's vocabulary. Two of the three have now been observed coming back from
+Google itself, in the exact spelling the code matches on.
+
+**The probe was not trusted until it was shown to discriminate.** Its first two
+forms returned HTTP 302 to a sign-in page for _every_ client id including
+fabricated ones, which proves nothing; following the redirect to
+`accounts.google.com/signin/oauth/error` and reading the error code is what
+separated the cases. A check that cannot fail is not evidence.
+
 What the owner must do, exactly: register a **Chrome Extension** OAuth client
 for the published extension id and set `VITE_ABA_GOOGLE_PROVIDER_CLIENT_ID`
 (G-6). Until then the panel reports the Google method unavailable with a
