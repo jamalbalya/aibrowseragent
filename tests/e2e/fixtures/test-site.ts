@@ -187,6 +187,53 @@ const PAGES: Record<string, string> = {
    * assumed — a closed root exposes no `shadowRoot` property, and this is the
    * only way to check that in the engine that enforces it.
    */
+  /**
+   * A page that replaces its own controls, which is the ordinary case a stale
+   * handle comes from.
+   *
+   * `/rerender` reads the page, then swaps the DOM out from under the handles
+   * — the same nodes by label, different nodes by identity, exactly what a
+   * framework does when a list settles. `?ambiguous=1` adds a second control
+   * with the same label, which must be refused rather than guessed at.
+   *
+   * The rebuild is driven from the page rather than from the test, so what the
+   * extension sees is a genuine re-render and not a scripted injection.
+   */
+  '/rerender': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Re-render</title></head>
+<body>
+  <h1>Re-render</h1>
+  <div id="host"><button id="first" data-generation="1">Save</button></div>
+  <p id="clicked">none</p>
+  <script>
+    document.getElementById('host').addEventListener('click', (event) => {
+      const target = event.target;
+      if (target instanceof HTMLButtonElement) {
+        document.getElementById('clicked').textContent =
+          target.id + ':' + target.dataset.generation;
+      }
+    });
+    // Replaces the subtree, so every previously issued handle is dead and the
+    // button with the same label is a different node.
+    window.rerender = (ambiguous) => {
+      const host = document.getElementById('host');
+      host.innerHTML = '';
+      const made = document.createElement('button');
+      made.id = 'second';
+      made.dataset.generation = '2';
+      made.textContent = 'Save';
+      host.appendChild(made);
+      if (ambiguous) {
+        const twin = document.createElement('button');
+        twin.id = 'third';
+        twin.dataset.generation = '2';
+        twin.textContent = 'Save';
+        host.appendChild(twin);
+      }
+      return host.querySelectorAll('button').length;
+    };
+  </script>
+</body></html>`,
+
   '/shadow': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Shadow Controls</title></head>
 <body>
   <h1>Shadow Controls</h1>

@@ -102,7 +102,8 @@ substitution is stated rather than glossed.
 
 **Verdict: `AUTOMATED`.**
 
-- EVIDENCE: tests/e2e/agent-task.spec.ts :: a stale element handle is refused and reported to the model
+- EVIDENCE: tests/e2e/agent-task.spec.ts :: an unrecoverable element handle is refused and reported to the model
+- EVIDENCE: tests/e2e/handle-recovery.spec.ts :: a stale handle is refused when the page now has two of them
 - EVIDENCE: tests/security/origin-validation.test.ts :: requires revalidation after a cross-site redirect
 - EVIDENCE: tests/unit/browser-tools.test.ts :: stops an action when the tab moved to another site after authorisation
 

@@ -846,6 +846,51 @@ cover. Everything downstream of the grant runs end to end. The clause gate
 prints the outstanding manual procedure on every run, so it stays visible rather
 than being absorbed into a verdict.
 
+### P-032 Task resume — the recovery rung that was missing
+
+`P-032-C6` is the specification's worked recovery ladder, given as an
+"Example:" rather than a requirement: refresh the page model, find the target,
+retry, screenshot fallback, alternate locator, model recovery. Retry and the
+page-model refresh were here. **The alternate locator was not**, and its
+absence had a cost that did not look like a gap.
+
+When a handle went stale, every path ended in the same sentence to the model:
+_"Read the page again to get current handles."_ That is correct and it is a
+model turn spent on a mechanical problem — and it only works if the model
+obliges. One that retries the same handle loops; one that gives up strands a
+task the page would have allowed. A page that re-renders between the read and
+the click is the **ordinary** case on anything modern: a list settling, a
+spinner resolving, a toast appearing.
+
+So the element is now looked for again before the handle is reported unusable.
+
+**The identity is role plus accessible name, and that is not a new invention.**
+It is what `describeActedOn` produces and what a workflow binding is matched
+on; a third identity scheme would be a third set of behaviours to reason about,
+and the two that exist would not be the ones under test.
+
+**An ambiguous match is refused, never resolved by position.** The descriptor
+carries one and using it is tempting and wrong, for the reason the
+parameteriser already settled: _"a recording that says 'the third Delete
+button' is a recording that clicks the wrong thing the moment a row is
+added."_ That holds with more force here, because this runs **after** the page
+has demonstrably changed — if two elements now share the role and the name, the
+page is not the page the model read, and guessing between them is how an agent
+deletes the wrong row. Zero matches and two matches are both refusals, with
+different sentences, because they ask the model for different things.
+
+**It bypasses no gate.** Relocation produces an element; visibility, enabled
+and field sensitivity all run on it afterwards, which is what makes this a rung
+on the ladder rather than a shortcut around the rails. And it is **reported**:
+the click result carries `relocated`, so acting on a node the model did not
+literally name is distinguishable in the result and in the audit trail.
+
+**The clause stays PARTIAL, deliberately.** The screenshot fallback is still
+absent, and that is a product decision rather than outstanding work: the model
+can already request a screenshot, and pushing an image into its context on
+every failed click is a cost the user did not ask for. Three rungs exist, one
+is a stated omission, and the row is not promoted on the strength of the three.
+
 ### P-033 Provider switching — what PASS means here
 
 **Four** adapters ship and all four pass one shared 21-case conformance suite,
@@ -919,6 +964,32 @@ install, requested on the button, revocable), and the manifest ships **no
 `oauth2` key**, which is where `getAuthToken` reads its client id. A real-
 Chromium case calls `getAuthToken` and asserts no token comes out. Every
 connector still uses the no-permission flow.
+
+**One account's discovery was readable as another's answer, and that is now
+fixed.** Found by auditing the requirement that account-specific model data
+must not cross connections, rather than by a failing test.
+
+The registry caches one adapter instance per provider id, and
+`resolveBrainAccount` reconnects it on every request rather than disconnecting
+first. The Gemini adapter is the only one that caches per-model capabilities —
+it does so to keep a network round trip out of the pre-flight check on every
+turn — and that cache was cleared on `disconnect` and not on `connect`. So
+capabilities discovered under one account's credential were still in the map
+when a different account's turn ran, and two Gemini accounts on different tiers
+or in different regions can have different access to the same model id.
+
+It is not a credential leak: no token crossed. It is an **answer** leak, and the
+consequence is a request allowed a feature the account cannot use, failing at
+the provider instead of being refused with a reason the user can act on.
+
+The cache is now discarded when the credential, the endpoint **or the
+credential scheme** changes, and not otherwise — clearing it unconditionally
+would put a round trip in front of every request, which is the cost it exists
+to avoid. The scheme is part of that identity because a key and an access token
+are both opaque strings that could in principle be equal while authorising
+different things. Three cases in
+`tests/integration/google-account-journey.test.ts` cover the three changes, and
+all three were verified to fail with the fix reverted.
 
 **The credential's shape is now part of the account record.** A key and an
 access token are both opaque strings, so `ProviderConfig.credentialScheme`
@@ -1047,7 +1118,7 @@ has just pasted a key.
 | P-029 | Permission history                   | yes  | yes  | —           | yes      | yes | PASS        |
 | P-030 | Prompt injection defence             | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-031 | Session persistence                  | yes  | yes  | yes         | —        | yes | PASS        |
-| P-032 | Task resume                          | yes  | yes  | yes         | —        | yes | PASS        |
+| P-032 | Task resume                          | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-033 | Provider switching                   | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-034 | Tool calling                         | yes  | yes  | yes         | yes      | yes | PASS        |
 | P-035 | Capability doctor                    | yes  | yes  | —           | —        | yes | PASS        |

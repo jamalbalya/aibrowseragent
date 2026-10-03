@@ -239,7 +239,8 @@ would pass the first assertion and fail that one.
 
 **Verdict: `AUTOMATED`.**
 
-- EVIDENCE: tests/e2e/agent-task.spec.ts :: a stale element handle is refused and reported to the model
+- EVIDENCE: tests/e2e/agent-task.spec.ts :: an unrecoverable element handle is refused and reported to the model
+- EVIDENCE: tests/e2e/handle-recovery.spec.ts :: a stale handle is refused when the page now has two of them
 - EVIDENCE: tests/unit/interaction-engine.test.ts :: refuses a handle from an earlier snapshot and says why
 - EVIDENCE: tests/e2e/workflows.spec.ts :: replaying a recorded click acts on the element that was originally clicked
 

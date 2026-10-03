@@ -594,6 +594,143 @@ describe('03 — two accounts, one endpoint, different credentials', () => {
   });
 });
 
+describe("03b — one account's discovery is not another's answer", () => {
+  it('clears the capability cache when the credential changes', async () => {
+    // **A real leak, found by audit rather than by a failing test.** One
+    // adapter instance is shared by every account on a provider — the registry
+    // caches by provider id — and `resolveBrainAccount` reconnects it on every
+    // request without disconnecting. So capabilities discovered under one
+    // account's credential were still cached when a different account's turn
+    // ran, and two Gemini accounts on different tiers or in different regions
+    // can have different access to the same model id.
+    let served = 0;
+    const adapter = new GeminiAdapter({
+      request: (url) => {
+        // The per-model lookup `getCapabilities` makes. Its answer changes
+        // between the two accounts, which is the whole point: the second must
+        // not read the first one's.
+        served += 1;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              name: 'models/gemini-2.5-flash',
+              supportedGenerationMethods: ['generateContent'],
+              // The distinguishing field: present for the first caller only.
+              inputTokenLimit: served === 1 ? 1_000_000 : 32_000,
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' }, ...(url ? {} : {}) },
+          ),
+        );
+      },
+    });
+
+    const connectAs = async (credential: string): Promise<void> => {
+      const result = await adapter.connect({
+        providerId: GEMINI_PROVIDER_ID,
+        baseUrl: ENDPOINT,
+        apiKey: credential,
+        credentialScheme: 'bearer',
+        model: 'gemini-2.5-flash',
+      });
+      expect(result.authenticated).toBe(true);
+    };
+
+    await connectAs('google-access-first');
+    const first = await adapter.getCapabilities('gemini-2.5-flash');
+    expect(served).toBe(1);
+
+    // The same account asking again reads its own cache: no second request,
+    // which is the cost the cache exists to avoid.
+    await connectAs('google-access-first');
+    expect((await adapter.getCapabilities('gemini-2.5-flash')).contextWindow).toBe(
+      first.contextWindow,
+    );
+    expect(served).toBe(1);
+
+    // A different credential discards it and asks again.
+    await connectAs('google-access-second');
+    const second = await adapter.getCapabilities('gemini-2.5-flash');
+    expect(served).toBe(2);
+    expect(second.contextWindow).not.toBe(first.contextWindow);
+  });
+
+  it('clears it when the endpoint changes, not only the credential', async () => {
+    // A second account can share a credential string and point somewhere
+    // else — a regional host, a proxy — and the catalogue there is a different
+    // catalogue.
+    let served = 0;
+    const adapter = new GeminiAdapter({
+      request: () => {
+        served += 1;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              name: 'models/gemini-2.5-flash',
+              supportedGenerationMethods: ['generateContent'],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      },
+    });
+    const connectTo = async (baseUrl: string): Promise<void> => {
+      await adapter.connect({
+        providerId: GEMINI_PROVIDER_ID,
+        baseUrl,
+        apiKey: ACCESS,
+        credentialScheme: 'bearer',
+        model: 'gemini-2.5-flash',
+      });
+    };
+
+    await connectTo(ENDPOINT);
+    await adapter.getCapabilities('gemini-2.5-flash');
+    expect(served).toBe(1);
+
+    await connectTo('https://gemini-eu.endpoint.test/v1beta');
+    await adapter.getCapabilities('gemini-2.5-flash');
+    expect(served).toBe(2);
+  });
+
+  it('clears it when the same string changes meaning', async () => {
+    // A key and an access token are both opaque strings and could in principle
+    // be equal. What they authorise is not, so the scheme is part of the
+    // identity too.
+    let served = 0;
+    const adapter = new GeminiAdapter({
+      request: () => {
+        served += 1;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              name: 'models/gemini-2.5-flash',
+              supportedGenerationMethods: ['generateContent'],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      },
+    });
+    const connectWith = async (scheme: 'api_key' | 'bearer'): Promise<void> => {
+      await adapter.connect({
+        providerId: GEMINI_PROVIDER_ID,
+        baseUrl: ENDPOINT,
+        apiKey: 'identical-string-under-test',
+        credentialScheme: scheme,
+        model: 'gemini-2.5-flash',
+      });
+    };
+
+    await connectWith('api_key');
+    await adapter.getCapabilities('gemini-2.5-flash');
+    expect(served).toBe(1);
+
+    await connectWith('bearer');
+    await adapter.getCapabilities('gemini-2.5-flash');
+    expect(served).toBe(2);
+  });
+});
+
 describe('04 — switching and disconnecting', () => {
   it('a switch changes which credential the next request carries', async () => {
     const first = await connectGoogleAccount('Google (personal)');

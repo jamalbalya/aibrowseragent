@@ -165,7 +165,12 @@ test.describe('§89 SPA navigation — the URL changed and the document did not'
     // this matched `/not found/` and the code is `ELEMENT_NOT_FOUND`, so the
     // assertion failed while the product was correct.
     expect(clicked.error?.code).toBe('ELEMENT_NOT_FOUND');
-    expect(clicked.error?.message).toContain('removed from the page');
+    // The sentence changed when relocation was added — the handle is now
+    // refused because the element could not be **found again**, rather than
+    // because the node was detached. Same code, same refusal, and a message
+    // that says which of the two states the page is in. The assertion below
+    // is the part that matters and is unchanged.
+    expect(clicked.error?.message).toContain('no longer on the page');
     // And it tells the caller what to do about it, which is what makes this a
     // recoverable failure rather than a dead end.
     expect(clicked.error?.message).toContain('Read the page again');

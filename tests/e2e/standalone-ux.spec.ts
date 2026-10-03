@@ -70,6 +70,16 @@ test('nothing on the normal path asks the user to sign in', async ({ panel }) =>
 test('the settings screen never offers a login or a server to configure', async ({ panel }) => {
   await panel.getByRole('button', { name: 'Settings' }).click();
 
+  // **Waited for, because this case was racy.** Settings loads its provider
+  // list, connector list and authorization methods asynchronously, and the
+  // body was snapshotted immediately after the click — so whether those
+  // sections had rendered depended on timing. It passed for a long time and
+  // then failed on an unrelated change that shifted it by a few milliseconds,
+  // which is the worst way for a negative control to behave: it was not
+  // checking the text it appeared to check.
+  await expect(panel.getByTestId('auth-local-only')).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Run capability check' })).toBeVisible();
+
   const body = (await panel.locator('body').innerText()).toLowerCase();
 
   // The standalone state, said as a state rather than a lack.
@@ -89,9 +99,17 @@ test('the settings screen never offers a login or a server to configure', async 
 
   // NEGATIVE CONTROL: no backend configuration is reachable from here. A
   // build that compiled one in, or a panel that offered one, fails this.
+  const bodyWithoutVendorTerms = body.replace(/personal access token/g, '');
   for (const word of INFRASTRUCTURE_WORDS) {
-    expect(body, word).not.toContain(word);
+    expect(bodyWithoutVendorTerms, word).not.toContain(word);
   }
+  // `access token` is on that list to catch infrastructure and OAuth talk, and
+  // it legitimately appears as **"personal access token"** — which is what
+  // GitHub and Figma call the credential a user creates, so it is the right
+  // words to put in front of somebody about to create one. Those two are
+  // excluded by name rather than by dropping the word, so the control still
+  // fires on a bare "access token" appearing anywhere in Settings.
+  expect(bodyWithoutVendorTerms).not.toContain('access token');
   // And no sign-in button exists to press.
   await expect(panel.getByTestId('auth-sign-in-google')).toHaveCount(0);
 });

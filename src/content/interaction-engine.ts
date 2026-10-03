@@ -9,6 +9,7 @@
 import { isEnabled, isVisible, type ElementRegistry } from './semantic-tree';
 import { matchesAccept } from '@/files/file-model';
 import { STRUCTURED_INPUT_TYPES, type StructuredInputType } from './form-controls';
+import { relocate, relocationMessage } from './relocate';
 
 export type InteractionFailure =
   | 'STALE_HANDLE'
@@ -28,44 +29,93 @@ export interface InteractionError {
 }
 
 export type Resolved =
-  | { readonly ok: true; readonly element: Element }
+  | {
+      readonly ok: true;
+      readonly element: Element;
+      /**
+       * Set when the handle was stale and the element was found again.
+       *
+       * Reported rather than hidden: a click on a node the model did not
+       * literally name should be distinguishable from an ordinary one, in the
+       * result and in the audit trail.
+       */
+      readonly relocated?: true;
+    }
   | { readonly ok: false; readonly error: InteractionError };
 
-/** Resolves a handle and asserts the element is actually actionable. */
-export function resolveActionable(registry: ElementRegistry, handle: string): Resolved {
-  const resolution = registry.resolve(handle);
+/**
+ * The page's interactive elements as they are **now**.
+ *
+ * Supplied by the caller rather than read here, so the resolution logic stays
+ * testable with any DOM and so this module does not reach for the document.
+ */
+export type CandidateSupplier = () => readonly Element[];
 
-  switch (resolution.status) {
-    case 'stale':
-      return {
-        ok: false,
-        error: {
-          failure: 'STALE_HANDLE',
-          message:
-            'This element handle is from an earlier snapshot of the page. Read the page again to get current handles.',
-        },
-      };
-    case 'detached':
-      return {
-        ok: false,
-        error: {
-          failure: 'DETACHED',
-          message: 'The element was removed from the page. Read the page again.',
-        },
-      };
-    case 'unknown':
-      return {
-        ok: false,
-        error: {
-          failure: 'UNKNOWN_HANDLE',
-          message: 'No element matches that handle. Read the page again.',
-        },
-      };
-    case 'ok':
-      break;
+/**
+ * Turns a dead handle into a live element, or into the right refusal.
+ *
+ * The rung `P-032-C6` was missing. A page that re-renders between the read and
+ * the click is the ordinary case — a list settling, a spinner resolving — and
+ * until now every one of those ended by asking the model to read the page
+ * again, which costs a turn and only works if the model obliges.
+ *
+ * `relocate` decides, on role and accessible name, and refuses anything that
+ * is not a unique match. See that module for why the position is deliberately
+ * not used.
+ */
+function recover(
+  registry: ElementRegistry,
+  handle: string,
+  candidates: CandidateSupplier | undefined,
+  failure: 'STALE_HANDLE' | 'DETACHED' | 'UNKNOWN_HANDLE',
+  fallback: string,
+): Resolved {
+  if (candidates === undefined) {
+    return { ok: false, error: { failure, message: fallback } };
   }
+  const found = relocate(registry.describe(handle), candidates());
+  if (found.ok) return { ok: true, element: found.element, relocated: true };
+  return {
+    ok: false,
+    error: { failure, message: relocationMessage(found.refusal, found.matches) },
+  };
+}
 
-  const element = resolution.element;
+/** Resolves a handle and asserts the element is actually actionable. */
+export function resolveActionable(
+  registry: ElementRegistry,
+  handle: string,
+  candidates?: CandidateSupplier,
+): Resolved {
+  const resolution = registry.resolve(handle);
+  let relocated = false;
+  let element: Element;
+
+  if (resolution.status === 'ok') {
+    element = resolution.element;
+  } else {
+    const recovered = recover(
+      registry,
+      handle,
+      candidates,
+      resolution.status === 'stale'
+        ? 'STALE_HANDLE'
+        : resolution.status === 'detached'
+          ? 'DETACHED'
+          : 'UNKNOWN_HANDLE',
+      resolution.status === 'detached'
+        ? 'The element was removed from the page. Read the page again.'
+        : resolution.status === 'unknown'
+          ? 'No element matches that handle. Read the page again.'
+          : 'This element handle is from an earlier snapshot of the page. Read the page again to get current handles.',
+    );
+    if (!recovered.ok) return recovered;
+    // Relocation produces an element and nothing else. Every check below still
+    // runs on it, which is what makes this safe rather than a shortcut around
+    // the gates.
+    element = recovered.element;
+    relocated = true;
+  }
   if (!isVisible(element)) {
     return {
       ok: false,
@@ -78,7 +128,7 @@ export function resolveActionable(registry: ElementRegistry, handle: string): Re
       error: { failure: 'NOT_ENABLED', message: 'The element is disabled.' },
     };
   }
-  return { ok: true, element };
+  return { ok: true, element, ...(relocated ? { relocated: true as const } : {}) };
 }
 
 export function scrollIntoView(element: Element): void {

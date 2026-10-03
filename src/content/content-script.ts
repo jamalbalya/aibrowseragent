@@ -12,6 +12,7 @@
  */
 import {
   ElementRegistry,
+  collectInteractive,
   describeActedOn,
   extractSemanticPage,
   observeField,
@@ -96,7 +97,11 @@ const handlers: Handlers = {
   }),
 
   'content.click': (payload) => {
-    const resolved = resolveActionable(registry, payload.elementId);
+    // `currentCandidates` lets a stale handle be re-found rather than bounced
+    // back to the model. A page that re-rendered between the read and the
+    // click is the ordinary case; see `relocate.ts` for the rule and for why
+    // an ambiguous match is still a refusal.
+    const resolved = resolveActionable(registry, payload.elementId, currentCandidates);
     if (!resolved.ok)
       throw new InteractionRejection(resolved.error.failure, resolved.error.message);
 
@@ -112,6 +117,9 @@ const handlers: Handlers = {
       clicked: true as const,
       navigated: location.href !== before,
       ...(actedOn === undefined ? {} : { actedOn }),
+      // Reported, so a click on a node the model did not literally name is
+      // visible in the result and in the audit trail.
+      ...(resolved.relocated === true ? { relocated: true as const } : {}),
     };
   },
 
@@ -268,6 +276,18 @@ function waitForSelector(selector: string, timeoutMs: number): Promise<{ found: 
       attributes: true,
     });
   });
+}
+
+/**
+ * The page's interactive elements as they are now.
+ *
+ * Read on demand rather than cached: the whole point is that the page has
+ * changed since the snapshot, so a cached list would be the stale thing being
+ * recovered from. It costs one `querySelectorAll` walk, and only on the path
+ * where a handle has already failed to resolve.
+ */
+function currentCandidates(): readonly Element[] {
+  return collectInteractive(document);
 }
 
 function toErrorEnvelope(error: unknown): ResponseEnvelope<never> {

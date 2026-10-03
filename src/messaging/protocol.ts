@@ -1464,7 +1464,21 @@ export interface ContentRequestMap {
    */
   'content.click': {
     request: { elementId: string };
-    response: { clicked: true; navigated: boolean; actedOn?: ActedOnElement };
+    response: {
+      clicked: true;
+      navigated: boolean;
+      actedOn?: ActedOnElement;
+      /**
+       * Set when the handle was stale and the element was found again.
+       *
+       * Reported rather than hidden. A page that re-renders between the read
+       * and the click is ordinary, and recovering from it saves a model turn —
+       * but a click on a node the model did not literally name has to be
+       * distinguishable from one on a node it did, in the result and in the
+       * trail. `content/relocate.ts` has the rule that decides it.
+       */
+      relocated?: true;
+    };
   };
   /**
    * `sensitivityCeiling` is the most sensitive class of field the worker

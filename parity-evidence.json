@@ -3079,7 +3079,11 @@
         "tests/integration/task-persistence.test.ts",
         "tests/integration/task-manager.test.ts"
       ],
-      "e2e": ["tests/e2e/mv3-lifecycle.spec.ts", "tests/e2e/task-pause.spec.ts"],
+      "e2e": [
+        "tests/e2e/handle-recovery.spec.ts",
+        "tests/e2e/mv3-lifecycle.spec.ts",
+        "tests/e2e/task-pause.spec.ts"
+      ],
       "clauses": [
         {
           "id": "P-032-C1",
@@ -3139,7 +3143,11 @@
           "requirement": "The worked recovery ladder: refresh the page model, find the target, retry, screenshot fallback, alternate locator, model recovery.",
           "mandatory": false,
           "status": "PARTIAL",
-          "note": "The specification gives this as an \"Example:\" rather than a requirement, so it is recorded as non-mandatory. Retry and the page-model refresh exist; a screenshot fallback and an alternate-locator strategy do not. Stated rather than claimed."
+          "note": "The specification gives this as an “Example:” rather than a requirement, so it is recorded as non-mandatory. **Three of its rungs now exist and one is a deliberate omission.** Retry and the page-model refresh were already there. The **alternate locator** rung is new: a stale handle is re-found by role and accessible name — the same identity `describeActedOn` produces and a workflow binding is matched on — and an ambiguous match is **refused**, not resolved by position, for the reason the parameteriser already settled: “a recording that says ‘the third Delete button’ is a recording that clicks the wrong thing the moment a row is added”. Relocation bypasses no gate — visibility, enabled and field-sensitivity all run on the re-found element — and it is reported in the result so a click on a node the model did not literally name is visible in the trail. What remains absent is the **automatic screenshot fallback**, and that is a product decision rather than missing work: the model can already request a screenshot, and pushing an image into its context on every failed click is a cost the user did not ask for. Stated rather than claimed, and the clause stays PARTIAL.",
+          "evidence": [
+            "tests/e2e/handle-recovery.spec.ts :: a stale handle is recovered when the element is unambiguous",
+            "tests/e2e/handle-recovery.spec.ts :: a stale handle is refused when the page now has two of them"
+          ]
         }
       ],
       "conditions": {
@@ -3149,7 +3157,8 @@
         "securityPath": {
           "exempt": "Resuming grants nothing. A resumed task re-earns every approval its actions need, because approval is decided at the one policy call site on each action rather than held by the task."
         }
-      }
+      },
+      "security": ["tests/security/handle-relocation.test.ts"]
     },
     "P-033": {
       "unit": [

@@ -126,9 +126,45 @@ export const DEFAULT_MAX_TEXT_LENGTH = 40_000;
  * the same element without re-querying, and invalidates the whole mapping when
  * a new snapshot is taken.
  */
+/**
+ * What a handle was issued for, kept so a stale one can be re-found.
+ *
+ * Role and accessible name, and deliberately nothing else. This is the same
+ * pair `describeActedOn` produces and the same pair a workflow binding is
+ * matched on, because an element's declarative identity should mean one thing
+ * in this build rather than three.
+ */
+export interface ElementDescriptor {
+  readonly role: string;
+  readonly name: string;
+}
+
+/**
+ * How many descriptors are retained across snapshots.
+ *
+ * They outlive their generation on purpose — that is the whole point — so the
+ * map needs a ceiling or a long-lived tab accumulates one entry per element
+ * per page read. Oldest-first eviction: a handle from twenty snapshots ago is
+ * not one a model is about to name.
+ */
+export const MAX_RETAINED_DESCRIPTORS = 2_000;
+
 export class ElementRegistry {
   private generation = 0;
   private elements = new Map<string, Element>();
+  /**
+   * Handle to descriptor, **surviving `beginSnapshot`**.
+   *
+   * The live element map is replaced on every snapshot, which is what makes a
+   * stale handle unresolvable. This is what makes it *recoverable*: the
+   * descriptor says what the handle was issued for, so the element can be
+   * looked for again in the page as it is now.
+   *
+   * It holds no node, so it keeps nothing alive and leaks no DOM across
+   * generations — a retained `Element` would pin a detached subtree in memory
+   * for as long as the tab lived.
+   */
+  private descriptors = new Map<string, ElementDescriptor>();
 
   /** Starts a new generation, invalidating every previously issued handle. */
   beginSnapshot(): number {
@@ -155,7 +191,32 @@ export class ElementRegistry {
   register(element: Element, index: number): string {
     const handle = `e${this.generation}-${index}`;
     this.elements.set(handle, element);
+    // Recorded now, while the element is in front of us. Deriving it later
+    // from a stale handle is impossible by definition, and deriving it from a
+    // detached node gives a name the page no longer shows.
+    this.remember(handle, { role: roleOf(element), name: accessibleName(element) });
     return handle;
+  }
+
+  private remember(handle: string, descriptor: ElementDescriptor): void {
+    this.descriptors.set(handle, descriptor);
+    while (this.descriptors.size > MAX_RETAINED_DESCRIPTORS) {
+      // `Map` iterates in insertion order, so the first key is the oldest.
+      const oldest = this.descriptors.keys().next();
+      if (oldest.done === true) break;
+      this.descriptors.delete(oldest.value);
+    }
+  }
+
+  /**
+   * What a handle was issued for, if it is still remembered.
+   *
+   * Works for a handle from an earlier generation, which is the case that
+   * matters — a current handle resolves to a live element and needs no
+   * descriptor.
+   */
+  describe(handle: string): ElementDescriptor | undefined {
+    return this.descriptors.get(handle);
   }
 
   /**

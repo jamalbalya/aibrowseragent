@@ -17,8 +17,8 @@ Web Store account was accessed.
 |                 | Previously submitted                              | Current candidate                                                   |
 | --------------- | ------------------------------------------------- | ------------------------------------------------------------------- |
 | Version         | `0.1.0`                                           | `0.1.0`                                                             |
-| SHA-256         | **not recorded — see below**                      | `25baebe86f3e17677ce2150fae83dc7cb1a859fb3d2db5eb7b6c1a7ecacb78a0`  |
-| Bytes           | not recorded                                      | 289,391                                                             |
+| SHA-256         | **not recorded — see below**                      | `df5a0aa2109dd582fc29b1fe76c7586b4056c48876fe2edcc4d0d25c4510e45d`  |
+| Bytes           | not recorded                                      | 290,022                                                             |
 | Entries         | not recorded                                      | 13                                                                  |
 | Source commit   | not recorded                                      | the commit this file was committed in                               |
 | Submission date | not recorded; reported as on or before 2026-10-01 | not submitted                                                       |
@@ -166,8 +166,8 @@ All run on the tree this candidate was built from, on Node 22.23.3.
 | Check                         | Result                                                                                              |
 | ----------------------------- | --------------------------------------------------------------------------------------------------- |
 | `npm run verify`              | pass — format, lint, typecheck, tests, build, package, parity, acceptance, notices                  |
-| Unit / integration / security | 4,496 passed, 34 skipped, 184 files                                                                 |
-| Real-Chromium E2E             | 514 passed, in 8.4 minutes, against this tree                                                       |
+| Unit / integration / security | 4,519 passed, 34 skipped, 185 files                                                                 |
+| Real-Chromium E2E             | 518 passed, in 9.0 minutes, against this tree                                                       |
 | `npm audit --omit=dev`        | 0 vulnerabilities                                                                                   |
 | Reproducibility               | deterministic over repeated packing, digest verified with `sha256sum -c`                            |
 | Parity                        | 36 PASS / 3 PARTIAL / 1 NOT-STARTED across 40 capabilities                                          |

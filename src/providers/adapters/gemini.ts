@@ -208,6 +208,28 @@ export class GeminiAdapter implements AIProviderAdapter {
       });
     }
 
+    // **The cache cannot outlive the credential it was measured with.**
+    //
+    // One adapter instance is shared by every account on this provider — the
+    // registry caches instances by provider id — and `resolveBrainAccount`
+    // reconnects it on every request rather than disconnecting first. So
+    // without this, capabilities discovered under one account's credential
+    // were still in the map when a *different* account's turn ran: two Gemini
+    // accounts on different tiers or in different regions can have different
+    // access to the same model id, and the second one would read the first
+    // one's answer.
+    //
+    // Cleared on a change of credential or endpoint, not on every connect.
+    // Clearing unconditionally would discard the cache on every request, which
+    // is a network round trip in front of each one — the cost the cache exists
+    // to avoid. The same account reconnecting keeps what it measured.
+    if (this.config !== null) {
+      const sameCredential = this.config.apiKey === config.apiKey;
+      const sameEndpoint = this.config.baseUrl === baseUrl;
+      const sameScheme = this.config.credentialScheme === config.credentialScheme;
+      if (!sameCredential || !sameEndpoint || !sameScheme) this.discovered.clear();
+    }
+
     this.config = { ...config, baseUrl, model: bareModelId(config.model) };
     return Promise.resolve({
       authenticated: true,

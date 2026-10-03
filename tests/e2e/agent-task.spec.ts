@@ -154,12 +154,23 @@ test('a screenshot is captured, stored and never inlined into model context', as
   expect(turns).not.toContain(payload.content!.slice(0, 200));
 });
 
-test('a stale element handle is refused and reported to the model', async ({
+test('an unrecoverable element handle is refused and reported to the model', async ({
   context,
   send,
   provider,
   site,
 }) => {
+  // **This case used to re-read the same page and then use a handle from the
+  // first read.** It passed because a stale handle was always refused. It now
+  // *recovers* — the element is still there, unambiguous, and re-finding it is
+  // the point of `content/relocate.ts` — so the old setup no longer stages
+  // what this test is about.
+  //
+  // The property is still real and still worth holding: when the element is
+  // genuinely gone, the model has to be **told**, in a sentence it can act on,
+  // rather than the task failing silently. So the page is navigated away from
+  // instead, which makes the handle unrecoverable for the right reason and
+  // additionally proves relocation does not reach across a navigation.
   const page = await context.newPage();
   await page.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
   await page.bringToFront();
@@ -167,8 +178,12 @@ test('a stale element handle is refused and reported to the model', async ({
   await connectProvider(send, provider);
   provider.script([
     { kind: 'tool_calls', calls: [{ name: 'browser_read_page', arguments: {} }] },
-    // Re-reading invalidates generation 1.
-    { kind: 'tool_calls', calls: [{ name: 'browser_read_page', arguments: {} }] },
+    // A different document, whose only control is labelled "Save". Nothing on
+    // it shares the role and name of the search button `e1-1` named.
+    {
+      kind: 'tool_calls',
+      calls: [{ name: 'browser_navigate', arguments: { url: `${site.baseUrl}/rerender` } }],
+    },
     { kind: 'tool_calls', calls: [{ name: 'browser_click', arguments: { elementId: 'e1-1' } }] },
     { kind: 'text', text: 'The handle was stale, so I stopped.' },
   ]);
@@ -180,7 +195,42 @@ test('a stale element handle is refused and reported to the model', async ({
 
   const turns = provider.requests.map((r) => JSON.stringify(r.body)).join('');
   expect(turns).toContain('ELEMENT_NOT_FOUND');
-  expect(turns).toContain('earlier snapshot');
+  // The sentence the model receives names the state and what to do about it.
+  expect(turns).toContain('Read the page again');
+});
+
+test('a stale handle whose element is still there is recovered, not refused', async ({
+  context,
+  send,
+  provider,
+  site,
+}) => {
+  // The other half of the behaviour the case above used to cover alone, and
+  // the reason it had to change: a model that re-reads the page and then uses
+  // a handle from before no longer loses the turn. The element is the same
+  // one, by role and accessible name, and nothing on the page is ambiguous.
+  const page = await context.newPage();
+  await page.goto(site.baseUrl, { waitUntil: 'domcontentloaded' });
+  await page.bringToFront();
+
+  await connectProvider(send, provider);
+  provider.script([
+    { kind: 'tool_calls', calls: [{ name: 'browser_read_page', arguments: {} }] },
+    // Re-reading invalidates generation 1 without changing the page.
+    { kind: 'tool_calls', calls: [{ name: 'browser_read_page', arguments: {} }] },
+    { kind: 'tool_calls', calls: [{ name: 'browser_click', arguments: { elementId: 'e1-1' } }] },
+    { kind: 'text', text: 'Clicked it.' },
+  ]);
+
+  const { task } = await send('task.create', { objective: 'Click the search button.' });
+  const finished = await waitForTask(send, task.id);
+
+  expect(finished.state).toBe('COMPLETED');
+  expect(finished.result?.failedActions ?? []).toEqual([]);
+  // And the model is told the element was re-found, so a click on a node it
+  // did not literally name is visible to it as well as in the trail.
+  const turns = provider.requests.map((r) => JSON.stringify(r.body)).join('');
+  expect(turns).toContain('relocated');
 });
 
 test('the task can be cancelled while it is running', async ({ context, send, provider, site }) => {

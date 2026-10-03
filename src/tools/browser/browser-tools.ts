@@ -357,7 +357,18 @@ export function createClickTool({ adapter }: BrowserToolDeps): AgentTool<typeof 
         });
         return {
           success: true,
-          data: { clicked: result.clicked, navigated: result.navigated },
+          data: {
+            clicked: result.clicked,
+            navigated: result.navigated,
+            // Inside `data`, deliberately, because the model should know. The
+            // handle it named was stale and the element was found again by
+            // role and accessible name; that is almost always what it wanted,
+            // and on the occasion it was not, a model that can see it happened
+            // can verify before going further. Hiding it would make a click on
+            // a node it did not literally name indistinguishable from one on a
+            // node it did.
+            ...(result.relocated === true ? { relocated: true as const } : {}),
+          },
           // Beside `data`, never inside it: this is page-derived text for the
           // observation hook, and `data` is what the model reads.
           ...(result.actedOn === undefined ? {} : { actedOn: result.actedOn }),
