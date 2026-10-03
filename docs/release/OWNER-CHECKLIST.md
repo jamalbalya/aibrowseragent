@@ -419,6 +419,66 @@ character by character, including the scheme and any trailing slash.
 Report what happened. A failure here is a finding about the repository, not
 about you.
 
+### G-6. Register a Google OAuth client for the **Gemini API** — a separate thing
+
+**This is not G-1 and does not depend on it.** G-1 to G-5 are the product
+sign-in, which needs a deployed backend. This one needs no backend, no secret
+and no deployment: it is what lets a user press _Connect with Google_ and give
+the agent a Gemini credential to run on. You can do this and skip G-1
+entirely.
+
+Twenty minutes, and the only part that is fiddly is the extension id.
+
+1. **Decide which extension id you are registering.** Google pins the redirect
+   to one id. An unpacked build has a different id from the published one, so
+   register the one you intend to test with, and expect to register the Web
+   Store id separately after publishing.
+2. In the Google Cloud console, pick or create a project, and **enable the
+   Generative Language API** on it. Usage is billed to this project.
+3. APIs & Services → Credentials → Create credentials → OAuth client ID →
+   application type **Chrome Extension** (not Web application, not Desktop).
+   Paste the extension id. You will be given a client id ending
+   `.apps.googleusercontent.com` and **no client secret** — Google does not
+   issue one for this client type, and the extension could not hold one safely
+   if it did.
+4. On the OAuth consent screen, add the scope
+   `https://www.googleapis.com/auth/cloud-platform` and add your own Google
+   account as a test user. While the app is unverified, only test users can
+   complete it — that is Google's rule and not a defect here.
+5. Build with the client id inlined:
+
+   ```sh
+   VITE_ABA_GOOGLE_PROVIDER_CLIENT_ID=<your-id>.apps.googleusercontent.com npm run build
+   ```
+
+6. Load that build, open Settings, choose Google Gemini, and press
+   **Connect with Google**. What to watch, in this order:
+   - Chrome asks for the `identity` permission. **Decline it once.** The panel
+     must say nothing was changed, and no account must appear.
+   - Press it again and accept. Google's consent screen appears.
+   - **Uncheck the requested access** if Google offers the choice. The
+     connection must be refused with a sentence about authorizing again — a
+     token without that scope cannot list or run a model, and storing it would
+     produce an account that looks connected and fails at first use.
+   - Accept properly. An account appears, with **no model selected**, and the
+     model list is populated from what Google says that project can use.
+   - Choose a model, run the capability check, then run a task.
+7. **What to record.** Which extension id, which project, whether each of the
+   four outcomes above behaved, and the date. Not the client id's project
+   number if you would rather not, and **never** a token, a code or a
+   screenshot showing one.
+
+**If the consent screen shows an error instead of a prompt**, the extension id
+in the client registration does not match the build you loaded. Compare
+`chrome://extensions` against the console entry character by character.
+
+**If a task then fails with a Google error about quota or a project**, that is
+the one thing this repository marks **unverified**: Google's discovery document
+declares no OAuth scope for `generateContent`, and whether every method accepts
+a bearer token on every project configuration has not been established here.
+Report exactly what Google said — it is a finding, and `docs/account-integration.md`
+is where it belongs.
+
 ---
 
 ## Build and verify

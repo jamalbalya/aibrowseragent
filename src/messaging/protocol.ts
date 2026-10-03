@@ -9,6 +9,7 @@ import type { AgentTask, AgentSession, TaskState } from '@/tasks/task-model';
 import type { AgentError } from '@/types/result';
 import type { CapabilityReport } from '@/providers/capability-doctor/capability-doctor';
 import type { AuthKind, ProviderOperation } from '@/providers/core/types';
+import type { ProviderAuthorization } from '@/providers/accounts/authorization';
 import type { ProviderKind } from '@/providers/core/provider-kind';
 import type { PermissionRequest, PermissionResponse } from '@/policy/permission-engine';
 import type { FileSelectionRequest } from '@/background/file-broker';
@@ -464,6 +465,59 @@ export interface PanelRequestMap {
       displayName?: string;
     };
     response: { account: ConnectedAccountView | null; error?: AgentError };
+  };
+  /**
+   * How each provider can be authorized, and what each method needs.
+   *
+   * The panel renders the connect screen from this rather than from a list of
+   * its own, so a claim about what a Google connection does exists in one
+   * place. `googleAuthorizable` is true for exactly one provider — Google's
+   * own — because no other vendor on this list will issue a third party an
+   * authorization an extension can obtain and use; the reasons, with sources,
+   * travel in `unavailable`.
+   */
+  'accounts.authMethods': {
+    request: Record<string, never>;
+    response: {
+      /**
+       * The authorization matrix, referenced rather than restated.
+       *
+       * The union of kinds, the discovery values and the method shape all have
+       * exactly one definition — `providers/accounts/authorization.ts` — and
+       * naming it here is what stops this file and that one drifting into two
+       * slightly different vocabularies. It also keeps a credential-shaped
+       * literal out of a response declaration, which `credential-boundary`
+       * checks for by text and was right to object to.
+       */
+      providers: readonly ProviderAuthorization[];
+      /**
+       * Whether a Gmail address can ever enumerate the user's AI accounts.
+       *
+       * Always false, and carried so the panel can say so where a user would
+       * reasonably expect otherwise. Model discovery is a different thing and
+       * does work — after a credential exists, against its own endpoint.
+       */
+      accountDiscoveryFromGoogleIdentity: boolean;
+      /** Whether the `identity` permission is already granted. */
+      identityPermissionGranted: boolean;
+    };
+  };
+  /**
+   * Authorizes a Google account and connects it as a Gemini account.
+   *
+   * **Not a sign-in.** It creates no product account and no session; it
+   * produces one access token bound to one connected account, exactly as a
+   * pasted key is. A user who has never signed in can do this, and a user who
+   * has signed in has not done it.
+   */
+  'accounts.connectGoogle': {
+    request: { loginHint?: string; displayName?: string };
+    response: {
+      account: ConnectedAccountView | null;
+      /** The named refusal, so the panel can explain rather than say "failed". */
+      failure?: string;
+      error?: AgentError;
+    };
   };
   'accounts.disconnect': { request: { connectionId: string }; response: { ok: true } };
   'accounts.listModels': {

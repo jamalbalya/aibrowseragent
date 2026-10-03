@@ -61,6 +61,23 @@ export const EGRESS_CHANNELS = [
    * could: see `src/identity/identity-transport.ts`.
    */
   'identity',
+  /**
+   * Authorizing an AI provider account — one vendor's token endpoint.
+   *
+   * A channel of its own rather than a reuse of `ai_provider` or `identity`,
+   * because it is neither. `ai_provider` carries task data to an inference
+   * endpoint under a consent pin; this carries an authorization code and a
+   * refresh token to a token endpoint and no task data at all. `identity`
+   * reaches this project's own backend to establish a *product* account; this
+   * reaches a third party to obtain a *provider* credential, and conflating
+   * the two is exactly the confusion the product is trying to remove — a user
+   * who authorizes Google for Gemini has not signed in to anything here.
+   *
+   * It carries no page-derived value and no secret of this build's own: a
+   * Chrome Extension OAuth client has no client secret, so there is none to
+   * send.
+   */
+  'provider_auth',
 ] as const;
 
 export type EgressChannel = (typeof EGRESS_CHANNELS)[number];
@@ -80,6 +97,9 @@ const EXTERNAL: ReadonlySet<EgressChannel> = new Set<EgressChannel>([
   'download',
   'connector',
   'mcp',
+  // Obtaining a provider credential leaves the device, so it is authorised
+  // like everything else that does.
+  'provider_auth',
 ]);
 
 export function isExternalChannel(channel: EgressChannel): boolean {
@@ -226,6 +246,31 @@ export function identityDestination(backendOrigin: string, url: string): EgressD
     identity: matches ? `identity@${info.origin}` : null,
     ...(info ? { origin: info.origin } : {}),
     purpose: 'authentication',
+  };
+}
+
+/**
+ * The destination for a provider authorization request.
+ *
+ * Pinned the way `identityDestination` is pinned, and for the same reason: a
+ * URL off the expected origin yields a `null` identity, which the gate denies —
+ * so a token exchange aimed anywhere else is refused by the rule that refuses
+ * every unrecognisable destination, rather than by a check somebody has to
+ * remember to write.
+ */
+export function providerAuthDestination(
+  providerId: string,
+  expectedEndpoint: string,
+  url: string,
+): EgressDestination {
+  const info = parseOrigin(url);
+  const expected = parseOrigin(expectedEndpoint);
+  const matches = info !== null && expected !== null && info.origin === expected.origin;
+  return {
+    channel: 'provider_auth',
+    identity: matches ? `provider-auth:${providerId}@${info.origin}` : null,
+    ...(info ? { origin: info.origin } : {}),
+    purpose: 'account authorization',
   };
 }
 

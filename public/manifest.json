@@ -34,7 +34,7 @@
     "activeTab",
     "alarms"
   ],
-  "optional_permissions": ["downloads"],
+  "optional_permissions": ["downloads", "identity"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "icons": {
     "16": "icons/icon-16.png",

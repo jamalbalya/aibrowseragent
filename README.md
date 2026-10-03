@@ -162,8 +162,20 @@ Then load it into Chrome:
 
 ### Connect a provider
 
+**There is nothing to sign up for.** The extension opens and works on this
+device with no account of its own; what it needs is an AI account _you_ hold.
+There is an optional product sign-in, it is absent from every shipped build,
+and it grants no access to any AI service.
+
+For **Google Gemini** you can authorize your Google account instead of pasting
+a key — see [Connect with Google](#connect-with-google) below. Every other
+provider takes a key you create, and the reasons are per-vendor rather than
+arbitrary: [docs/account-integration.md](docs/account-integration.md) has the
+table with each vendor's own source.
+
 1. In the side panel, click **Settings**.
-2. Choose a provider.
+2. Choose a provider. The panel states what that provider actually accepts
+   before the form that asks for a key.
 3. Enter your API key and a model id. The base URL is needed only for the
    OpenAI-compatible adapter, which is the one you point wherever you like;
    the other two default to their own documented endpoint.
@@ -200,6 +212,39 @@ and fail later.
 Your API key is stored by the extension and sent only to that provider's
 endpoint, as a request header. It never appears in a URL, and it is never
 written to logs, evidence, audit records, task records, or model prompts.
+
+### Connect with Google
+
+For **Google's Gemini API only**, you can authorize your Google account rather
+than paste a key. Press **Connect with Google** under that provider in
+Settings. Chrome asks for one optional permission — you can decline it, and
+withdraw it later — and Google's own consent screen opens. What comes back is
+an access token stored as that one account's credential, renewed before it
+expires.
+
+Three things it is not:
+
+- **not a sign-in.** No account here is created, no session starts, and
+  nothing about it is required to use the extension.
+- **not a way to find your other AI accounts.** No provider offers an API that
+  lists the accounts a Google identity holds elsewhere, and this extension does
+  not imply one. Models _are_ discovered — from the endpoint, once the account
+  has a credential.
+- **not a way to use a consumer subscription.** Gemini API usage is billed to a
+  Google Cloud project whether you authorize or paste a key. A Google One AI
+  Premium plan is not an API entitlement.
+
+Only Google works this way, and the reasons are specific: OpenAI's
+plan-sharing flow needs a loopback redirect an extension cannot serve,
+Anthropic's terms prohibit a third party routing a Claude subscription, and the
+rest issue keys only. The panel shows each reason with a link to the vendor's
+page.
+
+**In the published build this option reports itself unavailable**, because the
+artifact carries no Google OAuth client id. It says so and points at the key
+path instead of offering a button that cannot work. Registering a client is
+owner step G-6 in
+[docs/release/OWNER-CHECKLIST.md](docs/release/OWNER-CHECKLIST.md).
 
 ### Choose which account the agent uses
 
@@ -363,6 +408,7 @@ requirement. That is the argument for the check rather than the table.
 | [docs/security.md](docs/security.md)                                                                           | Threat model, controls, known limitations              |
 | [docs/testing.md](docs/testing.md)                                                                             | Test strategy and what each suite proves               |
 | [docs/provider-architecture.md](docs/provider-architecture.md)                                                 | Adding a provider adapter                              |
+| [docs/account-integration.md](docs/account-integration.md)                                                     | How an AI account is connected, and what Google does   |
 | [docs/tool-architecture.md](docs/tool-architecture.md)                                                         | Adding a tool                                          |
 | [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)                                                                   | §82's eighteen threats, one item each, with evidence   |
 | [docs/MCP_GUIDE.md](docs/MCP_GUIDE.md)                                                                         | What P-026 is, and where an MCP tool's risk comes from |

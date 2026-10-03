@@ -202,6 +202,13 @@ describe('TEST-SECURITY-038 — account routes are panel-only', () => {
     expect(PANEL_ROUTE_CLASSES['accounts.associate']).toBe('CLASS_B_PANEL_CONTROL_PLANE');
     expect(PANEL_ROUTE_CLASSES['accounts.declineAssociation']).toBe('CLASS_B_PANEL_CONTROL_PLANE');
     expect(PANEL_ROUTE_CLASSES['storage.setPreference']).toBe('CLASS_B_PANEL_CONTROL_PLANE');
+
+    // Describing what each provider needs changes nothing and carries no
+    // credential, so it reads. Obtaining one is control plane for the same
+    // reason `accounts.connect` is: a page that could reach it could connect
+    // an account the user never chose.
+    expect(PANEL_ROUTE_CLASSES['accounts.authMethods']).toBe('CLASS_E_PANEL_READ_ONLY');
+    expect(PANEL_ROUTE_CLASSES['accounts.connectGoogle']).toBe('CLASS_B_PANEL_CONTROL_PLANE');
   });
 
   it('gives no account route a class a content script could satisfy', async () => {
@@ -209,10 +216,11 @@ describe('TEST-SECURITY-038 — account routes are panel-only', () => {
     const accountRoutes = Object.keys(PANEL_ROUTE_CLASSES).filter(
       (route) => route.startsWith('accounts.') || route.startsWith('storage.'),
     );
-    // Nine account routes plus two storage routes. Pinned, so a route added
+    // Eleven account routes plus two storage routes. Pinned, so a route added
     // later has to be classified here deliberately rather than joining a
-    // loop that silently grows.
-    expect(accountRoutes.length).toBe(11);
+    // loop that silently grows — which is what it did for the two Google
+    // authorization routes, and the count moving is the guard working.
+    expect(accountRoutes.length).toBe(13);
     for (const route of accountRoutes) {
       // CLASS_C is the only class a content script can reach, and it is
       // worker-to-content, never content-originated.

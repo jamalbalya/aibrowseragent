@@ -413,9 +413,19 @@ export function AccountPanel(): React.JSX.Element {
         {busy === 'signing-in' ? 'Signing in…' : 'Sign in with Google'}
       </button>
       <p className="account__note">
-        This signs you in to AI Browser Agent only. It does not connect or authorise OpenAI,
-        Anthropic, Gemini or any other AI account — those are connected separately, each with its
-        own key.
+        This signs you in to AI Browser Agent only, and it is optional — the extension works on this
+        device without it. It does not connect or authorise OpenAI, Anthropic, Gemini or any other
+        AI account.
+      </p>
+      <p className="account__note">
+        {/* Two buttons in this product say "Google", and they do different
+            things. Settings → Connecting Google Gemini authorizes Google's own
+            AI API and produces a credential the agent can run on; this one
+            does not. A user who conflated them would authorize the wrong
+            thing and wonder why no model appeared. */}
+        Looking for <strong>Connect with Google</strong> to use Gemini? That is a different thing,
+        in Settings under the provider you are connecting. It authorizes Google’s AI API and does
+        not sign you in here.
       </p>
       {message === null ? null : (
         <p className="account__error" data-testid="auth-error">

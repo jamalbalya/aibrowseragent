@@ -1292,3 +1292,63 @@ body {
   opacity: 1;
   background: var(--surface-2, rgba(127, 127, 127, 0.12));
 }
+
+/* How a provider can be authorized.
+   Rendered from `accounts.authMethods`, so what it says about a Google
+   connection is the same thing the worker and the documentation say. The
+   "not available" tag and the collapsed reasons exist because the honest
+   answer differs per vendor, and a disabled button with no explanation is
+   worse than no button. */
+.auth-methods {
+  margin: 0.75rem 0 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--surface-2, rgba(127, 127, 127, 0.22));
+  border-radius: 8px;
+}
+
+.auth-methods__title {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.auth-methods__row + .auth-methods__row {
+  margin-top: 0.6rem;
+}
+
+.auth-methods__label {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.auth-methods__tag {
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.18));
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.auth-methods__action {
+  margin-top: 0.75rem;
+}
+
+.auth-methods__unavailable {
+  margin-top: 0.75rem;
+  font-size: 0.78rem;
+}
+
+.auth-methods__unavailable ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.auth-methods__unavailable li + li {
+  margin-top: 0.4rem;
+}
+
+.auth-methods__discovery {
+  margin-top: 0.75rem;
+}

@@ -898,22 +898,59 @@ describe('what a descriptor is allowed to declare', () => {
 });
 
 describe('the manifest is not widened for connectors', () => {
-  it('adds no host permission, no identity, no cookies and no webRequest', () => {
+  it('adds no host permission, no cookies and no webRequest — and no required identity', () => {
     const manifest = JSON.parse(
       readFileSync(resolve(import.meta.dirname, '../../public/manifest.json'), 'utf8'),
-    ) as { permissions?: string[]; host_permissions?: string[]; optional_permissions?: string[] };
+    ) as {
+      permissions?: string[];
+      host_permissions?: string[];
+      optional_permissions?: string[];
+      oauth2?: unknown;
+    };
 
     const all = [
       ...(manifest.permissions ?? []),
       ...(manifest.optional_permissions ?? []),
       ...(manifest.host_permissions ?? []),
     ];
-    // `chrome.identity` was deliberately not taken: the same permission also
-    // unlocks `getAuthToken`, which mints a token for the browser profile's
-    // own account. The tab-based flow needs no new permission at all.
-    for (const forbidden of ['identity', 'cookies', 'webRequest', '<all_urls>']) {
+    for (const forbidden of ['cookies', 'webRequest', '<all_urls>']) {
       expect(all).not.toContain(forbidden);
     }
+
+    // **`identity` is still not required, and still not used by a connector.**
+    //
+    // This assertion used to forbid it outright, on the grounds that the same
+    // permission unlocks `getAuthToken`, which mints a token for the browser
+    // profile's own account. That reasoning has not changed and the
+    // tab-watching flow every connector uses still needs no permission at all.
+    //
+    // What changed is that Google will register exactly one redirect for a
+    // Chrome Extension client — `https://<id>.chromiumapp.org/` — which only
+    // `launchWebAuthFlow` intercepts, so authorizing a Google account for the
+    // Gemini API is impossible without it. It is taken in the narrowest form
+    // available: **optional**, requested when the user presses the button, and
+    // revocable. A user who never connects Google never grants it.
+    //
+    // The capability that was objected to stays shut because `getAuthToken`
+    // reads its client id from the manifest's `oauth2` key and there is none.
+    // That is asserted here by its absence and measured in real Chromium by
+    // `tests/e2e/google-provider-auth.spec.ts`.
+    expect(manifest.permissions ?? []).not.toContain('identity');
+    expect(manifest.optional_permissions ?? []).toContain('identity');
+    expect(manifest.oauth2).toBeUndefined();
+
+    // And no connector reaches it. Checked on the port's **code** with its
+    // comments stripped, because the file discusses `chrome.identity` at
+    // length in order to explain why it does not use it — an assertion on the
+    // raw text fails on the explanation, which is the wrong thing to pin.
+    const port = readFileSync(
+      resolve(import.meta.dirname, '../../src/connectors/oauth/auth-flow-port.ts'),
+      'utf8',
+    )
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '');
+    expect(port).not.toContain('chrome.identity');
+    expect(port).not.toContain('launchWebAuthFlow');
   });
 });
 

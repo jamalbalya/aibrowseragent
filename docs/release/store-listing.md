@@ -254,6 +254,19 @@ none is quietly dropped when the copy is edited:
 - No Google sign-in in this build. The product has one, but it needs a backend
   that is not deployed, so the option is absent rather than offered and
   broken. Everything the extension does works without it.
+- **Requires your own AI account, and no account here.** You connect an AI
+  provider with a key you create, or — for Google's Gemini API only — by
+  authorizing your Google account. There is nothing to sign up for to use the
+  extension.
+- **Connecting Google does not find your other AI accounts.** No AI provider
+  offers a way to list the accounts a Google identity holds elsewhere, and this
+  extension does not imply one. Models _are_ discovered — from the endpoint,
+  once an account has a credential.
+- **Google authorization is unavailable in this build**, because it carries no
+  Google OAuth client id. The panel says so and offers the Gemini API key path
+  instead. Every other provider is connected with a key and is unaffected.
+- `identity` is an **optional** permission, requested only if you choose to
+  connect a Google account, and declinable.
 
 ## What is NOT claimed anywhere in this copy
 

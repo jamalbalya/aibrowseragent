@@ -8,6 +8,16 @@
  * permission whose main documented use is one this extension must never
  * perform, in order to get a window-opening convenience, is the wrong trade.
  *
+ * **One flow does take it, and this is not it.** Authorizing a Google account
+ * for the Gemini API cannot use this port: Google registers exactly one
+ * redirect for a Chrome Extension client, `https://<id>.chromiumapp.org/`,
+ * which resolves nowhere and is intercepted only by `launchWebAuthFlow` — so
+ * there is no navigation for a tab watcher to see. That flow lives in
+ * `providers/oauth/web-auth-flow.ts`, takes `identity` as an **optional**
+ * permission requested at the moment the user asks for it, and leaves
+ * `getAuthToken` without a client id by shipping no `oauth2` manifest key.
+ * Every connector still uses this port and still needs no permission at all.
+ *
  * What is used instead needs no new permission at all. The extension already
  * holds `tabs`, so it opens the authorization page in a tab it created and
  * watches that one tab for the redirect. This is what `launchWebAuthFlow`

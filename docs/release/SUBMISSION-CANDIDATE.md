@@ -17,8 +17,8 @@ Web Store account was accessed.
 |                 | Previously submitted                              | Current candidate                                                  |
 | --------------- | ------------------------------------------------- | ------------------------------------------------------------------ |
 | Version         | `0.1.0`                                           | `0.1.0`                                                            |
-| SHA-256         | **not recorded — see below**                      | `78e5cb0ce13a55f66ecdb1fd42b2b59d17fc03dd274ece941aeecc4dd958d6fa` |
-| Bytes           | not recorded                                      | 282,474                                                            |
+| SHA-256         | **not recorded — see below**                      | `6676aa5be073bdc22c3e1432c3260043919fdf62bac9184ba70d6c86d7ac6319` |
+| Bytes           | not recorded                                      | 287,862                                                            |
 | Entries         | not recorded                                      | 13                                                                 |
 | Source commit   | not recorded                                      | the commit this file was committed in                              |
 | Submission date | not recorded; reported as on or before 2026-10-01 | not submitted                                                      |
@@ -47,22 +47,47 @@ the Store's version rule, not about this queue.
 
 ## 2. What has not changed, which is what a reviewer looks at
 
-Byte-identical between the submitted artifact and this candidate, because
-neither has been touched since before the submission:
+Unchanged between the submitted artifact and this candidate, with one
+exception called out beneath the table:
 
 |                          |                                                                                                                                  |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
 | Permissions              | `sidePanel`, `storage`, `unlimitedStorage`, `tabs`, `tabGroups`, `scripting`, `debugger`, `notifications`, `activeTab`, `alarms` |
-| Optional permissions     | `downloads`                                                                                                                      |
+| Optional permissions     | `downloads`, **and `identity` — see below**                                                                                      |
 | Host access              | `http://*/*`, `https://*/*` — **not** `<all_urls>`                                                                               |
 | Content scripts          | `all_frames: false`                                                                                                              |
 | CSP                      | `script-src 'self'; object-src 'self'`                                                                                           |
 | Web-accessible resources | `oauth/callback.html`, to `https://github.com/*` only                                                                            |
 | Remote code              | none                                                                                                                             |
 
-No permission has been added since the submission. That is the single thing a
-reviewer scrutinises hardest, and a resubmission that widened it would be a
-materially different review.
+**One optional permission has been added, and this is the only row in this
+table that changed.** `identity` is now listed under `optional_permissions`.
+A reviewer scrutinises the permission set hardest, so what it means is stated
+precisely rather than summarised:
+
+- It is **not granted at install.** Chrome asks for it only when the user
+  presses _Connect with Google_ to authorize a Google account for the Gemini
+  API, and it can be declined and revoked. A user who connects every provider
+  with a pasted key never grants it.
+- It is needed because Google registers exactly one redirect for a Chrome
+  Extension OAuth client, `https://<id>.chromiumapp.org/`, which only
+  `chrome.identity.launchWebAuthFlow` can receive. `chrome-extension://` is not
+  an accepted Google redirect, and the loopback alternative belongs to desktop
+  clients, which Google pairs with a client secret this extension must not hold.
+- The capability it would otherwise unlock — `getAuthToken`, which can mint a
+  token for the **browser profile's own** Google account — stays shut, because
+  that method reads its client id from the manifest's `oauth2` key and this
+  manifest declares none. Measured in real Chromium:
+  `tests/e2e/google-provider-auth.spec.ts :: identity is not granted until
+asked for, and getAuthToken cannot work` grants nothing, calls it, and
+  asserts no token comes out.
+- **This build cannot complete that flow at all**, because it carries no Google
+  OAuth client id. The panel reports the method unavailable with a reason and
+  offers the Gemini API key path instead.
+
+No **required** permission has been added, and no host access has changed.
+`docs/account-integration.md` is the full account of what a Google connection
+does and does not do.
 
 ---
 
@@ -133,8 +158,8 @@ All run on the tree this candidate was built from, on Node 22.23.3.
 | Check                         | Result                                                                                              |
 | ----------------------------- | --------------------------------------------------------------------------------------------------- |
 | `npm run verify`              | pass — format, lint, typecheck, tests, build, package, parity, acceptance, notices                  |
-| Unit / integration / security | 4,389 passed, 34 skipped, 180 files                                                                 |
-| Real-Chromium E2E             | 506 passed, in 8.4 minutes, against this tree                                                       |
+| Unit / integration / security | 4,446 passed, 34 skipped, 182 files                                                                 |
+| Real-Chromium E2E             | 512 passed, in 8.2 minutes, against this tree                                                       |
 | `npm audit --omit=dev`        | 0 vulnerabilities                                                                                   |
 | Reproducibility               | deterministic over repeated packing, digest verified with `sha256sum -c`                            |
 | Parity                        | 36 PASS / 3 PARTIAL / 1 NOT-STARTED across 40 capabilities                                          |
@@ -145,31 +170,52 @@ All run on the tree this candidate was built from, on Node 22.23.3.
 
 ## 4a. The core journey, step by step
 
-The product's claim is one sequence: sign in for product identity, connect an
-AI provider account separately, choose which one is active, and have the agent
-use **that** one. Each step below names the measurement that covers it in the
-shipped build, so a reader can check a step rather than take a verdict. Every
-citation is a real-Chromium case unless it says otherwise.
+**The product requirement was clarified, and this section was rewritten to
+match it.** The earlier version opened with _"sign in for product identity,
+connect an AI provider account separately"_ and listed the Google sign-in as
+step 3 of the core journey. That is not the requirement: a product sign-in is
+optional, is not part of connecting an AI account, and must not gate exploring
+or using the extension. Google's role is to **authorize an AI account** where a
+vendor genuinely supports it — which is Google's own Gemini API and no other
+provider.
 
-| #   | Step                                       | Shipped build                                                                           | Measured by                                                                                                  |
-| --- | ------------------------------------------ | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| 1   | Install, and the panel opens beside a page | works                                                                                   | `extension-load.spec.ts :: the side panel mounts and reports no provider before one is configured`           |
-| 2   | First launch offers work, not a sign-up    | works                                                                                   | `standalone-ux.spec.ts :: first launch offers work, not a sign-up`                                           |
-| 3   | Sign in with Google                        | **absent, not broken** — no backend origin is compiled in, so the option is not offered | `auth-google.spec.ts :: sign-in refuses when no backend is configured, rather than reaching out`             |
-| 4   | Connect an AI provider account             | works                                                                                   | `provider-connection.spec.ts :: connecting an account through Settings leaves something that can run a task` |
-| 5   | A connection that was never checked        | usable, and marked unverified rather than assumed                                       | `provider-connection.spec.ts :: an account connected but never checked is still the one a task uses`         |
-| 6   | Hold two accounts at once                  | works, with separate credentials                                                        | `multi-account.spec.ts :: two accounts on one endpoint coexist with separate credentials`                    |
-| 7   | Choose which account is active             | works, and survives a worker restart                                                    | `multi-account.spec.ts :: accounts and the brain survive in real storage across a restart`                   |
-| 8   | **The chosen one is the one that runs**    | works                                                                                   | `multi-account.spec.ts :: the selected account is the one that actually serves the agent’s request`          |
-| 9   | Run a browser task                         | works                                                                                   | `agent-task.spec.ts :: reads a real page and reports a summary with evidence`                                |
-| 10  | Connect a connector and use it             | four exist; a real token is owner-held                                                  | `connector.spec.ts` (25 cases); live use is §5 below                                                         |
-| 11  | See what was done                          | works                                                                                   | `audit.spec.ts :: a genuine browser action leaves a record in the trail`                                     |
-| 12  | All of it with no backend at all           | works                                                                                   | `local-first.spec.ts :: workflows, shortcuts and workspaces all work with no backend at all`                 |
+So the journey below has no sign-in step. Each step names the measurement that
+covers it in the shipped build, so a reader can check a step rather than take a
+verdict. Every citation is a real-Chromium case unless it says otherwise.
+
+| #   | Step                                       | Shipped build                                                            | Measured by                                                                                                  |
+| --- | ------------------------------------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| 1   | Install, and the panel opens beside a page | works                                                                    | `extension-load.spec.ts :: the side panel mounts and reports no provider before one is configured`           |
+| 2   | First launch offers work, not a sign-up    | works                                                                    | `standalone-ux.spec.ts :: first launch offers work, not a sign-up`                                           |
+| 3   | Explore before connecting anything         | works, and asks for nothing                                              | `standalone-ux.spec.ts :: nothing on the normal path asks the user to sign in`                               |
+| 4   | Connect an AI provider account             | works                                                                    | `provider-connection.spec.ts :: connecting an account through Settings leaves something that can run a task` |
+| 5   | A connection that was never checked        | usable, and marked unverified rather than assumed                        | `provider-connection.spec.ts :: an account connected but never checked is still the one a task uses`         |
+| 6   | Hold two accounts at once                  | works, with separate credentials                                         | `multi-account.spec.ts :: two accounts on one endpoint coexist with separate credentials`                    |
+| 7   | Choose which account is active             | works, and survives a worker restart                                     | `multi-account.spec.ts :: accounts and the brain survive in real storage across a restart`                   |
+| 8   | **The chosen one is the one that runs**    | works                                                                    | `multi-account.spec.ts :: the selected account is the one that actually serves the agent’s request`          |
+| 9   | Run a browser task                         | works                                                                    | `agent-task.spec.ts :: reads a real page and reports a summary with evidence`                                |
+| 10  | Connect a connector and use it             | four exist; a real token is owner-held                                   | `connector.spec.ts` (25 cases); live use is §5 below                                                         |
+| 11  | See what was done                          | works                                                                    | `audit.spec.ts :: a genuine browser action leaves a record in the trail`                                     |
+| 12  | All of it with no backend at all           | works                                                                    | `local-first.spec.ts :: workflows, shortcuts and workspaces all work with no backend at all`                 |
+| 13  | **None of it needs a product sign-in**     | works, signed out from start to finish                                   | `google-provider-auth.spec.ts :: the whole journey runs with no product sign-in at any point`                |
+| 14  | Authorize a Google account for Gemini      | **unavailable in this build** — no Google OAuth client id is compiled in | `google-provider-auth.spec.ts :: connecting a Google account is refused honestly in this build`              |
 
 Three things this review establishes that are worth stating plainly.
 
-**Step 3 is the only step the shipped build does not perform, and it is absent
-rather than half-working.** The panel reports the configured state instead of
+**Step 14 is the only step the shipped build does not perform, and it is
+unavailable with a reason rather than half-working.** The panel says the build
+carries no Google OAuth client id and points at the Gemini API key path, which
+does work. Registering a client is owner step G-6; the protocol itself — PKCE,
+the callback checks, the scope refusal, the renewal — is driven by 41 unit cases
+and 15 integration cases, with 25 of 25 mutations killed.
+
+**Step 13 is the clarified requirement, and it is measured as one run**: signed
+out, explore, connect, discover, select, verify, run a task, assert the request
+carried that account's credential, switch, assert again, disconnect — with
+`auth.status` asserted signed-out at the start and the end.
+
+**The product sign-in is still absent from this build, and that is now beside
+the point rather than a gap in the journey.** The panel reports the configured state instead of
 offering a button that cannot work. The full journey _with_ sign-in — steps 3
 through 8 in one run, ending in a task served by the selected account — is
 measured in `auth-google-protocol.spec.ts :: 03b`, against `dist-auth`, the

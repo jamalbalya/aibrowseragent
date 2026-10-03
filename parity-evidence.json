@@ -3161,13 +3161,15 @@
       ],
       "integration": [
         "tests/integration/brain-routing.test.ts",
+        "tests/integration/google-account-journey.test.ts",
         "tests/integration/provider-switching.test.ts"
       ],
       "security": [
+        "tests/security/google-provider-auth.test.ts",
         "tests/security/provider-conformance.test.ts",
         "tests/security/provider-transport.test.ts"
       ],
-      "e2e": ["tests/e2e/provider-switching.spec.ts"],
+      "e2e": ["tests/e2e/google-provider-auth.spec.ts", "tests/e2e/provider-switching.spec.ts"],
       "clauses": [
         {
           "id": "P-033-C1",

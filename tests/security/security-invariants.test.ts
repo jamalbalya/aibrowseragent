@@ -322,7 +322,17 @@ describe('the manifest is the one it was reviewed as', () => {
       'activeTab',
       'alarms',
     ]);
-    expect(manifest.optional_permissions).toEqual(['downloads']);
+    // Two, and both are grants the user gives at the moment they ask for the
+    // feature. `downloads` for saving a file; `identity` for the one thing it
+    // is needed for — `launchWebAuthFlow`, which is the only way to receive
+    // Google's `chromiumapp.org` redirect and therefore the only way to
+    // authorize a Google account for the Gemini API. Neither is in
+    // `permissions`, so neither is granted at install.
+    expect(manifest.optional_permissions).toEqual(['downloads', 'identity']);
+    // The capability the `identity` permission was previously refused over —
+    // `getAuthToken`, which mints a token for the browser profile's own Google
+    // account — reads its client id from this key. There is none.
+    expect((manifest as { oauth2?: unknown }).oauth2).toBeUndefined();
     expect(manifest.host_permissions).toEqual(['http://*/*', 'https://*/*']);
     expect(manifest.content_scripts[0]?.all_frames).toBe(false);
     expect(manifest.web_accessible_resources.flatMap((entry) => entry.resources)).toEqual([

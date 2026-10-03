@@ -41,18 +41,22 @@ store cannot read another's keys.
 
 ## What leaves the browser, and to where
 
-Exactly seven destination families, and no others — Jira and Confluence share
-the Atlassian row because they share a site, with a separate credential each:
+Exactly nine destination families, and no others. Jira and Confluence share
+the Atlassian row because they share a site, with a separate credential each;
+the two Google authorization rows are reached only by a user who presses
+_Connect with Google_, and carry no task data at all:
 
-| Destination                                                             | Carries                                                       | When                                    |
-| ----------------------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------- |
-| `api.openai.com`, or any OpenAI-compatible endpoint the user configures | the task prompt, page content as enveloped data, tool schemas | the user chose this provider            |
-| `api.anthropic.com`                                                     | the same                                                      | the user chose this provider            |
-| `generativelanguage.googleapis.com`                                     | the same                                                      | the user chose this provider            |
-| `api.github.com`                                                        | connector requests, with a token the user created             | the user connected the GitHub connector |
-| `api.figma.com`                                                         | connector requests, with a token the user created             | the user connected the Figma connector  |
-| the user's own `*.atlassian.net` site, and **only that one**            | connector requests, with a token the user created             | the user connected Jira or Confluence   |
-| the page the user is working on                                         | typed values, clicks, file uploads                            | the task is acting on that page         |
+| Destination                                                             | Carries                                                                | When                                      |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------- |
+| `api.openai.com`, or any OpenAI-compatible endpoint the user configures | the task prompt, page content as enveloped data, tool schemas          | the user chose this provider              |
+| `api.anthropic.com`                                                     | the same                                                               | the user chose this provider              |
+| `generativelanguage.googleapis.com`                                     | the same                                                               | the user chose this provider              |
+| `api.github.com`                                                        | connector requests, with a token the user created                      | the user connected the GitHub connector   |
+| `api.figma.com`                                                         | connector requests, with a token the user created                      | the user connected the Figma connector    |
+| the user's own `*.atlassian.net` site, and **only that one**            | connector requests, with a token the user created                      | the user connected Jira or Confluence     |
+| `accounts.google.com`                                                   | an authorization request, performed by the user in Chrome's own window | the user pressed _Connect with Google_    |
+| `oauth2.googleapis.com`                                                 | an authorization code and a PKCE verifier, or a refresh token          | completing or renewing that authorization |
+| the page the user is working on                                         | typed values, clicks, file uploads                                     | the task is acting on that page           |
 
 The Atlassian row is the only destination that is not fixed in the build, and
 Jira and Confluence each bind their own credential to it independently. The user
@@ -66,6 +70,19 @@ There is **no telemetry, no analytics and no error reporting endpoint**. That
 is checkable rather than asserted: `security-invariants.test.ts` fixes the
 number of files holding a network primitive at three, and every outbound
 request passes `authorizeEgress`, of which there are exactly two callers.
+
+The two Google rows are an **authorization**, not inference. They are reached
+only when the user presses _Connect with Google_ to use the Gemini API, they
+carry no page content and no task data in any shape, and they produce one
+access token bound to one connected account. They are **not** a sign-in to AI
+Browser Agent: no product account, no session and no identity is created, and
+`src/providers/oauth/` imports nothing from `src/identity/`. The exchange runs
+on an egress channel of its own with an opaque payload policy, so neither the
+code nor the refresh token reaches an evidence digest, and the destination is
+pinned — an exchange aimed at any other origin is denied.
+
+A user who connects every provider with a pasted key reaches neither row, and
+a build with no Google OAuth client id compiled in cannot reach them at all.
 
 ## What is never collected
 

@@ -874,6 +874,69 @@ the capability as specified — switch provider, keep the agent body — and bot
 the new evidence and the remaining limit are stated here rather than folded
 into the verdict.
 
+**An account can now be connected by authorization, not only by a pasted
+key** — for exactly one provider, and the reason it is one is worth recording
+because it was checked rather than assumed.
+
+The product requirement is that a user connects the AI account they already
+hold, and Google is the obvious lever: every vendor accepts a Google login.
+What a vendor accepts on _its own site_ is not something this extension can
+receive. Checked against each vendor's documentation:
+
+- **Google Gemini — works.** Google issues a Chrome Extension OAuth client with
+  **no client secret** ("not applicable to requests from clients registered as
+  Android, iOS, or Chrome applications"), and `generativelanguage.googleapis.com`
+  accepts a bearer token — measured, by asking it: it answers an unauthenticated
+  request with _"Please use API Key or other form of API consumer identity"_ and
+  a bearer request with _"Expected OAuth 2 access token…"_.
+- **OpenAI — exists, needs no secret, and still does not fit.** Sign in with
+  ChatGPT advertises `token_endpoint_auth_methods_supported` including `none`,
+  and its plan-sharing guide says _"you don't need a client secret or an API
+  key"_. The blocker is the **redirect URI**: the plan-sharing flow requires
+  `http://127.0.0.1:{port}/callback`, loopback only, and an MV3 extension cannot
+  listen on a port. The https variant is identity-only and needs a server.
+- **Anthropic — prohibited.** Anthropic states a third party may not offer
+  Claude.ai login in its own application, nor route Free/Pro/Max credentials on
+  a user's behalf, nor intermediate Claude.ai credentials or session tokens.
+  Not a technical gap; building it would breach a term.
+- **9Router — nothing to authorize.** It issues its own keys and runs no
+  authorization server.
+
+So the Google button sits against the one provider it works for, and every
+other provider states what it needs instead with a link to the vendor's page.
+`src/providers/accounts/authorization.ts` is the single table the panel, the
+worker and `docs/account-integration.md` all read, so none of them can come to
+describe a vendor differently.
+
+**`identity` became an optional permission, and the objection to it was
+answered rather than dropped.** `connectors/oauth/auth-flow-port.ts` refused it
+for years, correctly: the same permission unlocks `getAuthToken`, which can mint
+a token for the _browser profile's own_ Google account. Google registers one
+redirect for an extension client, `https://<id>.chromiumapp.org/`, which only
+`launchWebAuthFlow` intercepts — so the tab-watching flow cannot receive this
+callback and the permission is unavoidable. It is taken optional (absent at
+install, requested on the button, revocable), and the manifest ships **no
+`oauth2` key**, which is where `getAuthToken` reads its client id. A real-
+Chromium case calls `getAuthToken` and asserts no token comes out. Every
+connector still uses the no-permission flow.
+
+**The credential's shape is now part of the account record.** A key and an
+access token are both opaque strings, so `ProviderConfig.credentialScheme`
+carries which header to use and `resolveBrainAccount` sets it from
+`account.authKind` — an adapter that guessed would send one in the header the
+endpoint ignores, which is an unauthenticated request carrying the user's
+credential. An authorized connection also expires, so `credentialForConnection`
+renews it before use, writes the new token back, and **does not retry a refused
+renewal**: a revoked grant does not become valid by being asked again.
+
+**Not verified live.** A real Google authorization needs an OAuth client
+registered to this extension's id, which is owner action G-6, and the shipped
+build carries none — so it reports the method unavailable _with a reason_ and
+offers the key path instead. Whether every Gemini method accepts a bearer token
+on every project configuration is **unverified**: Google's discovery document
+declares no OAuth scope for `generateContent`, and the documented quickstart
+covers retrieval.
+
 **A clause was added, and it is the one the row was missing.** §17 requires
 provider routing to be user-controlled and forbids silent switching. Four
 clauses tested _components_ of that — the registry, the switch state, the

@@ -15,6 +15,7 @@ import type { SitePolicyState } from '@/policy/site-policy';
 import type { PanelResponse } from '@/messaging/protocol';
 import { missingConnectors } from '@/sidepanel/connector-readiness';
 import { endpointsFor, knownEndpoint } from '@/providers/registry/known-endpoints';
+import { AuthorizationMethods } from './AuthorizationMethods';
 
 interface SettingsViewProps {
   readonly connection: ProviderConnection | null;
@@ -138,6 +139,15 @@ export function SettingsView({
   const [siteDrafts, setSiteDrafts] = useState<Record<string, string>>({});
   const [accountDrafts, setAccountDrafts] = useState<Record<string, string>>({});
   const [skills, setSkills] = useState<PanelResponse<'skill.list'>['skills']>([]);
+  /**
+   * What each provider can be authorized with.
+   *
+   * Fetched rather than written here, so there is one description of what a
+   * Google connection does and it is not this file's opinion.
+   */
+  const [authMethods, setAuthMethods] = useState<PanelResponse<'accounts.authMethods'> | null>(
+    null,
+  );
   const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
 
   const model = modelOverride ?? connection?.modelId ?? '';
@@ -157,6 +167,7 @@ export function SettingsView({
         setConnectors((await sendToBackground('connector.list', {})).connectors);
         setSkills((await sendToBackground('skill.list', {})).skills);
         setNotifications((await sendToBackground('settings.getNotificationsEnabled', {})).enabled);
+        setAuthMethods(await sendToBackground('accounts.authMethods', {}));
         setProviderId((current) => current || (list.providers[0]?.id ?? ''));
       } catch (error) {
         setMessage({ tone: 'error', text: describe(error) });
@@ -447,6 +458,32 @@ export function SettingsView({
           </select>
         </label>
         {provider ? <p className="field__hint">{provider.description}</p> : null}
+
+        {/* What this provider actually needs, before the form that assumes a
+            key. The Google button appears against the one provider it works
+            for; every other provider says what it needs instead. */}
+        <AuthorizationMethods
+          providerId={providerId}
+          methods={authMethods}
+          onConnected={(connectionId) => {
+            setConnectionId(connectionId);
+            // Discover against the new credential immediately: the account has
+            // no model yet, on purpose, and the next thing the user needs is
+            // the list of what it can actually use.
+            void (async () => {
+              try {
+                const listed = await sendToBackground('accounts.listModels', { connectionId });
+                setModels(listed.models);
+                setGroups(listed.groups ?? []);
+                setRefusedModels(listed.refused ?? 0);
+                setUpstreamOverride(null);
+              } catch (error) {
+                setMessage({ tone: 'error', text: describe(error) });
+              }
+            })();
+            onChanged();
+          }}
+        />
 
         {/* Vendors that speak the protocol above, named so a user can find
             their own account without knowing which protocol it is. Each one

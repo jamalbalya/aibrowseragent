@@ -285,15 +285,34 @@ key. That is the only observation that tells the two apart.
 
 ## Registered providers
 
-Four, all `kind: 'api'` and `authKind: 'api_key'`. Web providers are
-foundation only and none is registered, so none is selectable.
+Four, all `kind: 'api'`. Web providers are foundation only and none is
+registered, so none is selectable.
 
-| Provider            | Endpoint                           | Auth                              | Base URL |
-| ------------------- | ---------------------------------- | --------------------------------- | -------- |
-| `openai-compatible` | `POST /chat/completions`           | `Authorization: Bearer`           | required |
-| `anthropic`         | `POST /v1/messages`                | `x-api-key` + `anthropic-version` | optional |
-| `gemini`            | `POST /models/{m}:generateContent` | `x-goog-api-key`                  | optional |
-| `nine-router`       | `POST /chat/completions`           | `Authorization: Bearer`           | required |
+| Provider            | Endpoint                           | Auth                                             | Base URL |
+| ------------------- | ---------------------------------- | ------------------------------------------------ | -------- |
+| `openai-compatible` | `POST /chat/completions`           | `Authorization: Bearer`                          | required |
+| `anthropic`         | `POST /v1/messages`                | `x-api-key` + `anthropic-version`                | optional |
+| `gemini`            | `POST /models/{m}:generateContent` | `x-goog-api-key`, **or** `Authorization: Bearer` | optional |
+| `nine-router`       | `POST /chat/completions`           | `Authorization: Bearer`                          | required |
+
+### How a credential is obtained, which is not the same question
+
+Three of the four take `authKind: 'api_key'` and nothing else. Gemini takes
+either a key or an access token from a Google authorization, and it is the only
+provider on this list that can be connected with an OAuth grant at all —
+`docs/account-integration.md` has the per-vendor reasons with their sources,
+including the two worth knowing: Anthropic prohibits a third party routing a
+consumer plan, and OpenAI's plan-sharing flow needs a loopback redirect an MV3
+extension cannot serve.
+
+**Which header the credential goes in comes from the account record, never from
+the string.** A key and an access token are both opaque, and an adapter that
+guessed would send one in the header the endpoint ignores — an unauthenticated
+request carrying the user's credential, answered 401 with the credential
+already spent. `ProviderConfig.credentialScheme` carries the answer and
+`resolveBrainAccount` sets it from `account.authKind`; the Gemini adapter sets
+exactly one of the two headers and never both, because an empty key header
+beside a bearer token is a second, blank credential on the request.
 
 `nine-router` extends the Chat Completions adapter rather than duplicating it:
 only `listModels`, the identity and the capability floor are overridden, so

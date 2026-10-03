@@ -222,6 +222,27 @@ import { GoogleSignIn } from '@/identity/google-sign-in';
 import { SessionClient } from '@/identity/session-client';
 import { IdentityTransport } from '@/identity/identity-transport';
 import { loadIdentityConfig } from '@/identity/identity-config';
+import {
+  loadGoogleProviderAuthConfig,
+  googleRedirectUri,
+} from '@/providers/oauth/provider-auth-config';
+import {
+  GoogleProviderAuth,
+  needsRefresh,
+  type GoogleProviderToken,
+} from '@/providers/oauth/google-provider-auth';
+import { credentialForConnection } from '@/providers/accounts/connection-credential';
+import {
+  WebAuthFlow,
+  ensureIdentityPermission,
+  hasIdentityPermission,
+} from '@/providers/oauth/web-auth-flow';
+import {
+  GOOGLE_AUTH,
+  providerAuthorization,
+  isGoogleAuthorizable,
+} from '@/providers/accounts/authorization';
+import { providerAuthDestination } from '@/security/egress/destination';
 import { DataStoragePreferenceStore } from '@/storage/data-storage-preference';
 import { applyLocalExport, buildLocalExport, parseLocalExport } from '@/storage/data-export';
 import { K1Store } from '@/crypto/k1-store';
@@ -2410,7 +2431,7 @@ async function resolveFromAccount(
       account,
       {
         adapterFor: (providerId) => providerRegistry.get(providerId),
-        keyFor: (connectionId) => credentialStore.getConnectionKey(credentialKeyFor(connectionId)),
+        keyFor: (connectionId) => connectionCredential(credentialKeyFor(connectionId)),
         staleMessage: (modelId) =>
           selectionRefusal({ kind: 'stale', modelId }) ??
           'The selected model is no longer available.',
@@ -3422,11 +3443,134 @@ router.on('file.downloadsPermission', async () => ({
  * incapable of overwriting each other.
  */
 const connectionCredentials = {
-  read: (connectionId: string) => credentialStore.getConnectionKey(connectionId),
+  read: (connectionId: string) => connectionCredential(connectionId),
   write: (connectionId: string, apiKey: string) =>
     credentialStore.setConnectionKey(connectionId, apiKey),
   clear: (connectionId: string) => credentialStore.clearConnectionKey(connectionId),
 };
+
+/**
+ * Authorizing a Google account for the Gemini API.
+ *
+ * **Not a sign-in.** Nothing here creates a product account, a session or an
+ * `abaUserId`, and nothing here is needed to open the extension or run a local
+ * task. It produces one access token, bound to one connected account, exactly
+ * as a pasted key is. `authController` is the separate, optional product
+ * sign-in and the two share no state — see
+ * `providers/oauth/google-provider-auth.ts` for why they must not.
+ */
+const googleProviderAuthConfig = loadGoogleProviderAuthConfig();
+
+/** Salt for the authorization channel. Not a task, so not a task's salt. */
+const providerAuthSalt = 'provider-authentication';
+
+/**
+ * One POST to a provider's token endpoint.
+ *
+ * Through the gate on its own channel, with an opaque payload policy, because
+ * the body is a credential by construction: an authorization code, a PKCE
+ * verifier, or a refresh token. `redirect: 'error'` for the reason the
+ * connector exchange gives — a token endpoint that redirects is one that could
+ * be made to carry an authorization code somewhere else.
+ */
+async function postProviderToken(
+  providerId: string,
+  endpoint: string,
+  body: string,
+): Promise<{ status: number; body: unknown }> {
+  const response = await guardedSend(
+    {
+      url: endpoint,
+      init: {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Accept: 'application/json',
+        },
+        body,
+        redirect: 'error',
+        signal: AbortSignal.timeout(30_000),
+      },
+      destination: providerAuthDestination(providerId, endpoint, endpoint),
+      taskId: 'provider-authentication',
+      taintState: { kind: 'KNOWN_UNTAINTED' },
+      taintSalt: providerAuthSalt,
+      taintSignature: 'authentication',
+      describe: 'AI account authorization',
+      payloadPolicy: 'opaque',
+    },
+    { consent: consentStore },
+  );
+  // The status, never the body: a token endpoint's error response can echo the
+  // authorization code back.
+  let parsed: unknown = null;
+  try {
+    parsed = await response.json();
+  } catch {
+    parsed = null;
+  }
+  return { status: response.status, body: parsed };
+}
+
+/** The Google authorization driver, or one that reports NOT_CONFIGURED. */
+function googleProviderAuth(): GoogleProviderAuth {
+  return new GoogleProviderAuth({
+    clientId: googleProviderAuthConfig?.clientId ?? null,
+    redirectUri: googleRedirectUri(chrome.runtime.id),
+    // `launchWebAuthFlow`, which is the only thing that intercepts Google's
+    // `chromiumapp.org` redirect. The connectors' tab-watching flow cannot,
+    // and `web-auth-flow.ts` records why at length.
+    authFlow: new WebAuthFlow(chrome.identity),
+    post: (body) => postProviderToken(GEMINI_PROVIDER_ID, GOOGLE_AUTH.tokenEndpoint, body),
+    // Optional permission, asked for at the moment the user presses the
+    // button, and never otherwise.
+    requestPermission: () => ensureIdentityPermission(chrome.permissions),
+    now: () => Date.now(),
+  });
+}
+
+/**
+ * The credential for one connection, whatever shape it is in.
+ *
+ * The decision itself is `credentialForConnection`, which lives in
+ * `@/providers/accounts/connection-credential` so that the three rules inside
+ * it — renew before use, never retry a refused renewal, fail to `undefined`
+ * rather than throw — can be driven by a test rather than only reached by
+ * running a browser. What stays here is the wiring that is genuinely the
+ * worker's: the credential store and the Google driver.
+ */
+function connectionCredential(connectionId: string): Promise<string | undefined> {
+  return credentialForConnection(connectionId, {
+    keyFor: (id) => credentialStore.getConnectionKey(id),
+    tokensFor: (id) => credentialStore.getOAuthTokens(id),
+    storeTokens: (id, tokens) => credentialStore.setOAuthTokens(id, tokens),
+    needsRenewal: (tokens) => needsRefresh(tokens, Date.now()),
+    renew: async (refreshToken) => {
+      const renewed = await googleProviderAuth().refresh(refreshToken);
+      if (!renewed.ok) return { ok: false };
+      return {
+        ok: true,
+        tokens: {
+          accessToken: renewed.token.accessToken,
+          expiresAt: renewed.token.expiresAt,
+          ...(renewed.token.refreshToken === undefined
+            ? {}
+            : { refreshToken: renewed.token.refreshToken }),
+          scope: renewed.token.scope,
+        },
+      };
+    },
+  });
+}
+
+async function storeProviderToken(connectionId: string, token: GoogleProviderToken): Promise<void> {
+  await credentialStore.setOAuthTokens(connectionId, {
+    accessToken: token.accessToken,
+    expiresAt: token.expiresAt,
+    ...(token.refreshToken === undefined ? {} : { refreshToken: token.refreshToken }),
+    scope: token.scope,
+  });
+}
 
 /** The panel's view of an account. Never carries a credential. */
 function accountView(account: ConnectedAccount, brainId: string | null): ConnectedAccountView {
@@ -3986,6 +4130,145 @@ router.on('accounts.connect', async (request) => {
   await projectBrainToSettings();
 
   await broadcastAccounts();
+  const { brainId } = await visibleAccounts();
+  return { account: accountView(account, brainId) };
+});
+
+router.on('accounts.authMethods', async () => {
+  // Read from one table so the panel, the worker and the documentation cannot
+  // come to describe the same provider differently. `configured` for the
+  // Google method depends on whether a client id was compiled into this
+  // build, which is the only part that is not a constant.
+  const providers = providerAuthorization({
+    googleClientConfigured: googleProviderAuthConfig !== null,
+  })
+    // Only providers this build actually registers. A row for an adapter that
+    // is not here would be an offer the user could not take.
+    .filter((entry) => providerRegistry.has(entry.providerId));
+
+  return {
+    providers: providers.map((entry) => ({
+      providerId: entry.providerId,
+      displayName: entry.displayName,
+      googleAuthorizable: entry.googleAuthorizable,
+      modelDiscovery: entry.modelDiscovery,
+      billing: entry.billing,
+      methods: entry.methods.map((method) => ({
+        kind: method.kind,
+        label: method.label,
+        requires: method.requires,
+        ...(method.page === undefined ? {} : { page: method.page }),
+        configured: method.configured,
+        ...(method.unavailableReason === undefined
+          ? {}
+          : { unavailableReason: method.unavailableReason }),
+      })),
+      unavailable: entry.unavailable.map((entryUnavailable) => ({ ...entryUnavailable })),
+    })),
+    // Stated rather than left to inference. No vendor here offers an API that,
+    // given a Google identity, returns the accounts that identity holds
+    // elsewhere — so the panel says so where a user would expect otherwise.
+    accountDiscoveryFromGoogleIdentity: false,
+    identityPermissionGranted: await hasIdentityPermission(chrome.permissions),
+  };
+});
+
+router.on('accounts.connectGoogle', async (request) => {
+  if (googleProviderAuthConfig === null) {
+    return {
+      account: null,
+      failure: 'NOT_CONFIGURED',
+      error: createError(
+        'INVALID_ARGUMENT',
+        'No Google OAuth client id is configured in this build.',
+        {
+          userMessage:
+            'This build cannot connect a Google account: it carries no Google OAuth client id. ' +
+            'Paste a Gemini API key instead.',
+          retryable: false,
+        },
+      ),
+    };
+  }
+  // Exactly one provider, and the matrix is what says which. A request naming
+  // another provider is not possible through this route by construction, and
+  // the check is here so that stays true if the matrix ever changes.
+  if (!isGoogleAuthorizable(GEMINI_PROVIDER_ID) || !providerRegistry.has(GEMINI_PROVIDER_ID)) {
+    return {
+      account: null,
+      failure: 'NOT_CONFIGURED',
+      error: createError('INVALID_ARGUMENT', 'No Google-authorizable provider is registered.'),
+    };
+  }
+
+  const controller = new AbortController();
+  const authorized = await googleProviderAuth().authorize(controller.signal, request.loginHint);
+  if (!authorized.ok) {
+    // Recorded as an attempt, with the named refusal and no credential. A
+    // declined consent screen is ordinary and is worth seeing in the trail.
+    await auditLog.record({
+      type: 'provider.selected',
+      outcome: 'denied',
+      providerId: GEMINI_PROVIDER_ID,
+      code: `google_authorization_${authorized.failure.toLowerCase()}`,
+    });
+    return {
+      account: null,
+      failure: authorized.failure,
+      error: createError(
+        authorized.failure === 'NOT_CONFIGURED' ? 'INVALID_ARGUMENT' : 'AUTH_REQUIRED',
+        'The Google authorization did not complete.',
+        { userMessage: authorized.reason, retryable: authorized.failure !== 'DECLINED' },
+      ),
+    };
+  }
+
+  // The credential first, then the record — the ordering `accounts.connect`
+  // establishes and for the same reason: a record whose credential never
+  // landed is an account that fails at its first request with nothing to
+  // explain why.
+  const connectionId = accountStore.mintConnectionId();
+  await storeProviderToken(connectionId, authorized.token);
+
+  const account: ConnectedAccount = {
+    connectionId,
+    abaUserId: await currentAbaUserId(),
+    providerId: GEMINI_PROVIDER_ID,
+    protocol: protocolForLegacyProvider(GEMINI_PROVIDER_ID),
+    displayName: request.displayName?.trim() || 'Google Gemini',
+    // Never derived from the token. An access token's last four characters
+    // are opaque and change on every refresh, so they identify nothing; what
+    // identifies this account is that it was authorized with Google.
+    accountLabel: 'authorized with Google',
+    authKind: 'oauth2',
+    // No model yet. Discovery runs against the new credential and the user
+    // chooses from what Google actually offers this account — a default here
+    // would be this build asserting something about somebody else's catalogue.
+    modelId: null,
+    capabilities: null,
+    capabilityScope: null,
+    status: 'connected',
+    lastValidated: Date.now(),
+    createdAt: Date.now(),
+  };
+  await accountStore.put(account);
+  await auditLog.record({
+    type: 'provider.selected',
+    outcome: 'info',
+    providerId: GEMINI_PROVIDER_ID,
+    code: 'account_authorized_with_google',
+  });
+
+  // The first account becomes the one in use, exactly as on the key path.
+  // Only when there is no brain: authorizing a second account must never
+  // silently move the user off the one they chose.
+  const abaUserId = await currentAbaUserId();
+  if ((await accountStore.getBrain(abaUserId)) === null) {
+    await accountStore.setBrain(abaUserId, connectionId, null);
+  }
+  await projectBrainToSettings();
+  await broadcastAccounts();
+
   const { brainId } = await visibleAccounts();
   return { account: accountView(account, brainId) };
 });

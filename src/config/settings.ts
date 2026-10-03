@@ -75,6 +75,23 @@ export interface StoredProviderConfig {
 }
 
 /**
+ * What an OAuth-authorized connection stores instead of a key.
+ *
+ * **Secret.** Both tokens are credentials: the access token until it expires,
+ * the refresh token until the user revokes the grant. Neither is ever
+ * displayed, logged, broadcast or put in a URL.
+ */
+export interface StoredOAuthTokens {
+  readonly accessToken: string;
+  /** Epoch milliseconds. A record at or past this is refreshed before use. */
+  readonly expiresAt: number;
+  /** Absent when the provider issued none, which means re-authorizing by hand. */
+  readonly refreshToken?: string;
+  /** What was actually granted, which can be narrower than what was asked. */
+  readonly scope: string;
+}
+
+/**
  * Credential store.
  *
  * Isolated behind its own namespace and its own type so that a credential
@@ -133,8 +150,38 @@ export class CredentialStore {
     await this.area.set(`conn:${connectionId}`, apiKey);
   }
 
+  /**
+   * Clears **both** credential shapes a connection can hold.
+   *
+   * An account authorized with Google holds an OAuth record where a pasted
+   * account holds a key string, and disconnecting must not depend on the caller
+   * remembering which. Removing both unconditionally is cheap and makes "the
+   * credential is gone" true without a branch somebody has to get right — the
+   * failure to avoid is a disconnect that leaves a live refresh token behind.
+   */
   async clearConnectionKey(connectionId: string): Promise<void> {
     await this.area.remove(`conn:${connectionId}`);
+    await this.area.remove(`oauth:${connectionId}`);
+  }
+
+  /**
+   * An OAuth-authorized connection's tokens.
+   *
+   * A record rather than a string, because this credential has parts: an
+   * access token that expires, a refresh token that does not, the expiry, and
+   * the scope Google actually granted. Kept in the same protected namespace as
+   * every other credential and under its own key prefix, so a connection
+   * cannot hold a pasted key and an OAuth grant that disagree.
+   *
+   * Nothing in this record is ever logged or broadcast. The panel is told
+   * `authKind` and an expiry, never a token.
+   */
+  getOAuthTokens(connectionId: string): Promise<StoredOAuthTokens | undefined> {
+    return this.area.get<StoredOAuthTokens>(`oauth:${connectionId}`);
+  }
+
+  async setOAuthTokens(connectionId: string, tokens: StoredOAuthTokens): Promise<void> {
+    await this.area.set(`oauth:${connectionId}`, tokens);
   }
 
   getConfig(providerId: string): Promise<StoredProviderConfig | undefined> {

@@ -383,6 +383,12 @@ export const PANEL_ROUTE_CLASSES: Record<PanelRequestType, RouteClass> = {
   // script or page may reach any of them.
   'accounts.list': 'CLASS_E_PANEL_READ_ONLY',
   'accounts.connect': 'CLASS_B_PANEL_CONTROL_PLANE',
+  // Describes what is possible and carries no credential, so read-only.
+  'accounts.authMethods': 'CLASS_E_PANEL_READ_ONLY',
+  // Obtains a credential and stores one. Control plane, and for the same
+  // reason `accounts.connect` is: a page that could reach it could connect an
+  // account the user never chose.
+  'accounts.connectGoogle': 'CLASS_B_PANEL_CONTROL_PLANE',
   'accounts.disconnect': 'CLASS_B_PANEL_CONTROL_PLANE',
   'accounts.listModels': 'CLASS_B_PANEL_CONTROL_PLANE',
   'accounts.runDoctor': 'CLASS_B_PANEL_CONTROL_PLANE',

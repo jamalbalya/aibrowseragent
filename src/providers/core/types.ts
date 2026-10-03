@@ -263,6 +263,22 @@ export interface ProviderConfig {
   readonly organization?: string;
   readonly project?: string;
   readonly extraHeaders?: Readonly<Record<string, string>>;
+  /**
+   * How `apiKey` is presented to the endpoint.
+   *
+   * `api_key` — the vendor's own key header, which is what every pasted
+   * credential uses and what an adapter does by default.
+   * `bearer` — `Authorization: Bearer <token>`, for a connection authorized by
+   * OAuth, where the credential is an access token rather than a key.
+   *
+   * On the config rather than inferred from the value, for the reason the
+   * connector framework put `credentialHeader` on the descriptor: a key and a
+   * token are both opaque strings, and guessing which header a string wants by
+   * looking at it is how a credential gets sent in a header the endpoint
+   * ignores — an unauthenticated request with the user's credential attached
+   * to it. Only an adapter whose provider documents both needs to read it.
+   */
+  readonly credentialScheme?: 'api_key' | 'bearer';
 }
 
 export interface AuthResult {

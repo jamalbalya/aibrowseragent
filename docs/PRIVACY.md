@@ -97,6 +97,27 @@ token, and you still enter it twice. That is deliberate: each connector keeps
 its own credential and its own single permitted address, so neither can reach
 where the other was authorised to.
 
+**Connecting an AI account with Google.** For Google's Gemini API — and for no
+other AI service — you can authorize with your Google account instead of
+pasting a key. Google's own consent screen opens in a window Chrome controls,
+and what comes back is an access token stored as that one account's credential.
+
+Three things it is not:
+
+- **not a sign-in to AI Browser Agent.** No account here is created, no session
+  is started, and nothing about it is required to use the extension.
+- **not a way to see your other AI accounts.** It authorizes Google's API and
+  reveals nothing about any account you hold at OpenAI, Anthropic or anywhere
+  else. No provider offers that, and this extension does not imply it.
+- **not a way to use a consumer subscription.** A Google One AI Premium or
+  Gemini Advanced plan is sold for Google's own apps. API usage is billed to a
+  Google Cloud project either way, and the panel says so before you start.
+
+Only Google works this way. OpenAI's equivalent needs a redirect address a
+browser extension cannot provide, Anthropic's terms prohibit a third party
+using a Claude subscription on your behalf, and the rest issue keys only. Those
+reasons are shown in the panel, each with a link to the vendor's own page.
+
 Every permission the extension asks a service for is listed in the side panel
 with the reason it is needed.
 
@@ -161,18 +182,31 @@ intent can do those things.
 | `notifications`                  | tell you when a task needs your approval                   |
 | `alarms`                         | wake the extension when a scheduled task is due            |
 | `downloads`                      | optional; requested only when a download is attempted      |
+| `identity`                       | optional; requested only if you connect a Google account   |
 | `http://*/*`, `https://*/*`      | act on ordinary websites you direct the agent to           |
 
 The extension deliberately does **not** request `<all_urls>`. That broader
 permission would also grant access to local files, which was demonstrated and
 removed.
 
-It also does **not** request `identity`, `cookies` or `webRequest`. Signing in
-to a connected service opens its authorization page in an ordinary tab, which
-needs no permission beyond `tabs` — the `identity` permission would have been
-more convenient and would also have granted the ability to mint a token for
-your browser profile's own signed-in account, which this extension must never
-do.
+It does **not** request `cookies` or `webRequest` at all.
+
+`identity` is **optional**, which means it is not granted when you install the
+extension and is asked for only if you choose to connect a Google account for
+the Gemini API. You can decline, and you can withdraw it afterwards from the
+extension's permissions.
+
+It is asked for only because Google will accept one redirect address for a
+browser extension, and only Chrome's own `launchWebAuthFlow` can receive it.
+Everything else that authorizes a service — GitHub, Figma, Jira, Confluence —
+opens its page in an ordinary tab and needs no permission beyond `tabs`.
+
+The reason the permission was avoided for years is worth stating, because it
+has not gone away: it also unlocks an API that can mint a token for **your
+browser profile's own signed-in Google account**, which this extension must
+never do. That API reads its configuration from a manifest key, and this
+extension ships none, so it has nothing to work with. A test drives the real
+browser, calls it, and confirms no token comes out.
 
 ## Removing your data
 

@@ -135,10 +135,16 @@ export async function resolveBrainAccount(
 
   const apiKey = await deps.keyFor(account.connectionId);
   if (apiKey === undefined) {
+    // Two sentences rather than one, because the fix differs. A pasted key is
+    // re-pasted; an authorization is re-granted at the provider, and telling
+    // somebody who connected with Google to "reconnect its API key" sends them
+    // looking for something they never had.
     throw new BrainUnavailable(
       'NO_CREDENTIAL_ON_DEVICE',
       account.statusReason ??
-        `${account.displayName} needs its API key reconnected on this device.`,
+        (account.authKind === 'oauth2'
+          ? `${account.displayName} needs authorizing again on this device.`
+          : `${account.displayName} needs its API key reconnected on this device.`),
     );
   }
 
@@ -149,6 +155,11 @@ export async function resolveBrainAccount(
     providerId: account.providerId,
     ...(account.baseUrl === undefined ? {} : { baseUrl: account.baseUrl }),
     apiKey,
+    // How the credential is presented, from the account record rather than
+    // from the shape of the string. An access token and a key are both opaque,
+    // and an adapter that guessed would send one in the header the endpoint
+    // ignores — an unauthenticated request carrying the user's credential.
+    credentialScheme: account.authKind === 'oauth2' ? 'bearer' : 'api_key',
     model: account.modelId,
     // Handed in so the adapter's pre-flight capability check reads the
     // doctor's measurement rather than its own advertised placeholder.

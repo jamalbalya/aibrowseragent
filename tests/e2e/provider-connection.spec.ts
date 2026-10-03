@@ -428,5 +428,18 @@ test('connecting an account added no permission and no host access', async ({
   expect(manifest.permissions).not.toContain('cookies');
   expect(manifest.permissions).not.toContain('webRequest');
   expect(manifest.host_permissions).toEqual(['http://*/*', 'https://*/*']);
-  expect(manifest.optional_permissions ?? []).toEqual(['downloads']);
+
+  // `identity` is now **offered** as an optional permission, for the one flow
+  // that cannot work without it — authorizing a Google account for the Gemini
+  // API. Offering it is not granting it, and this case is about what
+  // connecting by key costs: nothing.
+  //
+  // So the claim is restated rather than relaxed. Connecting an account with a
+  // pasted key must leave `identity` ungranted, and the assertion is now on
+  // what Chrome says is *held* rather than on what the manifest lists.
+  expect(manifest.optional_permissions ?? []).toEqual(['downloads', 'identity']);
+  const granted = await serviceWorker.evaluate(() =>
+    chrome.permissions.contains({ permissions: ['identity'] }),
+  );
+  expect(granted).toBe(false);
 });

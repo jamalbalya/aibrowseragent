@@ -149,11 +149,18 @@ export class GeminiAdapter implements AIProviderAdapter {
 
   connect(config: ProviderConfig): Promise<AuthResult> {
     if (!config.apiKey || config.apiKey.trim().length === 0) {
+      const bearer = config.credentialScheme === 'bearer';
       return Promise.resolve({
         authenticated: false,
-        error: createError('AUTH_REQUIRED', 'An API key is required.', {
-          userMessage: 'Enter a Gemini API key issued for this project.',
-        }),
+        error: createError(
+          'AUTH_REQUIRED',
+          bearer ? 'An access token is required.' : 'An API key is required.',
+          {
+            userMessage: bearer
+              ? 'Authorize a Google account again — this connection has no usable access token.'
+              : 'Enter a Gemini API key issued for this project.',
+          },
+        ),
       });
     }
     if (!config.model || config.model.trim().length === 0) {
@@ -204,7 +211,16 @@ export class GeminiAdapter implements AIProviderAdapter {
     this.config = { ...config, baseUrl, model: bareModelId(config.model) };
     return Promise.resolve({
       authenticated: true,
-      accountLabel: `${parsed.host} (key …${config.apiKey.slice(-4)})`,
+      // An access token is not a key, and a label reading "key …a1b2" for one
+      // would be telling the user they pasted something they did not. The last
+      // four characters are also not a useful way to tell two Google
+      // authorizations apart — they are opaque and they change on every
+      // refresh — so an OAuth connection is labelled by what it is, and the
+      // panel shows the Google account beside it.
+      accountLabel:
+        config.credentialScheme === 'bearer'
+          ? `${parsed.host} (authorized with Google)`
+          : `${parsed.host} (key …${config.apiKey.slice(-4)})`,
     });
   }
 
@@ -224,16 +240,34 @@ export class GeminiAdapter implements AIProviderAdapter {
   /**
    * Request headers.
    *
-   * The key goes in `x-goog-api-key` and nowhere else. `extraHeaders` is
-   * applied first so a user-supplied header cannot displace the credential.
+   * The credential goes in exactly one header and nowhere else, and which
+   * header depends on what the credential *is*. A key issued by AI Studio is
+   * read from `x-goog-api-key`; an access token from an OAuth authorization is
+   * read from `Authorization: Bearer` and is **not** accepted in the key
+   * header. Sending either in the other's place is an unauthenticated request
+   * carrying the user's credential, which the service answers 401 with the
+   * credential already spent.
+   *
+   * Measured rather than assumed: `generativelanguage.googleapis.com` answers
+   * a bearer-token request with *"Expected OAuth 2 access token, login cookie
+   * or other valid authentication credential"*, so bearer is a scheme this API
+   * recognises.
+   *
+   * `extraHeaders` is applied first so a user-supplied header cannot displace
+   * the credential, and the unused scheme's header is never set at all — an
+   * empty `x-goog-api-key` alongside a bearer token would be a second,
+   * blank credential on the request.
    */
   private headers(): Record<string, string> {
     const config = this.require();
-    return {
+    const base = {
       ...(config.extraHeaders ?? {}),
       'Content-Type': 'application/json',
-      'x-goog-api-key': config.apiKey ?? '',
     };
+    if (config.credentialScheme === 'bearer') {
+      return { ...base, Authorization: `Bearer ${config.apiKey ?? ''}` };
+    }
+    return { ...base, 'x-goog-api-key': config.apiKey ?? '' };
   }
 
   /**
