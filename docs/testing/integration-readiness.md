@@ -419,11 +419,18 @@ above still reads **Never** under "a real grant", correctly.
 endpoint's vocabulary. Two of the three have now been observed coming back from
 Google itself, in the exact spelling the code matches on.
 
-**The probe was not trusted until it was shown to discriminate.** Its first two
-forms returned HTTP 302 to a sign-in page for _every_ client id including
-fabricated ones, which proves nothing; following the redirect to
-`accounts.google.com/signin/oauth/error` and reading the error code is what
-separated the cases. A check that cannot fail is not evidence.
+**The probe was not trusted until it was shown to discriminate**, and it is
+worth being exact about which part did that. Following the redirect to
+`accounts.google.com/signin/oauth/error` was necessary but not sufficient: it
+only made the error code visible. What makes `redirect_uri_mismatch` _mean_
+"this client exists" is the **fabricated-client-id control** returning
+`invalid_client` from the same request shape. Without that comparison the
+result is a 400 that could as easily be read as a broken client.
+
+The earlier forms of the probe are the reason this is laboured. They returned
+HTTP 302 to a sign-in page for _every_ client id including invented ones, so
+they would have reported the configuration as fine no matter what was in
+`.env`. A check that cannot fail is not evidence.
 
 What the owner must do, exactly: register a **Chrome Extension** OAuth client
 for the published extension id and set `VITE_ABA_GOOGLE_PROVIDER_CLIENT_ID`
