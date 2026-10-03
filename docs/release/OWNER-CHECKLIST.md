@@ -702,11 +702,18 @@ which is a repository question:
    yourself and the wrong one for a build you distribute. `validate-release`
    now prints which of the two you are holding.
 
-**The released artifact is unaffected by all of this.** Built with `.env` set
-aside it is still
-`b09109896dc65a33fb8d7a5c065df7281b4de786e6014b115190f69f4195541a`, 291,869
-bytes, 13 entries — byte-identical to the previously recorded one, and carrying
-no client id.
+**The release artifact for `0.2.0`**, built with `.env` set aside, is
+`ai-browser-agent-0.2.0.zip` —
+`1750528e7571776cd1e3bdbd55cd86cf70be2e3e9f431d532f6c8f7c364dcda9`, 291,862
+bytes, 13 entries, carrying no client id and declaring `downloads` as its only
+optional permission. It reproduced byte-for-byte from a clean clone of the
+pushed commit `b41f87d`.
+
+**One thing to remember when you build it yourself.** This machine's `.env`
+holds the Google client id, so a plain `npm run release` here would compile it
+in and keep the `identity` permission. That is not silent — `validate-release`
+prints which of the two you are holding — but if you want the artifact above,
+move `.env` aside first, or build from a clean clone, which has none.
 
 #### 1. Decide which extension id you are registering, and get it
 

@@ -125,21 +125,42 @@ reproduces, because a working tree holds things a clone does not: a resolved
 `.env`. `check-extension-env.mjs` reads that file, so "does the build depend on
 it?" was an open question answered only by reasoning.
 
-Measured on 4 October 2026, at commit `efff272`, on Node 22.23.3 / npm 10.9.9:
+Re-measured on 4 October 2026 for `0.2.0`, at commit `b41f87d`, on Node
+22.23.3 — this time by cloning **from the remote** rather than from the local
+directory, so the clone carries only what was actually pushed:
 
 ```sh
-git clone --no-local . /tmp/repro && cd /tmp/repro
-git checkout efff272
+git clone --depth 1 --branch main https://github.com/jamalbalya/aibrowseragent.git repro
+cd repro
 npm ci            # a fresh dependency tree, from package-lock.json
 npm run release
 ```
 
 ```text
-working tree : b09109896dc65a33fb8d7a5c065df7281b4de786e6014b115190f69f4195541a
-clean clone  : b09109896dc65a33fb8d7a5c065df7281b4de786e6014b115190f69f4195541a
+working tree : 1750528e7571776cd1e3bdbd55cd86cf70be2e3e9f431d532f6c8f7c364dcda9
+clean clone  : 1750528e7571776cd1e3bdbd55cd86cf70be2e3e9f431d532f6c8f7c364dcda9
 ```
 
-Byte-identical, 291,869 bytes, 13 entries. Two things follow, and the second is
+Byte-identical, **291,862 bytes, 13 entries**, `ai-browser-agent-0.2.0.zip`.
+
+The previous measurement, at commit `efff272` for `0.1.0`, produced
+`b09109896dc65a33fb8d7a5c065df7281b4de786e6014b115190f69f4195541a` at 291,869
+bytes — seven bytes larger.
+
+**A smaller archive is expected here, and the exact figure is deliberately not
+explained further.** Two source files differ between those commits:
+`public/manifest.json`, where the version string changed and kept its length,
+and `src/providers/oauth/provider-auth-config.ts`, where a dead export was
+removed. That second one is known not to affect the bytes: when it was removed,
+the artifact still hashed to `b0991098…`, which is what established the export
+was genuinely dead. What does shorten the package is the release build dropping
+`identity` from `optional_permissions` — the manifest inside the archive is
+1,402 bytes against the published one's 1,468.
+
+So the direction is accounted for. The precise seven is a deflate outcome over
+a changed manifest, and attributing it exactly would be arithmetic nobody
+checked — an earlier draft of this paragraph claimed the difference was fully
+accounted for and that no `src/` file had changed, and both halves were wrong. Two things follow, and the second is
 the one worth having:
 
 - The archive is a function of the **commit** on this toolchain, not of the
