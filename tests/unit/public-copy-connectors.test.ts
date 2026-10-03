@@ -118,8 +118,24 @@ describe('every shipped connector is named in the public copy', () => {
     // The exact stale phrasing, and the shapes it would most likely come back
     // in. Narrow on purpose: this is the sentence that was wrong, not a ban on
     // the word "one".
+    //
+    // **Blockquoted lines are excluded, and that exclusion earned itself.** On
+    // 4 October 2026 the published Chrome Web Store listing was read, and it
+    // still carries the sentence this case exists to prevent — "Only one
+    // connector exists: GitHub. There is no Jira, Confluence, Figma or Google
+    // Sheets integration." The guard had kept the repository's copy correct and
+    // could never reach the live listing, so recording the divergence means
+    // quoting it, and quoting it tripped this case.
+    //
+    // A `>` line is quoted material rather than this repository's claim, which
+    // is what the guard is about. Prose is still checked, so a sentence that
+    // merely sits near a quotation is caught.
     for (const path of PUBLIC_COPY) {
-      const text = copy(path).toLowerCase();
+      const text = copy(path)
+        .split('\n')
+        .filter((line) => !line.trimStart().startsWith('>'))
+        .join('\n')
+        .toLowerCase();
       for (const stale of [
         'only one connector',
         'one connector only',

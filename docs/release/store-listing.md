@@ -164,6 +164,52 @@ agent only when you pick it in Chrome's own file picker.
 Everything it stores stays in your browser.
 ```
 
+## The live listing diverges from this file, and one sentence must change
+
+Read from the published listing on 4 October 2026, not assumed. The live
+description was uploaded with `0.1.0` and says:
+
+> "Only one connector exists: GitHub. There is no Jira, Confluence, Figma or
+> Google Sheets integration."
+
+**That sentence becomes false the moment `0.2.0` is published**, and it fails in
+the direction that matters: it is an explicit denial of functionality the update
+ships. Before the update it was an honest understatement; after it, it tells a
+user that three connectors do not exist when they do. The replacement is already
+in the Detailed description above — _"Four connectors exist: GitHub, Figma, Jira
+and Confluence. There is no Google Sheets integration…"_ — so this is a paste,
+not a decision.
+
+**What matched and needs nothing.** The short description on the live listing is
+byte-identical to the one in this file. The Gemini and provider wording is
+unchanged. The category is `Workflow & Planning`.
+
+### Screenshots — eight are live, and I could not read them
+
+The listing shows **eight** preview images with no captions. Images are not
+something this audit can inspect, so what follows is a check for the owner
+rather than a finding.
+
+The update changes the interface in exactly one place a screenshot could show:
+the connector list goes from one entry to four, and in `0.1.0` that single
+entry could not actually be connected — its `authKind` was `oauth2` with an
+empty client id, so GitHub was offered and unusable. In `0.2.0` all four use a
+pasted token and work.
+
+So, per shot:
+
+| Shot shows                                        | Action                                                                                                                |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| A task running, its steps, the audit trail        | **Keep.** Unchanged by this update                                                                                    |
+| A permission prompt before a consequential action | **Keep.** Unchanged                                                                                                   |
+| Settings with an **AI provider** connected        | **Keep.** Unchanged                                                                                                   |
+| Any **connector** list or connector settings      | **Replace.** It shows one connector, and a reviewer comparing the shot to the description would find them disagreeing |
+| Any text overlay naming one connector             | **Replace**                                                                                                           |
+
+If none of the eight shows a connector, nothing needs replacing — the update
+adds no other visible surface. `screenshot-plan.md` has the capture rules,
+including what must never appear in a shot.
+
 ## What's new, for the `0.2.0` update
 
 Paste this into the dashboard's release-notes field. It is written for a user
@@ -252,10 +298,10 @@ execute arbitrary code in a page. Here it cannot, and the answer is specific:
 | Collects personally identifiable information                  | No                                                                                                                |
 | Collects health information                                   | No                                                                                                                |
 | Collects financial and payment information                    | No                                                                                                                |
-| Collects authentication information                           | No                                                                                                                |
+| Collects authentication information                           | No — **recommended change to Yes**, see below (strong case; exact wording supplied)                               |
 | Collects personal communications                              | No                                                                                                                |
 | Collects location                                             | No                                                                                                                |
-| Collects web history                                          | No                                                                                                                |
+| Collects web history                                          | No — **recommended change to Yes**, see below (weaker case than authentication information)                       |
 | Collects user activity                                        | No                                                                                                                |
 | Collects website content                                      | **Yes** — page content of a page the user asked the agent to work on, sent to the AI provider the user configured |
 
@@ -338,25 +384,52 @@ Factual sentences, for the justification box beside the answer. They describe
 what the extension does and take no position on the question — so the same
 facts support either answer, which is the point.
 
-**If you answer "No":**
+### The exact wording to paste, for the `0.2.0` update
 
-> The extension does not collect authentication information. It has no login
+**Answer: Yes.** Then paste this into the justification box. It describes the
+`0.2.0` build and nothing else — no Google OAuth, because that build ships no
+client id, and no OAuth tokens of any kind, because none can be obtained:
+
+```text
+The extension stores authentication information that the user supplies to it, and
+nothing it obtains on their behalf. Two kinds:
+
+An API key the user creates with their own AI provider (OpenAI-compatible,
+Anthropic or Google), pasted into the extension and sent only to that provider as
+a request header.
+
+A personal access token the user creates in their own account with an external
+service they choose to connect (GitHub, Figma, Jira or Confluence), pasted into
+the extension and sent only to that service.
+
+Both are held in the browser's own extension storage on the user's device, in a
+credential area kept apart from ordinary settings. Neither is transmitted to the
+developer or to any third party, neither is written to logs, task records or
+anything sent to an AI model, and neither appears in a URL. The extension has no
+login of its own, creates no account, and collects nothing from the user's
+accounts beyond what the task the user gave it requires.
+
+This build performs no OAuth authorization and holds no OAuth access or refresh
+token.
+```
+
+**Why the last line is in there.** It is the sentence a reviewer can check
+fastest and it forecloses the wrong reading of the rest. If a later build ships
+a Google OAuth client id, that line stops being true and the declaration needs
+revisiting — which is the point of writing it down rather than leaving it
+implied.
+
+**The superseded "No" wording** is kept below only so the change is legible.
+Do not paste it.
+
+> ~~The extension does not collect authentication information. It has no login
 > of its own and creates no account. An API key the user obtains from their own
-> AI provider, and — for a Google-authorized Gemini connection — the OAuth
-> access and refresh tokens issued to that user, are stored in the browser's
-> own extension storage on the user's device and sent only to the provider they
-> belong to, as request headers. None of it is transmitted to the developer or
-> to any third party, and nothing is collected from the user's accounts.
+> AI provider … are stored in the browser's own extension storage on the user's
+> device and sent only to the provider they belong to.~~
 
-**If you answer "Yes":**
-
-> The extension stores authentication information supplied by the user: an API
-> key the user obtains from their own AI provider, and — for a Google-authorized
-> Gemini connection — the OAuth access and refresh tokens issued to that user.
-> Both are held in the browser's own extension storage on the user's device and
-> sent only to the provider they belong to, as request headers. Neither is
-> transmitted to the developer or to any third party, and the extension has no
-> login of its own.
+Two things were wrong with it beyond the answer. It omitted connector tokens
+entirely, and it described Google OAuth tokens that no published build has ever
+been able to obtain.
 
 **What makes the two answers both defensible**, stated once so the choice is
 informed rather than arbitrary:
@@ -426,45 +499,68 @@ declares the data this extension handles as **"Website content"** and nothing
 else. So _"Collects authentication information: No"_ is not a repository record
 any more — it is the public answer, and it is checkable.
 
-**It is understated, and the evidence is the published package rather than this
-tree.** The `0.1.0` CRX was downloaded from the store and unpacked. What its
-`service-worker.js` contains:
+**It is understated — but not for the reason the first version of this section
+gave, and that correction is worth more than the conclusion.** The `0.1.0` CRX
+was downloaded from the store and unpacked, and a first pass read its strings as
+behaviour:
 
-| Found in the published build         | Count | What it means                                           |
-| ------------------------------------ | ----- | ------------------------------------------------------- |
-| `github.com/login/oauth`             | 1     | It performs a real OAuth authorization against GitHub   |
-| `code_verifier`                      | 2     | With PKCE, so it redeems an authorization code itself   |
-| `refresh_token`                      | 3     | It receives and holds refresh tokens                    |
-| `apiKey` / `x-api-key`               | 5 / 1 | It holds and sends user-pasted provider API keys        |
-| `chromiumapp.org` / `cloud-platform` | 0 / 0 | The **Google** provider OAuth flow does not exist in it |
+| Found in the published build         | Count |
+| ------------------------------------ | ----- |
+| `github.com/login/oauth`             | 1     |
+| `code_verifier` / `refresh_token`    | 2 / 3 |
+| `apiKey` / `x-api-key`               | 5 / 1 |
+| `chromiumapp.org` / `cloud-platform` | 0 / 0 |
 
-So the narrow argument that kept "No" alive — that a pasted third-party API key
-is none of Chrome's three named examples — **does not cover what is actually
-published.** A GitHub OAuth **refresh token** is not an API key. It is a bearer
-artefact that proves an authenticated session to a service and can mint more of
-them, which is functionally what an authentication cookie is, and it is the
-first example in Chrome's own category list by any reasonable reading.
+From that this document concluded that the published build "holds GitHub OAuth
+access and refresh tokens". **That was wrong**, and it is the same error this
+repository keeps catching in detectors: a string in a bundle is a code path, not
+a reachable behaviour.
 
-Combined with the two policy statements already established above — that
-_"handle"_ means _"collecting, transmitting, using, or sharing"_, and that local
-storage is explicitly **not** an exemption — all three legs of the "No" reading
-are now gone:
+What the code actually says. `connectors/adapters/github.ts` carries a
+correction of its own: GitHub's web application flow lists `client_secret` as
+**required** when exchanging the code, PKCE or not, and `ConnectorOAuthConfig`
+deliberately holds no secret — so _"the flow this build runs cannot be completed
+against GitHub at all"_. Atlassian requires a secret and supports no PKCE;
+Figma requires one even with PKCE. The adapter therefore supports two auth
+kinds, and the shipped build selects one:
 
-| Leg of the "No" reading             | Status                                                                           |
-| ----------------------------------- | -------------------------------------------------------------------------------- |
-| "Nothing is collected"              | Gone — handling includes transmitting and using, and it does both                |
-| "It stays on the device"            | Gone — the policy rules that out as an exemption in terms                        |
-| "An API key is not a named example" | **Gone — the published build also holds GitHub OAuth access and refresh tokens** |
+| Build             | Connector `authKind`              | Connector OAuth client id | Can obtain an OAuth token |
+| ----------------- | --------------------------------- | ------------------------- | ------------------------- |
+| Published `0.1.0` | `oauth2` (GitHub only connector)  | `""`                      | **No**                    |
+| Release `0.2.0`   | `api_token` (all four connectors) | `""`                      | **No**                    |
 
-**Recommendation, unchanged in direction and now without a counter-argument:
-answer "Yes".** What has changed is that this is no longer a close judgement
-call about a hypothetical. It is a correction to a live disclosure.
+So **no OAuth grant of any kind is reachable in either build.** Connector OAuth
+cannot complete without a secret the extension refuses to hold; Google's
+provider OAuth needs a client id that `0.1.0` lacks entirely and that `0.2.0`
+deliberately does not ship.
 
-**This is the one declaration worth changing as part of the `0.2.0` update**,
-because the update is the natural moment to correct it and because the
-"Yes" wording below is already true of both builds. The published policy
-supports either answer, so no policy change is required first and nothing is
-blocked.
+**The conclusion survives on a better footing, and the footing is a credential
+the extension really does handle.** What a user pastes to connect GitHub, Figma,
+Jira or Confluence is a personal access token, and the issuer's own
+documentation is unambiguous about what that is: GitHub says you may use one
+_"in place of a password when authenticating to GitHub in the command line or
+with the API"_, and _"Treat your access tokens like passwords."_
+(<https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens>)
+
+Chrome's category is _"logins, password, and authentication cookies"_. A
+documented password substitute, collected through a form field in this
+extension, stored by it, and transmitted by it to the service it authenticates
+against, is within that category on any reading — and it needs no argument
+about OAuth at all.
+
+| Leg of the "No" reading             | Status                                                                                               |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| "Nothing is collected"              | Gone — handling includes transmitting and using, and it does both                                    |
+| "It stays on the device"            | Gone — the policy rules that out as an exemption in terms                                            |
+| "An API key is not a named example" | **Gone — the build also handles connector personal access tokens, a documented password substitute** |
+
+**Recommendation: answer "Yes".** Unchanged in direction. The reasoning is
+narrower and sturdier than before: it rests on a credential the shipped build
+demonstrably handles, rather than on an OAuth flow that cannot run.
+
+**This is the one declaration worth changing as part of the `0.2.0` update.**
+The update is the natural moment, and the "Yes" wording below is true of both
+builds.
 
 **Still the owner's to submit.** This repository has not changed and cannot
 change the dashboard answer. What it can do is stop the analysis resting on a
@@ -491,32 +587,54 @@ task or the profile is deleted. Chrome's own description of the category — a
 list of pages visited with associated data such as the time of visit — is not a
 bad description of that.
 
-**Why "No" is still the better answer.** Three facts, each checkable:
+**I argued "No" here, and on 4 October 2026 I stopped being able to defend it
+consistently.** The argument is recorded in full because the reversal matters
+more than either answer.
 
-- **The extension cannot read browsing history at all.** `history` is not in
-  the manifest (neither required nor optional), and `chrome.history` appears
-  nowhere — not in the source, and zero times in the built bundles. The
-  narrower claim is deliberate: an earlier draft of this line said the _string_
-  "history" does not appear in the bundles, and that was wrong. It does, in
-  `sidepanel.js`, as a CSS class name (`history`, `history__list`,
-  `history__item`), a React transition type, and the panel's own list of the
-  user's **tasks**. None of those is a browsing record, and overstating a
-  checkable fact is how a true conclusion acquires a false reason. That is not merely printed and hoped
-  for: several Chromium tests read `chrome.runtime.getManifest()` in the live
-  worker and assert the **exact sorted permission list**, so adding `history`
-  fails the suite rather than slipping past a reviewer's eye.
-- **The scope is a task, not a session.** What is stored is the pages one task
-  the user asked for actually worked on — the record of the work, not a trace
-  of the person's browsing. A reviewer comparing the two would be comparing
-  "what did this task do" with "where has this user been".
-- **The page data itself is already declared.** "Collects website content" is
-  **Yes**, which is the honest disclosure of the thing a reviewer would
-  actually care about. A URL in the task record beside it adds no undisclosed
-  category.
+**What still holds.** The extension cannot read browsing history. `history` is
+not in the manifest, required or optional, and `chrome.history` appears nowhere
+— not in the source and zero times in the built bundles. That is asserted
+rather than hoped for: several Chromium tests read
+`chrome.runtime.getManifest()` in the live worker and compare the **exact sorted
+permission list**, so adding `history` fails the suite. (The narrower wording is
+deliberate — an earlier draft claimed the _string_ "history" is absent from the
+bundles, and that was wrong: it appears in `sidepanel.js` as CSS class names, a
+React transition type and the panel's own list of the user's **tasks**.)
 
-**Owner action: none required, but answer it on purpose.** If a reviewer
-queries it, the reply is the three facts above — not "it stays on the device",
-which the policy text rules out as a reason.
+**What does not hold.** Two of the three reasons were about provenance:
+
+- "The scope is a task, not a session — the record of the work, not a trace of
+  the person's browsing."
+- "The page data is already declared under website content, so a URL beside it
+  adds no category."
+
+The first is a provenance argument, and **this very document already rejects
+provenance as a defence** three sections above, for authentication information:
+_"Provenance is not in the definition. Where the data came from does not change
+whether it is handled."_ It cannot be wrong there and right here. The second is
+a category argument that does not survive contact with the form, where the
+categories are separate questions: answering one does not answer another.
+
+**And the governing text is broader than the reason I used.** Chrome's user-data
+FAQ, read 4 October 2026, defines web browsing activity as _"any information
+about the websites or other web resources a user requests or interacts with,
+including the domains or URLs the browser interacts with"_
+(<https://developer.chrome.com/docs/webstore/program-policies/user-data-faq>).
+A task record persists, per tab the task touched, the `url`, the `origin`,
+whether the agent opened it, and a `lastObservedAt` timestamp. Set against that
+sentence, "URLs the browser interacted with, and when" is what it is.
+
+**Recommendation: answer "Yes" to this one too.** Weaker than the
+authentication-information recommendation and stated as such — the dashboard
+renders its own shorter description of this category, which I could not retrieve
+from primary documentation, so this rests on the FAQ's definition rather than on
+the form's own words. But the three supports under "No" are now one, and that
+one is about a capability the extension lacks rather than about the data it
+keeps.
+
+**What makes it low-cost either way.** Over-disclosure is not penalised, the
+published policy already describes task records and the URLs in them, and
+answering "Yes" forecloses nothing about what the extension may ship.
 
 Supporting detail is in [`data-flows.md`](data-flows.md), category by
 category.
