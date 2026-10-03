@@ -250,6 +250,111 @@ test('the whole journey runs with no product sign-in at any point', async ({ sen
   expect(end.state).not.toBe('signed_in');
 });
 
+test('an account with no model can still be given one, from its own row', async ({
+  send,
+  provider,
+}) => {
+  // **The dead end this closes, measured on the real routes.** An account
+  // authorized with Google always arrives with no model selected — deliberately
+  // — and until now the only model picker was bound to whichever connection the
+  // panel session had just connected, or to the current brain. A user who
+  // authorized while another account was the brain, or who reopened the panel,
+  // had a row saying "no model selected" and two buttons that both answered
+  // "choose a model first", with nowhere to choose one.
+  //
+  // The Google path cannot be driven here — this build carries no client id —
+  // so the same state is produced the way the panel now recovers from it: an
+  // account exists, it has no model, and the two routes the row calls are
+  // enough to fix it.
+  const connected = await send('accounts.connect', {
+    providerId: 'openai-compatible',
+    baseUrl: provider.baseUrl,
+    apiKey: 'test-key-nomodel-aaaaaaaa',
+    // No model, which is the state an authorized Google account is in.
+    displayName: 'No model yet',
+  });
+  expect(connected.error).toBeUndefined();
+  const connectionId = connected.account!.connectionId;
+  expect(connected.account!.modelId).toBeNull();
+
+  // What the row's "Choose a model" button does: ask this account's own
+  // endpoint, with this account's own credential.
+  const listed = await send('accounts.listModels', { connectionId });
+  expect(listed.models.map((model) => model.id)).toContain('mock-model');
+
+  // And what choosing one does.
+  const chosen = await send('accounts.setBrain', { connectionId, modelId: 'mock-model' });
+  expect(chosen.error).toBeUndefined();
+
+  const after = await send('accounts.list', {});
+  const row = after.accounts.find((account) => account.connectionId === connectionId)!;
+  expect(row.modelId).toBe('mock-model');
+  expect(row.isBrain).toBe(true);
+
+  // And it can now run — after the capability check, which is the gate and not
+  // a formality. Selecting a model does not measure it, so a task started here
+  // without the check is refused as `BLOCKED` on `capability_unverified`.
+  // Writing this case without the doctor is how that was confirmed: the
+  // product is right and the first draft of this test was not.
+  await send('accounts.runDoctor', { connectionId, modelId: 'mock-model' });
+  provider.script([{ kind: 'text', text: 'Done.' }]);
+  const task = await send('task.create', { objective: 'Say something.' });
+  expect(await waitForTask(send, task.task.id, 40_000)).toMatchObject({ state: 'COMPLETED' });
+
+  await send('accounts.disconnect', { connectionId });
+});
+
+test('re-authorizing is refused for an account that was not connected with Google', async ({
+  send,
+  provider,
+}) => {
+  // The guard that stops a Google token being attached to an account connected
+  // some other way, checked on the real route — and checked **before** the user
+  // is sent to Google, so a request naming the wrong account costs nothing.
+  const keyed = await send('accounts.connect', {
+    providerId: 'openai-compatible',
+    baseUrl: provider.baseUrl,
+    apiKey: 'test-key-keyed-aaaaaaaaaa',
+    model: 'mock-model',
+    displayName: 'A pasted key',
+  });
+  const connectionId = keyed.account!.connectionId;
+
+  const refused = await send('accounts.connectGoogle', { reconnect: connectionId });
+  expect(refused.account).toBeNull();
+
+  // **`NOT_CONFIGURED`, not `NOT_RECONNECTABLE`, and that is the right answer
+  // for this build.** The route reports the configuration blocker first,
+  // because a build with no Google OAuth client id cannot complete any
+  // authorization and saying "that account was not connected with Google"
+  // would send the user to fix the wrong thing. The reconnect guard's own
+  // ordering — before the trip to Google, in a build that has a client id — is
+  // pinned in `google-provider-auth.test.ts` group 06d, on the route's source,
+  // because it cannot be reached from here.
+  //
+  // The first draft of this case expected `NOT_RECONNECTABLE` and was wrong
+  // about which refusal matters more.
+  expect(refused.failure).toBe('NOT_CONFIGURED');
+  expect(refused.error?.userMessage).toMatch(/Gemini API key/i);
+
+  // The security-relevant half holds either way, and is what this case is
+  // really for: the named account is untouched. Same auth kind, same model,
+  // still usable — no Google token was attached to a key-connected account.
+  const after = await send('accounts.list', {});
+  const row = after.accounts.find((account) => account.connectionId === connectionId)!;
+  expect(row.authKind).toBe('api_key');
+  expect(row.modelId).toBe('mock-model');
+  expect(row.status).not.toBe('disconnected');
+
+  // And an unknown connection creates nothing, rather than minting an account
+  // for a connection id that does not exist.
+  const before = after.accounts.length;
+  await send('accounts.connectGoogle', { reconnect: 'conn_does_not_exist' });
+  expect((await send('accounts.list', {})).accounts).toHaveLength(before);
+
+  await send('accounts.disconnect', { connectionId });
+});
+
 test('a task refuses when no AI account is connected, and says which it is', async ({ send }) => {
   // The honest state of a fresh installation: explorable, and unable to run an
   // AI task until a credential exists.

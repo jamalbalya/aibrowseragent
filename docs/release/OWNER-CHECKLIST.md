@@ -40,10 +40,18 @@ Accept both. A person who can be bound by them must do this.
 
 ## Content you need to host or hold
 
-**5. Privacy policy at a public URL — DONE**
+**5. Privacy policy at a public URL — DONE, and now NEEDS REPUBLISHING**
 Published and verified reachable on 2026-09-29:
 <https://about.jamal-balya.workers.dev/en/privacy>
 Paste it into the dashboard exactly as written.
+
+**`docs/PRIVACY.md` has changed since that copy was published**, and the
+published one is what a reviewer reads. Two additions, both disclosures rather
+than new behaviour: the **optional `identity` permission**, requested only if a
+user chooses to connect a Google account; and that a Google-authorized request
+carries the **name of the Cloud project** the usage is metered against. Copy the
+current `docs/PRIVACY.md` to that URL before submitting anything. Nothing in
+the repository can publish it.
 **Do not claim the extension collects no data** — website content is
 transmitted to the user's chosen provider, and that must be disclosed. The
 accurate strong claim is no telemetry, no analytics, nothing to the developer.
@@ -58,11 +66,34 @@ accurate strong claim is no telemetry, no analytics, nothing to the developer.
 Enter them in the extension's settings, in your own browser. Do not paste a
 key into a file, a commit, an issue, a screenshot, or a chat.
 
-**7. Connector OAuth application — YOU, only if you want §88 live**
-Register a GitHub OAuth app with callback
+**For Gemini there is now an alternative to a key**: authorize a Google account
+instead, which needs no key but does need the one-time setup in **G-6**. Either
+satisfies the Gemini rows above. Every other provider takes a key, and
+`docs/account-integration.md` has the per-vendor reasons.
+
+**7. Connector credentials — YOU, only if you want §88 live. ~~Register a
+GitHub OAuth app~~ — this item was wrong**
+
+This item used to say _"register a GitHub OAuth app with callback
 `chrome-extension://<your-extension-id>/oauth/callback.html` and configure the
-client id in settings. Needed for §88 C-1/R-1/V-1 and §86's duplicate-write
-manual half. Not needed to publish.
+client id in settings"_. **That would not have worked**, and following it would
+have cost an evening: GitHub's web application flow requires a `client_secret`
+in the code exchange, PKCE or not, and this extension must never carry one.
+Atlassian 3LO requires one and supports no PKCE at all; Figma requires one even
+with PKCE. `docs/connectors.md` has the table and the vendor sources.
+
+What actually unblocks §88 is **a token you create in your own account**, which
+takes minutes and needs no registration:
+
+| Connector  | Where you create the token                                           |
+| ---------- | -------------------------------------------------------------------- |
+| GitHub     | <https://github.com/settings/tokens> — the only one with a **write** |
+| Figma      | <https://www.figma.com/developers/api#access-tokens>                 |
+| Jira       | <https://id.atlassian.com/manage-profile/security/api-tokens>        |
+| Confluence | the same Atlassian token, entered again — section D-2 says why       |
+
+Section **D** is the five-step procedure and **D-2** covers the other three
+services. Not needed to publish.
 
 ---
 
@@ -519,29 +550,80 @@ You can also confirm it from a packaged artifact — `npm run release` prints
 #### 4. What to actually test, in this order
 
 Load the configured build, open Settings, choose **Google Gemini**, and press
-**Connect with Google**. Five outcomes, and each is worth producing
-deliberately:
+**Connect with Google**. Five outcomes, each worth producing deliberately.
 
-1. **Decline the Chrome permission prompt.** The panel must say nothing was
-   changed, and no account must appear. Chrome asks because `identity` is an
-   optional permission; declining it is a supported answer.
-2. **Accept it, then accept Google's consent screen.** An account appears with
-   **no model selected** — that is deliberate, not a bug — and the model list
-   fills from what Google says that project can actually use.
-3. **Uncheck the requested access** on Google's screen, if it offers the
-   choice. The connection must be refused with a sentence about authorizing
-   again. A token without `cloud-platform` cannot list or run a model, and
-   storing it would produce an account that looks connected and fails later.
-4. **Choose a model, run the capability check, then run a task.** Confirm the
-   answer comes back.
-5. **Revoke the extension's access** at
-   <https://myaccount.google.com/permissions>, then run another task. It must
-   refuse with a sentence telling you to connect the account again, and the
-   account must show as disconnected rather than staying green.
+**4.1 — Decline the Chrome permission prompt.** Chrome asks because `identity`
+is an optional permission. _Expected:_ the panel says nothing was changed, no
+account appears in the list, and Google is never opened. Declining is a
+supported answer, not an error.
 
-**What to record.** Which extension id, which project ID, whether each of the
-five behaved, and the date. **Never** a token, an authorization code, a
-screenshot showing either, or the contents of your `.env`.
+**4.2 — Accept the prompt, then accept Google's consent screen.** _Expected:_
+an account appears labelled _authorized with Google_, with **no model
+selected** — that is deliberate — and the model list fills from what Google
+says that project may use. If it is empty, the project almost certainly does
+not have the Generative Language API enabled; see step 2.2.
+
+**4.3 — Uncheck the requested access**, if Google offers the choice.
+_Expected:_ the connection is refused with a sentence about authorizing again
+and leaving the access selected. Nothing is stored. A token without
+`cloud-platform` can neither list nor run a model, so storing it would produce
+an account that looks connected and fails later.
+
+**4.4 — The one test that closes the last unknown.**
+
+This is the step nothing in the repository can do. Everything up to here proves
+the authorization; this proves the authorization is **accepted by the Gemini
+API for generating content**, which is the single thing still unverified.
+
+1. On the account's row, press **Choose a model** if it has none, and pick
+   one — the list is what Google offered in 4.2. `gemini-2.5-flash` is a good
+   choice: it is inexpensive and it supports tool calling, which the agent
+   requires.
+2. Press **Run capability check**. _Expected:_ a report in which **tool calling
+   passes**. The agent is enabled only when it does, because a model that
+   cannot call tools cannot drive a browser. A model reported _Chat only_ is
+   not a failure of the authorization — pick a different one.
+3. Open any ordinary web page.
+4. In the panel, run exactly this task:
+
+   ```text
+   Summarise this page in one sentence.
+   ```
+
+   One page read and one model turn: the smallest task that proves the agent
+   reached the model through this credential. _Expected:_ a one-sentence
+   summary, and the task reaching `COMPLETED`.
+
+5. **Capture this evidence**, which is what makes the result reportable:
+
+   - the capability check's verdict, including whether tool calling passed;
+   - whether the task completed, and the summary it produced;
+   - the model id you selected;
+   - from Settings → Activity, the entries for that task — they name the
+     provider and model used and carry no credential;
+   - if anything failed, **Google's own message, verbatim**.
+
+   **Do not capture** a token, an authorization code, a screenshot showing
+   either, or the contents of your `.env`. None is needed and none is safe to
+   paste anywhere.
+
+6. If it completed, the last Gemini OAuth unknown is closed, and
+   `docs/account-integration.md` should move that row from _unverified_ to
+   _confirmed live_, naming the date and the model.
+
+**4.5 — Revoke, and confirm the product notices.** Go to
+<https://myaccount.google.com/permissions>, remove this extension's access,
+then run another task. _Expected:_ the task refuses with a sentence telling you
+to connect the Google account again, and the account's row shows it as
+disconnected with that reason rather than staying green. An **Authorize again**
+button appears on that row; pressing it re-authorizes **the same account**,
+keeping your model choice, rather than adding a second row. Run the capability
+check again afterwards — the previous measurement was taken with a credential
+that no longer exists.
+
+**What to record overall.** Which extension id, which project ID, the outcome
+of each of 4.1 to 4.5, and the date. Never a token, a code, a screenshot of
+either, or your `.env`.
 
 #### 5. If something goes wrong, what it probably is
 
@@ -553,15 +635,22 @@ screenshot showing either, or the contents of your `.env`.
 | The panel says Google did not accept this build's OAuth client | The same id mismatch as the first row, reported from the token exchange rather than the consent screen.                                                          |
 | A task fails with something about a Cloud project              | Either `VITE_ABA_GOOGLE_QUOTA_PROJECT` is unset, or that project does not have the Generative Language API enabled, or the authorized account may not use it.    |
 | Google refuses with something about test users                 | The consent screen has your account missing from its test users while the app is unverified.                                                                     |
+| The model list in 4.2 is empty                                 | The project does not have the Generative Language API enabled, or the authorized account may not use it. Step 2.2.                                               |
+| A task is `BLOCKED` rather than failing                        | The capability check has not passed for that model. Selecting a model does not measure it; step 4.4.2 does.                                                      |
+| The row shows disconnected and tasks refuse                    | The authorization expired or was revoked. Press **Authorize again** on that row — it repairs the same account rather than adding a second.                       |
 
-**One thing is genuinely unknown and your test is what would settle it.** The
-extension sends a bearer token and a quota project; whether Google accepts that
-combination for `generateContent` on a given project configuration has not been
-verified here, because it needs a real authorization. The request path and the
-headers are correct as far as documentation and credential-free probing can
-establish — the live confirmation is step 4.4. **Report exactly what Google
-said, including an error verbatim if there is one**; it is a finding, and
-`docs/account-integration.md` is where it belongs.
+**One thing is genuinely unknown and step 4.4 settles it.** The extension sends
+a bearer token and a quota project, and both the request path and the headers
+match Google's documentation. A credential-free probe establishes that
+`generateContent` itself accepts the bearer scheme — it answers a
+non-credential literal with _"Expected OAuth 2 access token…"_, naming
+`GenerativeService.GenerateContent`. What no probe can establish is whether a
+**validly issued** token with a quota project is accepted for that method on a
+given project configuration.
+
+**Report exactly what Google said, including any error verbatim.** It is a
+finding either way, and `docs/account-integration.md` keeps the four evidence
+classes apart and has the row this belongs in.
 
 ---
 

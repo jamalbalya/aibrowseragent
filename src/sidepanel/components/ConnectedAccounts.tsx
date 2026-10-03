@@ -35,6 +35,25 @@ export function ConnectedAccounts({
   const [brain, setBrain] = useState<AccountsResponse['brain']>(null);
   const [offer, setOffer] = useState<readonly ConnectedAccountView[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  /**
+   * Models discovered for one account, and which account they belong to.
+   *
+   * **This closes a dead end.** An account authorized with Google always
+   * arrives with no model selected — deliberately, because the build must not
+   * assert anything about somebody else's catalogue. Until now the only model
+   * picker lived in the provider form above, bound to whichever connection
+   * this panel session had just connected or to the current brain. So a user
+   * who authorized Google while another account was the brain, or who reopened
+   * the panel, saw a row saying "no model selected" and two buttons that both
+   * answered "choose a model first" — with nowhere to choose one.
+   *
+   * Keyed by connection so two accounts cannot show each other's catalogue.
+   */
+  const [picker, setPicker] = useState<{
+    readonly connectionId: string;
+    readonly models: readonly { readonly id: string; readonly displayName: string }[];
+    readonly refused: number;
+  } | null>(null);
 
   const refresh = useCallback(async () => {
     const listed = await sendToBackground('accounts.list', {});
@@ -56,7 +75,11 @@ export function ConnectedAccounts({
   const selectBrain = useCallback(
     async (account: ConnectedAccountView) => {
       if (!account.modelId) {
-        onMessage('error', `Choose a model for ${account.displayName} first.`);
+        onMessage(
+          'error',
+          `Choose a model for ${account.displayName} first — the "Choose a model" button on ` +
+            'its row asks the account what it can run.',
+        );
         return;
       }
       setBusy(account.connectionId);
@@ -68,6 +91,123 @@ export function ConnectedAccounts({
         await refresh();
         onChanged();
         onMessage('ok', `${account.displayName} is now the AI brain.`);
+      } catch (error) {
+        onMessage('error', describe(error));
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh, onChanged, onMessage],
+  );
+
+  /**
+   * Asks the account's own endpoint what it can run.
+   *
+   * The same route the provider form uses, against this connection's own
+   * credential — so an authorized Google account lists what Google says that
+   * project may use, and a pasted key lists what that key may use. Nothing
+   * here has a model list of its own.
+   */
+  const discover = useCallback(
+    async (account: ConnectedAccountView) => {
+      setBusy(account.connectionId);
+      try {
+        const listed = await sendToBackground('accounts.listModels', {
+          connectionId: account.connectionId,
+        });
+        setPicker({
+          connectionId: account.connectionId,
+          models: listed.models,
+          refused: listed.refused ?? 0,
+        });
+        if (listed.models.length === 0) {
+          // Said plainly rather than shown as an empty dropdown. An endpoint
+          // that lists nothing is a real state — a key without access, a
+          // project without the API enabled — and it is not the same as
+          // "loading".
+          onMessage(
+            'error',
+            `${account.displayName} did not offer any usable models. Check that the account ` +
+              'has access and that its credential is still valid.',
+          );
+        }
+      } catch (error) {
+        onMessage('error', describe(error));
+      } finally {
+        setBusy(null);
+      }
+    },
+    [onMessage],
+  );
+
+  /**
+   * Selects a model and makes that account the brain.
+   *
+   * Both at once, because a model chosen on an account that is not the brain
+   * would be a selection with no effect, and the user pressed a button that
+   * says what it does. The capability check stays a separate, deliberate
+   * action — it issues several real model round-trips.
+   */
+  const chooseModel = useCallback(
+    async (account: ConnectedAccountView, modelId: string) => {
+      setBusy(account.connectionId);
+      try {
+        await sendToBackground('accounts.setBrain', {
+          connectionId: account.connectionId,
+          modelId,
+        });
+        setPicker(null);
+        await refresh();
+        onChanged();
+        onMessage(
+          'ok',
+          `${account.displayName} is now the AI brain, on ${modelId}. Run the capability check ` +
+            'to confirm it can drive the browser.',
+        );
+      } catch (error) {
+        onMessage('error', describe(error));
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh, onChanged, onMessage],
+  );
+
+  /**
+   * Re-authorizes an account whose Google authorization has expired.
+   *
+   * **The dead end this closes.** An authorization expires, the renewal is
+   * refused, and the account is marked disconnected with a reason. Before
+   * this the only way forward was *Connect with Google* in the provider form,
+   * which minted a **second** account for the same Google account: two rows
+   * with the same label, one of them dead, and the model choice left behind on
+   * the dead one.
+   *
+   * This writes the new token to the same connection, so the model, the
+   * consent pin and the audit history stay attached to the account the user
+   * already had. The capability measurement is deliberately not kept — it was
+   * taken with a credential that no longer exists.
+   */
+  const reauthorize = useCallback(
+    async (account: ConnectedAccountView) => {
+      setBusy(account.connectionId);
+      try {
+        const result = await sendToBackground('accounts.connectGoogle', {
+          reconnect: account.connectionId,
+        });
+        if (result.account === null) {
+          onMessage(
+            'error',
+            result.error?.userMessage ?? 'The Google authorization did not complete.',
+          );
+          return;
+        }
+        await refresh();
+        onChanged();
+        onMessage(
+          'ok',
+          `${account.displayName} is authorized again. Run the capability check to confirm it.`,
+        );
       } catch (error) {
         onMessage('error', describe(error));
       } finally {
@@ -97,7 +237,11 @@ export function ConnectedAccounts({
   const check = useCallback(
     async (account: ConnectedAccountView) => {
       if (!account.modelId) {
-        onMessage('error', `Choose a model for ${account.displayName} first.`);
+        onMessage(
+          'error',
+          `Choose a model for ${account.displayName} first — there is nothing to check until ` +
+            'one is selected.',
+        );
         return;
       }
       setBusy(account.connectionId);
@@ -174,6 +318,43 @@ export function ConnectedAccounts({
                   {account.accountLabel}
                   {account.modelId ? ` · ${account.modelId}` : ' · no model selected'}
                 </div>
+
+                {/* The way out of "no model selected". Shown only for the
+                    account that has no model, because an account that has one
+                    can be changed from the provider form above — and a second
+                    always-visible picker would be two places to do one thing. */}
+                {!account.modelId && picker?.connectionId !== account.connectionId ? (
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    disabled={busy !== null}
+                    onClick={() => void discover(account)}
+                  >
+                    {busy === account.connectionId ? 'Asking…' : 'Choose a model'}
+                  </button>
+                ) : null}
+
+                {picker?.connectionId === account.connectionId && picker.models.length > 0 ? (
+                  <label className="field">
+                    <span>Model</span>
+                    <select
+                      defaultValue=""
+                      disabled={busy !== null}
+                      onChange={(event) => {
+                        if (event.target.value.length > 0) {
+                          void chooseModel(account, event.target.value);
+                        }
+                      }}
+                    >
+                      <option value="">Choose from what this account offers</option>
+                      {picker.models.map((entry) => (
+                        <option key={entry.id} value={entry.id}>
+                          {entry.displayName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
                 {/* Said plainly. A restored connection has no credential, and
                     pretending otherwise fails at the first request instead. */}
                 {account.statusReason ? (
@@ -181,6 +362,20 @@ export function ConnectedAccounts({
                 ) : null}
               </div>
               <div className="account-list__actions">
+                {/* Shown only where it can work: an account connected with
+                    Google whose authorization has stopped producing a
+                    credential. For every other row it would be a button with
+                    nothing to do. */}
+                {account.authKind === 'oauth2' && account.status === 'disconnected' ? (
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    disabled={busy !== null}
+                    onClick={() => void reauthorize(account)}
+                  >
+                    {busy === account.connectionId ? 'Waiting for Google…' : 'Authorize again'}
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="button button--ghost"

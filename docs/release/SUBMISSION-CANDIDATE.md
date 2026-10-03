@@ -17,8 +17,8 @@ Web Store account was accessed.
 |                 | Previously submitted                              | Current candidate                                                   |
 | --------------- | ------------------------------------------------- | ------------------------------------------------------------------- |
 | Version         | `0.1.0`                                           | `0.1.0`                                                             |
-| SHA-256         | **not recorded — see below**                      | `a28837cff0f8b8bdb29716bfef54c7f63e03f2d1b7a39f4d696eaf600f09a493`  |
-| Bytes           | not recorded                                      | 288,797                                                             |
+| SHA-256         | **not recorded — see below**                      | `25baebe86f3e17677ce2150fae83dc7cb1a859fb3d2db5eb7b6c1a7ecacb78a0`  |
+| Bytes           | not recorded                                      | 289,391                                                             |
 | Entries         | not recorded                                      | 13                                                                  |
 | Source commit   | not recorded                                      | the commit this file was committed in                               |
 | Submission date | not recorded; reported as on or before 2026-10-01 | not submitted                                                       |
@@ -166,8 +166,8 @@ All run on the tree this candidate was built from, on Node 22.23.3.
 | Check                         | Result                                                                                              |
 | ----------------------------- | --------------------------------------------------------------------------------------------------- |
 | `npm run verify`              | pass — format, lint, typecheck, tests, build, package, parity, acceptance, notices                  |
-| Unit / integration / security | 4,477 passed, 34 skipped, 183 files                                                                 |
-| Real-Chromium E2E             | 512 passed, in 8.2 minutes, against this tree                                                       |
+| Unit / integration / security | 4,482 passed, 34 skipped, 183 files                                                                 |
+| Real-Chromium E2E             | 514 passed, in 8.1 minutes, against this tree                                                       |
 | `npm audit --omit=dev`        | 0 vulnerabilities                                                                                   |
 | Reproducibility               | deterministic over repeated packing, digest verified with `sha256sum -c`                            |
 | Parity                        | 36 PASS / 3 PARTIAL / 1 NOT-STARTED across 40 capabilities                                          |
@@ -305,10 +305,16 @@ Ten minutes, in this order.
    `release/ai-browser-agent-0.1.0.zip`. Verify the digest with
    `cd release && sha256sum -c ai-browser-agent-0.1.0.zip.sha256` before
    uploading, and compare it against §1.
-6. **Either way, record the digest you uploaded** somewhere you can check it —
+6. **Before uploading anything, republish the privacy policy.**
+   `docs/PRIVACY.md` has changed since the copy at the public URL was
+   published: it now discloses the optional `identity` permission and the Cloud
+   project name a Google-authorized request carries. The published copy is what
+   a reviewer reads, and nothing in the repository can update it. Owner
+   checklist item 5.
+7. **Either way, record the digest you uploaded** somewhere you can check it —
    not in this repository, which cannot verify it, which is the whole reason §1
    has a gap in it.
-7. **Do not** treat this document as the dashboard. It is one commit old the
+8. **Do not** treat this document as the dashboard. It is one commit old the
    moment it is written.
 
 ---

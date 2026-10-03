@@ -4217,6 +4217,37 @@ router.on('accounts.connectGoogle', async (request) => {
     };
   }
 
+  /**
+   * The account being re-authorized, when one was named.
+   *
+   * Checked **before** the authorization runs, so a request naming something
+   * this route must not touch is refused without sending the user to Google
+   * first. The two conditions are what stop a Google token being attached to
+   * an account that was connected another way: it must be a Gemini account,
+   * and it must already be an OAuth one.
+   */
+  let reconnecting: ConnectedAccount | undefined;
+  if (request.reconnect !== undefined) {
+    const existing = await accountStore.get(request.reconnect);
+    if (
+      existing === undefined ||
+      existing.providerId !== GEMINI_PROVIDER_ID ||
+      existing.authKind !== 'oauth2'
+    ) {
+      return {
+        account: null,
+        failure: 'NOT_RECONNECTABLE',
+        error: createError('INVALID_ARGUMENT', 'That connection cannot be re-authorized.', {
+          userMessage:
+            'That account was not connected with Google, so it cannot be re-authorized this ' +
+            'way. Disconnect it and connect again.',
+          retryable: false,
+        }),
+      };
+    }
+    reconnecting = existing;
+  }
+
   const controller = new AbortController();
   const authorized = await googleProviderAuth().authorize(controller.signal, request.loginHint);
   if (!authorized.ok) {
@@ -4243,15 +4274,22 @@ router.on('accounts.connectGoogle', async (request) => {
   // establishes and for the same reason: a record whose credential never
   // landed is an account that fails at its first request with nothing to
   // explain why.
-  const connectionId = accountStore.mintConnectionId();
+  //
+  // Re-authorizing writes to the **same** connection id, which is what keeps
+  // the user's model choice, their consent pin and their audit history
+  // attached to the account they already had rather than stranding them on a
+  // dead row beside a new one.
+  const connectionId = reconnecting?.connectionId ?? accountStore.mintConnectionId();
   await storeProviderToken(connectionId, authorized.token);
 
   const account: ConnectedAccount = {
     connectionId,
-    abaUserId: await currentAbaUserId(),
+    // Preserved on a re-authorization: the account's owner, its name and its
+    // model are the user's, and an expiry is not a reason to reset them.
+    abaUserId: reconnecting?.abaUserId ?? (await currentAbaUserId()),
     providerId: GEMINI_PROVIDER_ID,
     protocol: protocolForLegacyProvider(GEMINI_PROVIDER_ID),
-    displayName: request.displayName?.trim() || 'Google Gemini',
+    displayName: request.displayName?.trim() || reconnecting?.displayName || 'Google Gemini',
     // Never derived from the token. An access token's last four characters
     // are opaque and change on every refresh, so they identify nothing; what
     // identifies this account is that it was authorized with Google.
@@ -4266,7 +4304,14 @@ router.on('accounts.connectGoogle', async (request) => {
     // No model yet. Discovery runs against the new credential and the user
     // chooses from what Google actually offers this account — a default here
     // would be this build asserting something about somebody else's catalogue.
-    modelId: null,
+    // On a re-authorization the model is kept: the user chose it from a
+    // catalogue this build had read, and a new token for the same account does
+    // not make that choice wrong.
+    modelId: reconnecting?.modelId ?? null,
+    // The measurement does **not** survive, even on a re-authorization. It was
+    // taken with a credential that no longer exists, and a capability carried
+    // across a credential change is evidence about one thing read as a claim
+    // about another.
     capabilities: null,
     capabilityScope: null,
     status: 'connected',
@@ -4289,7 +4334,10 @@ router.on('accounts.connectGoogle', async (request) => {
     type: 'provider.selected',
     outcome: 'info',
     providerId: GEMINI_PROVIDER_ID,
-    code: 'account_authorized_with_google',
+    code:
+      reconnecting === undefined
+        ? 'account_authorized_with_google'
+        : 'account_reauthorized_with_google',
   });
 
   // The first account becomes the one in use, exactly as on the key path.

@@ -26,9 +26,14 @@ Seven steps, and the only one that is optional is the first.
    authorization for Gemini, a key you create for everything else.
 4. The build asks the endpoint which models that credential can use, and
    shows what came back. It never shows a model list of its own.
-5. Choose the account and model to run as the agent's brain.
+5. Choose the account and model to run as the agent's brain. An account that
+   has none shows **Choose a model** on its own row, which asks that account's
+   endpoint with that account's credential — so a connection made in one panel
+   session can be completed in another.
 6. Run the capability check. It measures that exact pair — this account, this
-   model — and the measurement is discarded if either changes.
+   model — and the measurement is discarded if either changes. **Selecting a
+   model does not measure it**: a task started before the check is refused as
+   blocked rather than run on an unverified model.
 7. Run a task. The request carries that account's credential and that model id.
 
 Steps 4 to 7 are measured end to end in
@@ -193,6 +198,31 @@ build's configuration and never from a message, and it is **never guessed from
 the client id** — the digits at the start of a Google client id usually are a
 project number, and "usually" is not a documented mapping for a value that
 decides whose quota is spent.
+
+### When an authorization stops working
+
+An access token expires within the hour, and a refusal to renew it is final —
+the grant may have been revoked. Three things happen, and the third is what
+stops the user being stranded:
+
+- the credential resolver returns nothing, so no request is made with a spent
+  token;
+- the **account** is marked disconnected with a reason naming the fix, so the
+  panel stops showing a healthy row whose every request refuses. The reason is
+  not "reconnect its API key" — an authorized account never had one;
+- the row offers **Authorize again**, which writes the new token to the **same
+  connection**. The model, the consent pin and the audit history stay attached
+  to the account the user already had, rather than being stranded on a dead row
+  beside a new one with the same label.
+
+The capability measurement is deliberately **not** carried across a
+re-authorization. It was taken with a credential that no longer exists, and a
+capability carried across a credential change is evidence about one thing read
+as a claim about another. The check must be run again, which the panel says.
+
+Re-authorizing is refused unless the named connection is already a Gemini
+account authorized with Google — so a Google token can never be attached to an
+account that was connected some other way.
 
 Disconnecting clears **both** shapes unconditionally. The failure that would
 otherwise be easy is a disconnect that removes the key slot an authorized

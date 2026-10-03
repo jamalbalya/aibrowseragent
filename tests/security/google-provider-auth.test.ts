@@ -803,6 +803,67 @@ describe('06c — an OAuth-authorized call names a quota project', () => {
   });
 });
 
+describe('06d — re-authorizing repairs the account rather than duplicating it', () => {
+  /**
+   * The dead end: an authorization expires, the renewal is refused, the
+   * account is marked disconnected — and authorizing again mints a *second*
+   * account for the same Google account. Two rows with the same label, one
+   * dead, and the model choice stranded on the dead one.
+   *
+   * Asserted on the worker's route source rather than by driving the worker,
+   * which `connector.spec.ts`-style E2E does; what is pinned here is the three
+   * decisions the route makes, each of which could reasonably have gone the
+   * other way.
+   */
+  const route = (): string => {
+    const worker = file('background/service-worker.ts');
+    const start = worker.indexOf("router.on('accounts.connectGoogle'");
+    return worker.slice(start, worker.indexOf("router.on('accounts.disconnect'", start));
+  };
+
+  it('writes to the same connection id, so nothing is stranded', () => {
+    expect(route()).toContain('reconnecting?.connectionId ?? accountStore.mintConnectionId()');
+  });
+
+  it('keeps the model and the name, because an expiry does not unmake a choice', () => {
+    const body = route();
+    expect(body).toContain('modelId: reconnecting?.modelId ?? null');
+    expect(body).toContain('reconnecting?.displayName');
+    expect(body).toContain('reconnecting?.abaUserId');
+  });
+
+  it('does not keep the capability measurement', () => {
+    // It was taken with a credential that no longer exists. Carrying it across
+    // a credential change turns evidence about one thing into a claim about
+    // another, which is worse than having no claim — nothing downstream can
+    // tell a stale measurement from a fresh one.
+    const body = route();
+    const afterMint = body.slice(body.indexOf('const account: ConnectedAccount'));
+    expect(afterMint).toContain('capabilities: null');
+    expect(afterMint).toContain('capabilityScope: null');
+    expect(afterMint).not.toContain('reconnecting?.capabilities');
+  });
+
+  it('checks what it is being pointed at before sending the user to Google', () => {
+    const body = route();
+    const guard = body.slice(0, body.indexOf('googleProviderAuth().authorize'));
+    // Both conditions, and both before the authorization: a request naming an
+    // account this route must not touch is refused without a trip to Google,
+    // and a Google token can never be attached to an account connected some
+    // other way.
+    expect(guard).toContain('existing.providerId !== GEMINI_PROVIDER_ID');
+    expect(guard).toContain("existing.authKind !== 'oauth2'");
+    expect(guard).toContain('NOT_RECONNECTABLE');
+  });
+
+  it('records a re-authorization as its own audit code', () => {
+    // A repair and a new connection are different events, and a trail that
+    // called them the same thing could not answer "when did this account's
+    // credential change".
+    expect(route()).toContain('account_reauthorized_with_google');
+  });
+});
+
 describe('07 — this is not a sign-in, and shares nothing with one', () => {
   it('names no identity module', () => {
     // The product requirement is that Google reaches an AI account and is not

@@ -511,7 +511,24 @@ export interface PanelRequestMap {
    * has signed in has not done it.
    */
   'accounts.connectGoogle': {
-    request: { loginHint?: string; displayName?: string };
+    request: {
+      loginHint?: string;
+      displayName?: string;
+      /**
+       * Re-authorize this existing connection instead of creating a new one.
+       *
+       * An authorization expires, and when it cannot be renewed the account is
+       * marked disconnected with a reason. Without this the only way forward
+       * was to authorize again, which minted a *second* account for the same
+       * Google account — two rows with the same label, one of them dead, and
+       * the model choice left behind on the dead one.
+       *
+       * Refused unless the named connection is an existing Gemini account
+       * authorized with Google, so this cannot attach a Google token to an
+       * account that was connected some other way.
+       */
+      reconnect?: string;
+    };
     response: {
       account: ConnectedAccountView | null;
       /** The named refusal, so the panel can explain rather than say "failed". */
