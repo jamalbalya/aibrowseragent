@@ -307,9 +307,44 @@ Both sentences above are true of the implementation and verifiable from it:
 the audit trail, evidence, a task record, a log, a model prompt or a URL, and
 `docs/release/data-flows.md` lists every destination a credential is sent to.
 
-**This repository does not pick one.** The question is about Google's
-definition rather than about this code, the form is submitted by the owner, and
-a declaration nobody chose is worse than either answer.
+### A recommendation, which is not a decision
+
+Asked for one, here it is with its reasoning. **Answer "Yes".** The decision
+remains the owner's — the form is submitted by a person who can be held to it —
+but if you want a recommendation rather than a balance sheet, that is it, for
+three reasons in order of weight:
+
+1. **The asymmetry of being wrong.** A "No" that a reviewer reads as
+   understatement is a rejection and a trust problem; a "Yes" that was stricter
+   than required costs nothing. The extension holds OAuth access and refresh
+   tokens — the one artefact in this product that is unambiguously
+   authentication information in ordinary usage, whatever Chrome's examples
+   enumerate.
+2. **Chrome's guidance points that way on the specific fact that applies
+   here.** Its examples are _"logins, passwords, and authentication
+   cookies"_, which an API key is none of. But its guidance also names
+   _"having login functionality, even if using a third-party system like Google
+   authentication"_, and this build does run a Google authorization flow. That
+   sentence is about this extension; the examples are not.
+3. **Nothing is lost by it.** Both answers are already consistent with the
+   published policy, so "Yes" requires no policy change and forecloses nothing.
+   The data-use form is a disclosure, not a limitation on what you may ship.
+
+**What argues the other way**, so the choice is informed: nothing is gathered
+_from_ the user's accounts, there is no login to this extension, and every
+credential is supplied by the user and sent only to the service that issued it.
+On a literal reading of the three examples, "No" is defensible — and it is the
+answer currently recorded.
+
+**Either way the justification text matters more than the checkbox**, because
+it is what a reviewer reads. Use the wording above verbatim; it is true of the
+implementation and verifiable from
+`tests/security/credential-boundary.test.ts` and
+`docs/release/data-flows.md`.
+
+**This repository has not changed the declaration.** It is recorded as "No",
+the recommendation above is a recommendation, and a declaration nobody chose
+would be worse than either answer.
 
 Supporting detail is in [`data-flows.md`](data-flows.md), category by
 category.

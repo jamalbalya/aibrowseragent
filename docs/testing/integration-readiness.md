@@ -288,6 +288,24 @@ a client id that is set and unusable rather than shipping one that will fail
 (`scripts/check-extension-env.mjs`), and `CLIENT_MISMATCH` is the error for a
 client registered to the wrong id.
 
+### Anthropic, pre-flighted a second time
+
+Before the owner spends a key, the three things that would make the first run
+fail on the _test_ rather than on the provider were checked against the real
+API's documented shapes. All three are sound, so this is recorded as a negative
+result rather than a change:
+
+| Risk                                                    | Finding                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `listModels` brittle to the vendor's real envelope      | Sound. `body.data ?? []`, filtered on `typeof id === 'string'`, `display_name` falling back to `id`, extra fields ignored. Pagination fields are simply unused, and with ~15 models the `?limit=100` request never needs a second page.                                               |
+| An id the build refuses to record                       | Sound. `admitModelIds` filters on length and charset; `claude-sonnet-4-5-20250929` and its siblings are plain hyphenated alphanumerics well inside the limit.                                                                                                                         |
+| Vision withheld from a model the build has not heard of | Sound, and deliberately so. `NO_VISION_HINTS` is a **deny** list of `claude-1`, `claude-2`, `claude-instant` matched by prefix, so an unknown model is claimed to have vision and the doctor verifies it. Checked against six current and historical ids: no current name is matched. |
+
+The direction of each is what matters. A brittle parser, a strict id filter or
+an allow-list for vision would each have failed _closed_ — an empty catalogue,
+a missing model, a refused image — and each would have looked like a provider
+problem in the owner's first run.
+
 ### Anthropic, audited rather than run
 
 No Anthropic key exists, so nothing below is a live result. What it is instead:

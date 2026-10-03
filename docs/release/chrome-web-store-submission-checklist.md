@@ -130,15 +130,15 @@ None of this can be done from a repository. Each item names why.
 Six items, and only one of them is a judgement rather than an errand. Nothing
 in the repository is waiting on any of them except the two marked.
 
-| #   | What                                                                | Kind                | Blocks                         |
-| --- | ------------------------------------------------------------------- | ------------------- | ------------------------------ |
-| 1   | Developer account: register, pay, accept the agreements             | Errand              | Submission                     |
-| 2   | **Answer "Collects authentication information"**                    | **Judgement**       | The data-use form              |
-| 3   | Four listing fields: category, language, support email, support URL | Errand + one choice | The listing                    |
-| 4   | At least one screenshot                                             | Judgement           | The listing                    |
-| 5   | Register a Google OAuth client for the published extension id (G-6) | Errand              | `87-10`, Google authorization  |
-| 6   | An Anthropic API key, then one command                              | Errand              | The last unverified provider   |
-| 7   | **Credit on the OpenAI account**, only if that path matters to you  | Errand              | Generation on `api.openai.com` |
+| #   | What                                                                | Kind                | Blocks                                                       |
+| --- | ------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------ |
+| 1   | Developer account: register, pay, accept the agreements             | Errand              | Submission                                                   |
+| 2   | **Answer "Collects authentication information"**                    | **Judgement**       | The data-use form                                            |
+| 3   | Four listing fields: category, language, support email, support URL | Errand + one choice | The listing                                                  |
+| 4   | At least one screenshot                                             | Judgement           | The listing                                                  |
+| 5   | Register a Google OAuth client for the published extension id (G-6) | Errand              | `87-10`, Google authorization, and the two Google connectors |
+| 6   | An Anthropic API key, then one command                              | Errand              | The last unverified provider                                 |
+| 7   | **Credit on the OpenAI account**, only if that path matters to you  | Errand              | Generation on `api.openai.com`                               |
 
 **Item 2 is the only one with two defensible answers**, and it no longer has a
 cost attached to either: the published policy already says _"A credential the
@@ -161,6 +161,21 @@ rather than about this code, and this repository will not pick one.
 
 **Items 5, 6 and 7 are the only ones that block a technical claim.** Everything
 else blocks the listing or the submission, not the product.
+
+Item 5 unlocks more than it looks. Re-audited on 4 October 2026: the two
+missing Tier 1 connectors are Google's — Sheets and Drive — and the parity
+matrix said they _"both need a registered client id"_, which reads as two more
+registrations. They need **this one**. A Chrome Extension OAuth client carries
+whatever scopes its consent screen declares, so those connectors are scope
+configuration on the client G-6 already asks for rather than new registration
+work. One errand, three outcomes.
+
+What is not mechanical, and is yours: whether to bundle those scopes. Adding
+`spreadsheets.readonly` and `drive.readonly` beside `cloud-platform` widens a
+single consent from _"run a model for me"_ to _"read my documents"_, and this
+product has been careful to keep Google identity, provider authorization and
+document access separate. Doing it is a product decision, not something implied
+by finishing G-6.
 
 Item 7 is new and small. On 3 October 2026 the direct `api.openai.com` path was
 exercised with the key already on the development machine: the credential is

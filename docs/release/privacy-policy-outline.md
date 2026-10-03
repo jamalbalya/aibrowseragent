@@ -162,6 +162,34 @@ What the policy must say instead is narrower and still strong:
 - Connector tokens disappear when the browser closes.
 - Say how a user clears things without uninstalling: disconnecting a provider
   clears its stored credential; disconnecting a connector clears its grant.
+- **The published page now understates this, because the extension improved
+  after it was written.** It says _"Revoking the extension's access in the
+  permissions page of the user's Google Account ends it from Google's side"_ —
+  true, and once the only way. Since `52211d7`, disconnecting a
+  **Google-authorized** account also asks Google to withdraw the grant:
+  `accounts.disconnect` posts the refresh token to
+  `https://oauth2.googleapis.com/revoke` before deleting it locally, because
+  deleting it first would destroy the token revocation needs.
+
+  This is an **under-statement, not a misstatement** — the page promises less
+  than the extension does, which is the safe direction for a policy and not
+  urgent. It is still a mismatch with behaviour. The sentence to add, which is
+  deliberately careful about what is guaranteed:
+
+  > Disconnecting a Google-authorized account also asks Google to withdraw the
+  > authorization. If Google cannot be reached the authorization may remain
+  > listed in your Google Account, where you can revoke it yourself; the
+  > credential is deleted from this device either way.
+
+  The hedge matters and is not padding: revocation is attempted once and never
+  allowed to block a disconnect, so a person asking to disconnect always
+  does — and the grant can therefore outlive the tokens if Google is down.
+  Claiming an unconditional revocation would be the one thing this document's
+  opening forbids.
+
+  Owner action: add that sentence to the deployed page in the `about-jamal`
+  repository and move `EFFECTIVE_DATE`. Not required before submission, because
+  nothing currently published is false.
 
 ## 8. Children
 
