@@ -432,14 +432,20 @@ is requested despite its cost.
 
 ## Status
 
-**Submitted, not published.** An artifact has been submitted to the Chrome Web
-Store and its last known status is `Pending Review`. It is **not approved** and
-**not published**: there is no public listing. That status is what the account
-owner reported, not something this repository can observe.
+**`0.1.0` is published. `0.2.0` is prepared and has not been uploaded.** The
+listing is live at
+<https://chromewebstore.google.com/detail/hlhcfmlgoojeoapmijopmicdmmhealhl>,
+showing `0.1.0`, last updated 3 October 2026, and declaring _"Website content"_
+as the data it handles. The item id came from the account owner and the listing
+was then read, so this is verified rather than reported.
 
-The artifact under review is the one uploaded at submission time, which is
-**not** the artifact a fresh build produces now — engineering has continued
-since. See
+**The published build cannot complete a tool call on Gemini.** The package was
+downloaded from the store and unpacked: it carries none of the 3 October 2026
+provider fixes. That is the reason `0.2.0` exists. The API-key path for
+OpenAI-compatible providers is unaffected.
+
+The published artifact is therefore **not** the artifact a fresh build produces
+now. See
 [docs/release/README.md](docs/release/README.md#two-artifacts-and-which-one-is-which)
 for the distinction and
 [docs/release/chrome-web-store-submission-checklist.md](docs/release/chrome-web-store-submission-checklist.md)

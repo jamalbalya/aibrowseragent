@@ -1,11 +1,86 @@
 # Changelog
 
-## 0.1.0 — submitted, under review
+## 0.2.0 — prepared, not submitted
 
-**Not published.** A `0.1.0` artifact has been submitted to the Chrome Web
-Store and its last known status is `Pending Review`. It is not approved, there
-is no public listing, and that status is what the account owner reported rather
-than something this repository can observe.
+**This version has not been uploaded, submitted or published.** It is built,
+validated and waiting on the account owner's decision. `0.1.0` remains the
+published version until that happens.
+
+### Why this update exists
+
+**The published build cannot run a tool call on Gemini.** That is not inferred
+from the commit history — the published package was downloaded from the Chrome
+Web Store and read. Its `service-worker.js` contains none of the fixes made on
+3 October 2026: no `thoughtSignature`, no `retryDelay`, no
+`insufficient_quota`, no `x-goog-user-project`, and none of the retired-model
+message. Two of those absences are the blocking pair. Canonical tool schemas
+carry a field Google's schema type rejects by name, so every tool request was
+refused; and a conversation that got past that could make exactly one tool call
+before Google refused the turn carrying the tool's result.
+
+So a user who installs `0.1.0` today and connects Gemini gets an agent that
+cannot use a tool. The API-key path for OpenAI-compatible providers is
+unaffected.
+
+### Fixed
+
+- **Gemini tool calling works at all.** Tool schemas are translated to Google's
+  documented `Schema` type instead of being sent as-is, and the
+  `thoughtSignature` a model returns beside a function call is carried back into
+  the next turn, which is what lets a conversation make more than one tool call.
+- **A retired model says so.** Google's model list leads with three models it
+  has retired; they are offered and answer `404`. The message now names the
+  cause instead of sending the user back to the list that just offered it.
+- **`Retry-After` is read**, including Google's body-only `RetryInfo`, so a
+  rate-limited request waits the interval the provider asked for rather than a
+  guess — and refuses rather than sleeping past a ceiling.
+- **An unfunded account is terminal, not retried.** An OpenAI-compatible 429
+  that means "no credit" is reported as such, with the fact that waiting will
+  not help, instead of being retried as congestion.
+- **An unreadable reply is an error, not an empty answer.** A response whose
+  parts carry no readable text no longer returns as a successful empty reply.
+- **A credential is renewed against the caller's horizon.** A task resolves its
+  credential once at the start, so a token valid now but expiring mid-run is
+  renewed up front rather than failing partway through with a terminal 401.
+- **Disconnecting a Google-authorized account revokes the grant.** The refresh
+  token is posted to Google's revocation endpoint before it is deleted locally,
+  because deleting it first destroys the token revocation needs. A disconnect
+  still always disconnects, whatever Google answers.
+
+### Changed
+
+- **`identity` is declared only when it can be used.** The permission exists for
+  one flow, authorizing a Google account for the Gemini API, and nothing else in
+  the build requests it — connectors deliberately use a tab watcher instead. A
+  release build with no Google OAuth client id compiled in now drops it from
+  `optional_permissions`, because a permission no code path can reach is a
+  least-privilege defect and something a reviewer would be right to ask about.
+  `validate-release.mjs` asserts the rule in both directions. This build ships
+  without the client id, so it declares `downloads` alone — which is what the
+  published `0.1.0` listing already declares.
+
+### Not in this update
+
+- No Google OAuth client id, so _Connect with Google_ reports itself
+  unavailable with a reason and the Gemini API key path is offered instead. The
+  flow is implemented and unit-tested; no real grant has ever been performed.
+- Plugins (P-025) remain NOT-STARTED.
+
+---
+
+## 0.1.0 — published
+
+**Published on the Chrome Web Store.** The listing is live at
+<https://chromewebstore.google.com/detail/hlhcfmlgoojeoapmijopmicdmmhealhl>,
+showing version `0.1.0`, last updated 3 October 2026, 266 KiB, and declaring
+_"Website content"_ as the data it handles. The item id was supplied by the
+account owner and the listing was then read directly, so this is verified
+rather than reported.
+
+**It predates the fixes above**, and the evidence is the published package
+itself rather than an inference from dates: downloaded from the Store,
+unpacked, and found to contain none of the 3 October markers. Whoever reads
+this should assume the published build and `HEAD` behave differently on Gemini.
 
 `0.1.0` is also still the version in `package.json` and the manifest, and work
 has continued since the submission — so the artifact a build produces from
@@ -75,10 +150,19 @@ what the agent is permitted to do.
 
 ### Not implemented
 
-Tracked in `PARITY_MATRIX.md`: 30 PASS, 8 PARTIAL, 2 NOT-STARTED across the 40
-specification capabilities. Notably absent: plugins (P-025), MCP (P-026), and
-every connector except GitHub — so the Jira, Confluence, Figma and Google
-Sheets flows the specification's acceptance tests name cannot be run at all.
+Tracked in `PARITY_MATRIX.md`: **36 PASS, 3 PARTIAL, 1 NOT-STARTED** across the
+40 specification capabilities. The one NOT-STARTED is plugins (P-025); the three
+PARTIAL are workflow recording (P-022), the connector framework (P-023) and
+skills (P-024).
+
+**These three numbers were wrong here until 4 October 2026**, and the reason is
+worth recording because it is the second time on this file. `release-claims.test.ts`
+was added to stop exactly this drift, and it did catch the word-form sentence
+higher up — but its regex matched only _"N capabilities are PARTIAL and M are
+NOT-STARTED"_, so this numeric restatement sat outside it and went stale: it
+still said 30/8/2, still called MCP (P-026) absent when it had earned PASS, and
+still said "every connector except GitHub" when Confluence, Figma and Jira all
+ship. The guard now reads numeric claims too.
 
 Web AI inference and provider-specific Web AI enablement are gated by design
 and are not implemented.

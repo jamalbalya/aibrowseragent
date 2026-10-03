@@ -88,6 +88,55 @@ if (process.env.RELEASE_BUILD === '1' && Array.isArray(manifest.web_accessible_r
   console.log('  release: web_accessible_resources narrowed to https origins');
 }
 
+// A release build declares `identity` only if it can actually use it.
+//
+// Exactly one flow needs that permission: authorizing a Google account for the
+// Gemini API, which `chrome.identity.launchWebAuthFlow` is the only way to
+// perform. Connectors deliberately do not use it — `connectors/oauth/auth-flow-port.ts`
+// says why — so with no Google OAuth client id compiled in, nothing in the
+// build can request it. `accounts.connectGoogle` returns `NOT_CONFIGURED`
+// before it ever reaches the permission ask.
+//
+// Declaring a permission the build cannot reach is a least-privilege defect and
+// a Chrome Web Store review risk: the policy requires a permission to be
+// necessary for functionality, and "it is for a feature this build has no
+// configuration for" is not a justification anybody should have to give. The
+// published 0.1.0 listing declares `downloads` alone, so adding `identity` in
+// an update would be a new permission declaration for a capability the
+// installer cannot use.
+//
+// Keyed on the **built bundle** rather than on the environment, for the reason
+// `validate-release.mjs` gives about its own copy of this pattern: the bundle
+// is the record of what the build decided, and a `.env` edited afterwards
+// cannot make this disagree with the artifact. The whole client id is matched,
+// never the bare suffix — `provider-auth-config.ts` contains that suffix in the
+// check that validates one, so a substring test reports every build as
+// configured.
+//
+// Release builds only, so a development build keeps the permission and every
+// test that drives the real `chrome.permissions` surface is unaffected. The
+// rule is a strict narrowing and `validate-release.mjs` asserts it rather than
+// trusting it.
+if (process.env.RELEASE_BUILD === '1' && Array.isArray(manifest.optional_permissions)) {
+  const CLIENT_ID = /[0-9]{6,}-[a-z0-9]{6,}\.apps\.googleusercontent\.com/;
+  const googleConfigured = ['service-worker.js', 'sidepanel.js']
+    .map((name) => resolve(root, 'dist', name))
+    .filter((file) => existsSync(file))
+    .some((file) => CLIENT_ID.test(readFileSync(file, 'utf8')));
+  if (!googleConfigured) {
+    const before = manifest.optional_permissions.length;
+    manifest.optional_permissions = manifest.optional_permissions.filter(
+      (name) => name !== 'identity',
+    );
+    if (manifest.optional_permissions.length !== before) {
+      console.log('  release: identity dropped — no Google OAuth client id is compiled in');
+    }
+    if (manifest.optional_permissions.length === 0) delete manifest.optional_permissions;
+  } else {
+    console.log('  release: identity kept — a Google OAuth client id is compiled in');
+  }
+}
+
 writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
 // The licence notices travel with the package, because that is what reaches a

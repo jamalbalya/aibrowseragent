@@ -279,6 +279,49 @@ this one would otherwise know which lines are load-bearing.
 | _"A credential the user supplies is stored locally and is sent only to the service it belongs to."_                                                          | Sending a credential anywhere else — a telemetry endpoint, a backend, a second provider | True. `tests/security/credential-boundary.test.ts` and `data-flows.md` |
 | _"Disconnecting a Google-authorized account … also asks Google to withdraw the authorization … attempted once and … never allowed to block the disconnect."_ | Revocation being claimed unconditionally, or ceasing to be attempted                    | True, and hedged correctly. Re-read on the deployed page 4 Oct 2026    |
 
+**Two more rows were added on 4 October 2026, and they fail in the opposite
+direction from the first one.** The revocation sentence understated the
+extension; these two **overstate** it, because the page was written against
+`HEAD` and the Chrome Web Store serves `0.1.0`. Established by downloading the
+published package and reading its manifest and bundle, not by reasoning about
+dates.
+
+| Published sentence                                                                                              | What falsifies it                                    | Status                                                                                                         |
+| --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| _"Two permissions are optional and are not granted at install."_                                                | The shipped manifest declaring fewer than two        | **Overstated.** Published `0.1.0` declares `downloads` alone, and so does the `0.2.0` release build            |
+| _"Identity — optional, requested only when the user chooses to authorize a Google account for the Gemini API."_ | The shipped manifest not declaring `identity` at all | **Overstated.** Absent from published `0.1.0`; dropped from a release build with no Google OAuth client id     |
+| _"Four are supported — GitHub, Figma, Jira and Confluence."_                                                    | The shipped build carrying fewer                     | **Overstated today, correct after `0.2.0`.** Published `0.1.0` contains GitHub only; `0.2.0` contains all four |
+
+**Why this happened, so it is not repeated.** The page describes the repository
+rather than the artifact, and those two had been the same thing until something
+was published. They are now permanently different: the store serves one build
+and `main` builds another. Every row in these tables should be read as a claim
+about **the published build**, and checked against the published package — which
+is downloadable, so this is cheap:
+
+```sh
+curl -sL -o published.crx "https://clients2.google.com/service/update2/crx\
+?response=redirect&prodversion=120&acceptformat=crx2,crx3\
+&x=id%3Dhlhcfmlgoojeoapmijopmicdmmhealhl%26uc"
+# strip the CRX3 header (12 bytes + the header length at offset 8) and unzip
+```
+
+**Proposed wording, for the owner to authorize — not applied here.** Both
+corrections are small and neither is urgent, because over-disclosure is the safe
+direction and nothing published is harmful. The connector row needs no change if
+the page is re-read after `0.2.0` ships, since the update makes it true.
+
+> **Two permissions are optional** → _"One permission is optional in the
+> published build: downloads, requested only when a task downloads a file. A
+> second, identity, is declared only by a build configured with a Google OAuth
+> client id, and the published build is not."_
+
+> **Identity — optional, requested only when…** → _"Identity — optional, and
+> present only in a build configured with a Google OAuth client id. It is
+> requested only when the user chooses to authorize a Google account for the
+> Gemini API, as described in section 5. The build on the Chrome Web Store
+> carries no such client id, so it does not declare this permission."_
+
 Both rows were re-read against the deployed page on 4 October 2026, not against
 this repository's copy of them. The page also states where credentials go rather
 than implying they stay put — _"An AI provider API key is stored in a credential

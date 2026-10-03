@@ -22,7 +22,7 @@ Web Store account was accessed.
 | Entries         | not recorded                                      | 13                                                                  |
 | Source commit   | not recorded                                      | the commit this file was committed in                               |
 | Submission date | not recorded; reported as on or before 2026-10-01 | not submitted                                                       |
-| Store status    | reported `Pending Review`, owner-reported         | not submitted                                                       |
+| Store status    | **published** — listing read 2026-10-04           | not submitted                                                       |
 | Google OAuth    | not applicable — the feature did not exist        | **no client id compiled in**; the option reports itself unavailable |
 
 **Two builds can now share this version, this digest-less table and this
@@ -274,15 +274,17 @@ this build's behaviour against them.
 the Chrome Web Store's current process, neither of which this repository can
 see. Verify each point before acting on it.**
 
-- Uploading a new package for an item that is pending review generally
-  **replaces** what is in review and **restarts** the review from the
-  beginning. A submission close to a verdict loses its queue position.
+- **Resolved on 4 October 2026: the item was published.** The branch of this
+  section about an upload replacing a pending review no longer applies — there
+  is nothing in review to replace. What applies instead is the last point
+  below, which is why `package.json` and the manifest now read `0.2.0`.
 - Review duration is not predictable and is not something this repository can
   estimate.
 - A rejection is not a penalty: it comes with a reason, and resubmitting after
   fixing it is ordinary.
-- `0.1.0` is reusable while nothing is published. Once something is published,
-  the next upload needs a higher version.
+- `0.1.0` was reusable while nothing was published. **Something is published
+  now, so the next upload needs a higher version** — this is the rule that
+  forced the bump, not a preference about what the number signals.
 
 ---
 
@@ -290,10 +292,16 @@ see. Verify each point before acting on it.**
 
 Ten minutes, in this order.
 
-1. **Open the dashboard.** Note the item's actual status — it may no longer be
-   `Pending Review`.
-2. **If it has been rejected**, read the reason. That reason is more
-   informative than anything in this document, and it decides the next step.
+**This decision tree is spent.** It was written while the status was unknown;
+the status is now known and verified, so what follows records how it resolved
+rather than asking again.
+
+1. **Status: published.** The listing is live at
+   <https://chromewebstore.google.com/detail/hlhcfmlgoojeoapmijopmicdmmhealhl>
+   showing `0.1.0`.
+2. **Its point 3 below was the branch that fired**, and it has been carried
+   out: every document that said nothing was published has been corrected, and
+   this file is one of them.
 3. **If it has been published**, stop and say so: several documents in this
    repository state that nothing is published, and they would all need
    correcting.

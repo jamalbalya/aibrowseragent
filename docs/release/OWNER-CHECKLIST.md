@@ -2,12 +2,15 @@
 
 > **Read this first, before anything in the dashboard.**
 >
-> The `0.1.0` artifact submitted to the Chrome Web Store, whose last known
-> status is `Pending Review`, **predates five defects found on 3 October 2026**
-> by running the provider adapters against real endpoints for the first time.
-> Two of them together meant the browser agent **could not run on Gemini at
-> all**. Whatever that review returns, that artifact should not be the one that
-> goes public — rebuild from `main` and upload the current one.
+> **`0.1.0` is published, and it predates five defects found on 3 October
+> 2026** by running the provider adapters against real endpoints for the first
+> time. Two of them together mean the published build **cannot complete a tool
+> call on Gemini**. This is not an inference from dates: the published package
+> was downloaded from the store and unpacked, and it contains none of those
+> fixes.
+>
+> So the thing to do is replace it. `0.2.0` is built, validated and waiting —
+> rebuild from `main` if you like, then upload and publish it.
 >
 > `docs/testing/integration-readiness.md` lists the five.
 
@@ -19,14 +22,15 @@ except using it. Everything marked **YOU** cannot be done from a repository:
 it needs a Google account, a payment, an agreement you can be bound by, a
 credential you hold, or a person at a browser.
 
-> **Current state: submitted, last known status `Pending Review`.** Not
-> approved, not published, no public listing.
+> **Current state: `0.1.0` published; `0.2.0` prepared and not uploaded.** The
+> listing is live at
+> <https://chromewebstore.google.com/detail/hlhcfmlgoojeoapmijopmicdmmhealhl>.
 >
 > Nothing below has been performed on your behalf, and this list is kept in its
-> original wording because every step in it is still yours to take — for the
-> review now in progress, and for whatever is submitted next. The item id and
-> the submission date live in your Chrome Web Store account and deliberately
-> not here, because this repository cannot verify them.
+> original wording because every step in it is still yours to take — now for an
+> **update** rather than a first submission. The item id is recorded here, which
+> it previously was not: you supplied it, so the listing can be read and the
+> status checked instead of reported.
 
 ---
 

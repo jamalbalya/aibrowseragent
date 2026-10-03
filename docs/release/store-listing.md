@@ -164,6 +164,51 @@ agent only when you pick it in Chrome's own file picker.
 Everything it stores stays in your browser.
 ```
 
+## What's new, for the `0.2.0` update
+
+Paste this into the dashboard's release-notes field. It is written for a user
+reading a store listing, not for this repository: it says what changed for them
+and does not mention commits, test counts or internal file names.
+
+```text
+Fixes Gemini tool use.
+
+If you connected a Gemini model, the agent could not use its browser tools —
+every tool request was refused, and a conversation that got past that could
+make only one tool call. Both causes are fixed, so Gemini now works for real
+tasks. Models Google has retired are now reported as retired instead of
+failing with an unexplained error.
+
+Also in this release:
+- Rate-limited requests now wait the interval the provider actually asked for.
+- An account with no credit is reported as such, instead of being retried.
+- A reply the extension cannot read is reported as an error, not returned as
+  an empty answer.
+- Disconnecting a Google-authorized account now asks Google to withdraw the
+  authorization, as well as deleting the credential from this device.
+- A long task no longer fails partway through because its credential expired
+  mid-run.
+
+No new permissions. Nothing is collected, and your credentials are still sent
+only to the provider they belong to.
+```
+
+**Two claims in that text were checked rather than assumed.** "No new
+permissions" is true of the shipped artifact: the published `0.1.0` manifest
+declares `downloads` as its only optional permission, and the `0.2.0` release
+build declares the same, because `identity` is dropped when no Google OAuth
+client id is compiled in. And "Fixes Gemini tool use" is stated as a fix to a
+total failure because the published package was downloaded and read — it
+carries neither of the two fixes, so the capability was genuinely absent rather
+than merely unreliable.
+
+**What it deliberately does not say.** It does not describe MCP or the three
+additional connectors as new user-facing features, because the connector
+framework is still PARTIAL in `PARITY_MATRIX.md` and a listing should not
+advertise a capability a user may not be able to complete. It also does not
+mention the authentication-information declaration, which is a dashboard answer
+and not release notes.
+
 ## Permission justifications
 
 One per permission, as the dashboard asks. Each is what the code does, not a
@@ -371,36 +416,65 @@ implementation and verifiable from
 the recommendation above is a recommendation, and a declaration nobody chose
 would be worse than either answer.
 
-#### What changed on 4 October 2026: the Google path is registered, the artifact still is not
+#### Settled on 4 October 2026 by reading the published build: the answer should change
 
-The owner registered a Google OAuth client and put its id in `.env`. That moves
-one fact in the table above from hypothetical to real, and leaves another in
-place, and the difference decides nothing by itself — but it does mean **the
-declaration and the artifact have to be chosen together.** Measured, not
-assumed:
+Everything above was written while nothing was published, so it reasoned about
+a declaration that had not been made yet. It has been made, and it can now be
+read: the live listing at
+<https://chromewebstore.google.com/detail/hlhcfmlgoojeoapmijopmicdmmhealhl>
+declares the data this extension handles as **"Website content"** and nothing
+else. So _"Collects authentication information: No"_ is not a repository record
+any more — it is the public answer, and it is checkable.
 
-| Fact                                                            | Evidence                                                                                                 |
-| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| A Google OAuth client now exists and Google recognises it       | The authorization endpoint answers this client id with `redirect_uri_mismatch`, not `invalid_client`     |
-| A build configured with it **does** offer _Connect with Google_ | `accounts.authMethods` returns `configured: true` in real Chromium (`google-provider-auth.spec.ts`)      |
-| The **release artifact** still carries no client id             | `validate-release` reports _"no client id"_; the zip is byte-identical to the one built before this work |
+**It is understated, and the evidence is the published package rather than this
+tree.** The `0.1.0` CRX was downloaded from the store and unpacked. What its
+`service-worker.js` contains:
 
-So for the artifact as it stands today, an installer cannot reach the OAuth
-path at all, and the only credential the extension handles for them is an API
-key they paste — which is the one credential for which "No" was ever arguable.
-For a build that carries the client id, the extension handles a Google **access
-and refresh token**, and the case for "No" loses the only ground it had.
+| Found in the published build         | Count | What it means                                           |
+| ------------------------------------ | ----- | ------------------------------------------------------- |
+| `github.com/login/oauth`             | 1     | It performs a real OAuth authorization against GitHub   |
+| `code_verifier`                      | 2     | With PKCE, so it redeems an authorization code itself   |
+| `refresh_token`                      | 3     | It receives and holds refresh tokens                    |
+| `apiKey` / `x-api-key`               | 5 / 1 | It holds and sends user-pasted provider API keys        |
+| `chromiumapp.org` / `cloud-platform` | 0 / 0 | The **Google** provider OAuth flow does not exist in it |
 
-**The recommendation does not change: answer "Yes".** It is now firmer rather
-than different. Reasons 1 and 2 above — handling includes transmitting and
-using, and local storage is not an exemption — never depended on the Google
-path, and they apply to the API key alone. Reason 3 now applies to a build the
-owner can actually produce.
+So the narrow argument that kept "No" alive — that a pasted third-party API key
+is none of Chrome's three named examples — **does not cover what is actually
+published.** A GitHub OAuth **refresh token** is not an API key. It is a bearer
+artefact that proves an authenticated session to a service and can mint more of
+them, which is functionally what an authentication cookie is, and it is the
+first example in Chrome's own category list by any reasonable reading.
 
-**What this does add is a sequencing constraint.** If the submitted artifact
-ever carries the client id, "Yes" stops being a judgement and becomes the only
-defensible answer. Deciding the declaration before deciding which build is
-submitted gets those two out of order.
+Combined with the two policy statements already established above — that
+_"handle"_ means _"collecting, transmitting, using, or sharing"_, and that local
+storage is explicitly **not** an exemption — all three legs of the "No" reading
+are now gone:
+
+| Leg of the "No" reading             | Status                                                                           |
+| ----------------------------------- | -------------------------------------------------------------------------------- |
+| "Nothing is collected"              | Gone — handling includes transmitting and using, and it does both                |
+| "It stays on the device"            | Gone — the policy rules that out as an exemption in terms                        |
+| "An API key is not a named example" | **Gone — the published build also holds GitHub OAuth access and refresh tokens** |
+
+**Recommendation, unchanged in direction and now without a counter-argument:
+answer "Yes".** What has changed is that this is no longer a close judgement
+call about a hypothetical. It is a correction to a live disclosure.
+
+**This is the one declaration worth changing as part of the `0.2.0` update**,
+because the update is the natural moment to correct it and because the
+"Yes" wording below is already true of both builds. The published policy
+supports either answer, so no policy change is required first and nothing is
+blocked.
+
+**Still the owner's to submit.** This repository has not changed and cannot
+change the dashboard answer. What it can do is stop the analysis resting on a
+leg that the published artifact disproves, which is what this section does.
+
+**And the `0.2.0` build does not reintroduce the Google path.** It ships no
+client id, so _Connect with Google_ reports itself unavailable; the
+`identity` permission is dropped from the release manifest for the same reason,
+leaving `downloads` alone — which is exactly what the published listing already
+declares, so the update adds no permission.
 
 ### One other answer worth taking deliberately: "Collects web history"
 

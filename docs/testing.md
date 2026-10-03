@@ -361,10 +361,10 @@ no document in this repository claims a store availability that has not
 happened, and that the packer's three determinism properties are still there.
 Both are the kind of one-line change that leaves everything else passing.
 
-**The extension has been submitted; its last known status is `Pending Review`.**
-It is **not approved and not published**, and there is no public listing. The
-artifact under review is the one uploaded at submission time, not the one a
-fresh build produces now — see
+**`0.1.0` is published; `0.2.0` is prepared and has not been uploaded.** The
+published package was downloaded and read, and it carries none of the 3 October
+2026 provider fixes — so the published build and `HEAD` behave differently on
+Gemini. The published artifact is not the one a fresh build produces now — see
 [release/README.md](release/README.md#two-artifacts-and-which-one-is-which).
 
 ## Acceptance packages for §85–§90

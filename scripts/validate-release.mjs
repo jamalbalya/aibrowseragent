@@ -408,6 +408,56 @@ for (const full of files) {
   if (remote) fail(`${rel} loads a remote script: ${remote[0]}`);
 }
 
+// A whole client id — digits, a hyphen, then the suffix — and **not** the
+// bare suffix. The first version of this line searched for
+// `.apps.googleusercontent.com` and reported every build as configured,
+// because `provider-auth-config.ts` contains that string in the check that
+// validates a client id. The same shape of false positive as the artifact scan
+// matching the redactor's own private-key pattern: a detector finding the
+// detector.
+const CLIENT_ID_PATTERN = /[0-9]{6,}-[a-z0-9]{6,}\.apps\.googleusercontent\.com/;
+const googleClient = relPaths
+  .filter((name) => name.endsWith('.js'))
+  .some((name) => CLIENT_ID_PATTERN.test(readFileSync(resolve(dist, name), 'utf8')));
+
+/**
+ * `identity` is declared if and only if the build can use it.
+ *
+ * One flow needs that permission — authorizing a Google account for the Gemini
+ * API, which `launchWebAuthFlow` is the only way to perform. Connectors
+ * deliberately do not use it. So with no client id compiled in nothing can
+ * request it: `accounts.connectGoogle` answers `NOT_CONFIGURED` first. A
+ * permission no code path can reach is a least-privilege defect and a review
+ * risk, because the policy asks for a permission to be necessary for
+ * functionality.
+ *
+ * `scripts/build.mjs` drops it from a release build in that case, and this
+ * checks the result **both ways**. A narrowing that is applied but never
+ * verified is one somebody removes by accident later; and the inverse error
+ * matters as much, because a build that does carry a client id but has had the
+ * permission stripped offers a Connect with Google button that cannot ask for
+ * what it needs.
+ *
+ * Checked here rather than in the report below, because the report runs only
+ * after the error gate — a `fail()` down there would be collected and never
+ * shown. That was the first version of this check.
+ */
+const identityDeclared = (manifest.optional_permissions ?? []).includes('identity');
+if (googleClient && !identityDeclared) {
+  fail(
+    'a Google OAuth client id is compiled in but optional_permissions does not declare ' +
+      '"identity". The Google authorization flow cannot request the permission it needs, so ' +
+      'Connect with Google would fail at the permission step.',
+  );
+}
+if (!googleClient && identityDeclared) {
+  fail(
+    'optional_permissions declares "identity" but no Google OAuth client id is compiled in, ' +
+      'so no code path can request it. One flow uses that permission and this build has no ' +
+      'configuration for it; scripts/build.mjs drops it for exactly this reason.',
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Report.
 // ---------------------------------------------------------------------------
@@ -423,6 +473,9 @@ console.log(`✓ Release artefact valid: ${pkg.name} ${pkg.version}`);
 console.log(`  files:       ${relPaths.length}`);
 console.log(`  permissions: ${(manifest.permissions ?? []).join(', ')}`);
 console.log(`  optional:    ${(manifest.optional_permissions ?? []).join(', ') || 'none'}`);
+console.log(
+  `  identity:    ${identityDeclared ? 'declared, and reachable' : 'not declared, and not reachable'}`,
+);
 console.log(`  host access: ${hostPermissions.join(', ') || 'none'}`);
 
 /**
@@ -438,17 +491,6 @@ console.log(`  host access: ${hostPermissions.join(', ') || 'none'}`);
  * Read from the built bundle rather than from the environment, so it describes
  * the artifact and not the shell that happens to be running this check.
  */
-// A whole client id — digits, a hyphen, then the suffix — and **not** the
-// bare suffix. The first version of this line searched for
-// `.apps.googleusercontent.com` and reported every build as configured,
-// because `provider-auth-config.ts` contains that string in the check that
-// validates a client id. The same shape of false positive as the artifact scan
-// matching the redactor's own private-key pattern: a detector finding the
-// detector.
-const CLIENT_ID_PATTERN = /[0-9]{6,}-[a-z0-9]{6,}\.apps\.googleusercontent\.com/;
-const googleClient = relPaths
-  .filter((name) => name.endsWith('.js'))
-  .some((name) => CLIENT_ID_PATTERN.test(readFileSync(resolve(dist, name), 'utf8')));
 console.log(
   `  google oauth: ${
     googleClient

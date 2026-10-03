@@ -51,7 +51,14 @@ function documents(dir: string): string[] {
 
 import { API_PROVIDER_IDS } from '@/providers/registry/api-providers';
 
-const MARKDOWN = ['README.md', 'PARITY_MATRIX.md', ...documents('docs')];
+const MARKDOWN = ['README.md', 'PARITY_MATRIX.md', 'CHANGELOG.md', ...documents('docs')];
+
+/** The version this tree builds, which is not the version that is published. */
+const PREPARED = JSON.parse(read('package.json')).version as string;
+/** The version on the Chrome Web Store, verified by reading the listing. */
+const PUBLISHED = '0.1.0';
+/** The item id the listing is served at, supplied by the account owner. */
+const ITEM_ID = 'hlhcfmlgoojeoapmijopmicdmmhealhl';
 
 describe('the repository does not claim a publication that has not happened', () => {
   /**
@@ -66,17 +73,66 @@ describe('the repository does not claim a publication that has not happened', ()
     /published (?:on|to|in) the chrome web store/i,
     /live (?:on|in) the chrome web store/i,
     /listed (?:on|in) the chrome web store/i,
+    /submitted (?:for review|to the chrome web store)/i,
+    /under review/i,
     /install (?:it |this |the extension )?from the chrome web store/i,
     /get it (?:on|from) the chrome web store/i,
     /download (?:it |this )?from the chrome web store/i,
-    /our chrome web store listing/i,
   ];
 
-  it.each(MARKDOWN)('%s claims no store availability', (file) => {
+  /**
+   * **This test inverted on 4 October 2026, and the reason matters.**
+   *
+   * It used to forbid every one of the claims above anywhere, because none of
+   * them was true. Then `0.1.0` was published, and a blanket ban would have
+   * forced the documentation to stay silent about a fact a reader most needs:
+   * there is a live listing, and the build in this tree is not what is on it.
+   *
+   * So the ban is now aimed at the claim that is still false. `0.1.0` is
+   * published and may be described as such. The **prepared** version is not,
+   * and no line may put it in the same sentence as availability or submission
+   * language. That is the actual confusion to prevent — a reader concluding
+   * that what they can install is what this tree builds — and it is a sharper
+   * rule than the old one, which could not tell the two apart at all.
+   *
+   * `CHANGELOG.md` is now in the scanned set. It was outside every guard in
+   * this file until the parity counts drifted in it, and it is the file with
+   * by far the most publication language in it, so leaving it out was the
+   * weakest point of this suite.
+   */
+  it.each(MARKDOWN)('%s does not claim the prepared version is on the store', (file) => {
     const text = read(file);
-    for (const claim of CLAIMS) {
-      expect(claim.test(text), `${file} matches ${claim}`).toBe(false);
+    // Line by line, because a document that legitimately discusses both
+    // versions would trip a whole-file test for no reason.
+    for (const [index, line] of text.split('\n').entries()) {
+      if (!line.includes(PREPARED)) continue;
+      for (const claim of CLAIMS) {
+        expect(
+          claim.test(line),
+          `${file}:${index + 1} puts the prepared version ${PREPARED} beside "${claim.source}"`,
+        ).toBe(false);
+      }
     }
+  });
+
+  it('states which version is published and which is merely prepared', () => {
+    // The absence of a false claim is not the presence of a true one, which is
+    // this suite's oldest rule. Two versions now exist and a reader has to be
+    // able to tell them apart without inferring anything.
+    const changelog = read('CHANGELOG.md');
+    expect(changelog, 'CHANGELOG.md does not name the prepared version').toContain(PREPARED);
+    expect(changelog, 'CHANGELOG.md does not name the published version').toContain(PUBLISHED);
+    // The prepared version says, in its own section, that it is not out.
+    const prepared = changelog.slice(
+      changelog.indexOf(`## ${PREPARED}`),
+      changelog.indexOf(`## ${PUBLISHED}`),
+    );
+    expect(prepared.length, `no ## ${PREPARED} section above ## ${PUBLISHED}`).toBeGreaterThan(200);
+    expect(prepared).toMatch(/not been uploaded, submitted or published/i);
+    // And the published one is identified well enough to be checked by a
+    // reader, rather than asserted. The item id is the whole point: without it
+    // nobody can confirm the claim.
+    expect(changelog, 'the published listing is not identified').toContain(ITEM_ID);
   });
 
   it('says plainly, in the release documentation, what the store state is', () => {
@@ -89,18 +145,23 @@ describe('the repository does not claim a publication that has not happened', ()
     // below are each a thing a reader could otherwise get wrong, and the third
     // is the one that is easiest to state carelessly.
     const store = read('docs/release/chrome-web-store-submission-checklist.md');
-    // 1. A submission exists, and its status is named rather than implied.
-    expect(store).toContain('A submission has been made');
-    expect(store).toContain('Pending Review');
-    // 2. Pending is not approved. Saying only "submitted" invites the reader
-    //    to assume the rest.
-    expect(store).toMatch(/not approved\*{0,2} and \*{0,2}not published/i);
-    // 3. The artifact under review is not the artifact this repository builds
-    //    today, and after this pass it never will be again — engineering
-    //    continues, the digest is a function of the source tree.
+    // 1. Which version is published, named rather than implied.
+    expect(store).toContain(`\`${PUBLISHED}\` is published`);
+    // 2. And which one is not. This replaces the old "not approved and not
+    //    published" assertion: that sentence became false when the item was
+    //    published, but the risk it guarded against did not go away — it moved
+    //    to the next version.
+    expect(store).toMatch(/nothing about `0\.\d+\.\d+` has been uploaded, submitted or published/i);
+    // 3. The published artifact is not the artifact this repository builds
+    //    today — engineering continues and the digest is a function of the
+    //    source tree.
     expect(store).toContain('not the artifact this repository builds');
-    // The status is a report, not a measurement: nothing here can see the store.
-    expect(store).toMatch(/cannot observe the store/i);
+    // 4. The listing is identified, so a reader can check the claim instead of
+    //    taking it. This is the assertion that replaces "cannot observe the
+    //    store": the repository now can, because it was given the item id, and
+    //    a status that is checkable must say how.
+    expect(store).toContain(ITEM_ID);
+    expect(store).toMatch(/verified rather than reported/i);
     expect(store).toContain('ACCOUNT OWNER ACTION REQUIRED');
     // And the thing that cannot be done here is named as such rather than
     // left as an empty checkbox somebody might tick.
@@ -113,7 +174,7 @@ describe('the repository does not claim a publication that has not happened', ()
     // "submitted" will conclude that digest is under review.
     const release = read('docs/release/README.md');
     expect(release).toContain('Two artifacts, and which one is which');
-    expect(release).toContain('Submitted artifact');
+    expect(release).toContain('Published artifact');
     expect(release).toContain('Current engineering artifact');
     expect(release).toMatch(/has \*{0,2}not been uploaded/i);
     // No digest anywhere in the submission section.
@@ -135,7 +196,11 @@ describe('the repository does not claim a publication that has not happened', ()
       release.indexOf('\n## ', release.indexOf('## What has and has not happened') + 4),
     );
     expect(section.length).toBeGreaterThan(200);
-    expect(section).toContain('Pending Review');
+    // The section states both versions and their states. It used to assert
+    // 'Pending Review'; that is simply no longer what is true.
+    expect(section).toContain(PUBLISHED);
+    expect(section).toContain(PREPARED);
+    expect(section).toMatch(/is published/i);
     expect(section, 'a digest appears beside submission language').not.toMatch(/\b[0-9a-f]{64}\b/);
     // And the rule itself is still written down, so the next person knows why.
     expect(release).toContain('No digest is written into this document any more');
@@ -374,6 +439,29 @@ describe('the parity records know what the build actually registers', () => {
       WORDS.indexOf(claim![2]!.toLowerCase()),
       `CHANGELOG says "${claim![2]}" NOT-STARTED`,
     ).toBe(notStarted);
+
+    // The same claim again, in digits, because the word-form check above is
+    // what this guard was built for and it is not enough.
+    //
+    // On 4 October 2026 the CHANGELOG still read "30 PASS, 8 PARTIAL, 2
+    // NOT-STARTED" two sections below a word-form sentence this guard was
+    // keeping correct. The regex above matches "N capabilities are PARTIAL and
+    // M are NOT-STARTED" and nothing else, so a numeric restatement was outside
+    // every guard — the same hole, in the same file, that this test was added
+    // to close. Any "<n> PASS, <n> PARTIAL, <n> NOT-STARTED" is now read too.
+    const digits = /(\d+)\s+PASS,\s*(\d+)\s+PARTIAL,\s*(\d+)\s+NOT-STARTED/g;
+    const numeric = [...changelog.matchAll(digits)];
+    expect(
+      numeric.length,
+      'CHANGELOG.md states no numeric parity counts; if that is deliberate, delete this check ' +
+        'rather than leaving it passing vacuously',
+    ).toBeGreaterThan(0);
+    const pass = rows.filter((row) => statusOf(row) === 'PASS').length;
+    for (const match of numeric) {
+      expect(Number(match[1]), `CHANGELOG says ${match[1]} PASS`).toBe(pass);
+      expect(Number(match[2]), `CHANGELOG says ${match[2]} PARTIAL`).toBe(partial);
+      expect(Number(match[3]), `CHANGELOG says ${match[3]} NOT-STARTED`).toBe(notStarted);
+    }
   });
 
   it('names every registered provider in the parity matrix', () => {

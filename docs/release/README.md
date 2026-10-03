@@ -268,23 +268,51 @@ A submission **has** been made. That is new, and it changes what this document
 can claim — but less than it might appear, because it introduces a second
 artifact and the two must not be confused.
 
-- An artifact was **uploaded and submitted** for Chrome Web Store review by the
-  account owner.
-- Its **last known status is `Pending Review`**, as reported by the owner. This
-  repository cannot observe the store, so that status is a report rather than a
-  measurement, and it may have changed since it was written here.
-- It has **not been approved** and it has **not been published**. There is no
-  public listing, and nothing in this repository should be read as saying
-  otherwise.
+- An artifact was uploaded and submitted for Chrome Web Store review by the
+  account owner, **completed review, and is published**.
+- The listing is live at
+  <https://chromewebstore.google.com/detail/hlhcfmlgoojeoapmijopmicdmmhealhl>,
+  showing version `0.1.0`, last updated 3 October 2026, 266 KiB, and declaring
+  _"Website content"_ as the data it handles. The item id was supplied by the
+  account owner and the listing was then read, so this is **verified** — every
+  earlier status in this document was a report the repository could not check.
 - The artifact a fresh `npm run release` produces today is a **different, later
-  artifact**, and it has **not been uploaded**. See the section below.
+  artifact**, and it has **not been uploaded**. That is no longer an inference
+  from the commit history: the published package was downloaded and unpacked,
+  and it contains none of the 3 October 2026 fixes. See the section below.
+- **`0.2.0` is prepared and has not been uploaded, submitted or published.**
+
+### The `0.2.0` manifest differs from the published one in exactly one field
+
+Measured by unpacking the published CRX and comparing its `manifest.json` with
+what the release build produces, rather than by reading the diff and reasoning
+about it:
+
+| Field                      | Published `0.1.0`      | Release `0.2.0`        |
+| -------------------------- | ---------------------- | ---------------------- |
+| `version`                  | `0.1.0`                | **`0.2.0`**            |
+| `permissions` (10)         | identical              | identical              |
+| `host_permissions`         | identical              | identical              |
+| `optional_permissions`     | `["downloads"]`        | `["downloads"]`        |
+| `web_accessible_resources` | `https://github.com/*` | `https://github.com/*` |
+
+`optional_permissions` matching is the one worth explaining, because the source
+manifest lists `["downloads", "identity"]`. A release build drops `identity`
+when no Google OAuth client id is compiled in, since nothing could request it —
+so the shipped set comes out equal to what is already published and **the update
+adds no permission**. That is the claim the store release notes make, and this
+is what makes it true rather than hopeful.
+
+`update_url` appears in the published manifest and in no build here. Chrome adds
+it when it packages an item; it is not ours and its absence from the source is
+correct.
 
 ### Two artifacts, and which one is which
 
-|                                  |                                                                                                                             |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| **Submitted artifact**           | The archive the owner uploaded at submission time, built from the commit that was current then. It is the one under review. |
-| **Current engineering artifact** | What `npm run release` builds from `HEAD` now. Reproducible, validated, and **not uploaded**.                               |
+|                                  |                                                                                                                                                              |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Published artifact**           | `0.1.0`, live on the store, 266 KiB. Downloaded and read: it carries none of the 3 October 2026 provider fixes, so it cannot complete a tool call on Gemini. |
+| **Current engineering artifact** | `0.2.0`, what `npm run release` builds from `HEAD` now. Reproducible, validated, and **not uploaded**.                                                       |
 
 They are not the same bytes and will not be: the digest is a function of the
 source tree, so every commit touching `src/` or `public/` produces a different
