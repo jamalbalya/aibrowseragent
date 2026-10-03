@@ -162,8 +162,8 @@ What the policy must say instead is narrower and still strong:
 - Connector tokens disappear when the browser closes.
 - Say how a user clears things without uninstalling: disconnecting a provider
   clears its stored credential; disconnecting a connector clears its grant.
-- **The published page now understates this, because the extension improved
-  after it was written.** It says _"Revoking the extension's access in the
+- **This was an under-statement on the published page, and it is now closed.**
+  The page used to say only _"Revoking the extension's access in the
   permissions page of the user's Google Account ends it from Google's side"_ —
   true, and once the only way. Since `52211d7`, disconnecting a
   **Google-authorized** account also asks Google to withdraw the grant:
@@ -171,25 +171,29 @@ What the policy must say instead is narrower and still strong:
   `https://oauth2.googleapis.com/revoke` before deleting it locally, because
   deleting it first would destroy the token revocation needs.
 
-  This is an **under-statement, not a misstatement** — the page promises less
-  than the extension does, which is the safe direction for a policy and not
-  urgent. It is still a mismatch with behaviour. The sentence to add, which is
-  deliberately careful about what is guaranteed:
+  **Verified live at <https://about.jamal-balya.workers.dev/en/privacy> on
+  4 October 2026**, effective date 4 October 2026, section 13. The deployed
+  wording is:
 
-  > Disconnecting a Google-authorized account also asks Google to withdraw the
-  > authorization. If Google cannot be reached the authorization may remain
-  > listed in your Google Account, where you can revoke it yourself; the
-  > credential is deleted from this device either way.
+  > Disconnecting a Google-authorized account removes both the access token and
+  > the refresh token from the extension, and also asks Google to withdraw the
+  > authorization. That request is attempted once and is never allowed to block
+  > the disconnect: if Google cannot be reached or refuses, the authorization
+  > can remain listed in the permissions page of the user's Google Account,
+  > where it can be revoked directly. The credential is deleted from this
+  > device either way.
 
-  The hedge matters and is not padding: revocation is attempted once and never
-  allowed to block a disconnect, so a person asking to disconnect always
-  does — and the grant can therefore outlive the tokens if Google is down.
-  Claiming an unconditional revocation would be the one thing this document's
-  opening forbids.
+  That is stronger than the sentence this document proposed, and in the one
+  place that matters: it adds _"or refuses"_, which the proposal missed. A
+  refusal is not a failure to reach Google — an already-revoked or malformed
+  grant comes back 400 — and `revokeAuthorization` treats 200 and 400 alike as
+  revoked, so the grant can outlive the tokens for a reason other than Google
+  being down.
 
-  Owner action: add that sentence to the deployed page in the `about-jamal`
-  repository and move `EFFECTIVE_DATE`. Not required before submission, because
-  nothing currently published is false.
+  The hedge is the load-bearing part and is not padding: revocation is
+  attempted once and never allowed to block a disconnect, so a person asking to
+  disconnect always does. Claiming an unconditional revocation would be the one
+  thing this document's opening forbids, and the deployed page does not.
 
 ## 8. Children
 
@@ -270,10 +274,18 @@ change, so they are the ones to re-read after any credential or deletion work.
 Listed here because the page lives in another repository and nobody looking at
 this one would otherwise know which lines are load-bearing.
 
-| Published sentence                                                                                                   | What would falsify it                                                                   | Status                                                                 |
-| -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| _"A credential the user supplies is stored locally and is sent only to the service it belongs to."_                  | Sending a credential anywhere else — a telemetry endpoint, a backend, a second provider | True. `tests/security/credential-boundary.test.ts` and `data-flows.md` |
-| _"Revoking the extension's access in the permissions page of the user's Google Account ends it from Google's side."_ | The extension revoking the grant itself, which it now does                              | **Understated** — see the retention section above for the replacement  |
+| Published sentence                                                                                                                                           | What would falsify it                                                                   | Status                                                                 |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| _"A credential the user supplies is stored locally and is sent only to the service it belongs to."_                                                          | Sending a credential anywhere else — a telemetry endpoint, a backend, a second provider | True. `tests/security/credential-boundary.test.ts` and `data-flows.md` |
+| _"Disconnecting a Google-authorized account … also asks Google to withdraw the authorization … attempted once and … never allowed to block the disconnect."_ | Revocation being claimed unconditionally, or ceasing to be attempted                    | True, and hedged correctly. Re-read on the deployed page 4 Oct 2026    |
+
+Both rows were re-read against the deployed page on 4 October 2026, not against
+this repository's copy of them. The page also states where credentials go rather
+than implying they stay put — _"An AI provider API key is stored in a credential
+area namespaced apart from ordinary settings, and is sent only to the provider
+it belongs to, as a request header, never in a URL"_ — so it does not contain
+the one claim about credentials that would be false: that they are never
+transmitted.
 
 Chrome's own policy text, read 4 October 2026, is also worth keeping beside
 this: _"Handle"_ means _"collecting, transmitting, using, or sharing user
