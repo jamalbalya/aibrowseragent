@@ -1,5 +1,16 @@
 # Owner checklist — from here to a public listing
 
+> **Read this first, before anything in the dashboard.**
+>
+> The `0.1.0` artifact submitted to the Chrome Web Store, whose last known
+> status is `Pending Review`, **predates five defects found on 3 October 2026**
+> by running the provider adapters against real endpoints for the first time.
+> Two of them together meant the browser agent **could not run on Gemini at
+> all**. Whatever that review returns, that artifact should not be the one that
+> goes public — rebuild from `main` and upload the current one.
+>
+> `docs/testing/integration-readiness.md` lists the five.
+
 Twenty-four steps, in order. Steps 1–9 can be done in any order among
 themselves; 10 onward are sequential.
 
@@ -118,7 +129,7 @@ services. Not needed to publish.
 
 **8. Execute the remaining manual acceptance — YOU**
 
-**Twenty-two procedures need a person.** That is the whole list, and it is
+**Twenty-one procedures need a person.** That is the whole list, and it is
 ordered below so that one sitting covers as much of it as your credentials
 allow. Every one has written steps; follow the reference in its row.
 
@@ -153,7 +164,21 @@ remain are 87-07 (many tool calls inside one task) and 87-10 (a credential that
 expires while in use), and both need a condition to arrange rather than a key
 to buy.
 
-### A. With one API key — fifteen of the twenty-two
+The fifth move is **twenty-two down to twenty-one**, and it is small because
+only one countable item was left to take. `87-07` was executed against the
+live Gemini endpoint: three tool calls across two turns, with all three numbers
+in the answer coming from tool results and none from the model's own idea of
+the weather. `84-P-009` — answering from a real image — went with it, on a
+question only the image could answer, though it was never in the count. Both
+are in [RESULTS.md](../testing/acceptance/RESULTS.md).
+
+**`87-10` is what remains, and it is hard rather than expensive.** It asks for
+a credential that expires _while in use_. An API key does not expire on a
+schedule, so no key can produce the condition — it needs an OAuth
+authorization, whose access token lives about an hour. Which means **G-6
+first**: it is blocked on the Google client id, like everything else there.
+
+### A. With one API key — fourteen of the twenty-one
 
 Any one of OpenAI-compatible, Anthropic or Gemini. Do these first: they are the
 bulk of the list and they share one browsing session.
@@ -168,27 +193,28 @@ ABA_LIVE_PROTOCOL=anthropic ABA_LIVE_API_KEY=…   npx vitest run tests/integrat
 It makes a handful of small paid requests and covers connect, validate, list
 models, text generation, streaming, tool calling, vision, an invalid credential
 and part of the unsupported-capability item — plus a real tool-result round
-trip that no written procedure asks for. What it cannot do is 87-07 (many tool
-calls in one task), 87-10 (a credential that actually expires) and 87-11 (being
-genuinely rate limited), so those three stay yours. The breakdown is in
+trip that no written procedure asks for. Since that was written, 87-07 (many
+tool calls in one task) and 87-11 (being genuinely rate limited) have both been
+executed live — 87-11 found a defect — so **only 87-10 stays yours**, and it
+needs an OAuth account rather than a key. The breakdown is in
 [MATRIX.md](../testing/acceptance/MATRIX.md) and the honest status of every
 external surface is in
 [integration-readiness.md](../testing/integration-readiness.md).
 
-| Order | Procedure        | What it establishes                                                                                                                                                                                                                                                                                                                                       |
-| ----- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1     | `84-P-001`       | The panel opens beside the page and never obscures or reflows it — the one claim about Chrome's own side-panel chrome                                                                                                                                                                                                                                     |
-| 2     | `85-A-1`         | Whether the summary of a real page is accurate and useful                                                                                                                                                                                                                                                                                                 |
-| 3     | `85-B-1`         | A genuine three-tab comparison, with one tab closed mid-task                                                                                                                                                                                                                                                                                              |
-| 4     | `85-C-1`         | Whether the diagnosis of a staged broken Save is correct                                                                                                                                                                                                                                                                                                  |
-| 5     | `84-P-008`       | Whether an answer really depended on the screenshot                                                                                                                                                                                                                                                                                                       |
-| 6     | `87-07`, `87-10` | The two provider items that survived the live run: many tool calls inside one task, and a credential that expires while in use. The other ten were executed live on 2026-10-03 — see [MATRIX.md](../testing/acceptance/MATRIX.md)                                                                                                                         |
-| 7     | `84-P-019`       | Clicking the notification brings you to the panel at the right place                                                                                                                                                                                                                                                                                      |
-| 8     | `84-P-020`       | A schedule survives a full browser restart. **Narrowed:** the restart mechanism is now automated — a connected provider and its model selection are read back by a new browser process — so what is left is the _schedule_ specifically, which no automated test can create because every target it could use is correctly refused for unattended running |
-| 9     | `91-D-3`         | Granting the optional `downloads` permission through Chrome's own dialog                                                                                                                                                                                                                                                                                  |
-| 10    | `90-10`          | A dropped connection retries and then stops cleanly rather than hanging                                                                                                                                                                                                                                                                                   |
-| 11    | `90-09`          | An extension reload: a torn-down content script is reported clearly                                                                                                                                                                                                                                                                                       |
-| 12    | `90-08`          | A full browser quit and reopen — and the connector correctly needing re-authorization                                                                                                                                                                                                                                                                     |
+| Order | Procedure  | What it establishes                                                                                                                                                                                                                                                                                                                                       |
+| ----- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | `84-P-001` | The panel opens beside the page and never obscures or reflows it — the one claim about Chrome's own side-panel chrome                                                                                                                                                                                                                                     |
+| 2     | `85-A-1`   | Whether the summary of a real page is accurate and useful                                                                                                                                                                                                                                                                                                 |
+| 3     | `85-B-1`   | A genuine three-tab comparison, with one tab closed mid-task                                                                                                                                                                                                                                                                                              |
+| 4     | `85-C-1`   | Whether the diagnosis of a staged broken Save is correct                                                                                                                                                                                                                                                                                                  |
+| 5     | `84-P-008` | Whether an answer really depended on the screenshot                                                                                                                                                                                                                                                                                                       |
+| 6     | `87-10`    | The one provider item left: a credential that **expires while in use**. An API key does not expire on a schedule, so this needs an OAuth account — which means G-6 first. Eleven of the twelve were executed live on 2026-10-03; see [MATRIX.md](../testing/acceptance/MATRIX.md) and [RESULTS.md](../testing/acceptance/RESULTS.md)                      |
+| 7     | `84-P-019` | Clicking the notification brings you to the panel at the right place                                                                                                                                                                                                                                                                                      |
+| 8     | `84-P-020` | A schedule survives a full browser restart. **Narrowed:** the restart mechanism is now automated — a connected provider and its model selection are read back by a new browser process — so what is left is the _schedule_ specifically, which no automated test can create because every target it could use is correctly refused for unattended running |
+| 9     | `91-D-3`   | Granting the optional `downloads` permission through Chrome's own dialog                                                                                                                                                                                                                                                                                  |
+| 10    | `90-10`    | A dropped connection retries and then stops cleanly rather than hanging                                                                                                                                                                                                                                                                                   |
+| 11    | `90-09`    | An extension reload: a torn-down content script is reported clearly                                                                                                                                                                                                                                                                                       |
+| 12    | `90-08`    | A full browser quit and reopen — and the connector correctly needing re-authorization                                                                                                                                                                                                                                                                     |
 
 Leave 8, 11 and 12 until last in the session: each one ends the browser state
 the earlier items are using.
@@ -509,6 +535,40 @@ and no deployment**: it is what lets a user press _Connect with Google_ and give
 the agent a Gemini credential to run on. You can do this and skip G-1 entirely.
 
 Twenty minutes. The fiddly part is the extension id, so that is step 1.
+
+**One provider remains completely untested, and it is one command.**
+
+Anthropic is the last protocol with no live verification: there is no Anthropic
+key in this repository or on the development machine, so `api.anthropic.com`
+has never been reached. Gemini and an OpenAI-compatible gateway both are
+verified, and between them they produced five defects that every mocked test
+had passed — two of which meant the agent could not run on Gemini at all.
+There is no reason to assume Anthropic's own translation is clean.
+
+```sh
+ABA_LIVE_PROTOCOL=anthropic ABA_LIVE_API_KEY=… \
+  npx vitest run tests/integration/provider-live.test.ts
+```
+
+No base URL is needed; the adapter defaults to `api.anthropic.com`. Eleven
+cases: discovery, connection, the capability doctor on a real model, a
+completion, a stream, a two-turn tool round trip, many tool calls across
+several turns, a real image, a listed-but-unrunnable model, and two asserting
+the credential does not come back out.
+
+**The harness's Anthropic path has already been verified**, so a failure will
+be the provider or this build rather than the test. A local stand-in speaking
+the Anthropic Messages protocol — `x-api-key`, `/v1/models`, `/v1/messages`,
+`tool_use` and `tool_result` blocks, SSE events — was served on loopback and
+the harness reached `AGENT_READY` through it with the full round trip passing;
+a mutation that made the stand-in ignore the tool result failed the case meant
+to catch it. That is recorded in
+[RESULTS.md](../testing/acceptance/RESULTS.md) and is **not** evidence about
+`api.anthropic.com`.
+
+It spends a few cents of a real key. Nothing else in the repository needs one.
+
+---
 
 **Before you start: you may not need this at all.** On 3 October 2026 the
 Gemini **API key** path was exercised against the real

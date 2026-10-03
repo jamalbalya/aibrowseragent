@@ -319,6 +319,63 @@ describe('the parity records know what the build actually registers', () => {
   const PARITY = read('PARITY_MATRIX.md');
   const EVIDENCE = read('parity-evidence.json');
 
+  it('makes the changelog state the parity counts the matrix actually holds', () => {
+    // **The one claim document outside every guard in this file.** `MARKDOWN`
+    // above sweeps `README.md`, `PARITY_MATRIX.md` and everything under
+    // `docs/`; `CHANGELOG.md` is at the repository root, so nothing read it —
+    // and it drifted. It said *"seven capabilities are PARTIAL and three are
+    // NOT-STARTED"* long after the matrix had moved to three and one,
+    // overstating the product's gaps by a wide margin in the one file a reader
+    // reaches for to find out what shipped.
+    //
+    // Derived rather than restated, which is the whole point: the numbers come
+    // out of the matrix table, so a capability changing status fails this test
+    // instead of silently making a sentence false.
+    // The last cell of the row, found by dropping the empties a leading and
+    // trailing pipe produce. Taken positionally rather than by index so that
+    // adding a column to the table does not quietly stop this working.
+    const statusOf = (row: string): string | undefined => {
+      const cells = row
+        .split('|')
+        .map((cell) => cell.trim())
+        .filter((cell) => cell.length > 0);
+      return cells.at(-1);
+    };
+    const rows = PARITY.split('\n').filter((line) => /^\|\s*P-\d+\s*\|/.test(line));
+    expect(rows.length, 'no capability rows found in PARITY_MATRIX.md').toBeGreaterThan(30);
+
+    const partial = rows.filter((row) => statusOf(row) === 'PARTIAL').length;
+    const notStarted = rows.filter((row) => statusOf(row) === 'NOT-STARTED').length;
+
+    const WORDS = [
+      'zero',
+      'one',
+      'two',
+      'three',
+      'four',
+      'five',
+      'six',
+      'seven',
+      'eight',
+      'nine',
+      'ten',
+    ];
+    const changelog = read('CHANGELOG.md');
+    const claim =
+      /([A-Za-z]+) capabilit(?:y|ies) (?:is|are)\s+PARTIAL and ([A-Za-z]+) (?:is|are) NOT-STARTED/.exec(
+        changelog,
+      );
+    expect(claim, 'CHANGELOG.md no longer states the parity counts').not.toBeNull();
+
+    expect(WORDS.indexOf(claim![1]!.toLowerCase()), `CHANGELOG says "${claim![1]}" PARTIAL`).toBe(
+      partial,
+    );
+    expect(
+      WORDS.indexOf(claim![2]!.toLowerCase()),
+      `CHANGELOG says "${claim![2]}" NOT-STARTED`,
+    ).toBe(notStarted);
+  });
+
   it('names every registered provider in the parity matrix', () => {
     for (const id of API_PROVIDER_IDS) {
       expect(PARITY, `PARITY_MATRIX.md does not mention ${id}`).toContain(id);

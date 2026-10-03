@@ -42,6 +42,14 @@ found three defects that every mocked test in the repository had passed, one of
 which meant **the browser agent could not run on Gemini at all**
 (`docs/testing/integration-readiness.md`).
 
+A second pass on 3 October re-ran the 9Router gateway harness against a running
+gateway — 25 cases, 35 models, 4 upstream groups — and executed two more of the
+twelve §87 items for real, taking that count to **eleven of twelve**. Driving
+the rate limit deliberately, which the written procedure asks for, produced a
+fifth defect: Google sends **no `Retry-After` header** and puts the wait in the
+error body, so the retry guidance this build had just been taught to honour was
+never reaching the provider most likely to need it.
+
 The lesson is the one A-6 taught and this row did not learn: _"paid"_ was an
 assumption inside the blocker, not a fact about the vendor. What is actually
 left is an Anthropic key, which this project does not have, and a direct call

@@ -13,6 +13,7 @@ import {
   GeminiAdapter,
   GEMINI_DEFAULT_BASE_URL,
   geminiFactory,
+  retryDelayFromDetails,
 } from '@/providers/adapters/gemini';
 import { ProviderRequestError } from '@/providers/core/provider-error';
 import type { CanonicalEvent } from '@/providers/core/types';
@@ -742,6 +743,60 @@ describe('what live Gemini refused, and what it served anyway', () => {
     expect(capabilities.streaming).toBe(true);
   });
 
+  it('actually streams on such a model, which is the behaviour the flag gates', async () => {
+    // The sibling test above asserts `capabilities.streaming === true`, which
+    // is a flag. The thing a user experiences is whether the agent can stream
+    // at all — and the flag's only job is to let the request through the
+    // capability guard. Before the fix the guard refused, so `stream()` yielded
+    // an error event instead of content and no probe could ever correct it.
+    //
+    // So this asserts the end of the chain rather than its beginning: real SSE
+    // frames out of `stream()`, on a model whose `/models` entry does not
+    // mention streaming.
+    let streamed = '';
+    const adapter = new GeminiAdapter(
+      passthroughTransport(
+        vi.fn((url: string) =>
+          Promise.resolve(
+            url.includes(':streamGenerateContent')
+              ? sseResponse([
+                  `data: ${JSON.stringify({
+                    candidates: [{ content: { role: 'model', parts: [{ text: 'one two' }] } }],
+                  })}\n\n`,
+                  `data: ${JSON.stringify({
+                    candidates: [{ finishReason: 'STOP' }],
+                    usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 2 },
+                  })}\n\n`,
+                ])
+              : jsonResponse({
+                  ...MODEL_DESCRIPTOR,
+                  supportedGenerationMethods: ['generateContent', 'countTokens'],
+                }),
+          ),
+        ) as typeof fetch,
+      ),
+    );
+    await adapter.connect(CONFIG);
+    // The measurement the doctor would hand back, read from the same list.
+    const measured = await adapter.getCapabilities('gemini-test-model');
+    await adapter.connect({ ...CONFIG, measuredCapabilities: measured });
+
+    const events: CanonicalEvent[] = [];
+    for await (const event of adapter.stream({
+      systemInstruction: '',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'count' }] }],
+      egress: egress(),
+    })) {
+      events.push(event);
+      if (event.type === 'text_delta') streamed += event.delta;
+    }
+
+    // No refusal, and real content: the guard let it through.
+    expect(events.some((event) => event.type === 'error')).toBe(false);
+    expect(streamed).toBe('one two');
+    expect(events.at(-1)?.type).toBe('done');
+  });
+
   it('still denies both when the model is not a generative one', async () => {
     // The control: the fix must not turn streaming on for everything. An
     // embedding model reports neither.
@@ -963,5 +1018,92 @@ describe('the thought signature Google requires back', () => {
       egress: egress(),
     });
     expect(bodies.at(-1)).not.toContain('thoughtSignature');
+  });
+});
+
+describe('the retry guidance Google does not put in a header', () => {
+  /**
+   * Measured against the live free tier: the sixteenth request in a minute is
+   * refused, the `Retry-After` header is **absent**, and the wait is in the
+   * body as a `google.rpc.RetryInfo`. The retry policy had just been taught to
+   * prefer server guidance over its own backoff, and for Gemini it would never
+   * have seen any.
+   */
+  const LIVE_BODY = {
+    error: {
+      code: 429,
+      status: 'RESOURCE_EXHAUSTED',
+      message: 'You exceeded your current quota.',
+      details: [
+        {
+          '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+          violations: [
+            {
+              quotaMetric: 'generativelanguage.googleapis.com/generate_content_free_tier_requests',
+              quotaValue: '15',
+            },
+          ],
+        },
+        { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '11s' },
+      ],
+    },
+  };
+
+  it('reads the wait from the body Google actually sends', () => {
+    expect(retryDelayFromDetails(LIVE_BODY.error)).toBe(11_000);
+  });
+
+  it('accepts a fractional duration and rejects anything that is not one', () => {
+    const info = (retryDelay: unknown) => ({
+      details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay }],
+    });
+    expect(retryDelayFromDetails(info('1.5s'))).toBe(1500);
+    expect(retryDelayFromDetails(info('0.100s'))).toBe(100);
+    expect(retryDelayFromDetails(info('0s'))).toBe(0);
+    // An error body is attacker-influenceable in general, so anything that is
+    // not a plain duration is no guidance rather than a coerced number.
+    for (const bad of ['11', '11 s', '-5s', 'eleven seconds', '1e3s', '', 11, null, {}]) {
+      expect(retryDelayFromDetails(info(bad)), JSON.stringify(bad)).toBeUndefined();
+    }
+    expect(retryDelayFromDetails({ details: 'not-an-array' })).toBeUndefined();
+    expect(retryDelayFromDetails({})).toBeUndefined();
+    expect(retryDelayFromDetails(null)).toBeUndefined();
+  });
+
+  it('ignores a detail entry that is not RetryInfo', () => {
+    // QuotaFailure arrives alongside it and has no retryDelay; a reader that
+    // took the first entry would find nothing and conclude there was nothing.
+    expect(
+      retryDelayFromDetails({
+        details: [
+          { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [] },
+          { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '7s' },
+        ],
+      }),
+    ).toBe(7000);
+  });
+
+  it('carries that wait onto the failure, so the retry policy can honour it', async () => {
+    // The end the fix exists for: `decideRetryFor` prefers a stated wait over
+    // its own 8-second backoff, and this is the only path by which a stated
+    // wait reaches it from Google.
+    const adapter = new GeminiAdapter(
+      passthroughTransport(vi.fn(() => Promise.resolve(jsonResponse(LIVE_BODY, 429)))),
+    );
+    await adapter.connect(CONFIG);
+    await expect(
+      adapter.generate({
+        systemInstruction: '',
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        egress: egress(),
+      }),
+    ).rejects.toSatisfy((error: unknown) => {
+      const failure = (error as ProviderRequestError).failure;
+      expect(failure.error.code).toBe('RATE_LIMITED');
+      expect(failure.retryAfterMs).toBe(11_000);
+      // And the sentence quotes it, rather than saying "try again shortly".
+      expect(failure.error.userMessage).toMatch(/11s/);
+      return true;
+    });
   });
 });

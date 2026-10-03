@@ -80,6 +80,7 @@ import { OPENAI_COMPATIBLE_PROVIDER_ID } from '@/providers/adapters/openai-compa
 import { NINE_ROUTER_PROVIDER_ID } from '@/providers/adapters/nine-router-catalog';
 import type {
   AIProviderAdapter,
+  CanonicalMessage,
   CanonicalRequest,
   CanonicalToolSchema,
 } from '@/providers/core/types';
@@ -621,6 +622,184 @@ describe('TEST-LIVE-001 — D: a tool result, and the turn after it', () => {
       // protocol uses for it.
       const lastBody = bodies.at(-1) ?? '';
       expect(lastBody).toMatch(/tool_result|functionResponse|"role":"tool"/);
+    },
+    LIVE_TIMEOUT_MS,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// F — the two things §87's manual half says to do first, and the one it says
+//     a sustained trajectory needs
+// ---------------------------------------------------------------------------
+
+/**
+ * A 24×24 PNG: left half red, right half green.
+ *
+ * The capability doctor's vision probe is a 1×1 transparent pixel, which
+ * proves the adapter can *encode* an image and nothing about whether the model
+ * read it. §87's manual procedure asks for the other thing — *"send a
+ * screenshot and ask a question only answerable from the image, confirm the
+ * answer is actually derived from it"* — and this is the smallest image that
+ * can carry such a question. Generated rather than photographed so the
+ * expected answer is a fact about the bytes.
+ */
+const SPLIT_IMAGE_PNG =
+  'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAIAAABvFaqvAAAAJElEQVR42mO4oKBAECkcMCCI' +
+  'GEYNGjVo1KBRg0YNGjVo4A0CAGWZZB86DFo2AAAAAElFTkSuQmCC';
+
+/** One tool per city, so asking about three cities needs more than one call. */
+const CITY_TOOL: CanonicalToolSchema = {
+  type: 'function',
+  name: 'get_temperature',
+  description: 'Returns the current temperature in celsius for exactly one city.',
+  parameters: {
+    type: 'object',
+    properties: { city: { type: 'string', description: 'A single city name.' } },
+    required: ['city'],
+    additionalProperties: false,
+  },
+};
+
+const CITY_TEMPERATURES: Record<string, number> = { jakarta: 31, oslo: 4, cairo: 27 };
+
+describe('TEST-LIVE-001 — F: what a sustained trajectory and a real image show', () => {
+  it.skipIf(!LIVE)(
+    'F1 — many tool calls across several turns, answered from their results',
+    async () => {
+      // §87-07's manual half. `sustained-task.test.ts` drives thirty-six calls
+      // against a fake; this drives a real conversation until the model stops
+      // asking, and checks that every answer it gives came from a tool.
+      //
+      // Three cities and a one-city tool, so one call cannot be enough. The
+      // numbers are arbitrary and appear nowhere else, which is what makes a
+      // final answer containing them evidence that the results were read.
+      const { adapter } = harness();
+      await adapter.connect(config(MODEL));
+
+      const messages: CanonicalMessage[] = [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text:
+                'What is the temperature in Jakarta, in Oslo and in Cairo? Use the tool for ' +
+                'each city, then give me all three numbers in one sentence.',
+            },
+          ],
+        },
+      ];
+
+      let calls = 0;
+      let turns = 0;
+      let answer = '';
+      // Bounded: a model that keeps calling forever is a finding, not a hang.
+      while (turns < 6) {
+        turns += 1;
+        const reply = await live(`F1 turn ${turns}`, () =>
+          adapter.generate(request({ messages, tools: [CITY_TOOL], toolChoice: 'auto' })),
+        );
+        if (reply === null) return;
+        if (reply.toolCalls.length === 0) {
+          answer = reply.text;
+          break;
+        }
+        calls += reply.toolCalls.length;
+        messages.push({
+          role: 'assistant',
+          content: [
+            ...(reply.text.trim().length > 0 ? [{ type: 'text' as const, text: reply.text }] : []),
+            ...reply.toolCalls.map((call) => ({
+              type: 'tool_call' as const,
+              toolCallId: call.toolCallId,
+              name: call.name,
+              arguments: call.arguments,
+              ...(call.providerSignature === undefined
+                ? {}
+                : { providerSignature: call.providerSignature }),
+            })),
+          ],
+        });
+        messages.push({
+          role: 'tool',
+          content: reply.toolCalls.map((call) => {
+            const city = call.arguments.city;
+            const asked = (typeof city === 'string' ? city : '').toLowerCase();
+            const celsius = CITY_TEMPERATURES[asked];
+            return {
+              type: 'tool_result' as const,
+              toolCallId: call.toolCallId,
+              name: call.name,
+              content: JSON.stringify(
+                celsius === undefined ? { error: `unknown city: ${asked}` } : { celsius },
+              ),
+              isError: celsius === undefined,
+            };
+          }),
+        });
+      }
+
+      process.stdout.write(
+        `[PROVLIVE] F1: ${calls} tool call(s) over ${turns} turn(s); answer=${JSON.stringify(
+          answer.slice(0, 120),
+        )}\n`,
+      );
+
+      // More than one call really happened, which is the whole point of the
+      // item: `sustained-task.test.ts` proves the loop, not the provider.
+      expect(calls).toBeGreaterThanOrEqual(2);
+      expect(answer.length).toBeGreaterThan(0);
+      // And the numbers in the answer came from the tool, not from the model's
+      // own idea of the weather.
+      for (const [city, celsius] of Object.entries(CITY_TEMPERATURES)) {
+        expect(answer, `${city} (${celsius})`).toContain(String(celsius));
+      }
+    },
+    LIVE_TIMEOUT_MS,
+  );
+
+  it.skipIf(!LIVE)(
+    'F2 — a real image, and a question only the image can answer',
+    async () => {
+      // §87's manual half, the vision item. The doctor's 1×1 transparent probe
+      // proves encoding; this proves the model saw what was sent.
+      const { adapter } = harness();
+      await adapter.connect(config(MODEL));
+      const measured = await adapter.getCapabilities(MODEL).catch(() => null);
+      if (measured !== null && measured.vision === false) {
+        process.stdout.write(`[PROVLIVE] F2: ${MODEL} reports no vision; nothing to ask.\n`);
+        return;
+      }
+
+      const reply = await live('F2 image question', () =>
+        adapter.generate(
+          request({
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'image', data: SPLIT_IMAGE_PNG, mimeType: 'image/png' },
+                  {
+                    type: 'text',
+                    text:
+                      'This image is split down the middle into two solid colours. Which side ' +
+                      'is red — the left or the right? Answer with exactly one word.',
+                  },
+                ],
+              },
+            ],
+          }),
+        ),
+      );
+      if (reply === null) return;
+
+      process.stdout.write(`[PROVLIVE] F2: answered ${JSON.stringify(reply.text.trim())}\n`);
+      // The left half is red in the bytes. A model that cannot see the image
+      // has a fifty-fifty guess, which is why this is reported as well as
+      // asserted — a wrong answer here is worth looking at rather than
+      // retrying.
+      expect(reply.text.toLowerCase()).toContain('left');
+      expect(reply.text.toLowerCase()).not.toContain('right');
     },
     LIVE_TIMEOUT_MS,
   );

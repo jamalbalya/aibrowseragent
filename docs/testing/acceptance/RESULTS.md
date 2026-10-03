@@ -213,6 +213,143 @@ nine automated cases already do in a real browser would add nothing.
 
 ---
 
+### §87 — multiple tool calls (87-07) — 2026-10-03 — EXECUTED — MET
+
+- Commit: `efafc48` (fix in the commit that follows)
+- Provider: Google Gemini API, `generativelanguage.googleapis.com/v1beta`
+- Model: `gemini-flash-lite-latest`
+- Procedure: three cities, one tool that answers for exactly one city, so a
+  single call cannot be enough. Tool results carry numbers that appear nowhere
+  else in the conversation.
+- Observed: **3 tool calls across 2 turns.** The model called the tool for all
+  three cities, read the results, and answered _"The current temperatures are
+  31°C in Jakarta, 4°C in Oslo, and 27°C in Cairo."_ — every number from a
+  tool result, none from the model's own idea of the weather.
+- Evidence: `tests/integration/provider-live.test.ts :: F1 — many tool calls
+across several turns, answered from their results`
+- Verdict: EXECUTED — MET
+
+### §87 / §84 P-009 — vision, with a real image — 2026-10-03 — EXECUTED — MET
+
+- Commit: `efafc48`
+- Provider: Google Gemini API
+- Model: `gemini-flash-lite-latest`
+- Procedure: §87's manual half asks for _"a question only answerable from the
+  image"_. The capability doctor's probe is a 1×1 transparent PNG, which proves
+  the adapter can encode an image and nothing about whether the model read it.
+  A 24×24 PNG was generated with the left half red and the right half green,
+  and the model asked which side is red.
+- Observed: **"Left."** — correct, and underivable from the prompt. This also
+  settles `84-P-009`, which was blocked precisely because _"a local server can
+  claim vision and cannot read a picture"_.
+- Evidence: `tests/integration/provider-live.test.ts :: F2 — a real image, and
+a question only the image can answer`
+- Verdict: EXECUTED — MET
+
+### §87 — rate limit (87-11), manual half — 2026-10-03 — **EXECUTED — NOT MET**, defect fixed
+
+- Commit: `efafc48` (fix in the commit that follows)
+- Provider: Google Gemini API
+- Model: `gemini-flash-lite-latest`
+- Procedure: _"drive enough requests to be limited for real, and confirm the
+  retry succeeds rather than compounding. Record the vendor's retry-after
+  handling."_
+- Observed: the **17th** small request in a minute was refused with 429
+  `RESOURCE_EXHAUSTED`, naming the quota
+  `generate_content_free_tier_requests` with a value of 15. The
+  **`Retry-After` header was absent.** The wait was in the body instead, as
+  `google.rpc.RetryInfo` with `retryDelay: "11s"`, alongside a `QuotaFailure`.
+- Why NOT MET: every adapter read the wait from the `Retry-After` **header**
+  only. So for the provider most likely to rate-limit, on the free tier this
+  product is built around, the retry guidance honoured since `5e7270d` never
+  engaged — the agent retried on its own ~8-second backoff, arrived three
+  seconds early, and collected another 429.
+- Fix: `retryDelayFromDetails` reads `google.rpc.RetryInfo` from the error
+  body, and the Gemini adapter prefers the header when present and the body
+  otherwise. Pinned by `tests/unit/gemini.test.ts` against the exact body
+  recorded above, and by `tests/integration/agent-runtime.test.ts :: waits the
+time a rate-limited provider stated, then succeeds`.
+- This is the finding the procedure exists to surface: _"a vendor behaviour
+  that differs from its own documentation"_.
+- Verdict after fix: EXECUTED — MET
+
+### §87 — the 9Router gateway, live — 2026-10-03 — EXECUTED — MET
+
+- Commit: `efafc48`
+- Provider: a 9Router gateway running on loopback, fronting a real upstream
+  account; credentials from `.env.9router.local`, which exists for this.
+- Observed: **35 models across 4 upstream groups**, and all 25 cases of
+  `tests/integration/nine-router-live.test.ts` passed in 30.6s — discovery,
+  selection, the provider pin, a completion that returned, a capability
+  measurement, and the credential absent from the audit trail and the evidence
+  digest after being proved present on the wire.
+- Verdict: EXECUTED — MET
+
+### §87 / §86 — a commercial provider reached from inside the extension — 2026-10-03 — EXECUTED — MET
+
+- Commit: `efafc48` (spec added in the commit that follows)
+- Chrome: the Playwright-managed Chromium, extension loaded unpacked from `dist/`
+- Provider: Google Gemini API, `generativelanguage.googleapis.com`
+- Model: `gemini-flash-lite-latest`
+- **Why this was worth doing after the node harness already passed.** Every
+  live run until now happened in Node: the production registry, transport, gate
+  and adapters assembled in a process with no extension around them. So one
+  thing was still unproven — that the extension's own **service worker** can
+  reach a commercial endpoint. Those are the browser's questions rather than the
+  adapter's: the manifest's host permissions, an extension page's CSP, a service
+  worker's `fetch` under MV3, and the egress gate running where it actually
+  runs. Every provider request ever made from inside this extension had gone to
+  a local server on loopback.
+- Observed, phase 1: the capability doctor ran **from inside the worker** and
+  reported **AGENT_READY** with all twelve checks passing against the live
+  endpoint. A real task then read `/details` and answered with the weight the
+  page states — `COMPLETED`, `browser.read_page` among its completed actions,
+  the answer carrying a number that appears only on that page, and the
+  credential absent from the task record. The side panel showed the same
+  finished task.
+- Observed, phase 2 — **and this is the finding.** Pointed at the site root,
+  which carries `<input type="password" value="hunter2-do-not-leak">`, the run
+  was refused: `POLICY_BLOCKED`, _"this transfer contains credential-shaped
+  data (named-secret-assignment) and cannot be sent anywhere"_, with the
+  user-facing sentence _"this request was not permitted to leave the browser.
+  It was refused before anything was sent."_ `browser.read_page` had succeeded
+  first — reading is allowed, because nothing left the browser — and the
+  transfer was stopped before the request.
+
+  **The exfiltration guard's credential check had never run against a real
+  external destination before**, because every test provider was on loopback
+  and loopback is treated differently. The first time it ran, it fired, and it
+  fired correctly.
+
+- Not asserted: the refusal itself. Driven as the only page in the context it
+  produced `POLICY_BLOCKED`; driven as the second page of two it produced
+  `PARTIAL`. Both are defensible, and the difference is a scheduling detail
+  about when taint attaches and which tab the agent picks. The spec therefore
+  reports the outcome and asserts the invariant — the password never reaches
+  the task record — which holds in both orders.
+- Evidence: `tests/e2e/live-provider-in-browser.spec.ts`, opt-in on
+  `ABA_E2E_GEMINI_KEY`; it skips without one, so `npm run test:e2e` neither
+  needs a key nor spends one.
+- Verdict: EXECUTED — MET
+
+### §87 — the anthropic protocol path of the live harness — 2026-10-03 — EXECUTED — BLOCKED (no key)
+
+- Commit: `efafc48`
+- What was done: no Anthropic API key exists in this environment, so the
+  provider cannot be reached. What **can** be verified without one is that the
+  harness's `anthropic` path works, which matters because three of its early
+  live failures were harness bugs rather than build bugs.
+- Observed: a local stand-in speaking the Anthropic Messages protocol —
+  `x-api-key`, `/v1/models`, `/v1/messages`, `tool_use` and `tool_result`
+  blocks, SSE events — was served on loopback, and the harness reached
+  **AGENT_READY** through it with the full two-turn tool round trip passing.
+  A mutation that made the stand-in ignore the tool result failed case D1,
+  so the case has teeth on this protocol too.
+- What this is **not**: evidence about `api.anthropic.com`. Nothing here
+  reached a commercial Anthropic endpoint.
+- Owner action: see `OWNER-CHECKLIST.md`. One command, one key.
+- Verdict: EXECUTED — BLOCKED (no credential); harness verified ready
+
 ## Still not executed
 
 Each is blocked on something this repository does not hold and will not

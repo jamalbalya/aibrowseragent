@@ -3,9 +3,22 @@
 What to capture, when you have a provider key and a browser. Every shot here
 shows a real capability doing a real thing.
 
-**No screenshots have been produced.** Producing them needs a configured
-provider, and this repository holds no key. Two things were available without
-one and both were rejected rather than used:
+**No screenshots have been produced**, and the reason has changed.
+
+It used to be _"producing them needs a configured provider, and this repository
+holds no key"_. **That is no longer true.** As of 3 October 2026 a free Google
+AI Studio key reaches the real Gemini API, the extension is live-verified
+against it, and a real task runs end to end — so a shot of a working product
+with real model output is now possible and no longer needs anything bought.
+
+What remains is not a blocker but a judgement, and it is yours: which
+capability to lead with, which page to feature, and how to frame the panel
+beside it. Those decide what the listing says about the product, and a
+mechanically captured panel would be a worse asset than ten minutes in a real
+browser.
+
+Two things were available before and were rejected rather than used. Both
+rejections still stand:
 
 - The side panel with no provider configured. That is an empty state, and an
   empty state as a listing asset misrepresents the product.
@@ -14,6 +27,23 @@ one and both were rejected rather than used:
   convincing.
 
 Neither is a placeholder to be swapped later. Neither was captured.
+
+### What live testing settled, so your shots do not fail
+
+- **Use a `-latest` or `3.x` Gemini model**, for example
+  `gemini-flash-lite-latest`. Google's model list leads with
+  `gemini-2.5-flash`, `gemini-2.5-pro` and `gemini-2.5-flash-lite`, and all
+  three answer `404 … no longer available to new users`. A shot of that error
+  is not the shot you want.
+- **`gemini-flash-lite-latest` reaches AGENT_READY** with all twelve
+  capability checks passing, so the readiness badge in Settings shows the good
+  state rather than `CHAT_ONLY`.
+- **The free tier allows fifteen requests a minute.** A session of repeated
+  captures will hit 429 at the sixteenth; wait about eleven seconds, which is
+  what Google asks for.
+- The settings screen shows a **masked key suffix**. It is on the list below of
+  things that must never be visible, and it is the one screen where a
+  legitimate shot can leak one.
 
 ## Before you start
 

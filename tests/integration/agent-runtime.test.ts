@@ -54,6 +54,8 @@ interface Recorder {
   readonly activities: string[];
   /** Terminal outcomes, recorded atomically by `onComplete`. */
   readonly completions: { state: TaskState; hasResult: boolean }[];
+  /** The reason given with each state change, which is where a retry explains itself. */
+  readonly stateReasons: string[];
 }
 
 function recorder(): Recorder {
@@ -61,14 +63,18 @@ function recorder(): Recorder {
   const steps: TaskStep[] = [];
   const activities: string[] = [];
   const completions: { state: TaskState; hasResult: boolean }[] = [];
+  /** The reason given with each state change, which is where a retry explains itself. */
+  const stateReasons: string[] = [];
   return {
     states,
     steps,
     activities,
     completions,
+    stateReasons,
     callbacks: {
-      onStateChange: (_id, state) => {
+      onStateChange: (_id, state, reason) => {
         states.push(state);
+        if (typeof reason === 'string') stateReasons.push(reason);
         return Promise.resolve();
       },
       onComplete: (_id, outcome) => {
@@ -524,6 +530,62 @@ describe('provider failures', () => {
     expect(output.result.outcome).toBe('COMPLETED');
     expect(output.usage.retries).toBeGreaterThan(0);
     expect(rec.states).toContain('RECOVERING');
+  });
+
+  it('waits the time a rate-limited provider stated, then succeeds', async () => {
+    // §87's rate-limit procedure asks for exactly this: *"drive enough
+    // requests to be limited for real, and confirm the retry succeeds rather
+    // than compounding"*. Doing that against the live Gemini free tier is how
+    // the gap was found — Google refuses the sixteenth request in a minute,
+    // sends **no** `Retry-After` header, and puts `RetryInfo.retryDelay: 11s`
+    // in the error body. Nothing read it, so the agent retried on its own
+    // 8-second backoff, arrived early, and was refused again.
+    //
+    // The wait here is 60ms rather than 11s so the test is a test.
+    const provider = new FakeProvider([textResponse('recovered after waiting')]);
+    provider.failWith = Object.assign(new Error('rate limited'), {
+      retryAfterMs: 60,
+      agentError: {
+        code: 'RATE_LIMITED',
+        message: 'rate limited',
+        userMessage: 'The provider is rate limiting requests. Retry in about 1s.',
+        recoverable: true,
+        retryable: true,
+      },
+    });
+    const rec = recorder();
+
+    // `random: () => 0` would make the jittered backoff the *smallest* it can
+    // be, so a run that ignored the stated wait would still pass on timing
+    // alone. The reason string is what separates them.
+    const runtime = new AgentRuntime({
+      registry: harness.registry,
+      callbacks: rec.callbacks,
+      random: () => 0,
+    });
+
+    const original = provider.generate.bind(provider);
+    let attempts = 0;
+    provider.generate = (request) => {
+      attempts += 1;
+      if (attempts > 1) provider.failWith = null;
+      return original(request);
+    };
+
+    const output = await runtime.run({
+      task: makeTask(),
+      provider,
+      capabilities: FULL_CAPABILITIES,
+      signal: new AbortController().signal,
+      tabId: 1,
+    });
+
+    expect(output.result.outcome).toBe('COMPLETED');
+    expect(output.usage.retries).toBe(1);
+    // The decision names the provider's own number, which is the only way to
+    // tell "waited because it was told to" from "waited because it always
+    // waits".
+    expect(rec.stateReasons.join(' ')).toMatch(/the provider asked for/);
   });
 
   it('fails cleanly on a non-retryable provider error', async () => {

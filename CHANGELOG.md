@@ -10,16 +10,36 @@ than something this repository can observe.
 `0.1.0` is also still the version in `package.json` and the manifest, and work
 has continued since the submission — so the artifact a build produces from
 `HEAD` today is **not** the artifact under review, even though both carry this
-version number. See
+version number.
+
+**That difference now matters, and it is worth being blunt about.** On 3
+October 2026 the three provider adapters were exercised against real endpoints
+for the first time, and five defects came out that every mocked test in this
+repository had passed. Two of them, together, meant **the browser agent could
+not run on Gemini at all**: every tool request was refused because canonical
+tool schemas carry a field Google's schema type rejects by name, and a
+conversation that got past that could make exactly one tool call before Google
+refused the turn carrying the tool's result. The artifact under review predates
+both fixes, so whatever its review outcome, it should not be the artifact that
+is published. `docs/testing/integration-readiness.md` has the five. See
 [`docs/release/README.md`](docs/release/README.md#two-artifacts-and-which-one-is-which)
 for that distinction and
 [`docs/release/chrome-web-store-submission-checklist.md`](docs/release/chrome-web-store-submission-checklist.md)
 for what publishing still requires.
 
-The version number is deliberately still `0.1.0`. Seven capabilities are
-PARTIAL and three are NOT-STARTED (see [`PARITY_MATRIX.md`](PARITY_MATRIX.md)),
+The version number is deliberately still `0.1.0`. Three capabilities are
+PARTIAL and one is NOT-STARTED (see [`PARITY_MATRIX.md`](PARITY_MATRIX.md)),
 and `0.1.0` says so to anyone reading a listing. Bumping it to `1.0.0` would be
 a cosmetic change to a number people read as a claim.
+
+**Those two numbers were wrong here until 3 October 2026**, and they had been
+wrong for a while: this file said _"seven capabilities are PARTIAL and three
+are NOT-STARTED"_ long after the matrix had moved to three and one. Nothing
+read it — `release-claims.test.ts` sweeps `README.md`, `PARITY_MATRIX.md` and
+everything under `docs/`, and this file is at the repository root, so it was
+the one claim document outside every guard. It is inside one now, and the
+guard derives the counts from `parity-evidence.json` rather than restating
+them.
 
 ### What the extension does
 

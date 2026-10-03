@@ -25,17 +25,20 @@ evidence:
 | **BLOCKED**          | Cannot be verified here: needs a credential, an account, a paid service, or an owner-only decision.                                                                    |
 | **MISSING**          | Not implemented, or implemented and known defective.                                                                                                                   |
 
-**Two provider rows are now LIVE-VERIFIED, and that changed on 3 October 2026.**
+**Three of the four provider rows are now LIVE-VERIFIED, and that changed on 3 October 2026.**
 It is stated here rather than left to be inferred, and so is the shape of it:
-Gemini and a generic OpenAI-compatible endpoint have been exercised with real
-credentials against real services, including a complete agentic turn — a model
-calling a tool, the tool's result going back, and an answer that could only
-have come from reading it. Anthropic has not, because no key for it exists
-here.
+Gemini, a commercial OpenAI-compatible gateway and a 9Router gateway have all
+been exercised with real credentials against real services, including a
+complete agentic trajectory — a model calling tools, their results going back,
+and answers that could only have come from reading them. Anthropic has not,
+because no key for it exists in this repository or on the development machine;
+its path through the harness has been verified against a protocol stand-in so
+that the owner's first run with a key tests the provider rather than the test.
 
-Going live cost three defects' worth of embarrassment and was worth every
-penny. Each of the three had passed every mocked test in this repository,
-because a fixture accepts whatever you send it:
+Going live cost five defects' worth of embarrassment and was worth every penny.
+Each of the five had passed every mocked test in this repository, because a
+fixture accepts whatever you send it — and two of them, taken together, meant
+the agent could not run on Gemini at all:
 
 1. **Gemini tool calling never worked at all.** Canonical tool schemas carry
    `additionalProperties: false` — ordinary JSON Schema, accepted by every
@@ -59,17 +62,47 @@ because a fixture accepts whatever you send it:
    id was not found. Check it against the model list"_ — advice that, in this
    case, confirms the user was right and leaves them believing the extension is
    broken.
+4. **A Gemini conversation could make exactly one tool call.** A `functionCall`
+   part comes back with an opaque `thoughtSignature`, and Google refuses any
+   later turn that replays the call without it:
+   `400 Function call is missing a thought_signature in functionCall parts.`
+   The adapter parsed the part and dropped the field, so the turn that sends
+   the **tool result** back — the first thing an agent does after a tool runs —
+   failed every time.
+
+   This one took two fixes, and the second is the more interesting. Teaching
+   the adapter to keep and re-emit the token was not enough: the agent runtime
+   rebuilds the assistant turn field by field, so it dropped the new field
+   again. A value reconstructed field by field silently loses anything added to
+   it later.
+
+   The capability doctor could not see it: its tool probe is a **single** turn,
+   and a single turn was the only thing that worked.
+
+5. **Google's retry guidance was never read.** Found by doing what §87's manual
+   procedure asks — _"drive enough requests to be limited for real"_. The
+   sixteenth small request in a minute is refused, and Google sends **no
+   `Retry-After` header**: the wait is in the error body as
+   `google.rpc.RetryInfo` with `retryDelay: "11s"`, beside a `QuotaFailure`
+   naming the free-tier limit of 15.
+
+   Every adapter read the header only. So the retry guidance honoured since
+   `5e7270d` never engaged for the provider most likely to rate-limit, on the
+   free tier this product is built around — the agent retried on its own
+   8-second backoff, arrived three seconds early, and collected another 429.
+   The second defect running whose fix was already written and simply out of
+   reach.
 
 ## AI providers
 
-| Surface                      | Status                                | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | What is unproven                                                                                                                                                                      |
-| ---------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `openai-compatible` protocol | LIVE-VERIFIED (gateway)               | `tests/unit/openai-compatible.test.ts` (28); `tests/e2e/provider-integration.spec.ts` against a local server; **and live against `openrouter.ai` on 2026-10-03 via `provider-live.test.ts`** — 466 models discovered, doctor **AGENT_READY** with `tools=pass streaming=pass text=pass context=pass`                                                                                                                                                                                  | `api.openai.com` itself, directly rather than through a gateway. Two free models declined vision and structured output, which is a fact about them                                    |
-| `anthropic` protocol         | UNIT                                  | `tests/unit/anthropic.test.ts` (41)                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Every byte on the wire. No request has left this machine for `api.anthropic.com`, because no Anthropic key exists here. This is the one provider row no amount of local work can move |
-| `gemini` protocol            | LIVE-VERIFIED                         | `tests/unit/gemini.test.ts` (41); `tests/integration/google-account-journey.test.ts` (27); **and live against `generativelanguage.googleapis.com` on 2026-10-03** — `gemini-flash-lite-latest` reached **AGENT_READY** with all twelve doctor checks passing, and the full two-turn tool round trip completed: the model called the tool, the result was sent back, and the answer carried a value that appears only in that result. All four defects above were found and fixed here | Nothing on this adapter. The remaining Gemini gap is the **OAuth** credential path, which needs a client id and is a separate row below                                               |
-| `nine-router` protocol       | MOCK-INTEGRATION, with a live harness | `tests/unit/nine-router-catalog.test.ts` (15), `tests/integration/nine-router-pipeline.test.ts` (19), `tests/e2e/nine-router.spec.ts`; and `tests/integration/nine-router-live.test.ts` (opt-in, real)                                                                                                                                                                                                                                                                                | Nothing, once the live harness is run — it is the only provider that has one that has been exercised against a real gateway                                                           |
-| Capability doctor            | LIVE-VERIFIED                         | `tests/unit/capability-doctor.test.ts` (23); and its full probe sequence run against two real endpoints, reaching `AGENT_READY` on one and measuring eight capabilities on the other                                                                                                                                                                                                                                                                                                  | Anthropic's refusal shapes                                                                                                                                                            |
-| Any provider, end to end     | LIVE-VERIFIED for two of four         | `tests/integration/provider-live.test.ts`, run against Gemini (all nine cases) and OpenRouter                                                                                                                                                                                                                                                                                                                                                                                         | Anthropic (no key) and `api.openai.com` directly (a key exists but the run would be paid, and this project holds to free tiers)                                                       |
+| Surface                      | Status                          | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | What is unproven                                                                                                                                                                                                                   |
+| ---------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `openai-compatible` protocol | LIVE-VERIFIED (gateway)         | `tests/unit/openai-compatible.test.ts` (28); `tests/e2e/provider-integration.spec.ts` against a local server; **and live against `openrouter.ai` on 2026-10-03 via `provider-live.test.ts`** — 466 models discovered, doctor **AGENT_READY** with `tools=pass streaming=pass text=pass context=pass`                                                                                                                                                                                  | `api.openai.com` itself, directly rather than through a gateway. Two free models declined vision and structured output, which is a fact about them                                                                                 |
+| `anthropic` protocol         | UNIT                            | `tests/unit/anthropic.test.ts` (41); and the live harness's **anthropic path** verified on 2026-10-03 against a loopback stand-in speaking the Messages protocol — AGENT_READY with the full two-turn round trip, and a mutation that made the stand-in ignore the tool result caught by the case meant to catch it                                                                                                                                                                   | `api.anthropic.com` itself. No Anthropic key exists in this repository or on the development machine. The harness is verified ready, so a failure will be the provider or this build rather than the test — see OWNER-CHECKLIST.md |
+| `gemini` protocol            | LIVE-VERIFIED                   | `tests/unit/gemini.test.ts` (41); `tests/integration/google-account-journey.test.ts` (27); **and live against `generativelanguage.googleapis.com` on 2026-10-03** — `gemini-flash-lite-latest` reached **AGENT_READY** with all twelve doctor checks passing, and the full two-turn tool round trip completed: the model called the tool, the result was sent back, and the answer carried a value that appears only in that result. All five defects above were found and fixed here | Nothing on this adapter. The remaining Gemini gap is the **OAuth** credential path, which needs a client id and is a separate row below                                                                                            |
+| `nine-router` protocol       | LIVE-VERIFIED (gateway)         | `tests/unit/nine-router-catalog.test.ts` (15), `tests/integration/nine-router-pipeline.test.ts` (19), `tests/e2e/nine-router.spec.ts`; **and live on 2026-10-03** — all 25 cases of `tests/integration/nine-router-live.test.ts` passed in 30.6s against a running gateway: 35 models across 4 upstream groups, discovery, selection, the provider pin, a completion that returned, and a capability measurement                                                                      | Nothing on this adapter                                                                                                                                                                                                            |
+| Capability doctor            | LIVE-VERIFIED                   | `tests/unit/capability-doctor.test.ts` (23); and its full probe sequence run against two real endpoints, reaching `AGENT_READY` on one and measuring eight capabilities on the other                                                                                                                                                                                                                                                                                                  | Anthropic's refusal shapes                                                                                                                                                                                                         |
+| Any provider, end to end     | LIVE-VERIFIED for three of four | `tests/integration/provider-live.test.ts` against Gemini (all eleven cases) and OpenRouter; `nine-router-live.test.ts` against a running gateway                                                                                                                                                                                                                                                                                                                                      | Anthropic, for want of a key anywhere; and `api.openai.com` directly, where a key exists and the run would be paid                                                                                                                 |
 
 ### The question behind this table
 
@@ -128,6 +161,34 @@ first hour of having real credentials. That ratio is the argument for the live
 harness, and it is worth stating plainly: a 4,500-case suite and 525
 real-Chromium cases did not find any of them, and could not have.
 
+### Where the live runs happen, which turned out to matter
+
+Every live run described above happens in **Node**: the production registry,
+transport, gate and adapters, assembled in a process with no extension around
+them. That proves the adapter. It does not prove the _extension_, and those are
+different questions — the manifest's host permissions, an extension page's CSP,
+a service worker's `fetch` under MV3, and the egress gate running where it
+actually runs.
+
+Until 3 October 2026 every provider request ever made from inside this
+extension went to a local server on **loopback**. The first time one went to a
+commercial endpoint, two things came out of it:
+
+- **It works.** The capability doctor ran from inside the service worker and
+  reported `AGENT_READY` on all twelve checks against
+  `generativelanguage.googleapis.com`, and a real task read a real page and
+  answered from it.
+- **The exfiltration guard's credential check had never run.** Loopback is
+  treated differently, so the check in front of a commercial destination was
+  dead code in every test. Pointed at a page carrying
+  `<input type="password" value="…">`, it fired — `POLICY_BLOCKED`, _"this
+  transfer contains credential-shaped data … refused before anything was
+  sent"_ — after the page had been read and before anything left. Correctly,
+  and for the first time.
+
+`tests/e2e/live-provider-in-browser.spec.ts` is that run, opt-in on
+`ABA_E2E_GEMINI_KEY` and skipped without it.
+
 ## Google provider authorization
 
 | Surface                                                   | Status           | Evidence                                                                                                                                                                                | What is unproven                                                                                                                                    |
@@ -177,6 +238,36 @@ the real extension in real Chromium.
 "LIVE-VERIFIED (browser)" is deliberately qualified. It means the Chrome API was
 really called and really answered. It says nothing about any provider.
 
+### One known limitation, examined and deliberately left
+
+**A retired model stays selected after it has failed.** `modelStale` — the
+mechanism that refuses a selection before spending a request on it — is set
+only by **discovery**, when the chosen id is absent from the catalogue. A
+retired Gemini model is _present_ in the catalogue; that is the whole problem.
+So nothing records what the worker learned when the task failed, and the panel
+goes on showing a dead model as the selected brain.
+
+This was investigated and **not fixed**, which is a decision rather than an
+omission:
+
+- The signal is not distinguishable where it would have to be read. A provider
+  rejecting the model and this build's own capability guard refusing an
+  **unverified** capability are separate categories (`unsupported_capability`
+  and `capability_unverified`) that deliberately map to one `ErrorCode`,
+  `MODEL_UNSUPPORTED`, and the category does not survive the conversion to an
+  `AgentError`. The task lifecycle sees one code for both.
+- Acting on that code would therefore also mark a model stale for having an
+  unmeasured capability — making a perfectly good model unusable until the
+  next discovery. That is a worse defect than the one being fixed.
+- And the harm is bounded: the refusal now says _"this model is still listed
+  but Google has retired it for this account — choose a different model"_, so
+  the user is told the right thing on the first failure. Marking it stale would
+  save a second attempt by somebody who ignored the first message.
+
+Closing it properly means carrying the provider's category to the lifecycle,
+the same way `retryAfterMs` is now read off the thrown error rather than off
+`AgentError`. That is a protocol change and it is not worth making blind.
+
 ### Two reach limits that no amount of testing closes
 
 These are decisions, not gaps, and they are recorded in
@@ -219,16 +310,27 @@ ABA_LIVE_MODEL=…       # optional; discovered when omitted
   npx vitest run tests/integration/provider-live.test.ts
 ```
 
-Two runs that have actually been made, recorded so they can be repeated:
+Runs that have actually been made, recorded so they can be repeated:
 
 ```bash
-# Gemini, free tier. Found all three defects listed at the top of this file.
+# Gemini, free tier. Found every defect listed at the top of this file.
 ABA_LIVE_PROTOCOL=gemini ABA_LIVE_MODEL=gemini-flash-latest
 
 # A commercial gateway speaking Chat Completions. Reached AGENT_READY.
 ABA_LIVE_PROTOCOL=openai-compatible \
 ABA_LIVE_BASE_URL=https://openrouter.ai/api/v1 \
 ABA_LIVE_MODEL=nvidia/nemotron-3.5-lightning:free
+
+# The anthropic path, against a loopback stand-in rather than the vendor.
+# Verifies the harness, and is not evidence about api.anthropic.com.
+ABA_LIVE_PROTOCOL=anthropic ABA_LIVE_BASE_URL=http://127.0.0.1:<port>
+```
+
+And the gateway harness, which has its own file and its own two variables:
+
+```bash
+NINEROUTER_TEST_BASE_URL=… NINEROUTER_TEST_API_KEY=… \
+  npx vitest run tests/integration/nine-router-live.test.ts
 ```
 
 Pass the key in the process environment, never on the command line: an argument

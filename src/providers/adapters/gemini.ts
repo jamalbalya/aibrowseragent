@@ -118,6 +118,8 @@ interface WireError {
   code?: number;
   message?: string;
   status?: string;
+  /** `google.rpc` status details. See `retryDelayFromDetails`. */
+  details?: unknown;
 }
 
 interface WireModel {
@@ -1149,6 +1151,55 @@ function namesARetiredModel(detail: string | undefined): boolean {
   );
 }
 
+/**
+ * How long Google said to wait, from the error body.
+ *
+ * **Google sends no `Retry-After` header.** Measured, not assumed: driving the
+ * free tier past its fifteen-requests-per-minute limit returns 429 with the
+ * header **absent** and the guidance in the body instead —
+ *
+ * ```json
+ * { "error": { "status": "RESOURCE_EXHAUSTED", "details": [
+ *   { "@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [...] },
+ *   { "@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "11s" }
+ * ] } }
+ * ```
+ *
+ * That matters more than it looks. The retry policy was just taught to honour
+ * server guidance over its own backoff, and `retryAfterMs(response)` reads the
+ * header — so for the provider most likely to rate-limit, on the free tier
+ * this product is built around, the new behaviour would never have engaged.
+ * The agent would retry after about eight seconds when Google had said eleven,
+ * collect another 429, and spend its three attempts getting nowhere.
+ *
+ * `retryDelay` is a protobuf `Duration` rendered as a string: seconds with an
+ * optional fractional part and a trailing `s`. Parsed defensively because it
+ * arrives in an error body, which is attacker-influenceable in general: a
+ * value that is not a plain duration is treated as no guidance at all rather
+ * than coerced into a number.
+ */
+export function retryDelayFromDetails(body: unknown): number | undefined {
+  if (body === null || typeof body !== 'object') return undefined;
+  const details = (body as { details?: unknown }).details;
+  if (!Array.isArray(details)) return undefined;
+
+  for (const entry of details) {
+    if (entry === null || typeof entry !== 'object') continue;
+    const type = (entry as { '@type'?: unknown })['@type'];
+    if (typeof type !== 'string' || !type.endsWith('google.rpc.RetryInfo')) continue;
+    const delay = (entry as { retryDelay?: unknown }).retryDelay;
+    if (typeof delay !== 'string') continue;
+    // `11s`, `1.5s`, `0.100s`. Nothing else, and no unit but seconds: the
+    // field is documented as a Duration and a Duration is always seconds.
+    const match = /^([0-9]+(?:\.[0-9]+)?)s$/.exec(delay.trim());
+    if (match === null) continue;
+    const seconds = Number(match[1]);
+    if (!Number.isFinite(seconds) || seconds < 0) continue;
+    return Math.round(seconds * 1000);
+  }
+  return undefined;
+}
+
 function failureFromError(
   error: WireError,
   retry: number | undefined,
@@ -1228,7 +1279,9 @@ async function toHttpFailure(
   const withStatus: WireError = { ...error, code: error.code ?? response.status };
   return failureFromError(
     withStatus,
-    retryAfterMs(response),
+    // The header first, for the day Google starts sending one; the body
+    // otherwise, which is where it actually is today.
+    retryAfterMs(response) ?? retryDelayFromDetails(error),
     `The provider returned ${response.status}.`,
     raw,
     options,
