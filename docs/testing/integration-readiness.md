@@ -35,10 +35,10 @@ because no key for it exists in this repository or on the development machine;
 its path through the harness has been verified against a protocol stand-in so
 that the owner's first run with a key tests the provider rather than the test.
 
-Going live cost five defects' worth of embarrassment and was worth every penny.
-Each of the five had passed every mocked test in this repository, because a
-fixture accepts whatever you send it — and two of them, taken together, meant
-the agent could not run on Gemini at all:
+Going live cost seven defects' worth of embarrassment and was worth every
+penny. Each of the seven had passed every mocked test in this repository,
+because a fixture accepts whatever you send it — and two of them, taken
+together, meant the agent could not run on Gemini at all:
 
 1. **Gemini tool calling never worked at all.** Canonical tool schemas carry
    `additionalProperties: false` — ordinary JSON Schema, accepted by every
@@ -93,16 +93,42 @@ the agent could not run on Gemini at all:
    The second defect running whose fix was already written and simply out of
    reach.
 
+6. **An empty account was told to wait.** `api.openai.com` answers an account
+   with no credit with **429** — the same status a throttled account gets —
+   carrying `type: insufficient_quota`, `code: credit_balance_exhausted`, and
+   **no `Retry-After` header**, because there is no time at which trying again
+   would work.
+
+   Every 429 was reported as rate limiting, so the user was told to _"try again
+   shortly"_ — advice that can never come true — and `rate_limited` is
+   **retryable**, so the agent spent its retry budget re-asking a question
+   whose answer cannot change until somebody adds money to an account. It now
+   reports as `access_denied`, which is terminal, with a sentence that says
+   waiting will not help.
+
+7. **A disconnect did not disconnect.** `authorization.ts` had declared
+   `revokeEndpoint: 'https://oauth2.googleapis.com/revoke'` since the Google
+   flow was built, and **nothing read it** — the constant appeared exactly once
+   in the repository, in its own declaration. So pressing _Disconnect_ deleted
+   the stored tokens and told Google nothing: this build could no longer use
+   the grant, while the user's Google account went on listing the extension as
+   authorized indefinitely.
+
+   Revocation now happens before the local removal, because the removal
+   destroys the token it needs, and a disconnect still always disconnects —
+   every failure is reported and none of them blocks. The third instance in
+   three sessions of a value parsed or declared and never read.
+
 ## AI providers
 
-| Surface                      | Status                          | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | What is unproven                                                                                                                                                                                                                   |
-| ---------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `openai-compatible` protocol | LIVE-VERIFIED (gateway)         | `tests/unit/openai-compatible.test.ts` (28); `tests/e2e/provider-integration.spec.ts` against a local server; **and live against `openrouter.ai` on 2026-10-03 via `provider-live.test.ts`** — 466 models discovered, doctor **AGENT_READY** with `tools=pass streaming=pass text=pass context=pass`                                                                                                                                                                                  | `api.openai.com` itself, directly rather than through a gateway. Two free models declined vision and structured output, which is a fact about them                                                                                 |
-| `anthropic` protocol         | UNIT                            | `tests/unit/anthropic.test.ts` (41); and the live harness's **anthropic path** verified on 2026-10-03 against a loopback stand-in speaking the Messages protocol — AGENT_READY with the full two-turn round trip, and a mutation that made the stand-in ignore the tool result caught by the case meant to catch it                                                                                                                                                                   | `api.anthropic.com` itself. No Anthropic key exists in this repository or on the development machine. The harness is verified ready, so a failure will be the provider or this build rather than the test — see OWNER-CHECKLIST.md |
-| `gemini` protocol            | LIVE-VERIFIED                   | `tests/unit/gemini.test.ts` (41); `tests/integration/google-account-journey.test.ts` (27); **and live against `generativelanguage.googleapis.com` on 2026-10-03** — `gemini-flash-lite-latest` reached **AGENT_READY** with all twelve doctor checks passing, and the full two-turn tool round trip completed: the model called the tool, the result was sent back, and the answer carried a value that appears only in that result. All five defects above were found and fixed here | Nothing on this adapter. The remaining Gemini gap is the **OAuth** credential path, which needs a client id and is a separate row below                                                                                            |
-| `nine-router` protocol       | LIVE-VERIFIED (gateway)         | `tests/unit/nine-router-catalog.test.ts` (15), `tests/integration/nine-router-pipeline.test.ts` (19), `tests/e2e/nine-router.spec.ts`; **and live on 2026-10-03** — all 25 cases of `tests/integration/nine-router-live.test.ts` passed in 30.6s against a running gateway: 35 models across 4 upstream groups, discovery, selection, the provider pin, a completion that returned, and a capability measurement                                                                      | Nothing on this adapter                                                                                                                                                                                                            |
-| Capability doctor            | LIVE-VERIFIED                   | `tests/unit/capability-doctor.test.ts` (23); and its full probe sequence run against two real endpoints, reaching `AGENT_READY` on one and measuring eight capabilities on the other                                                                                                                                                                                                                                                                                                  | Anthropic's refusal shapes                                                                                                                                                                                                         |
-| Any provider, end to end     | LIVE-VERIFIED for three of four | `tests/integration/provider-live.test.ts` against Gemini (all eleven cases) and OpenRouter; `nine-router-live.test.ts` against a running gateway                                                                                                                                                                                                                                                                                                                                      | Anthropic, for want of a key anywhere; and `api.openai.com` directly, where a key exists and the run would be paid                                                                                                                 |
+| Surface                      | Status                                                       | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | What is unproven                                                                                                                                                                                                                           |
+| ---------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `openai-compatible` protocol | LIVE-VERIFIED (gateway); DIRECT: credential + discovery only | `tests/unit/openai-compatible.test.ts` (33); `tests/e2e/provider-integration.spec.ts` against a local server; **live against `openrouter.ai`** — 466 models, doctor **AGENT_READY**; and **live against `api.openai.com` directly on 2026-10-03** — the credential validated and **127 models discovered**, both at zero cost                                                                                                                                                         | Generation, tools and streaming on `api.openai.com`: the account has **no credit**, which is a billing state and not a code problem. That blockage found defect 6 — every 429 was reported as rate limiting, including an unfunded account |
+| `anthropic` protocol         | UNIT                                                         | `tests/unit/anthropic.test.ts` (41); and the live harness's **anthropic path** verified on 2026-10-03 against a loopback stand-in speaking the Messages protocol — AGENT_READY with the full two-turn round trip, and a mutation that made the stand-in ignore the tool result caught by the case meant to catch it                                                                                                                                                                   | `api.anthropic.com` itself. No Anthropic key exists in this repository or on the development machine. The harness is verified ready, so a failure will be the provider or this build rather than the test — see OWNER-CHECKLIST.md         |
+| `gemini` protocol            | LIVE-VERIFIED                                                | `tests/unit/gemini.test.ts` (41); `tests/integration/google-account-journey.test.ts` (27); **and live against `generativelanguage.googleapis.com` on 2026-10-03** — `gemini-flash-lite-latest` reached **AGENT_READY** with all twelve doctor checks passing, and the full two-turn tool round trip completed: the model called the tool, the result was sent back, and the answer carried a value that appears only in that result. All five defects above were found and fixed here | Nothing on this adapter. The remaining Gemini gap is the **OAuth** credential path, which needs a client id and is a separate row below                                                                                                    |
+| `nine-router` protocol       | LIVE-VERIFIED (gateway)                                      | `tests/unit/nine-router-catalog.test.ts` (15), `tests/integration/nine-router-pipeline.test.ts` (19), `tests/e2e/nine-router.spec.ts`; **and live on 2026-10-03** — all 25 cases of `tests/integration/nine-router-live.test.ts` passed in 30.6s against a running gateway: 35 models across 4 upstream groups, discovery, selection, the provider pin, a completion that returned, and a capability measurement                                                                      | Nothing on this adapter                                                                                                                                                                                                                    |
+| Capability doctor            | LIVE-VERIFIED                                                | `tests/unit/capability-doctor.test.ts` (23); and its full probe sequence run against two real endpoints, reaching `AGENT_READY` on one and measuring eight capabilities on the other                                                                                                                                                                                                                                                                                                  | Anthropic's refusal shapes                                                                                                                                                                                                                 |
+| Any provider, end to end     | LIVE-VERIFIED for three of four                              | `tests/integration/provider-live.test.ts` against Gemini (all eleven cases) and OpenRouter; `nine-router-live.test.ts` against a running gateway                                                                                                                                                                                                                                                                                                                                      | Anthropic, for want of a key anywhere; and `api.openai.com` directly, where a key exists and the run would be paid                                                                                                                         |
 
 ### The question behind this table
 
@@ -196,12 +222,12 @@ means an OAuth-style grant; "API-key connection" means a credential the user
 pastes; "model discovery" means the vendor was asked what the credential can
 reach.
 
-| Provider            | Account authorization                                                                                                                   | API-key connection                  | Model discovery                                  | Static model list |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------------ | ----------------- |
-| `gemini`            | **Not verified.** Implemented, unit- and Chromium-tested against stand-ins; needs a client id that needs a published extension id (G-6) | **LIVE-VERIFIED**                   | **LIVE-VERIFIED** — 44 models from the vendor    | None              |
-| `openai-compatible` | Not applicable — the protocol has none                                                                                                  | **LIVE-VERIFIED** against a gateway | **LIVE-VERIFIED** — 466 models                   | None              |
-| `anthropic`         | Not applicable                                                                                                                          | **Not verified** — no key anywhere  | **Not verified**                                 | None              |
-| `nine-router`       | Not applicable                                                                                                                          | **LIVE-VERIFIED**                   | **LIVE-VERIFIED** — 35 models, 4 upstream groups | None              |
+| Provider            | Account authorization                                                                                                                   | API-key connection                                                         | Model discovery                                                        | Static model list |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ----------------- |
+| `gemini`            | **Not verified.** Implemented, unit- and Chromium-tested against stand-ins; needs a client id that needs a published extension id (G-6) | **LIVE-VERIFIED**                                                          | **LIVE-VERIFIED** — 44 models from the vendor                          | None              |
+| `openai-compatible` | Not applicable — the protocol has none                                                                                                  | **LIVE-VERIFIED** against a gateway, and against `api.openai.com` directly | **LIVE-VERIFIED** — 466 from the gateway, **127 from OpenAI directly** | None              |
+| `anthropic`         | Not applicable                                                                                                                          | **Not verified** — no key anywhere                                         | **Not verified**                                                       | None              |
+| `nine-router`       | Not applicable                                                                                                                          | **LIVE-VERIFIED**                                                          | **LIVE-VERIFIED** — 35 models, 4 upstream groups                       | None              |
 
 **No provider has a static or manually configured model list**, and that is a
 design position rather than an accident: all four adapters report
@@ -210,8 +236,20 @@ _"a model list — models are discovered from the endpoint, never declared
 here"_. So there is no provider for which this build could show a model the
 user's credential cannot reach because somebody typed it into the source.
 
-What that leaves genuinely untested: Anthropic end to end, `api.openai.com`
-directly, and any OAuth grant for any provider.
+What that leaves genuinely untested, and why each:
+
+- **Anthropic, end to end.** No key exists in this repository or on the
+  development machine. 42 unit cases cover connection, discovery, request
+  formatting, response parsing, authentication, errors and redaction; what is
+  missing is one command with one key, written down in `OWNER-CHECKLIST.md`.
+- **Generation on `api.openai.com`.** The credential and discovery are
+  live-verified; the account has **no credit**, so no completion can be made.
+  A billing state, not a code problem — and it cost nothing to find out,
+  because `GET /v1/models` is free.
+- **Any OAuth grant, for any provider.** The flow is implemented and tested
+  against stand-ins in real Chromium, and no real authorization has ever been
+  performed, because none can be until a client id exists — which needs a
+  published extension id.
 
 ## Google provider authorization
 
@@ -228,6 +266,41 @@ authorization cannot be executed before the first submission. The build refuses
 a client id that is set and unusable rather than shipping one that will fail
 (`scripts/check-extension-env.mjs`), and `CLIENT_MISMATCH` is the error for a
 client registered to the wrong id.
+
+### OAuth, mechanism by mechanism
+
+**No OAuth grant has ever been performed, for any provider or connector.** That
+is the headline, and everything below is implementation and stand-in testing.
+It is worth setting out per mechanism anyway, because "untested" and
+"unimplemented" are not the same thing and the owner's action differs.
+
+| Mechanism                                | Implemented                                                            | Tested against                                                   | A real grant |
+| ---------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------ |
+| PKCE authorization URL (S256, no secret) | `google-provider-auth.ts`                                              | 56 unit cases; 28 Chromium cases on the real `launchWebAuthFlow` | **Never**    |
+| Redirect + callback handling             | `readGoogleCallback`                                                   | The redirect is matched before anything on the URL is read       | **Never**    |
+| State / CSRF                             | `timingSafeEqual` on `state`, in both the provider and connector flows | Unit cases for mismatch, absent and replayed state               | **Never**    |
+| Authorization TTL                        | `AUTHORIZATION_TTL_MS` (10 min) in the connector flow                  | Unit                                                             | **Never**    |
+| Token storage                            | `CredentialStore.setOAuthTokens`, inside the K1-protected area         | `02c` of the Google journey asserts it is protected like a key   | **Never**    |
+| Refresh                                  | `needsRefresh` with the caller's horizon; one attempt, never retried   | Unit, plus the horizon arithmetic                                | **Never**    |
+| Client misconfiguration                  | `CLIENT_MISMATCH`, which now prints the redirect URI to register       | Unit                                                             | **Never**    |
+| Cancellation / decline                   | `DECLINED`, separated from a client problem                            | Unit                                                             | **Never**    |
+| **Revocation on disconnect**             | **New.** `revoke-authorization.ts`                                     | 11 unit cases, three mutation-controlled rules                   | **Never**    |
+
+**Revocation is the one that changed today, and it had been missing entirely.**
+`revokeEndpoint` was declared when the Google flow was built and read by
+nothing — it appeared exactly once in the repository, in its own declaration.
+So a disconnect deleted the tokens and told Google nothing: this build could no
+longer use the grant, and the user's Google account went on listing the
+extension as authorized. It now asks Google to withdraw the grant first,
+because the local removal destroys the token needed to ask, and a disconnect
+still always disconnects whatever the answer.
+
+What the owner must do, exactly: register a **Chrome Extension** OAuth client
+for the published extension id and set `VITE_ABA_GOOGLE_PROVIDER_CLIENT_ID`
+(G-6). Until then the panel reports the Google method unavailable with a
+reason, the build fails if the value is set and unusable, and none of the rows
+above can move. No secret is involved at any point — Google issues none for
+this client type, and the build could not hold one safely if it did.
 
 ## Connectors
 

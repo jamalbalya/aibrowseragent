@@ -211,6 +211,27 @@ function rateLimited(error: unknown): boolean {
   return failure?.error?.code === 'RATE_LIMITED';
 }
 
+/**
+ * Whether the account has simply run out of money.
+ *
+ * Reported apart from a rate limit because they are apart: a throttled account
+ * works again in a minute, an unfunded one never does. Measured against
+ * `api.openai.com`, which answers an empty account with **429** and
+ * `insufficient_quota` — the same status as throttling, which is why this
+ * build used to tell the user to *"try again shortly"*.
+ *
+ * Both are inconclusive about this build, and only one of them is worth
+ * waiting out, so the run says which.
+ */
+function outOfCredit(error: unknown): boolean {
+  const failure = (error as { failure?: { error?: { code?: string; userMessage?: string } } })
+    .failure;
+  return (
+    failure?.error?.code === 'PERMISSION_DENIED' &&
+    /no remaining credit or quota/i.test(failure.error.userMessage ?? '')
+  );
+}
+
 /** Runs a live call, or declares the case inconclusive if the account is throttled. */
 async function live<T>(what: string, call: () => Promise<T>): Promise<T | null> {
   try {
@@ -218,6 +239,13 @@ async function live<T>(what: string, call: () => Promise<T>): Promise<T | null> 
   } catch (error) {
     if (rateLimited(error)) {
       process.stdout.write(`[PROVLIVE] INCONCLUSIVE — ${what}: the account is rate limited.\n`);
+      return null;
+    }
+    if (outOfCredit(error)) {
+      process.stdout.write(
+        `[PROVLIVE] INCONCLUSIVE — ${what}: this account has no credit with the provider. ` +
+          'Nothing here is a finding about this build.\n',
+      );
       return null;
     }
     throw error;
@@ -385,6 +413,10 @@ describe('TEST-LIVE-001 — A: connecting', () => {
         process.stdout.write('[PROVLIVE] INCONCLUSIVE — A2 probe: the account is rate limited.\n');
         return;
       }
+      if (/no remaining credit or quota/i.test(health.error?.userMessage ?? '')) {
+        process.stdout.write('[PROVLIVE] INCONCLUSIVE — A2 probe: the account has no credit.\n');
+        return;
+      }
       expect(health.reachable, health.error?.message ?? '').toBe(true);
 
       // The credential really did go out — which is what makes the absences
@@ -418,6 +450,10 @@ describe('TEST-LIVE-001 — B: the capability doctor, for real', () => {
       // connection probe specifically: that is the first round trip, so if it
       // was refused for quota nothing after it ran either.
       const connection = report.checks.find((check) => check.id === 'connection');
+      if (connection !== undefined && /no remaining credit or quota/i.test(connection.detail)) {
+        process.stdout.write('[PROVLIVE] INCONCLUSIVE — B1 doctor: the account has no credit.\n');
+        return;
+      }
       if (connection !== undefined && /429|rate limit/i.test(connection.detail)) {
         process.stdout.write('[PROVLIVE] INCONCLUSIVE — B1 doctor: the account is rate limited.\n');
         return;
@@ -486,6 +522,10 @@ describe('TEST-LIVE-001 — C: generating', () => {
         if (event.type === 'error') {
           if (event.error.code === 'RATE_LIMITED') {
             process.stdout.write('[PROVLIVE] INCONCLUSIVE — C2 stream: rate limited.\n');
+            return;
+          }
+          if (/no remaining credit or quota/i.test(event.error.userMessage)) {
+            process.stdout.write('[PROVLIVE] INCONCLUSIVE — C2 stream: no credit.\n');
             return;
           }
           throw new Error(event.error.message);

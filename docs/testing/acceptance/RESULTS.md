@@ -388,6 +388,63 @@ time a rate-limited provider stated, then succeeds`.
   record nor the error.
 - Verdict: EXECUTED — MET
 
+### §87 — `api.openai.com`, directly — 2026-10-03 — **EXECUTED — PARTIAL**, defect found and fixed
+
+- Commit: `edea3d3` (fix in the commit that follows)
+- Endpoint: `https://api.openai.com/v1`, the vendor itself rather than a
+  gateway. This was the one provider path D14 deliberately left alone, to avoid
+  spending money.
+- Observed, at **zero cost**: `GET /v1/models` answered **HTTP 200 with 127
+  models**. The credential is valid and model discovery works against the
+  vendor directly, which is the half of this item that needs no spending.
+- Observed, on the other half: every completion answered **429**, with
+  `type: insufficient_quota`, `code: credit_balance_exhausted`, _"You have no
+  credits remaining"_, and **no `Retry-After` header**. The account is
+  unfunded. No amount of code changes that, and nothing in it is a finding
+  about this build.
+- **But the way it was reported was.** Every 429 was mapped to rate limiting,
+  so the user was told _"The provider is rate limiting requests. Try again
+  shortly."_ — advice that can never come true — and `rate_limited` is
+  **retryable**, so the agent would spend its retry budget re-asking a question
+  whose answer cannot change until somebody adds money. An unfunded account now
+  reports as `access_denied`, which is terminal, with a sentence saying waiting
+  will not help.
+- Evidence: `tests/unit/openai-compatible.test.ts` pins the recorded body and
+  both controls — an unfunded account is terminal, a genuinely throttled one
+  stays retryable and keeps its `Retry-After`.
+- Remaining evidence needed: credit on the account, then
+  `ABA_LIVE_PROTOCOL=openai-compatible ABA_LIVE_BASE_URL=https://api.openai.com/v1
+ABA_LIVE_MODEL=gpt-4.1-nano npx vitest run tests/integration/provider-live.test.ts`.
+- Verdict: EXECUTED — PARTIAL (credential and discovery verified; generation
+  blocked by billing, not by code)
+
+### OAuth — revocation on disconnect — 2026-10-03 — **EXECUTED — NOT MET**, defect fixed
+
+- Commit: `edea3d3` (fix in the commit that follows)
+- What was inspected: every OAuth mechanism, against its implementation and its
+  tests, for the readiness matrix's per-mechanism table.
+- **Found:** `authorization.ts` declared
+  `revokeEndpoint: 'https://oauth2.googleapis.com/revoke'` when the Google flow
+  was built, and **nothing read it** — the constant appeared exactly once in
+  the whole repository, in its own declaration. `accounts.disconnect` deleted
+  the stored tokens and told Google nothing. The refresh token was destroyed
+  locally, so this build could no longer use the grant; the user's Google
+  account went on listing the extension as authorized indefinitely. Somebody
+  who pressed _Disconnect_ to withdraw access had not withdrawn it.
+- Fix: the grant is withdrawn at the provider **before** the local removal,
+  because the removal destroys the token revocation needs. The refresh token is
+  what is sent, because revoking it takes the access tokens with it. A
+  disconnect still always disconnects: every failure is reported and none of
+  them blocks, because a person must not be prevented from disconnecting by the
+  state of a third party.
+- Evidence: `tests/security/revoke-authorization.test.ts` (11 cases), with
+  three mutation-controlled rules — revoking the access token instead of the
+  refresh token, letting a failure throw, and revoking for a pasted key.
+- **Not live-verified, and cannot be:** revocation needs a real grant, and no
+  grant can exist until a client id does. Recorded as implemented and
+  unexercised rather than as working.
+- Verdict after fix: EXECUTED — NOT MET live; implemented and unit-verified
+
 ### §87 — the anthropic protocol path of the live harness — 2026-10-03 — EXECUTED — BLOCKED (no key)
 
 - Commit: `efafc48`

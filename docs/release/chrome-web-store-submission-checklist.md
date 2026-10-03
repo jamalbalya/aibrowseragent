@@ -130,14 +130,15 @@ None of this can be done from a repository. Each item names why.
 Six items, and only one of them is a judgement rather than an errand. Nothing
 in the repository is waiting on any of them except the two marked.
 
-| #   | What                                                                | Kind                | Blocks                        |
-| --- | ------------------------------------------------------------------- | ------------------- | ----------------------------- |
-| 1   | Developer account: register, pay, accept the agreements             | Errand              | Submission                    |
-| 2   | **Answer "Collects authentication information"**                    | **Judgement**       | The data-use form             |
-| 3   | Four listing fields: category, language, support email, support URL | Errand + one choice | The listing                   |
-| 4   | At least one screenshot                                             | Judgement           | The listing                   |
-| 5   | Register a Google OAuth client for the published extension id (G-6) | Errand              | `87-10`, Google authorization |
-| 6   | An Anthropic API key, then one command                              | Errand              | The last unverified provider  |
+| #   | What                                                                | Kind                | Blocks                         |
+| --- | ------------------------------------------------------------------- | ------------------- | ------------------------------ |
+| 1   | Developer account: register, pay, accept the agreements             | Errand              | Submission                     |
+| 2   | **Answer "Collects authentication information"**                    | **Judgement**       | The data-use form              |
+| 3   | Four listing fields: category, language, support email, support URL | Errand + one choice | The listing                    |
+| 4   | At least one screenshot                                             | Judgement           | The listing                    |
+| 5   | Register a Google OAuth client for the published extension id (G-6) | Errand              | `87-10`, Google authorization  |
+| 6   | An Anthropic API key, then one command                              | Errand              | The last unverified provider   |
+| 7   | **Credit on the OpenAI account**, only if that path matters to you  | Errand              | Generation on `api.openai.com` |
 
 **Item 2 is the only one with two defensible answers**, and it no longer has a
 cost attached to either: the published policy already says _"A credential the
@@ -158,8 +159,21 @@ is what holds that. There is no login to this extension at all.
 decision is the owner's because the question is about Google's definition
 rather than about this code, and this repository will not pick one.
 
-**Items 5 and 6 are the only two that block a technical claim.** Everything
+**Items 5, 6 and 7 are the only ones that block a technical claim.** Everything
 else blocks the listing or the submission, not the product.
+
+Item 7 is new and small. On 3 October 2026 the direct `api.openai.com` path was
+exercised with the key already on the development machine: the credential is
+valid and **127 models were discovered**, both at no cost. Every completion
+answered 429 `insufficient_quota` — _"You have no credits remaining"_ — so
+generation on that endpoint is blocked by billing rather than by code, and
+nothing else depends on it: the same protocol is already live-verified against
+a commercial gateway. It is listed only so the gap is not mistaken for a
+defect.
+
+That run did find one, now fixed: every 429 was reported as rate limiting, so
+an unfunded account was told to _"try again shortly"_ and the agent would retry
+against a condition that cannot clear.
 
 ### 1. Developer account
 

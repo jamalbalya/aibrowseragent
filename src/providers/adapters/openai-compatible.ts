@@ -737,17 +737,78 @@ class StreamAccumulator {
  * something else. A module-level helper that needs an instance's identity has
  * to be given it.
  */
+/**
+ * Whether a 429 is an unfunded account rather than a pace problem.
+ *
+ * The two arrive under the same status and need opposite advice. Measured
+ * against `api.openai.com`, an account with no credit answers:
+ *
+ * ```json
+ * { "error": { "type": "insufficient_quota",
+ *              "code": "credit_balance_exhausted",
+ *              "message": "You have no credits remaining…" } }
+ * ```
+ *
+ * with **no `Retry-After` header** — because there is no time at which trying
+ * again would work. Treating that as rate limiting was wrong twice over: the
+ * sentence told the user to *"try again shortly"*, which is advice that can
+ * never come true, and `rate_limited` is **retryable**, so the agent spent its
+ * retry budget re-asking a question whose answer cannot change until somebody
+ * adds money to an account.
+ *
+ * Matched on the body's `type` and `code`, which are a fixed vocabulary, and
+ * never on the message, which is prose. The phrase is checked too because a
+ * gateway fronting OpenAI may pass the message through while flattening the
+ * fields — and a gateway is the common case here, since this adapter is
+ * pointed at whatever endpoint the user names.
+ */
+export function namesAnExhaustedQuota(detail: string | undefined): boolean {
+  if (detail === undefined || detail.length === 0) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(detail);
+  } catch {
+    parsed = null;
+  }
+  const error =
+    parsed !== null && typeof parsed === 'object'
+      ? ((parsed as { error?: unknown }).error as Record<string, unknown> | undefined)
+      : undefined;
+  const field = (name: string): string =>
+    typeof error?.[name] === 'string' ? error[name].toLowerCase() : '';
+  if (field('type') === 'insufficient_quota') return true;
+  if (field('code') === 'insufficient_quota') return true;
+  if (field('code') === 'credit_balance_exhausted') return true;
+
+  const lowered = detail.toLowerCase();
+  return (
+    lowered.includes('insufficient_quota') ||
+    lowered.includes('credit balance') ||
+    lowered.includes('no credits remaining') ||
+    lowered.includes('exceeded your current quota')
+  );
+}
+
 async function toHttpFailure(
   providerId: string,
   response: Response,
   secret?: string,
 ): Promise<ProviderFailure> {
   const detail = await readErrorBody(response, { ...(secret === undefined ? {} : { secret }) });
-  const category = categoryForStatus(response.status);
-  const retry = retryAfterMs(response);
+  const status = categoryForStatus(response.status);
+  // A 429 that is an empty account is not a 429 that is a busy one. It is an
+  // entitlement problem, so it reports as one — and `access_denied` is
+  // terminal, which stops the agent retrying something that cannot clear.
+  const exhausted = status === 'rate_limited' && namesAnExhaustedQuota(detail);
+  const category = exhausted ? 'access_denied' : status;
+  // No retry guidance either, even if a header arrived: there is no useful
+  // time to wait.
+  const retry = exhausted ? undefined : retryAfterMs(response);
 
-  const userMessage =
-    category === 'authentication_failed'
+  const userMessage = exhausted
+    ? 'This account has no remaining credit or quota with the provider. Waiting will not ' +
+      'help — add credit, or connect an account that has some.'
+    : category === 'authentication_failed'
       ? 'The API key was rejected. Check the key and that it is still active.'
       : category === 'access_denied'
         ? 'The key was accepted but is not permitted to use this endpoint or model.'

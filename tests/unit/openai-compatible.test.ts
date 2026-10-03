@@ -6,6 +6,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import {
+  namesAnExhaustedQuota,
   OpenAICompatibleAdapter,
   ProviderRequestError,
   readServerSentEvents,
@@ -477,5 +478,124 @@ describe('readServerSentEvents', () => {
 
   it('ignores comment and event lines', async () => {
     expect(await collect([': keepalive\n\nevent: ping\ndata: real\n\n'])).toEqual(['real']);
+  });
+});
+
+describe('an empty account is not a busy one', () => {
+  /**
+   * Measured against `api.openai.com` on 3 October 2026. An account with no
+   * credit answers **429** — the same status a throttled account gets — with
+   * `type: insufficient_quota`, `code: credit_balance_exhausted`, and **no
+   * `Retry-After` header**, because there is no time at which trying again
+   * would work.
+   *
+   * Treating it as rate limiting was wrong twice: the sentence said *"try
+   * again shortly"*, which can never come true, and `rate_limited` is
+   * retryable — so the agent spent its retry budget re-asking a question whose
+   * answer cannot change until somebody adds money to an account.
+   */
+  const LIVE_BODY = {
+    error: {
+      message:
+        'You have no credits remaining. Add credits to continue using the API at ' +
+        'https://platform.openai.com/settings/organization/billing/.',
+      type: 'insufficient_quota',
+      code: 'credit_balance_exhausted',
+      param: null,
+    },
+  };
+
+  it('recognises the body the provider actually sends', () => {
+    expect(namesAnExhaustedQuota(JSON.stringify(LIVE_BODY))).toBe(true);
+  });
+
+  it('recognises the shapes a gateway in front of it may flatten to', () => {
+    // This adapter is pointed at whatever endpoint the user names, so a
+    // gateway relaying OpenAI is the common case rather than the exception. A
+    // gateway that keeps the message and drops the fields must still be
+    // understood.
+    for (const body of [
+      { error: { code: 'insufficient_quota', message: 'quota' } },
+      { error: { message: 'You exceeded your current quota, please check your plan.' } },
+      { error: { message: 'Your credit balance is too low to access this model.' } },
+      'insufficient_quota',
+    ]) {
+      expect(namesAnExhaustedQuota(JSON.stringify(body)), JSON.stringify(body)).toBe(true);
+    }
+  });
+
+  it('does not mistake a genuinely throttled account for an empty one', () => {
+    // The control, and the reason this is matched rather than assumed from the
+    // status: a real rate limit must keep its retryable, wait-and-see
+    // treatment.
+    for (const body of [
+      { error: { type: 'rate_limit_error', code: 'rate_limit_exceeded', message: 'slow down' } },
+      { error: { message: 'Rate limit reached for requests' } },
+      {},
+      '',
+      'not json at all',
+    ]) {
+      expect(namesAnExhaustedQuota(typeof body === 'string' ? body : JSON.stringify(body))).toBe(
+        false,
+      );
+    }
+    expect(namesAnExhaustedQuota(undefined)).toBe(false);
+  });
+
+  it('reports an exhausted account as terminal, with advice that can come true', async () => {
+    const adapter = new OpenAICompatibleAdapter(
+      passthroughTransport(vi.fn(() => Promise.resolve(jsonResponse(LIVE_BODY, 429)))),
+    );
+    await adapter.connect(CONFIG);
+    await expect(
+      adapter.generate({
+        systemInstruction: '',
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        egress: testEgressContext(),
+      }),
+    ).rejects.toSatisfy((error: unknown) => {
+      const failure = (error as ProviderRequestError).failure;
+      // Terminal, so the retry budget is not spent on it.
+      expect(failure.error.code).toBe('PERMISSION_DENIED');
+      expect(failure.error.retryable).toBe(false);
+      // And no retry guidance, because there is no useful time to wait.
+      expect(failure.retryAfterMs).toBeUndefined();
+      expect(failure.error.userMessage).toMatch(/no remaining credit or quota/i);
+      expect(failure.error.userMessage).toMatch(/waiting will not help/i);
+      expect(failure.error.userMessage).not.toMatch(/try again shortly/i);
+      return true;
+    });
+  });
+
+  it('still treats a real rate limit as retryable and worth waiting for', async () => {
+    // The other control, at the adapter rather than the predicate: a 429 that
+    // is about pace keeps `RATE_LIMITED`, keeps its retryability, and keeps
+    // the server's own retry guidance.
+    const adapter = new OpenAICompatibleAdapter(
+      passthroughTransport(
+        vi.fn(() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ error: { message: 'Rate limit reached' } }), {
+              status: 429,
+              headers: { 'Content-Type': 'application/json', 'Retry-After': '20' },
+            }),
+          ),
+        ),
+      ),
+    );
+    await adapter.connect(CONFIG);
+    await expect(
+      adapter.generate({
+        systemInstruction: '',
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        egress: testEgressContext(),
+      }),
+    ).rejects.toSatisfy((error: unknown) => {
+      const failure = (error as ProviderRequestError).failure;
+      expect(failure.error.code).toBe('RATE_LIMITED');
+      expect(failure.error.retryable).toBe(true);
+      expect(failure.retryAfterMs).toBe(20_000);
+      return true;
+    });
   });
 });

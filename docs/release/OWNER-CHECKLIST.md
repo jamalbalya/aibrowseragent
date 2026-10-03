@@ -550,8 +550,11 @@ ABA_LIVE_PROTOCOL=anthropic ABA_LIVE_API_KEY=… \
   npx vitest run tests/integration/provider-live.test.ts
 ```
 
-No base URL is needed; the adapter defaults to `api.anthropic.com`. Eleven
-cases: discovery, connection, the capability doctor on a real model, a
+No base URL is needed; the adapter defaults to `api.anthropic.com`, and **no
+model id either** — the harness asks the vendor what the key can reach and
+picks one that answers, preferring one that accepts a tool. Naming a model
+would be guessing at a catalogue you have not seen, which is the mistake
+Google's own list punishes. Twelve cases: discovery, connection, the capability doctor on a real model, a
 completion, a stream, a two-turn tool round trip, many tool calls across
 several turns, a real image, a listed-but-unrunnable model, and two asserting
 the credential does not come back out.
@@ -567,6 +570,15 @@ to catch it. That is recorded in
 `api.anthropic.com`.
 
 It spends a few cents of a real key. Nothing else in the repository needs one.
+
+**What is already covered without it**, so a failure will be the provider or
+this build rather than the test: 42 unit cases over connection (including
+connecting before a model is chosen), the model-list envelope, request
+formatting, response parsing, authentication, the error taxonomy and credential
+redaction — and the harness's `anthropic` path driven against a loopback
+stand-in speaking the Messages protocol, reaching `AGENT_READY` with the full
+two-turn round trip, with a mutation that ignored the tool result caught by the
+case meant to catch it.
 
 ---
 

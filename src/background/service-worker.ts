@@ -232,6 +232,7 @@ import {
   type GoogleProviderToken,
 } from '@/providers/oauth/google-provider-auth';
 import { credentialForConnection } from '@/providers/accounts/connection-credential';
+import { revokeAuthorization } from '@/providers/accounts/revoke-authorization';
 import {
   WebAuthFlow,
   ensureIdentityPermission,
@@ -4373,6 +4374,32 @@ router.on('accounts.connectGoogle', async (request) => {
 });
 
 router.on('accounts.disconnect', async ({ connectionId }) => {
+  // Withdraw the grant at the provider **before** the local removal, because
+  // the removal destroys the token revocation needs. The decision lives in
+  // `@/providers/accounts/revoke-authorization`; what stays here is the
+  // wiring, and the rule that a disconnect always disconnects: whatever the
+  // attempt returns, the credential goes.
+  //
+  // This closes a gap that had been open since the Google flow was built.
+  // `revokeEndpoint` was declared in `authorization.ts` and read by nothing,
+  // so pressing *Disconnect* deleted the tokens here and left the user's
+  // Google account listing this extension as authorized indefinitely.
+  const disconnecting = await accountStore.get(connectionId);
+  if (disconnecting !== undefined) {
+    const outcome = await revokeAuthorization(disconnecting, {
+      tokensFor: (id) => credentialStore.getOAuthTokens(id),
+      post: (body) => postProviderToken(disconnecting.providerId, GOOGLE_AUTH.revokeEndpoint, body),
+    });
+    if (outcome.attempted && !outcome.revoked) {
+      // Worth a line, because the user's Google account still holds a grant
+      // they asked to withdraw. Never fatal, and it carries no token.
+      log.warn('Could not withdraw the authorization at the provider.', {
+        providerId: disconnecting.providerId,
+        status: outcome.status,
+      });
+    }
+  }
+
   // The credential goes first, then the record, then any brain pointing at
   // it. `AccountStore.remove` owns that ordering.
   await accountStore.remove(connectionId, connectionCredentials);
