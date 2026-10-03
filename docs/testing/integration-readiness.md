@@ -189,6 +189,30 @@ commercial endpoint, two things came out of it:
 `tests/e2e/live-provider-in-browser.spec.ts` is that run, opt-in on
 `ABA_E2E_GEMINI_KEY` and skipped without it.
 
+### Per provider: what is verified, and by what
+
+The five categories asked for, kept apart on purpose. "Account authorization"
+means an OAuth-style grant; "API-key connection" means a credential the user
+pastes; "model discovery" means the vendor was asked what the credential can
+reach.
+
+| Provider            | Account authorization                                                                                                                   | API-key connection                  | Model discovery                                  | Static model list |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------------ | ----------------- |
+| `gemini`            | **Not verified.** Implemented, unit- and Chromium-tested against stand-ins; needs a client id that needs a published extension id (G-6) | **LIVE-VERIFIED**                   | **LIVE-VERIFIED** — 44 models from the vendor    | None              |
+| `openai-compatible` | Not applicable — the protocol has none                                                                                                  | **LIVE-VERIFIED** against a gateway | **LIVE-VERIFIED** — 466 models                   | None              |
+| `anthropic`         | Not applicable                                                                                                                          | **Not verified** — no key anywhere  | **Not verified**                                 | None              |
+| `nine-router`       | Not applicable                                                                                                                          | **LIVE-VERIFIED**                   | **LIVE-VERIFIED** — 35 models, 4 upstream groups | None              |
+
+**No provider has a static or manually configured model list**, and that is a
+design position rather than an accident: all four adapters report
+`modelListing: true`, and `known-endpoints.ts` says of itself that it is not
+_"a model list — models are discovered from the endpoint, never declared
+here"_. So there is no provider for which this build could show a model the
+user's credential cannot reach because somebody typed it into the source.
+
+What that leaves genuinely untested: Anthropic end to end, `api.openai.com`
+directly, and any OAuth grant for any provider.
+
 ## Google provider authorization
 
 | Surface                                                   | Status           | Evidence                                                                                                                                                                                | What is unproven                                                                                                                                    |

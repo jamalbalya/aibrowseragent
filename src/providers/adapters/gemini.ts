@@ -172,14 +172,6 @@ export class GeminiAdapter implements AIProviderAdapter {
         ),
       });
     }
-    if (!config.model || config.model.trim().length === 0) {
-      return Promise.resolve({
-        authenticated: false,
-        error: createError('INVALID_ARGUMENT', 'A model id is required.', {
-          userMessage: 'Choose a model, for example one of the ids the model list reports.',
-        }),
-      });
-    }
 
     const baseUrl = (config.baseUrl ?? GEMINI_DEFAULT_BASE_URL).replace(/\/+$/, '');
     let parsed: URL;
@@ -239,7 +231,18 @@ export class GeminiAdapter implements AIProviderAdapter {
       if (!sameCredential || !sameEndpoint || !sameScheme) this.discovered.clear();
     }
 
-    this.config = { ...config, baseUrl, model: bareModelId(config.model) };
+    // A connection with no model is legitimate and has to be: the product's
+    // journey is connect, discover what this credential can see, then choose.
+    // `connect` used to refuse without one, which made that journey
+    // impossible for this provider and for Anthropic — a user had to know a
+    // model id before they could ask what the ids were. The requirement now
+    // belongs to the operations that need a model, which is where it means
+    // something. See `requireModel`.
+    this.config = {
+      ...config,
+      baseUrl,
+      ...(config.model === undefined ? {} : { model: bareModelId(config.model) }),
+    };
     return Promise.resolve({
       authenticated: true,
       // An access token is not a key, and a label reading "key …a1b2" for one
@@ -259,6 +262,27 @@ export class GeminiAdapter implements AIProviderAdapter {
     this.config = null;
     this.discovered.clear();
     return Promise.resolve();
+  }
+
+  /**
+   * The model this connection will act on, or a refusal naming the gap.
+   *
+   * `connect` deliberately accepts a connection with no model, because
+   * discovery has to happen before a choice can be made. Every operation that
+   * puts a model in the request path goes through here instead, so the refusal
+   * arrives before a URL like `/models/:generateContent` is built and sent to
+   * the vendor as a malformed request.
+   */
+  private requireModel(): string {
+    const model = bareModelId(this.require().model ?? '');
+    if (model.length === 0) {
+      throw toThrowable(
+        providerFailure(GEMINI_PROVIDER_ID, 'invalid_request', 'No model is selected.', {
+          userMessage: 'Choose a model for this account before running a task.',
+        }),
+      );
+    }
+    return model;
   }
 
   private require(): ProviderConfig {
@@ -460,7 +484,7 @@ export class GeminiAdapter implements AIProviderAdapter {
   }
 
   async generate(request: CanonicalRequest): Promise<CanonicalResponse> {
-    const model = bareModelId(this.require().model ?? '');
+    const model = this.requireModel();
     const unsupported = await this.unsupported(request, false);
     if (unsupported) throw toThrowable(unsupported);
 
@@ -493,7 +517,7 @@ export class GeminiAdapter implements AIProviderAdapter {
   }
 
   async *stream(request: CanonicalRequest): AsyncIterable<CanonicalEvent> {
-    const model = bareModelId(this.require().model ?? '');
+    const model = this.requireModel();
     const unsupported = await this.unsupported(request, true);
     if (unsupported) {
       yield { type: 'error', error: unsupported.error };
@@ -585,7 +609,7 @@ export class GeminiAdapter implements AIProviderAdapter {
     request: CanonicalRequest,
     streaming: boolean,
   ): Promise<ProviderFailure | null> {
-    const model = bareModelId(this.require().model ?? '');
+    const model = this.requireModel();
     return checkCapabilities(
       GEMINI_PROVIDER_ID,
       model,

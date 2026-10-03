@@ -317,6 +317,37 @@ If it answers, the question is closed. If Google refuses, the message is the
 finding — the extension already turns the two refusals it can anticipate into
 sentences naming the fix, and anything else should be reported verbatim.
 
+## The journey's order, and the defect that made it impossible
+
+The journey in §1 is: connect, see what this credential can actually reach,
+choose a model. On 3 October 2026 that was found to be **impossible for two of
+the four providers**, and it had been all along.
+
+`connect` on the Gemini and Anthropic adapters refused a credential with no
+model — `INVALID_ARGUMENT: A model id is required` — so a user had to know a
+model id before they could ask what the model ids were. On Gemini that is
+worse than circular: the three ids the vendor lists first are all models
+Google has retired, so the obvious guess fails and the error used to send the
+user back to the list that offered it.
+
+It also made the two connection paths disagree. A Google authorization has
+always produced an account with `modelId: null`, left for
+`resolveBrainAccount` to refuse until a model is chosen. The pasted-key path
+refused to produce the same thing.
+
+The requirement now belongs to the operations that use a model. `connect`
+validates the credential; `generate` and `stream` refuse with _"choose a model
+for this account before running a task"_ before a request is built. Gemini puts
+the model in the request path and Anthropic in the request body, so without
+the guard the first would have built `/models/:generateContent` and the second
+would have omitted the field — in both cases spending a vendor round trip on
+something already known locally.
+
+Why it took a real vendor and a real browser to see: every adapter test
+supplied a model, because the adapter demanded one. The live harness even
+carried a `'probe-placeholder'` model for exactly this reason, which is a
+workaround written in place of a bug report.
+
 ## What has been exercised live
 
 On 3 October 2026 this journey was driven against the real Gemini API with a
@@ -330,6 +361,24 @@ part of it.
 | Select one and measure it                 | Works. The capability doctor measured `tools=pass streaming=pass vision=pass` against the live endpoint.                                                                                                                                    |
 | Run the agent on it                       | **Was impossible, and is now fixed.** Every tool schema in this build carries `additionalProperties`, which Google's `Schema` type rejects by name — so tool calling failed, Gemini reported `CHAT_ONLY`, and the agent was disabled on it. |
 | A bearer token on an API-key endpoint     | Refused, as designed: `401 … Expected OAuth 2 access token`. The two credential schemes are genuinely not interchangeable, which this build already assumed and can now say it has checked.                                                 |
+
+On 3 October 2026 the same journey was driven again **inside the extension**,
+through the account routes rather than the adapter, against two different
+vendors. What that added:
+
+| Step                                     | Result                                                                                                                                                               |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `accounts.connect` with no model         | Accepted, after the fix above. Returns an account with `modelId: null`.                                                                                              |
+| `accounts.listModels`                    | **44 models from Google, 466 from a commercial gateway** — real discovery through the extension's own route, not a fixture's idea of a catalogue.                    |
+| `accounts.setBrain`                      | The chosen model is recorded and the account becomes the brain.                                                                                                      |
+| `accounts.runDoctor`                     | `AGENT_READY` on both vendors, measured from inside the service worker.                                                                                              |
+| A task, the brain switched, another task | The second task records `providerId: openai-compatible` and completes. **The switch took effect at the vendor** — which two real companies are the only way to show. |
+| `accounts.list`                          | Both accounts, neither row carrying a credential.                                                                                                                    |
+| `accounts.disconnect`                    | The removed account is gone and the brain stays on the survivor: no silent fallback, no stranding.                                                                   |
+| A credential the vendor rejects          | An account is created and the capability doctor reports `FAILED` with the credentials check failing. The rejected key is not echoed back.                            |
+
+Evidence: `tests/e2e/live-provider-in-browser.spec.ts`, opt-in on
+`ABA_E2E_GEMINI_KEY` and `ABA_E2E_OPENROUTER_KEY`.
 
 Two further things the endpoint taught, both now handled:
 

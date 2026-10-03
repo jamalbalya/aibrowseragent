@@ -93,12 +93,40 @@ function posts(
 }
 
 describe('connect', () => {
-  it('requires an API key and a model', async () => {
+  it('requires an API key, and accepts a connection with no model yet', async () => {
+    // **The second half of this used to assert the opposite, and it was
+    // wrong.** `connect` refused a credential with no model, which made the
+    // product's own journey impossible: connect, ask what this credential can
+    // see, then choose. A user had to know a model id before they could
+    // discover what the ids were — and on Gemini the obvious guesses are
+    // models Google has retired.
+    //
+    // It also made the pasted-key path disagree with the Google authorization
+    // path, which has always produced an account with `modelId: null` and left
+    // `resolveBrainAccount` to refuse until one is chosen.
+    //
+    // A key is still required, because there is nothing to validate without
+    // one. The model requirement moved to the operations that use a model;
+    // the case below is that.
     const adapter = new GeminiAdapter(passthroughTransport(vi.fn()));
     expect((await adapter.connect({ providerId: 'gemini' })).authenticated).toBe(false);
-    expect((await adapter.connect({ providerId: 'gemini', apiKey: 'k' })).authenticated).toBe(
-      false,
-    );
+    expect((await adapter.connect({ providerId: 'gemini', apiKey: 'k' })).authenticated).toBe(true);
+  });
+
+  it('refuses the operation, not the connection, when no model was chosen', async () => {
+    // Where the requirement belongs: a request that needs a model is refused
+    // before anything is sent, rather than a malformed one reaching the vendor
+    // or a connection being withheld from somebody who has not chosen yet.
+    const adapter = new GeminiAdapter(passthroughTransport(vi.fn()));
+    await adapter.connect({ providerId: 'gemini', apiKey: 'k' });
+    await expect(
+      adapter.generate({ systemInstruction: '', messages: [], egress: egress() }),
+    ).rejects.toSatisfy((error: unknown) => {
+      const shown = (error as ProviderRequestError).failure.error;
+      expect(shown.code).toBe('INVALID_ARGUMENT');
+      expect(shown.userMessage).toMatch(/choose a model/i);
+      return true;
+    });
   });
 
   it('defaults to the documented endpoint', async () => {

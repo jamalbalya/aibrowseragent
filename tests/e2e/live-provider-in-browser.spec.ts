@@ -38,9 +38,39 @@ import { ask, expect, openPanel, test, waitForTask } from './fixtures/extension'
 const KEY = process.env.ABA_E2E_GEMINI_KEY ?? '';
 const MODEL = process.env.ABA_E2E_GEMINI_MODEL ?? 'gemini-flash-lite-latest';
 
+/**
+ * A second, genuinely different vendor, for the switching journey.
+ *
+ * Optional: the cases that need it skip without it, and everything else still
+ * runs on the Gemini key alone. Two *real* vendors is the only way to test
+ * what §33 claims — that switching the brain switches which service answers —
+ * because one vendor behind two base URLs is still one vendor.
+ */
+const OTHER_KEY = process.env.ABA_E2E_OPENROUTER_KEY ?? '';
+const OTHER_BASE = 'https://openrouter.ai/api/v1';
+const OTHER_MODEL = process.env.ABA_E2E_OPENROUTER_MODEL ?? 'nvidia/nemotron-3.5-lightning:free';
+
 test.skip(KEY.length === 0, 'ABA_E2E_GEMINI_KEY is not set.');
 
-test('the service worker reaches a commercial provider, and the guard still holds', async ({
+/**
+ * ## Why so much is in one test
+ *
+ * Google's free tier allows fifteen requests a minute and one capability
+ * doctor run is eight of them, so two tests that each measure a model exhaust
+ * it and the second reports `RATE_LIMITED` — which says nothing about either.
+ * Playwright gives every test a fresh browser context, so a measurement cannot
+ * be shared across tests; sharing it means sharing the test.
+ *
+ * The phases below are therefore one journey rather than several cases, and
+ * each prints what it observed so a reader can see which part of it held.
+ */
+
+// Five phases, two vendors and three capability measurements against real
+// services. The suite's 60s default is right for a local server and nowhere
+// near enough for this.
+test.setTimeout(300_000);
+
+test('the account journey, end to end, against real vendors', async ({
   context,
   extensionId,
   send,
@@ -157,4 +187,149 @@ test('the service worker reaches a commercial provider, and the guard still hold
   // anything persisted or shown, and neither does the provider key.
   expect(JSON.stringify(refused)).not.toContain('hunter2-do-not-leak');
   expect(JSON.stringify(refused).includes(KEY)).toBe(false);
+
+  // ---- Phase 3: the account routes, against the real vendor -------------
+  //
+  // Phases 1 and 2 used the legacy single-provider routes, which is what the
+  // D15 spec reached for. The product's actual journey is the **account**
+  // routes — connect, discover, choose a brain, measure, run — and those had
+  // only ever been driven against a local server. Discovery in particular:
+  // `accounts.listModels` asks the vendor what this credential can see, and
+  // until now the answer always came from a fixture that returned what the
+  // test intended.
+  const { account } = await send('accounts.connect', {
+    providerId: 'gemini',
+    apiKey: KEY,
+    displayName: 'Gemini (live)',
+  });
+  expect(account, 'accounts.connect returned no account').not.toBeNull();
+  const connectionId = account!.connectionId;
+  // Connecting is not selecting: a fresh account has no model, and the
+  // product refuses to guess one.
+  expect(account!.modelId).toBeNull();
+  expect(JSON.stringify(account)).not.toContain(KEY);
+
+  const discovered = await send('accounts.listModels', { connectionId });
+  process.stdout.write(
+    `[E2ELIVE] discovery: ${discovered.models.length} model(s) from the vendor\n`,
+  );
+  // Real discovery: the vendor offered dozens, not the two a fixture would.
+  expect(discovered.models.length).toBeGreaterThan(10);
+  expect(discovered.models.map((model) => model.id)).toContain(MODEL);
+  // A model list is not a place for a credential.
+  expect(JSON.stringify(discovered)).not.toContain(KEY);
+
+  const chosen = await send('accounts.setBrain', { connectionId, modelId: MODEL });
+  expect(chosen.account.modelId).toBe(MODEL);
+  expect(chosen.account.isBrain).toBe(true);
+
+  // ---- Phase 4: switching the brain to a different real vendor ----------
+  //
+  // §33's claim is that switching the brain switches which service answers.
+  // Every test of it so far used one local server wearing two hats. This uses
+  // two companies.
+  if (OTHER_KEY.length === 0) {
+    process.stdout.write('[E2ELIVE] phase 4 skipped: ABA_E2E_OPENROUTER_KEY is not set.\n');
+    return;
+  }
+
+  const other = await send('accounts.connect', {
+    providerId: 'openai-compatible',
+    baseUrl: OTHER_BASE,
+    apiKey: OTHER_KEY,
+    displayName: 'Gateway (live)',
+  });
+  expect(other.account, JSON.stringify(other.error)).not.toBeNull();
+  const otherId = other.account!.connectionId;
+  expect(otherId).not.toBe(connectionId);
+
+  const otherModels = await send('accounts.listModels', { connectionId: otherId });
+  process.stdout.write(`[E2ELIVE] second vendor: ${otherModels.models.length} model(s)\n`);
+  expect(otherModels.models.length).toBeGreaterThan(10);
+
+  // Both accounts exist, with their own identities, and neither row carries a
+  // key — the panel reads this list.
+  const { accounts } = await send('accounts.list', {});
+  expect(accounts.map((row) => row.connectionId).sort()).toEqual([connectionId, otherId].sort());
+  const listed = JSON.stringify(accounts);
+  expect(listed).not.toContain(KEY);
+  expect(listed).not.toContain(OTHER_KEY);
+
+  // Measure and select the second vendor. Its quota is its own, so this costs
+  // Google nothing.
+  await send('accounts.setBrain', { connectionId: otherId, modelId: OTHER_MODEL });
+  const otherReport = await send('accounts.runDoctor', {
+    connectionId: otherId,
+    modelId: OTHER_MODEL,
+  });
+  process.stdout.write(`[E2ELIVE] second vendor doctor: ${otherReport.report.readiness}\n`);
+
+  const switched = await send('task.create', {
+    objective: 'Read this page and tell me what it says the medium widget weighs.',
+  });
+  const onOther = await waitForTask(send, switched.task.id, 120_000);
+  process.stdout.write(
+    `[E2ELIVE] after switch: provider=${onOther.providerId} model=${onOther.modelId} ` +
+      `state=${onOther.state}\n`,
+  );
+
+  // **The switch took effect at the vendor, not just in the UI.** The task
+  // records the provider that served it, and it is the second one.
+  expect(onOther.providerId).toBe('openai-compatible');
+  expect(onOther.modelId).toBe(OTHER_MODEL);
+  // And neither credential reached the record of a task served by the other.
+  expect(JSON.stringify(onOther).includes(KEY)).toBe(false);
+  expect(JSON.stringify(onOther).includes(OTHER_KEY)).toBe(false);
+
+  // ---- Phase 5: disconnecting the first account -------------------------
+  await send('accounts.disconnect', { connectionId });
+  const after = await send('accounts.list', {});
+  expect(after.accounts.map((row) => row.connectionId)).toEqual([otherId]);
+  // The brain is still the second account: disconnecting one must not strand
+  // the agent on nothing, and must not silently fall back either.
+  expect(after.brain?.connectionId).toBe(otherId);
+});
+
+test('a real vendor rejection is reported as the vendor’s, not as a bug', async ({ send }) => {
+  // Cheap on purpose: one request, no capability measurement, so it costs
+  // almost nothing against the per-minute limit.
+  //
+  // The key is the real one with its last characters changed, so it has the
+  // right shape and no validity. A locally fabricated key can be refused by
+  // this build's own format checks before a request leaves, which tests
+  // nothing about the vendor.
+  const wrong = `${KEY.slice(0, -4)}zzzz`;
+  const { account, error } = await send('accounts.connect', {
+    providerId: 'gemini',
+    apiKey: wrong,
+    displayName: 'Rejected (live)',
+  });
+
+  process.stdout.write(
+    `[E2ELIVE] rejected key: account=${account === null ? 'null' : 'created'} ` +
+      `code=${error?.code}\n`,
+  );
+
+  // Either the connect is refused outright, or an account exists and its
+  // first real use fails — but it must never read as connected *and* usable,
+  // and the message must not blame the user's own configuration when the
+  // vendor is the one refusing.
+  if (account === null) {
+    expect(error, 'a refused connect must say why').toBeDefined();
+    expect(error!.userMessage.length).toBeGreaterThan(0);
+  } else {
+    const probe = await send('accounts.runDoctor', {
+      connectionId: account.connectionId,
+      modelId: MODEL,
+      quick: false,
+    });
+    process.stdout.write(`[E2ELIVE] rejected key doctor: ${probe.report.readiness}\n`);
+    expect(probe.report.readiness).toBe('FAILED');
+    const credentials = probe.report.checks.find((check) => check.id === 'credentials');
+    expect(credentials?.status, JSON.stringify(probe.report.checks)).toBe('fail');
+  }
+
+  // And the rejected key is not echoed anywhere, which is the thing a
+  // provider's own error body is most likely to do.
+  expect(JSON.stringify({ account, error })).not.toContain(wrong);
 });

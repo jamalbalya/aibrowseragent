@@ -264,10 +264,12 @@ const probe = await (async (): Promise<{
   const empty = { ids: [], model: '', unusable: '', unusableMessage: '' };
   if (!CONFIGURED) return empty;
   const { adapter } = harness();
-  const connected = await adapter.connect(config(WANTED_MODEL || 'probe-placeholder'));
-  // A model id is required to connect on two of the three protocols, so the
-  // placeholder above is what lets discovery happen before one is known. It is
-  // never used for a completion.
+  // No placeholder model any more. This used to pass `'probe-placeholder'`,
+  // because two of the four protocols refused to connect without a model —
+  // which is the defect that fix made visible: the product's own journey is
+  // connect, discover, choose, and a workaround here was papering over the
+  // fact that a user could not follow it.
+  const connected = await adapter.connect(config(WANTED_MODEL));
   if (!connected.authenticated && WANTED_MODEL.length === 0) return empty;
   let ids: string[] = [];
   try {

@@ -320,6 +320,75 @@ describe('01 — authorize, discover, select, run', () => {
   });
 });
 
+describe('01b — the order the journey actually happens in', () => {
+  it('connects a pasted key with no model, so discovery can come next', async () => {
+    // **The defect this pins.** The product's journey is: connect, ask what
+    // this credential can see, choose a model. `connect` used to refuse a
+    // credential with no model — so for Gemini and Anthropic a user had to
+    // know a model id before they could discover what the ids were, and on
+    // Gemini the obvious guesses (`gemini-2.5-flash` and friends, the first
+    // three the vendor lists) are models Google has retired.
+    //
+    // It also made the two connection paths disagree with each other. A Google
+    // authorization has always produced an account with `modelId: null`, left
+    // for `resolveBrainAccount` to refuse until one is chosen. The pasted-key
+    // path refused to produce the same thing.
+    //
+    // Found at the extension level against the real vendor, which is the only
+    // place it was visible: every adapter test supplied a model because the
+    // adapter demanded one.
+    const adapter = new GeminiAdapter(recording());
+
+    // Step 1: the credential alone.
+    const auth = await adapter.connect({
+      providerId: GEMINI_PROVIDER_ID,
+      baseUrl: ENDPOINT,
+      apiKey: 'gemini-key-under-test',
+      credentialScheme: 'api_key',
+    });
+    expect(auth.authenticated, auth.error?.message).toBe(true);
+
+    // Step 2: discovery, which is the thing that needed step 1 to succeed.
+    const models = await adapter.listModels();
+    expect(models.map((model) => model.id)).toEqual(['gemini-2.5-flash', 'gemini-2.5-pro']);
+
+    // Step 3: and only now is a model known, so only now can one be chosen.
+    const account = accountAfterSelection(
+      {
+        connectionId: 'conn_order',
+        abaUserId: 'unassigned',
+        providerId: GEMINI_PROVIDER_ID,
+        protocol: 'gemini',
+        displayName: 'Gemini',
+        accountLabel: 'label',
+        authKind: 'api_key',
+        baseUrl: ENDPOINT,
+        modelId: null,
+        capabilities: null,
+        capabilityScope: null,
+        status: 'connected',
+        lastValidated: null,
+        createdAt: NOW,
+      },
+      models[0]!.id,
+    );
+    expect(account.modelId).toBe('gemini-2.5-flash');
+  });
+
+  it('refuses the run, not the connection, while no model is chosen', async () => {
+    // Where the requirement belongs. The connection is usable for discovery;
+    // what it cannot do is serve a task, and that refusal comes from the
+    // account layer with a sentence naming the fix.
+    const account = await connectGoogleAccount();
+    await expect(resolve(account)).rejects.toSatisfy((error: unknown) => {
+      expect(error).toBeInstanceOf(BrainUnavailable);
+      expect((error as BrainUnavailable).refusal).toBe('NO_MODEL_SELECTED');
+      expect((error as Error).message).toMatch(/choose one in settings/i);
+      return true;
+    });
+  });
+});
+
 describe('02 — the credential expires, which the key path never does', () => {
   it('renews before a request rather than after one fails', async () => {
     const account = await connectGoogleAccount();

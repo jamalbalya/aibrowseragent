@@ -332,6 +332,62 @@ time a rate-limited provider stated, then succeeds`.
   needs a key nor spends one.
 - Verdict: EXECUTED — MET
 
+### §84 / §87 — the whole account journey, in the extension, two vendors — 2026-10-03 — **EXECUTED — NOT MET**, defect fixed, re-executed MET
+
+- Commit: `8a7dc08` (fix in the commit that follows)
+- Chrome: the Playwright-managed Chromium, extension loaded unpacked
+- Vendors: Google Gemini API (`gemini-flash-lite-latest`) and a commercial
+  OpenAI-compatible gateway (`nvidia/nemotron-3.5-lightning:free`)
+- Procedure: the product's own journey, through the **account** routes rather
+  than the adapter — connect, discover, choose, measure, run, switch,
+  disconnect.
+- **Why NOT MET on the first attempt.** `accounts.connect` returned `null` with
+  `INVALID_ARGUMENT`. The Gemini and Anthropic adapters' `connect` refused a
+  credential with no model, so the journey's own order was impossible: a user
+  had to know a model id before they could ask what the model ids were. On
+  Gemini that is worse than circular, because the three ids the vendor lists
+  first are all models it has retired. It also made the pasted-key path
+  disagree with the Google authorization path, which has always produced an
+  account with `modelId: null`.
+- Fix: the model requirement moved from `connect` to the operations that use a
+  model. `generate` and `stream` now refuse with _"choose a model for this
+  account before running a task"_ before a request is built — which matters
+  because Gemini puts the model in the request path and Anthropic in the body,
+  so without it the first would have built `/models/:generateContent` and the
+  second would have omitted the field, each spending a vendor round trip on
+  something known locally.
+- Observed after the fix:
+  - `accounts.connect` with no model → an account with `modelId: null`.
+  - `accounts.listModels` → **44 models from Google, 466 from the gateway**.
+    Real discovery, through the extension's own route.
+  - `accounts.setBrain`, then `accounts.runDoctor` → **AGENT_READY** on both
+    vendors, measured from inside the service worker.
+  - A task on the first vendor completed; the brain was switched to the second
+    and the next task recorded `providerId: openai-compatible` and completed.
+    **The switch took effect at the vendor**, which two real companies are the
+    only way to demonstrate.
+  - `accounts.list` carried neither credential.
+  - `accounts.disconnect` removed one account and left the brain on the
+    survivor — no silent fallback, no stranding.
+- Evidence: `tests/e2e/live-provider-in-browser.spec.ts`, opt-in on
+  `ABA_E2E_GEMINI_KEY` and `ABA_E2E_OPENROUTER_KEY`; also pinned in
+  `verify` by `tests/unit/gemini.test.ts`, `tests/unit/anthropic.test.ts` and
+  `tests/integration/google-account-journey.test.ts :: 01b`.
+- Verdict after fix: EXECUTED — MET
+
+### §87 — a credential the vendor rejects — 2026-10-03 — EXECUTED — MET
+
+- Commit: `8a7dc08`
+- Provider: Google Gemini API, with the real key's last four characters changed
+  so the shape is right and the value is not. A locally fabricated key can be
+  refused by this build's own format checks before a request leaves, which
+  tests nothing about the vendor.
+- Observed: the account was created and `accounts.runDoctor` reported
+  **`FAILED`** with the `credentials` check failing — the vendor's refusal,
+  surfaced as the vendor's. The rejected key appears in neither the account
+  record nor the error.
+- Verdict: EXECUTED — MET
+
 ### §87 — the anthropic protocol path of the live harness — 2026-10-03 — EXECUTED — BLOCKED (no key)
 
 - Commit: `efafc48`

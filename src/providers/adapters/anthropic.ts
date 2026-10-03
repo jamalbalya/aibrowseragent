@@ -179,14 +179,6 @@ export class AnthropicAdapter implements AIProviderAdapter {
         }),
       });
     }
-    if (!config.model || config.model.trim().length === 0) {
-      return Promise.resolve({
-        authenticated: false,
-        error: createError('INVALID_ARGUMENT', 'A model id is required.', {
-          userMessage: 'Choose a model, for example one of the ids the model list reports.',
-        }),
-      });
-    }
 
     const baseUrl = (config.baseUrl ?? ANTHROPIC_DEFAULT_BASE_URL).replace(/\/+$/, '');
     let parsed: URL;
@@ -231,6 +223,31 @@ export class AnthropicAdapter implements AIProviderAdapter {
   disconnect(): Promise<void> {
     this.config = null;
     return Promise.resolve();
+  }
+
+  /**
+   * The model this connection will act on, or a refusal naming the gap.
+   *
+   * `connect` deliberately accepts a connection with no model, because the
+   * product's journey is connect, discover what this credential can see, then
+   * choose — and it used to refuse without one, which made that journey
+   * impossible here and for Gemini. The requirement now belongs to the
+   * operations that need a model.
+   *
+   * Anthropic carries the model in the request **body**, so an absent one
+   * would be omitted from the JSON and the vendor would answer 400 for
+   * something already known locally. Refusing here spends no request.
+   */
+  private requireModel(): string {
+    const model = (this.require().model ?? '').trim();
+    if (model.length === 0) {
+      throw toThrowable(
+        providerFailure(ANTHROPIC_PROVIDER_ID, 'invalid_request', 'No model is selected.', {
+          userMessage: 'Choose a model for this account before running a task.',
+        }),
+      );
+    }
+    return model;
   }
 
   private require(): ProviderConfig {
@@ -345,6 +362,7 @@ export class AnthropicAdapter implements AIProviderAdapter {
   }
 
   async generate(request: CanonicalRequest): Promise<CanonicalResponse> {
+    this.requireModel();
     const unsupported = this.unsupported(request, false);
     if (unsupported) throw toThrowable(unsupported);
 
@@ -371,6 +389,7 @@ export class AnthropicAdapter implements AIProviderAdapter {
   }
 
   async *stream(request: CanonicalRequest): AsyncIterable<CanonicalEvent> {
+    this.requireModel();
     const unsupported = this.unsupported(request, true);
     if (unsupported) {
       yield { type: 'error', error: unsupported.error };
