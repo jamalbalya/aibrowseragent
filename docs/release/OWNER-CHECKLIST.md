@@ -40,18 +40,35 @@ Accept both. A person who can be bound by them must do this.
 
 ## Content you need to host or hold
 
-**5. Privacy policy at a public URL — DONE, and now NEEDS REPUBLISHING**
-Published and verified reachable on 2026-09-29:
+**5. Privacy policy at a public URL — DONE, republished, and checked**
 <https://about.jamal-balya.workers.dev/en/privacy>
 Paste it into the dashboard exactly as written.
 
-**`docs/PRIVACY.md` has changed since that copy was published**, and the
-published one is what a reviewer reads. Two additions, both disclosures rather
-than new behaviour: the **optional `identity` permission**, requested only if a
-user chooses to connect a Google account; and that a Google-authorized request
-carries the **name of the Cloud project** the usage is metered against. Copy the
-current `docs/PRIVACY.md` to that URL before submitting anything. Nothing in
-the repository can publish it.
+**Republished by the owner and effective 2026-10-03.** This item previously
+said it needed republishing, because the hosted text predated the optional
+`identity` permission and the Cloud project a Google-authorized request names.
+Both are now in it.
+
+**Read against the implementation on 2026-10-03**, claim by claim, and every
+one holds:
+
+| The published policy says                                                                                               | The code                                                                              |
+| ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `identity` is "requested only when the user chooses to authorize a Google account for the Gemini API"                   | Optional in the manifest, requested on the button, nowhere else                       |
+| "Google's own consent screen opens in a window Chrome controls, so the extension never sees the user's Google password" | `launchWebAuthFlow`; the extension never renders a Google form                        |
+| The Cloud project "is configured when the extension is built, is not read from the user's Google account"               | `VITE_ABA_GOOGLE_QUOTA_PROJECT`, build-time, never from a message                     |
+| An API key "is sent only to the provider it belongs to, as a request header, never in a URL"                            | Per-connection credential; the Gemini adapter refuses a base URL that could carry one |
+| "GitHub, Figma, Jira and Confluence — and none is connected unless the user connects it"                                | Four registered connectors, each `authKind: 'api_token'`                              |
+| "The extension has no backend operated by the developer"                                                                | No backend origin is compiled into the shipped build                                  |
+| "no telemetry, no analytics and no error or crash reporting… no information is sent to the developer"                   | No such destination exists in the egress allowlist                                    |
+| "does not require an account or sign-in"                                                                                | The journey runs signed out start to finish                                           |
+
+An earlier hosted version mentioned "authentication services, synchronization
+services", which the shipped build has none of. **That over-disclosure is gone
+from the republished text** — worth noting because a policy claiming more than
+the product does is its own kind of inaccuracy, and this one corrected itself.
+
+Nothing further is needed here unless the implementation changes again.
 **Do not claim the extension collects no data** — website content is
 transmitted to the user's chosen provider, and that must be disclosed. The
 accurate strong claim is no telemetry, no analytics, nothing to the developer.

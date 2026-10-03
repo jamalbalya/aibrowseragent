@@ -63,9 +63,55 @@ for (const entry of manifest.content_scripts ?? []) {
   for (const file of entry.js ?? []) requireFile(file, 'content_scripts.js');
 }
 
+/**
+ * Reads a PNG's declared dimensions, or `null` if it is not a PNG.
+ *
+ * The first 24 bytes are enough: an 8-byte signature, then the IHDR length and
+ * type, then width and height as big-endian 32-bit integers. No decoding and
+ * no dependency.
+ */
+function pngSize(file) {
+  const header = readFileSync(file).subarray(0, 24);
+  if (header.length < 24) return null;
+  const SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (!header.subarray(0, 8).equals(SIGNATURE)) return null;
+  if (header.subarray(12, 16).toString('latin1') !== 'IHDR') return null;
+  return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) };
+}
+
+/**
+ * Every declared icon exists, is a PNG, and is the size it is declared under.
+ *
+ * **Existence alone was all this checked**, and the two failures that get past
+ * that are the ones that reach the Chrome Web Store dashboard rather than a
+ * terminal: a key pointing at the wrong file — `"128": "icons/icon-16.png"` is
+ * one transposition away — and a file that is truncated or is not a PNG at
+ * all. Chrome refuses a manifest whose icon it cannot decode, so the cost of
+ * not checking here is an upload that fails after the artifact is built.
+ *
+ * A wrong size or an unreadable file is an **error**, not a warning: warnings
+ * here are printed and do not fail, and an icon the browser may reject is not
+ * something to print and carry on past. A *missing* icon stays a warning,
+ * which is the behaviour this check already had and which nothing in this pass
+ * had reason to change.
+ */
 for (const [size, path] of Object.entries(manifest.icons ?? {})) {
   const full = resolve(dist, path);
-  if (!existsSync(full)) warnings.push(`Icon ${size} ("${path}") is missing.`);
+  if (!existsSync(full)) {
+    warnings.push(`Icon ${size} ("${path}") is missing.`);
+    continue;
+  }
+  const declared = Number(size);
+  const actual = pngSize(full);
+  if (actual === null) {
+    errors.push(`Icon ${size} ("${path}") is not a readable PNG.`);
+    continue;
+  }
+  if (actual.width !== declared || actual.height !== declared) {
+    errors.push(
+      `Icon ${size} ("${path}") is ${actual.width}x${actual.height}, not ${declared}x${declared}.`,
+    );
+  }
 }
 
 // The service worker is declared as a module, so it must be emitted as one.
