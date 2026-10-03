@@ -67,6 +67,25 @@ worth knowing that `retries: ${'process.env.CI ? 1 : 0'}` means CI absorbs a
 single flake and a local run does not — so a local failure deserves a re-run
 before it deserves a bisect.
 
+**A third case, 4 October 2026, and the same three lines settled it.** A full
+run reported one failure — `shortcuts.spec.ts :: a shortcut's permission
+profile makes a run stricter than the mode setting`. It is a different shape
+from the two above and the shape is the tell: the error was
+`browserContext.newPage: Target page, context or browser has been closed`,
+raised while Chromium was launching, alongside macOS
+`CVDisplayLinkCreateWithCGDisplay failed` noise. **Nothing asserted anything** —
+the run contained zero assertion failures of any kind. Then: 12 of 12 in
+isolation; the spec references nothing that had changed in the tree; and a
+clean full re-run returned **525 passed, 2 skipped, exit 0** — the same numbers
+as the re-run above.
+
+So the list of specs that have flaked locally is `notifications`,
+`persisted-state` and `shortcuts`, and the useful generalisation is not about
+those three files. It is that **a launch-time Playwright error with no failed
+expectation is contention, not a defect** — worth separating from an assertion
+failure before investigating either, because the two deserve completely
+different attention.
+
 One measurement error of mine is recorded with it: the first run was invoked as
 `npm run test:e2e | tail -8`, which reports **`tail`'s** exit code rather than
 Playwright's. It printed `exited with code 0` over two failures. Pipe the log
