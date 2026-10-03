@@ -263,6 +263,27 @@ repository rather than assumed, and the owner is the only one who can run it.
 **Do not** treat a repository change as publication. Until step 6 shows the new
 text at that URL, the policy a reviewer would read is the old one.
 
+## What must stay synchronized with the extension's behaviour
+
+Two sentences on the published page describe behaviour the extension can
+change, so they are the ones to re-read after any credential or deletion work.
+Listed here because the page lives in another repository and nobody looking at
+this one would otherwise know which lines are load-bearing.
+
+| Published sentence                                                                                                   | What would falsify it                                                                   | Status                                                                 |
+| -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| _"A credential the user supplies is stored locally and is sent only to the service it belongs to."_                  | Sending a credential anywhere else — a telemetry endpoint, a backend, a second provider | True. `tests/security/credential-boundary.test.ts` and `data-flows.md` |
+| _"Revoking the extension's access in the permissions page of the user's Google Account ends it from Google's side."_ | The extension revoking the grant itself, which it now does                              | **Understated** — see the retention section above for the replacement  |
+
+Chrome's own policy text, read 4 October 2026, is also worth keeping beside
+this: _"Handle"_ means _"collecting, transmitting, using, or sharing user
+data"_, and disclosure is required _"even when data is processed or stored
+locally on a user's device and is not transmitted to external servers or third
+parties"_. A policy that leans on "it never leaves the device" is leaning on
+something the policy explicitly does not accept as an exemption. The published
+page does not lean on it; `store-listing.md` records where this repository used
+to.
+
 ## The matching disclosure form
 
 The policy and the dashboard's data-use form must agree. Mismatches are a

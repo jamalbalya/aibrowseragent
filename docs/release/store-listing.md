@@ -234,20 +234,39 @@ What the extension actually does with credentials:
   record, a model prompt, or a URL — and `tests/security/credential-boundary.test.ts`
   is what holds that.
 
-Chrome's published definition is _"Authentication information includes items
-such as logins, passwords, and authentication cookies"_, and its guidance notes
-that _"common ways products handle user data include having login
-functionality, even if using a third-party system like Google
-authentication"_.
+### What Chrome's own policy says, read rather than remembered
 
-Two defensible readings follow, and the owner picks one before submitting:
+This section used to quote the definition without citing where it came from,
+which is a thin footing for a declaration somebody signs. Read from the source
+on 4 October 2026 —
+[Chrome Web Store user-data FAQ](https://developer.chrome.com/docs/webstore/program-policies/user-data-faq)
+— three statements matter, and two of them were not in this document before:
 
-- **"No"** — the examples are logins, passwords and authentication cookies.
-  The user's own API key is none of those, nothing is collected _from_ the
-  user's accounts, and there is no login to this extension at all.
-- **"Yes"** — an OAuth access token functions as an authentication credential,
-  and the extension now runs a Google authorization flow, which that guidance
-  names explicitly even when the third party is Google.
+1. **The category.** _"Authentication information"_ is defined as _"logins,
+   password, and authentication cookies"_.
+2. **The threshold is handling, not collecting.** _"Handle"_ means
+   _"collecting, transmitting, using, or sharing user data."_
+3. **Local-only storage is explicitly not an exemption.** _"Extensions are
+   required to disclose how they handle user data, even when data is processed
+   or stored locally on a user's device and is not transmitted to external
+   servers or third parties."_
+
+**Statements 2 and 3 remove most of the "No" case**, and they were the parts
+this document had been missing:
+
+| Argument previously made for "No"                  | What the policy text does to it                                                                                                        |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| "Nothing is _collected_"                           | The threshold is **handle** — collecting, transmitting, using **or** sharing. The extension transmits these credentials and uses them. |
+| "They stay on the user's device"                   | Explicitly not an exemption: disclosure is required for data stored locally and never transmitted.                                     |
+| "It is the user's own key, not gathered from them" | Provenance is not in the definition. Where the data came from does not change whether it is handled.                                   |
+
+What genuinely survives for "No" is narrower than it looked, and it is only
+this: an **API key** is arguably none of the three named examples — not a
+login, not a password, not a cookie. That argument does not extend to the other
+credential this extension holds. A Google **OAuth access and refresh token**
+is, in function, exactly what an authentication cookie is: a bearer artefact
+that proves an authenticated session to a service. And the extension holds one
+whenever a user takes the Google path.
 
 **Whichever is chosen, the policy and the form must agree**, because a mismatch
 between them is a common rejection. That constraint used to carry a cost: a
@@ -309,32 +328,38 @@ the audit trail, evidence, a task record, a log, a model prompt or a URL, and
 
 ### A recommendation, which is not a decision
 
-Asked for one, here it is with its reasoning. **Answer "Yes".** The decision
-remains the owner's — the form is submitted by a person who can be held to it —
-but if you want a recommendation rather than a balance sheet, that is it, for
-three reasons in order of weight:
+Asked for one, here it is. **Answer "Yes".** The decision remains the owner's —
+the form is submitted by a person who can be held to it — but the reasoning has
+changed since this recommendation was first written, and it is worth saying how.
 
-1. **The asymmetry of being wrong.** A "No" that a reviewer reads as
-   understatement is a rejection and a trust problem; a "Yes" that was stricter
-   than required costs nothing. The extension holds OAuth access and refresh
-   tokens — the one artefact in this product that is unambiguously
-   authentication information in ordinary usage, whatever Chrome's examples
-   enumerate.
-2. **Chrome's guidance points that way on the specific fact that applies
-   here.** Its examples are _"logins, passwords, and authentication
-   cookies"_, which an API key is none of. But its guidance also names
-   _"having login functionality, even if using a third-party system like Google
-   authentication"_, and this build does run a Google authorization flow. That
-   sentence is about this extension; the examples are not.
-3. **Nothing is lost by it.** Both answers are already consistent with the
-   published policy, so "Yes" requires no policy change and forecloses nothing.
-   The data-use form is a disclosure, not a limitation on what you may ship.
+It used to lead on the asymmetry of being wrong: an understated "No" is a
+rejection, an overstated "Yes" costs nothing. That is still true and is now the
+**weakest** of the reasons, because reading Chrome's own policy text supplied
+better ones:
 
-**What argues the other way**, so the choice is informed: nothing is gathered
-_from_ the user's accounts, there is no login to this extension, and every
-credential is supplied by the user and sent only to the service that issued it.
-On a literal reading of the three examples, "No" is defensible — and it is the
-answer currently recorded.
+1. **The form's threshold is "handle", and the policy defines handle as
+   "collecting, transmitting, using, or sharing".** The extension transmits
+   these credentials to their providers on every request and uses them to
+   authenticate. That is handling on Chrome's own definition, and no reading of
+   "we never collect anything" changes it.
+2. **"It stays on the device" is explicitly ruled out as an exemption.**
+   Disclosure is required _"even when data is processed or stored locally on a
+   user's device and is not transmitted to external servers or third parties"_.
+   This extension's whole storage design is local-first, so that sentence is
+   aimed squarely at it.
+3. **One of the two credentials is squarely in the category.** A Google OAuth
+   access or refresh token is functionally what an authentication cookie is: a
+   bearer artefact proving an authenticated session. The named examples cover
+   it even if they do not obviously cover an API key.
+4. **Nothing is lost by answering "Yes".** Both answers are consistent with the
+   published policy, so it requires no policy change and forecloses nothing.
+   The data-use form is a disclosure, not a constraint on what you may ship.
+
+**What still argues for "No"**, so the choice is informed: an API key is
+literally none of the three named examples, and if the Google path were removed
+the question would be genuinely close. It is not removed. "No" is the answer
+currently recorded, and the case for it is narrower than this document
+previously presented.
 
 **Either way the justification text matters more than the checkbox**, because
 it is what a reviewer reads. Use the wording above verbatim; it is true of the
@@ -345,6 +370,42 @@ implementation and verifiable from
 **This repository has not changed the declaration.** It is recorded as "No",
 the recommendation above is a recommendation, and a declaration nobody chose
 would be worse than either answer.
+
+### One other answer worth taking deliberately: "Collects web history"
+
+Recorded as **No**, and that is probably right — but the third policy statement
+above (local storage is not an exemption) removes one of the reasons it looked
+obviously right, so it deserves a deliberate answer rather than an inherited
+one.
+
+**What the extension actually stores.** A task record persists, per tab the
+task touched, the `url`, the `origin`, whether the agent opened it, and a
+`lastObservedAt` timestamp. The audit trail records a `site` per decision. All
+of it local, all of it visible in the panel, and all of it removed when the
+task or the profile is deleted. Chrome's own description of the category — a
+list of pages visited with associated data such as the time of visit — is not a
+bad description of that.
+
+**Why "No" is still the better answer.** Three facts, each checkable:
+
+- **The extension cannot read browsing history at all.** `history` is not in
+  the manifest, nothing in the source touches `chrome.history`, and the string
+  does not appear in the built bundles. That is not merely printed and hoped
+  for: several Chromium tests read `chrome.runtime.getManifest()` in the live
+  worker and assert the **exact sorted permission list**, so adding `history`
+  fails the suite rather than slipping past a reviewer's eye.
+- **The scope is a task, not a session.** What is stored is the pages one task
+  the user asked for actually worked on — the record of the work, not a trace
+  of the person's browsing. A reviewer comparing the two would be comparing
+  "what did this task do" with "where has this user been".
+- **The page data itself is already declared.** "Collects website content" is
+  **Yes**, which is the honest disclosure of the thing a reviewer would
+  actually care about. A URL in the task record beside it adds no undisclosed
+  category.
+
+**Owner action: none required, but answer it on purpose.** If a reviewer
+queries it, the reply is the three facts above — not "it stays on the device",
+which the policy text rules out as a reason.
 
 Supporting detail is in [`data-flows.md`](data-flows.md), category by
 category.
