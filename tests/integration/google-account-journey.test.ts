@@ -40,6 +40,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { MemoryStorageArea, SerializedStorageArea } from '@/storage/storage-area';
 import { AccountStore } from '@/providers/accounts/account-store';
 import { CredentialStore, type StoredOAuthTokens } from '@/config/settings';
+import { ProtectedStorageArea } from '@/crypto/protected-storage-area';
+import { protectExistingRecords } from '@/crypto/protect-existing';
+import { K1Store } from '@/crypto/k1-store';
+import { isEnvelope } from '@/crypto/envelope';
 import {
   GoogleProviderAuth,
   needsRefresh,
@@ -144,6 +148,9 @@ function googleAuth(
   });
 }
 
+/** What the account store was told to record, so state can be asserted. */
+let markedUnusable: { connectionId: string; reason: string }[] = [];
+
 /** The worker's wiring, assembled from the same parts it assembles. */
 function credentialFor(connectionId: string): Promise<string | undefined> {
   return credentialForConnection(connectionId, {
@@ -151,6 +158,12 @@ function credentialFor(connectionId: string): Promise<string | undefined> {
     tokensFor: (id) => credentials.getOAuthTokens(id),
     storeTokens: (id, tokens) => credentials.setOAuthTokens(id, tokens),
     needsRenewal: (tokens) => needsRefresh(tokens, now()),
+    onUnusable: async (id, reason) => {
+      markedUnusable.push({ connectionId: id, reason });
+      const account = await accounts.get(id);
+      if (account === undefined) return;
+      await accounts.put({ ...account, status: 'disconnected', statusReason: reason });
+    },
     renew: async (refreshToken): Promise<RenewOutcome> => {
       const renewed = await googleAuth().refresh(refreshToken);
       if (!renewed.ok) return { ok: false };
@@ -222,6 +235,7 @@ beforeEach(() => {
       scope: GOOGLE_AUTH.scope,
     },
   };
+  markedUnusable = [];
   area = new SerializedStorageArea(new MemoryStorageArea());
   accounts = new AccountStore(area);
   credentials = new CredentialStore(new MemoryStorageArea());
@@ -378,6 +392,146 @@ describe('02 — the credential expires, which the key path never does', () => {
     expect(await credentialFor(account.connectionId)).toBeUndefined();
     // No renewal was attempted: there was nothing to attempt it with.
     expect(tokenPosts).toHaveLength(1);
+  });
+});
+
+describe('02b — the panel is told what the worker learned', () => {
+  it('marks the account unusable when a renewal is refused', async () => {
+    // **The state inconsistency this prevents.** Without it the worker knows
+    // the authorization is dead and the account still reads `connected`, so
+    // the panel shows a healthy row whose every request refuses — two
+    // unrelated-looking problems instead of one explained one.
+    const account = await connectGoogleAccount();
+    await accounts.put(accountAfterSelection(account, 'gemini-2.5-flash'));
+
+    clock = NOW + HOUR;
+    tokenReply = { status: 400, body: { error: 'invalid_grant' } };
+    expect(await credentialFor(account.connectionId)).toBeUndefined();
+
+    expect(markedUnusable).toHaveLength(1);
+    const stored = await accounts.get(account.connectionId);
+    expect(stored?.status).toBe('disconnected');
+    // The sentence names the fix, and it is not "reconnect its API key" —
+    // this account never had one.
+    expect(stored?.statusReason).toMatch(/Connect the Google account again/i);
+    expect(stored?.statusReason).not.toMatch(/API key/i);
+  });
+
+  it('marks it unusable when there is no renewal token to try', async () => {
+    tokenReply = {
+      status: 200,
+      body: { access_token: ACCESS, expires_in: 3600, scope: GOOGLE_AUTH.scope },
+    };
+    const account = await connectGoogleAccount();
+    clock = NOW + HOUR;
+
+    expect(await credentialFor(account.connectionId)).toBeUndefined();
+    expect(markedUnusable).toHaveLength(1);
+    expect(markedUnusable[0]!.reason).toMatch(/expired/i);
+    // One attempt at nothing: no renewal was tried, because there was nothing
+    // to try it with.
+    expect(tokenPosts).toHaveLength(1);
+  });
+
+  it('does not mark a healthy account, or one that renewed', async () => {
+    const account = await connectGoogleAccount();
+    expect(await credentialFor(account.connectionId)).toBe(ACCESS);
+
+    clock = NOW + HOUR;
+    tokenReply = {
+      status: 200,
+      body: { access_token: RENEWED, expires_in: 3600, scope: GOOGLE_AUTH.scope },
+    };
+    expect(await credentialFor(account.connectionId)).toBe(RENEWED);
+
+    // A renewal that worked is not an event the user needs told about.
+    expect(markedUnusable).toEqual([]);
+    expect((await accounts.get(account.connectionId))?.status).toBe('connected');
+  });
+
+  it('records it once rather than on every refused request', async () => {
+    const account = await connectGoogleAccount();
+    clock = NOW + HOUR;
+    tokenReply = { status: 400, body: { error: 'invalid_grant' } };
+
+    await credentialFor(account.connectionId);
+    await credentialFor(account.connectionId);
+    await credentialFor(account.connectionId);
+    // The callback is reached each time — it is the caller's job to be
+    // idempotent, and the worker's version returns early on an account that is
+    // already `disconnected`. What matters here is that the reason does not
+    // change and the status does not oscillate.
+    const stored = await accounts.get(account.connectionId);
+    expect(stored?.status).toBe('disconnected');
+    expect(new Set(markedUnusable.map((entry) => entry.reason)).size).toBe(1);
+  });
+});
+
+describe('02c — the stored authorization is protected like every other credential', () => {
+  it('is encrypted in place when K1 is switched on, object shape and all', async () => {
+    // The failure to avoid: a credential **shape** that the K1 conversion
+    // silently skips, leaving a live refresh token in plaintext on disk after
+    // the user switched protection on. `protectExistingRecords` walks every
+    // key rather than a list, which is what makes this work — and an object
+    // value rather than a string is the part worth proving.
+    const backing = new MemoryStorageArea();
+    const plain = CredentialStore.plainArea(backing);
+    const store = new CredentialStore(backing);
+    const connectionId = 'conn_under_test';
+
+    await store.setOAuthTokens(connectionId, {
+      accessToken: ACCESS,
+      expiresAt: NOW + HOUR,
+      refreshToken: REFRESH,
+      scope: GOOGLE_AUTH.scope,
+    });
+
+    // Plaintext before: the record is readable through the raw area.
+    const before = await plain.get<Record<string, unknown>>(`oauth:${connectionId}`);
+    expect(before?.accessToken).toBe(ACCESS);
+
+    // The real `K1Store`, unlocked, rather than a stub that returns a key:
+    // the conversion's correctness depends on seal and open agreeing, and a
+    // stub could make them agree in a way the product does not.
+    const k1 = new K1Store(new MemoryStorageArea(), new MemoryStorageArea(), () => NOW);
+    await k1.initialize('correct horse battery staple');
+    const protectedArea = new ProtectedStorageArea(
+      plain,
+      k1,
+      // The same label the credential store's own protected area uses. It is
+      // prefixed into the authenticated location, so an envelope sealed under
+      // one label cannot be read under another — which is why the test uses
+      // the real one rather than a convenient string.
+      'credentials',
+    );
+    const outcome = await protectExistingRecords(plain, protectedArea);
+
+    expect(outcome.failed).toBe(0);
+    expect(outcome.unreadable).toBe(0);
+    expect(outcome.encrypted).toBeGreaterThanOrEqual(1);
+
+    // Ciphertext after, and neither token appears anywhere in it.
+    const after = JSON.stringify(await plain.get(`oauth:${connectionId}`));
+    expect(after).not.toContain(ACCESS);
+    expect(after).not.toContain(REFRESH);
+    // And it still reads back through the protected view.
+    expect(
+      (await protectedArea.get<{ accessToken: string }>(`oauth:${connectionId}`))?.accessToken,
+    ).toBe(ACCESS);
+  });
+
+  it('is not mistaken for an already-encrypted envelope', async () => {
+    // The one confusion that would destroy data: treating an envelope as
+    // plaintext and sealing it twice, or treating plaintext as an envelope and
+    // leaving it. An envelope is identified by `v` and `alg`, and
+    // `StoredOAuthTokens` has neither.
+    const tokens = {
+      accessToken: ACCESS,
+      expiresAt: NOW,
+      refreshToken: REFRESH,
+      scope: GOOGLE_AUTH.scope,
+    };
+    expect(isEnvelope(tokens)).toBe(false);
   });
 });
 

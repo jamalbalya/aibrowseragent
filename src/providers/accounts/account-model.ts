@@ -72,6 +72,18 @@ export interface ConnectedAccount {
   readonly authKind: AuthKind;
   readonly baseUrl?: string;
   /**
+   * The Google Cloud project an OAuth-authorized call is metered against.
+   *
+   * Per connection rather than global, for the same reason `baseUrl` is: two
+   * authorized accounts can belong to different projects, and one of them
+   * paying for the other's calls is not a detail. Written at connect time from
+   * the build's configuration and never from a message.
+   *
+   * Absent on every key-authorized account, because a key carries its own
+   * project.
+   */
+  readonly quotaProject?: string;
+  /**
    * The model, exactly as the provider named it.
    *
    * For a gateway account this routinely contains `/` — `openai/gpt-5.x` — and

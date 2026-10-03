@@ -279,6 +279,19 @@ export interface ProviderConfig {
    * to it. Only an adapter whose provider documents both needs to read it.
    */
   readonly credentialScheme?: 'api_key' | 'bearer';
+  /**
+   * The Google Cloud project to meter an OAuth-authorized call against.
+   *
+   * Sent as `x-goog-user-project`, and **only** alongside a bearer credential.
+   * Google documents that a user-credential call to a client-based API must
+   * name a quota project, and answers one that does not with a message about
+   * exactly that. A key carries its own project, so a key request must not send
+   * this — it would name a second project for the same call.
+   *
+   * Validated before it gets here (`parseQuotaProject`), because it travels in
+   * a header and an unvalidated header value is header injection.
+   */
+  readonly quotaProject?: string;
 }
 
 export interface AuthResult {

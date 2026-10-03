@@ -929,13 +929,40 @@ credential. An authorized connection also expires, so `credentialForConnection`
 renews it before use, writes the new token back, and **does not retry a refused
 renewal**: a revoked grant does not become valid by being asked again.
 
+**The remaining uncertainty narrowed, and one earlier reading was too strong.**
+The previous entry said Google's discovery document "declares no OAuth scope
+for `generateContent`", implying OAuth might not cover it. The documents do
+declare scopes — for seven methods in `v1` and thirteen in `v1beta`, all file,
+cache or media operations, all naming only a vestigial
+`devstorage.read_only` — so the document does not describe this API's OAuth
+scoping at all and its silence is not evidence either way. The better evidence
+is the endpoint: `POST …:generateContent` with a bearer literal answers `401
+UNAUTHENTICATED` — _"Expected OAuth 2 access token, login cookie or other valid
+authentication credential"_ — naming
+`GenerativeService.GenerateContent`. A method that did not accept the scheme
+would not say that.
+
+**And it found a gap that would have bitten the owner immediately after G-6.**
+Google documents that a user-credential call to a client-based API must name a
+project for billing and quota, via `x-goog-user-project`, and its own Gemini
+OAuth quickstart sends that header beside the bearer token. The adapter sent no
+such header. It now does — only alongside a bearer credential, never with a
+key, from a value configured by whoever registers the client and **never
+guessed from the client id's digits**, because "usually a project number" is not
+a documented mapping for a value that decides whose quota is spent. Google's own
+quota-project refusal is turned into a sentence naming the setting, instead of
+the shared message for that status, which mentions a key the user does not have
+and tells them to change a model that is fine.
+
 **Not verified live.** A real Google authorization needs an OAuth client
 registered to this extension's id, which is owner action G-6, and the shipped
 build carries none — so it reports the method unavailable _with a reason_ and
-offers the key path instead. Whether every Gemini method accepts a bearer token
-on every project configuration is **unverified**: Google's discovery document
-declares no OAuth scope for `generateContent`, and the documented quickstart
-covers retrieval.
+offers the key path instead. What remains **unverified** is one specific thing:
+whether a validly issued `cloud-platform` token, with a quota project naming a
+Cloud project that has the Generative Language API enabled, is accepted for
+`generateContent`. `docs/account-integration.md` separates the four evidence
+classes and names the minimal procedure that would settle it — G-6 step 4.4,
+one task on a configured build.
 
 **A clause was added, and it is the one the row was missing.** §17 requires
 provider routing to be user-controlled and forbids silent switching. Four

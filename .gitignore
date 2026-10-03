@@ -15,7 +15,13 @@ coverage/
 .DS_Store
 .env
 .env.*
+# The two exceptions: names only, every value empty, so the required set is
+# discoverable without any value being present. `.env.example` documents the
+# optional backend; `.env.extension.example` documents the extension's own
+# build-time values, none of which can be a secret because Vite inlines them
+# into `dist/`.
 !.env.example
+!.env.extension.example
 *.log
 .vite/
 # Vitest's reporter output directory, created by `--reporter=json`. A build

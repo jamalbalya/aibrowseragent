@@ -258,6 +258,19 @@ export class GeminiAdapter implements AIProviderAdapter {
    * empty `x-goog-api-key` alongside a bearer token would be a second,
    * blank credential on the request.
    */
+  /**
+   * How this connection authenticates, for error classification.
+   *
+   * Read from the live config rather than passed down, so a failure cannot be
+   * classified against a different connection's shape than the request was
+   * made with.
+   */
+  private authShape(): { readonly bearer: boolean; readonly quotaProject?: string } {
+    const bearer = this.config?.credentialScheme === 'bearer';
+    const project = this.config?.quotaProject;
+    return { bearer, ...(project === undefined ? {} : { quotaProject: project }) };
+  }
+
   private headers(): Record<string, string> {
     const config = this.require();
     const base = {
@@ -265,7 +278,22 @@ export class GeminiAdapter implements AIProviderAdapter {
       'Content-Type': 'application/json',
     };
     if (config.credentialScheme === 'bearer') {
-      return { ...base, Authorization: `Bearer ${config.apiKey ?? ''}` };
+      return {
+        ...base,
+        Authorization: `Bearer ${config.apiKey ?? ''}`,
+        // Google documents that a user-credential call to a client-based API
+        // must name a project for billing and quota, and answers one that does
+        // not with a message saying so. The quickstart's own curl example sends
+        // this header beside the bearer token.
+        //
+        // Only with a bearer credential. A key already carries its own
+        // project, so sending this with one would name a second project for
+        // the same call. Omitted when none is configured rather than sent
+        // empty — an empty value is a project id Google cannot resolve.
+        ...(config.quotaProject === undefined
+          ? {}
+          : { 'x-goog-user-project': config.quotaProject }),
+      };
     }
     return { ...base, 'x-goog-api-key': config.apiKey ?? '' };
   }
@@ -388,7 +416,7 @@ export class GeminiAdapter implements AIProviderAdapter {
       if (!response.ok) {
         return {
           reachable: false,
-          error: (await toHttpFailure(response, this.config?.apiKey)).error,
+          error: (await toHttpFailure(response, this.config?.apiKey, this.authShape())).error,
         };
       }
       return { reachable: true, latencyMs: Date.now() - started };
@@ -421,7 +449,8 @@ export class GeminiAdapter implements AIProviderAdapter {
       throw toThrowable(toNetworkError(GEMINI_PROVIDER_ID, error, ':generateContent'));
     }
 
-    if (!response.ok) throw toThrowable(await toHttpFailure(response, this.config?.apiKey));
+    if (!response.ok)
+      throw toThrowable(await toHttpFailure(response, this.config?.apiKey, this.authShape()));
 
     const body = await parseJsonBody<WireGenerateResponse>(GEMINI_PROVIDER_ID, response);
     // A 200 carrying an error object is documented and must not be read as a
@@ -464,7 +493,10 @@ export class GeminiAdapter implements AIProviderAdapter {
     }
 
     if (!response.ok) {
-      yield { type: 'error', error: (await toHttpFailure(response, this.config?.apiKey)).error };
+      yield {
+        type: 'error',
+        error: (await toHttpFailure(response, this.config?.apiKey, this.authShape())).error,
+      };
       return;
     }
     if (!response.body) {
@@ -868,19 +900,63 @@ function categoryForStatusEnum(status: string | undefined, code: number | undefi
   return 'invalid_request' as const;
 }
 
+/**
+ * Whether Google is complaining about the quota project rather than the model.
+ *
+ * Google's documented behaviour for a **user-credential** call to a
+ * client-based API: *"If your API call returns an error message saying that
+ * user credentials are not supported or that the quota project is not set, you
+ * must explicitly set the quota project by including the `x-goog-user-project`
+ * header."* That is a configuration gap with a specific fix, and the shared
+ * message for the same status — *"the key was accepted but is not permitted to
+ * use this model"* — would send the user to change their model, which cannot
+ * help and mentions a key they may not have.
+ *
+ * Matched on Google's own phrases rather than echoed. The body is
+ * attacker-influenceable text in general and a provider's error body can echo
+ * a credential, so what is read is whether a known phrase is *present*; the
+ * sentence the user sees is this build's.
+ */
+function namesTheQuotaProject(detail: string | undefined): boolean {
+  if (detail === undefined) return false;
+  const lowered = detail.toLowerCase();
+  return (
+    lowered.includes('quota project') ||
+    lowered.includes('user credentials are not supported') ||
+    lowered.includes('x-goog-user-project')
+  );
+}
+
 function failureFromError(
   error: WireError,
   retry: number | undefined,
   fallbackMessage: string,
   detail?: string,
+  options: { readonly bearer?: boolean; readonly quotaProject?: string } = {},
 ): ProviderFailure {
   const category = categoryForStatusEnum(error.status, error.code);
 
-  const userMessage =
-    category === 'authentication_failed'
-      ? 'The API key was rejected. Check the key and that it is enabled for this API.'
+  // Only for a bearer credential: a key request cannot be short a quota
+  // project, so reading the same phrase there would be a coincidence.
+  const quotaProjectMissing = options.bearer === true && namesTheQuotaProject(detail);
+
+  const userMessage = quotaProjectMissing
+    ? options.quotaProject === undefined
+      ? 'Google needs to know which Cloud project to meter this against. This build has no ' +
+        'quota project configured — see docs/release/OWNER-CHECKLIST.md section G-6, or ' +
+        'connect with a Gemini API key instead.'
+      : 'Google refused the Cloud project this build names for billing and quota. Check that ' +
+        'the project exists, has the Generative Language API enabled, and that the authorized ' +
+        'account may use it.'
+    : category === 'authentication_failed'
+      ? options.bearer === true
+        ? 'Google rejected the authorization. Connect the Google account again.'
+        : 'The API key was rejected. Check the key and that it is enabled for this API.'
       : category === 'access_denied'
-        ? 'The key was accepted but is not permitted to use this model.'
+        ? options.bearer === true
+          ? 'The authorized account is not permitted to use this model, or the Generative ' +
+            'Language API is not enabled on its project.'
+          : 'The key was accepted but is not permitted to use this model.'
         : category === 'unsupported_capability'
           ? 'The model id was not found. Check it against the model list.'
           : category === 'rate_limited'
@@ -910,7 +986,11 @@ function failureFromError(
  * Passed explicitly rather than read from ambient state, because the thing
  * that must not emit a secret should be given it deliberately.
  */
-async function toHttpFailure(response: Response, secret?: string): Promise<ProviderFailure> {
+async function toHttpFailure(
+  response: Response,
+  secret?: string,
+  options: { readonly bearer?: boolean; readonly quotaProject?: string } = {},
+): Promise<ProviderFailure> {
   const raw = await readErrorBody(response, { ...(secret === undefined ? {} : { secret }) });
   let error: WireError = {};
   try {
@@ -926,6 +1006,7 @@ async function toHttpFailure(response: Response, secret?: string): Promise<Provi
     retryAfterMs(response),
     `The provider returned ${response.status}.`,
     raw,
+    options,
   );
 }
 

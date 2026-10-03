@@ -66,7 +66,8 @@ What the build does with it:
   verifier and no secret;
 - stores the access and refresh tokens as that one connection's credential;
 - presents the access token as `Authorization: Bearer` to
-  `generativelanguage.googleapis.com`, and renews it before expiry.
+  `generativelanguage.googleapis.com`, with the configured Cloud project as
+  `x-goog-user-project`, and renews it before expiry.
 
 The scope is `https://www.googleapis.com/auth/cloud-platform`, which is the
 scope Google's own Gemini OAuth guide uses. It is broad, and the panel says so
@@ -173,7 +174,7 @@ Every connector still uses the tab-watching flow in
 | -------------------- | ----------------------- | ------------------------------------------------------- |
 | Stored at            | `credentials:conn:<id>` | `credentials:oauth:<id>`                                |
 | Credential           | one key string          | access token, refresh token, expiry, granted scope      |
-| Header               | the vendor's key header | `Authorization: Bearer`                                 |
+| Header               | the vendor's key header | `Authorization: Bearer`, plus `x-goog-user-project`     |
 | Expires              | no                      | yes, typically within the hour                          |
 | On expiry            | —                       | renewed before the next request, once, and written back |
 | On a refused renewal | —                       | reports no credential; does **not** retry               |
@@ -185,6 +186,14 @@ or nothing, and none of them knows which kind it was. A refused renewal returns
 nothing rather than throwing: the caller's refusal is "this needs authorizing
 again", which is the truth and names the fix.
 
+The quota project is stored **on the account**, not globally, because two
+authorized accounts can belong to different Cloud projects and one paying for
+the other's calls is not a detail. It is written at connect time from the
+build's configuration and never from a message, and it is **never guessed from
+the client id** — the digits at the start of a Google client id usually are a
+project number, and "usually" is not a documented mapping for a value that
+decides whose quota is spent.
+
 Disconnecting clears **both** shapes unconditionally. The failure that would
 otherwise be easy is a disconnect that removes the key slot an authorized
 account never had and leaves a live refresh token behind.
@@ -194,10 +203,11 @@ account never had and leaves a live refresh token behind.
 Two origins are reached that no other part of the build reaches, and both are
 disclosed in `docs/release/data-flows.md`:
 
-| Origin                  | What is sent                                                      | When                                      |
-| ----------------------- | ----------------------------------------------------------------- | ----------------------------------------- |
-| `accounts.google.com`   | an authorization request the user performs in Chrome's own window | the user pressed Connect with Google      |
-| `oauth2.googleapis.com` | the code and PKCE verifier, or a refresh token                    | completing or renewing that authorization |
+| Origin                              | What is sent                                                      | When                                              |
+| ----------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------- |
+| `accounts.google.com`               | an authorization request the user performs in Chrome's own window | the user pressed Connect with Google              |
+| `generativelanguage.googleapis.com` | the task, with the access token and the Cloud project name        | an authorized Gemini account is the agent's brain |
+| `oauth2.googleapis.com`             | the code and PKCE verifier, or a refresh token                    | completing or renewing that authorization         |
 
 Both go through the egress gate on a channel of their own, `provider_auth`,
 with an opaque payload policy so neither the code nor the refresh token reaches
@@ -205,13 +215,87 @@ an evidence digest. The destination is pinned: a token exchange aimed at any
 other origin yields a `null` destination identity, which the gate denies by the
 same rule that denies every unrecognisable destination.
 
+## Does the Gemini API accept a bearer token? What is actually known
+
+This was the one open question from the previous pass, and it is now narrowed
+to a single thing an owner can settle. The four evidence classes are kept
+apart on purpose.
+
+### Confirmed by Google's own documentation
+
+- **A Chrome Extension OAuth client carries no secret.** Google: a client
+  secret "is not applicable to requests from clients registered as Android,
+  iOS, or Chrome applications".
+- **A user-credential call must name a quota project.** Google: _"When you
+  provide user credentials to authenticate to a client-based API, you must
+  specify the project to use for billing and quota… If your API call returns an
+  error message saying that user credentials are not supported or that the
+  quota project is not set, you must explicitly set the quota project by
+  including the `x-goog-user-project` header."_ Google's own Gemini OAuth
+  quickstart sends that header beside the bearer token.
+- **`cloud-platform` is the scope Google's Gemini OAuth guide uses.** The
+  narrower documented alternative, `generative-language.retriever`, covers
+  semantic retrieval and cannot run a model.
+
+### Confirmed by probing the live endpoint with no credential
+
+Two `curl` calls, carrying a literal that is not a credential for anything:
+
+| Request                                                                                   | Answer                                                                                                                                          |
+| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1beta/models`, no authorization                                                    | `403` — _"Method doesn't allow unregistered callers… Please use API Key or other form of API consumer identity"_                                |
+| `GET /v1beta/models`, `Authorization: Bearer <literal>`                                   | `401 UNAUTHENTICATED` — _"Expected OAuth 2 access token, login cookie or other valid authentication credential"_, `reason: CREDENTIALS_MISSING` |
+| `POST /v1beta/models/gemini-2.5-flash:generateContent`, `Authorization: Bearer <literal>` | the same `401`, naming `google.ai.generativelanguage.v1beta.GenerativeService.GenerateContent`                                                  |
+
+The third row is the one that matters and it is new. **`generateContent`
+itself** — not just the model list — answers a bearer request by rejecting the
+token's _validity_, and names the scheme it expected. A method that did not
+accept bearer authentication at all would not say that.
+
+**A correction to the previous record.** It said Google's discovery document
+"declares no OAuth scope for `generateContent`", implying OAuth might not cover
+it. That reading was too strong. The discovery documents for `v1` and `v1beta`
+declare scopes for **seven and thirteen** methods respectively, all of them
+file, cache or media operations, and all naming only
+`devstorage.read_only` — a vestigial entry. The document does not describe this
+API's OAuth scoping **at all**, so its silence about `generateContent` is not
+evidence either way. The live probe above is the better evidence, and it points
+the other way.
+
+### Tested here with mocks and non-credential literals only
+
+- The whole authorization: PKCE, the callback checks, the scope refusal, the
+  renewal, the refusal to retry a refused renewal — 49 unit cases and 21
+  integration cases over the real stack.
+- The request shape: a bearer token in `Authorization` and never in
+  `x-goog-api-key`, the quota project in `x-goog-user-project` and only
+  alongside a bearer credential, and neither in a URL.
+- Every refusal message, including the two that would otherwise send an owner
+  the wrong way: Google's quota-project complaint, and a client registered for
+  a different extension id.
+
+### Still unverified, and exactly what would settle it
+
+**Whether a validly issued `cloud-platform` token, with a quota project naming
+a Cloud project that has the Generative Language API enabled, is accepted for
+`generateContent`.** Nothing short of a real authorization can establish it,
+and this repository holds no Google OAuth client.
+
+The minimal procedure is `docs/release/OWNER-CHECKLIST.md` G-6 step 4.4: with a
+configured build, connect a Google account, choose a model, and run one task.
+If it answers, the question is closed. If Google refuses, the message is the
+finding — the extension already turns the two refusals it can anticipate into
+sentences naming the fix, and anything else should be reported verbatim.
+
 ## What has not been exercised live
 
-|                                                               | Why                                                                                                                                                                                                                                                          |
-| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| A real Google authorization                                   | Needs an OAuth client registered to this extension's id. This repository holds none, and registering one is an owner action — `docs/release/OWNER-CHECKLIST.md` section G-6.                                                                                 |
-| A real Gemini API call with an OAuth token                    | Needs the above, plus a Cloud project with the Generative Language API enabled.                                                                                                                                                                              |
-| Whether an OAuth-authorized call needs a quota project header | Google's discovery document declares no OAuth scope for `generateContent` or `models.list`, and the documented OAuth quickstart covers retrieval. The bearer scheme is accepted; whether every method is, on every project configuration, is **unverified**. |
+## What has not been exercised live
+
+|                                                         | Why                                                                                                                                                                          |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A real Google authorization                             | Needs an OAuth client registered to this extension's id. This repository holds none, and registering one is an owner action — `docs/release/OWNER-CHECKLIST.md` section G-6. |
+| A real Gemini API call with an OAuth token              | Needs the above, plus a Cloud project with the Generative Language API enabled.                                                                                              |
+| Whether a valid token is accepted for `generateContent` | Needs a real authorization. The scheme is accepted and the quota-project header is now sent; see the section above for what is known and what would settle it.               |
 
 The shipped build therefore reports the Google method as **not available, with
 a reason**, and offers the Gemini API key path instead. That is what

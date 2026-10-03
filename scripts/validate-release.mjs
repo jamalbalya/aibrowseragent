@@ -337,5 +337,38 @@ if (errors.length > 0) {
 console.log(`✓ Release artefact valid: ${pkg.name} ${pkg.version}`);
 console.log(`  files:       ${relPaths.length}`);
 console.log(`  permissions: ${(manifest.permissions ?? []).join(', ')}`);
+console.log(`  optional:    ${(manifest.optional_permissions ?? []).join(', ') || 'none'}`);
 console.log(`  host access: ${hostPermissions.join(', ') || 'none'}`);
+
+/**
+ * Whether this artifact can offer a Google provider authorization.
+ *
+ * Reported because two builds with the same version and the same permissions
+ * behave differently here, and nothing else on disk says which one you are
+ * holding. A client id is **not** a secret — it is inlined and anybody who
+ * unzips the extension can read it — so printing its presence discloses
+ * nothing, and an owner who has just followed G-6 needs to be able to tell
+ * whether their rebuild took.
+ *
+ * Read from the built bundle rather than from the environment, so it describes
+ * the artifact and not the shell that happens to be running this check.
+ */
+// A whole client id — digits, a hyphen, then the suffix — and **not** the
+// bare suffix. The first version of this line searched for
+// `.apps.googleusercontent.com` and reported every build as configured,
+// because `provider-auth-config.ts` contains that string in the check that
+// validates a client id. The same shape of false positive as the artifact scan
+// matching the redactor's own private-key pattern: a detector finding the
+// detector.
+const CLIENT_ID_PATTERN = /[0-9]{6,}-[a-z0-9]{6,}\.apps\.googleusercontent\.com/;
+const googleClient = relPaths
+  .filter((name) => name.endsWith('.js'))
+  .some((name) => CLIENT_ID_PATTERN.test(readFileSync(resolve(dist, name), 'utf8')));
+console.log(
+  `  google oauth: ${
+    googleClient
+      ? 'a client id IS compiled in — the panel can offer "Connect with Google"'
+      : 'no client id — the panel reports the Google option unavailable, with a reason'
+  }`,
+);
 console.log('  note: Chrome Web Store policy is NOT checked here and must be verified separately.');

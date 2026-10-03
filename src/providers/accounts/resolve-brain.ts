@@ -160,6 +160,9 @@ export async function resolveBrainAccount(
     // and an adapter that guessed would send one in the header the endpoint
     // ignores — an unauthenticated request carrying the user's credential.
     credentialScheme: account.authKind === 'oauth2' ? 'bearer' : 'api_key',
+    // Travels with the account, so a second authorized account on another
+    // project cannot be metered against this one's.
+    ...(account.quotaProject === undefined ? {} : { quotaProject: account.quotaProject }),
     model: account.modelId,
     // Handed in so the adapter's pre-flight capability check reads the
     // doctor's measurement rather than its own advertised placeholder.

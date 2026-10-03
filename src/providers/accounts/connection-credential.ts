@@ -45,6 +45,19 @@ export interface ConnectionCredentialDeps {
   readonly renew: (refreshToken: string) => Promise<RenewOutcome>;
   /** Whether this record needs renewing now. */
   readonly needsRenewal: (tokens: StoredOAuthTokens) => boolean;
+  /**
+   * Called when an authorization can no longer produce a credential.
+   *
+   * Optional, and the reason it exists is state consistency rather than
+   * reporting: without it the panel goes on showing an account as connected
+   * while every request refuses, because the worker learned something it never
+   * wrote down. The message is the one a person can act on.
+   *
+   * Awaited, so a caller that records it has recorded it before the refusal
+   * reaches the user — a refusal that arrives before the status it explains
+   * reads as two unrelated problems.
+   */
+  readonly onUnusable?: (connectionId: string, reason: string) => Promise<void>;
 }
 
 export async function credentialForConnection(
@@ -63,11 +76,23 @@ export async function credentialForConnection(
     // the request did not force the screen. The access token is spent and the
     // honest state is that this connection needs authorizing again — which is
     // what `undefined` tells the caller.
+    await deps.onUnusable?.(
+      connectionId,
+      'This authorization has expired and came without a renewal token. Connect the Google ' +
+        'account again.',
+    );
     return undefined;
   }
 
   const renewed = await deps.renew(tokens.refreshToken);
-  if (!renewed.ok) return undefined;
+  if (!renewed.ok) {
+    await deps.onUnusable?.(
+      connectionId,
+      'Google would not renew this authorization — it may have been revoked. Connect the ' +
+        'Google account again.',
+    );
+    return undefined;
+  }
 
   await deps.storeTokens(connectionId, renewed.tokens);
   return renewed.tokens.accessToken;

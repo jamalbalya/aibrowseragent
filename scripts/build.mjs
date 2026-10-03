@@ -32,6 +32,11 @@ function run(args, label) {
   }
 }
 
+// Before anything is compiled, so a value that is set and unusable stops the
+// build at the moment the person who set it is watching — rather than being
+// ignored, which looks identical to never having set it.
+run(['node', 'scripts/check-extension-env.mjs'], 'Checking optional extension build configuration');
+
 run(['vite', 'build'], 'Building side panel and service worker');
 run(['vite', 'build', '--config', 'vite.content.config.ts'], 'Building content script');
 

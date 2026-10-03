@@ -93,6 +93,17 @@ export interface GoogleProviderToken {
 
 export type GoogleAuthFailure =
   | 'NOT_CONFIGURED'
+  /**
+   * The client id does not match this extension, or Google does not know it.
+   *
+   * Separated from `EXCHANGE_FAILED` because the fix is completely different
+   * and belongs to whoever built the extension, not the user: Google pins a
+   * Chrome Extension client to one extension id, and an unpacked build has a
+   * different id from a published one. Reporting this as "Google refused to
+   * issue a token" would send a user hunting through their own account for a
+   * problem in the build's configuration.
+   */
+  | 'CLIENT_MISMATCH'
   | 'PERMISSION_DENIED'
   | 'CANCELLED'
   | 'CALLBACK_INVALID'
@@ -171,6 +182,27 @@ export async function prepareGoogleAuthorization(
 }
 
 /**
+ * Google error codes that mean the **build's** client registration is wrong.
+ *
+ * `redirect_uri_mismatch` is the one this project will actually hit: Google
+ * pins a Chrome Extension client to one extension id, and an unpacked build
+ * has a different id from a published one. `invalid_client` and
+ * `unauthorized_client` are the same class of problem — a client Google does
+ * not recognise, or one not permitted this grant.
+ */
+const CLIENT_PROBLEM_CODES: ReadonlySet<string> = new Set([
+  'redirect_uri_mismatch',
+  'invalid_client',
+  'unauthorized_client',
+]);
+
+const CLIENT_MISMATCH_REASON =
+  'Google did not accept this build’s OAuth client. The client is registered to one ' +
+  'extension id, and this build’s id is different — an unpacked build and a published one ' +
+  'never share one. See docs/release/OWNER-CHECKLIST.md section G-6, or connect with a ' +
+  'Gemini API key instead.';
+
+/**
  * Reads a callback, or says exactly why it was refused.
  *
  * Order matters, and it is the order `oauth-flow.ts` established: the redirect
@@ -210,8 +242,15 @@ export function readGoogleCallback(
 
   const refused = parsed.searchParams.get('error');
   if (refused !== null) {
-    // Google's own code — `access_denied` and friends — and not its
+    // Google's own code — a fixed OAuth vocabulary — and never its
     // description, which is attacker-influenceable text on a URL.
+    //
+    // Two of those codes are a misconfigured build rather than a user saying
+    // no, and they are separated here because the fix differs and belongs to
+    // somebody else.
+    if (CLIENT_PROBLEM_CODES.has(refused)) {
+      return { ok: false, failure: 'CLIENT_MISMATCH', reason: CLIENT_MISMATCH_REASON };
+    }
     return {
       ok: false,
       failure: 'DECLINED',
@@ -244,6 +283,18 @@ export function readGoogleCallback(
     };
   }
   return { ok: true, code };
+}
+
+/**
+ * Whether a token-endpoint refusal is about the client rather than the grant.
+ *
+ * Reads one field, compares it against a closed set, and returns a boolean —
+ * so nothing from the body can reach a message, a log or a record.
+ */
+export function namesAClientProblem(body: unknown): boolean {
+  if (typeof body !== 'object' || body === null) return false;
+  const code = (body as Record<string, unknown>).error;
+  return typeof code === 'string' && CLIENT_PROBLEM_CODES.has(code);
 }
 
 /** Form-encodes an exchange. Separate so a test can read what is sent. */
@@ -440,6 +491,13 @@ export class GoogleProviderAuth {
       };
     }
     if (response.status !== 200) {
+      // The `error` field only — a fixed OAuth vocabulary — and never
+      // `error_description`, which a token endpoint can use to echo the
+      // authorization code back. Matched against a known set and discarded;
+      // what the user sees is this build's sentence.
+      if (namesAClientProblem(response.body)) {
+        return { ok: false, failure: 'CLIENT_MISMATCH', reason: CLIENT_MISMATCH_REASON };
+      }
       return {
         ok: false,
         failure: 'EXCHANGE_FAILED',

@@ -3165,6 +3165,7 @@
         "tests/integration/provider-switching.test.ts"
       ],
       "security": [
+        "tests/security/extension-env.test.ts",
         "tests/security/google-provider-auth.test.ts",
         "tests/security/provider-conformance.test.ts",
         "tests/security/provider-transport.test.ts"

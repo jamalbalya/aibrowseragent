@@ -52,6 +52,7 @@ import {
 } from '@/providers/accounts/authorization';
 import {
   GoogleProviderAuth,
+  namesAClientProblem,
   needsRefresh,
   prepareGoogleAuthorization,
   readGoogleCallback,
@@ -565,6 +566,240 @@ describe('06 — the credential goes in the header the service reads', () => {
     // request carrying the user's credential.
     const source = file('providers/accounts/resolve-brain.ts');
     expect(source).toContain("account.authKind === 'oauth2' ? 'bearer' : 'api_key'");
+  });
+});
+
+describe('06b — a misconfigured client is reported as that, not as the user’s fault', () => {
+  const pending = {
+    state: 'state-under-test',
+    codeVerifier: 'verifier-under-test',
+    redirectUri: REDIRECT,
+    createdAt: NOW,
+  };
+
+  it('separates a wrong client registration from a user declining', () => {
+    // Google pins a Chrome Extension client to **one** extension id, and an
+    // unpacked build has a different id from a published one. Reporting that
+    // as "Google refused the authorization" sends a user hunting through
+    // their own Google account for a problem in the build.
+    for (const code of ['redirect_uri_mismatch', 'invalid_client', 'unauthorized_client']) {
+      const result = readGoogleCallback(`${REDIRECT}?error=${code}`, pending, NOW);
+      expect(result.ok === false && result.failure, code).toBe('CLIENT_MISMATCH');
+      // The sentence names whose problem it is and where the fix is written.
+      expect(result.ok === false && result.reason).toMatch(/extension id/i);
+      expect(result.ok === false && result.reason).toMatch(/G-6/);
+      // And offers the path that does work in the meantime.
+      expect(result.ok === false && result.reason).toMatch(/API key/i);
+    }
+
+    // A user saying no is still a user saying no.
+    const declined = readGoogleCallback(`${REDIRECT}?error=access_denied`, pending, NOW);
+    expect(declined.ok === false && declined.failure).toBe('DECLINED');
+  });
+
+  it('reads one field of a token-endpoint refusal and nothing else', () => {
+    expect(namesAClientProblem({ error: 'invalid_client' })).toBe(true);
+    expect(namesAClientProblem({ error: 'redirect_uri_mismatch' })).toBe(true);
+    expect(namesAClientProblem({ error: 'invalid_grant' })).toBe(false);
+    for (const nothing of [null, undefined, 'invalid_client', 42, {}, { error: 42 }]) {
+      expect(namesAClientProblem(nothing), JSON.stringify(nothing)).toBe(false);
+    }
+    // A boolean, so nothing from the body can reach a message, a log or a
+    // record — a token endpoint's error body can echo the authorization code.
+    expect(typeof namesAClientProblem({ error: 'invalid_client' })).toBe('boolean');
+  });
+
+  it('does not echo Google’s description, which can carry the code back', () => {
+    const result = readGoogleCallback(
+      `${REDIRECT}?error=invalid_client&error_description=${encodeURIComponent(`code ${CODE} rejected`)}`,
+      pending,
+      NOW,
+    );
+    expect(result.ok === false && result.reason).not.toContain(CODE);
+  });
+});
+
+describe('06c — an OAuth-authorized call names a quota project', () => {
+  it('sends x-goog-user-project with a bearer credential and not with a key', async () => {
+    // Google documents that a user-credential call to a client-based API must
+    // name a project for billing and quota, and answers one that does not
+    // with a message saying exactly that. A key carries its own project, so a
+    // key request must not send this — it would name a second project for one
+    // call.
+    const seen: Record<string, string>[] = [];
+    const adapter = new GeminiAdapter({
+      request: (_url, init) => {
+        seen.push(
+          Object.fromEntries(
+            Object.entries((init.headers ?? {}) as Record<string, string>).map(([k, v]) => [
+              k.toLowerCase(),
+              v,
+            ]),
+          ),
+        );
+        return Promise.resolve(
+          new Response(JSON.stringify({ models: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+      },
+    });
+
+    await adapter.connect({
+      providerId: GEMINI_PROVIDER_ID,
+      apiKey: ACCESS,
+      credentialScheme: 'bearer',
+      quotaProject: 'my-project-1',
+      model: 'gemini-2.5-flash',
+    });
+    await adapter.listModels();
+    expect(seen[0]!['x-goog-user-project']).toBe('my-project-1');
+
+    const keyed = new GeminiAdapter({
+      request: (_url, init) => {
+        seen.push(
+          Object.fromEntries(
+            Object.entries((init.headers ?? {}) as Record<string, string>).map(([k, v]) => [
+              k.toLowerCase(),
+              v,
+            ]),
+          ),
+        );
+        return Promise.resolve(
+          new Response(JSON.stringify({ models: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+      },
+    });
+    await keyed.connect({
+      providerId: GEMINI_PROVIDER_ID,
+      apiKey: 'gemini-key-under-test',
+      quotaProject: 'my-project-1',
+      model: 'gemini-2.5-flash',
+    });
+    await keyed.listModels();
+    expect(seen[1]!['x-goog-user-project']).toBeUndefined();
+  });
+
+  it('omits the header rather than sending it empty when none is configured', async () => {
+    const seen: Record<string, string>[] = [];
+    const adapter = new GeminiAdapter({
+      request: (_url, init) => {
+        seen.push(
+          Object.fromEntries(
+            Object.entries((init.headers ?? {}) as Record<string, string>).map(([k, v]) => [
+              k.toLowerCase(),
+              v,
+            ]),
+          ),
+        );
+        return Promise.resolve(
+          new Response(JSON.stringify({ models: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+      },
+    });
+    await adapter.connect({
+      providerId: GEMINI_PROVIDER_ID,
+      apiKey: ACCESS,
+      credentialScheme: 'bearer',
+      model: 'gemini-2.5-flash',
+    });
+    await adapter.listModels();
+    // Absent, not empty: an empty value is a project id Google cannot resolve.
+    expect('x-goog-user-project' in seen[0]!).toBe(false);
+  });
+
+  it('turns Google’s quota-project refusal into a sentence naming the setting', async () => {
+    // The failure an owner would otherwise hit immediately after G-6: a 403
+    // whose shared message is "the key was accepted but is not permitted to
+    // use this model", which mentions a key they do not have and sends them
+    // to change a model that is fine.
+    const adapter = new GeminiAdapter({
+      request: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: {
+                code: 403,
+                status: 'PERMISSION_DENIED',
+                message:
+                  'Your application is authenticating by using local Application Default ' +
+                  'Credentials. The generativelanguage.googleapis.com API requires a quota ' +
+                  'project, which is not set by default.',
+              },
+            }),
+            { status: 403, headers: { 'Content-Type': 'application/json' } },
+          ),
+        ),
+    });
+    await adapter.connect({
+      providerId: GEMINI_PROVIDER_ID,
+      apiKey: ACCESS,
+      credentialScheme: 'bearer',
+      model: 'gemini-2.5-flash',
+    });
+
+    // `validateConnection`, not `listModels`: the latter returns an empty list
+    // on a refusal by design, so it produces no message to assert on. This is
+    // the path the connect flow and the capability check take.
+    const health = await adapter.validateConnection();
+    const message = JSON.stringify(health);
+    expect(message).toMatch(/Cloud project/i);
+    expect(message).toMatch(/G-6|API key/);
+    // And it does not tell them to change the model.
+    expect(message).not.toMatch(/not permitted to use this model/);
+  });
+
+  it('keeps the shared message for a key request that says the same thing', async () => {
+    // The phrase is only read for a bearer credential. A key request cannot be
+    // short a quota project, so matching it there would be a coincidence
+    // producing a confusing message.
+    const adapter = new GeminiAdapter({
+      request: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: { code: 403, status: 'PERMISSION_DENIED', message: 'quota project missing' },
+            }),
+            { status: 403, headers: { 'Content-Type': 'application/json' } },
+          ),
+        ),
+    });
+    await adapter.connect({
+      providerId: GEMINI_PROVIDER_ID,
+      apiKey: 'gemini-key-under-test',
+      model: 'gemini-2.5-flash',
+    });
+    expect(JSON.stringify(await adapter.validateConnection())).toMatch(
+      /not permitted to use this model/,
+    );
+  });
+
+  it('tells an authorized account to re-authorize rather than check its key', async () => {
+    const adapter = new GeminiAdapter({
+      request: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: { code: 401, status: 'UNAUTHENTICATED' } }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        ),
+    });
+    await adapter.connect({
+      providerId: GEMINI_PROVIDER_ID,
+      apiKey: ACCESS,
+      credentialScheme: 'bearer',
+      model: 'gemini-2.5-flash',
+    });
+    const health = JSON.stringify(await adapter.validateConnection());
+    expect(health).toMatch(/Connect the Google account again/i);
+    expect(health).not.toMatch(/API key was rejected/);
   });
 });
 

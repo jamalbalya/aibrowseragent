@@ -14,15 +14,23 @@ Web Store account was accessed.
 
 ## 1. The two artifacts
 
-|                 | Previously submitted                              | Current candidate                                                  |
-| --------------- | ------------------------------------------------- | ------------------------------------------------------------------ |
-| Version         | `0.1.0`                                           | `0.1.0`                                                            |
-| SHA-256         | **not recorded — see below**                      | `6676aa5be073bdc22c3e1432c3260043919fdf62bac9184ba70d6c86d7ac6319` |
-| Bytes           | not recorded                                      | 287,862                                                            |
-| Entries         | not recorded                                      | 13                                                                 |
-| Source commit   | not recorded                                      | the commit this file was committed in                              |
-| Submission date | not recorded; reported as on or before 2026-10-01 | not submitted                                                      |
-| Store status    | reported `Pending Review`, owner-reported         | not submitted                                                      |
+|                 | Previously submitted                              | Current candidate                                                   |
+| --------------- | ------------------------------------------------- | ------------------------------------------------------------------- |
+| Version         | `0.1.0`                                           | `0.1.0`                                                             |
+| SHA-256         | **not recorded — see below**                      | `a28837cff0f8b8bdb29716bfef54c7f63e03f2d1b7a39f4d696eaf600f09a493`  |
+| Bytes           | not recorded                                      | 288,797                                                             |
+| Entries         | not recorded                                      | 13                                                                  |
+| Source commit   | not recorded                                      | the commit this file was committed in                               |
+| Submission date | not recorded; reported as on or before 2026-10-01 | not submitted                                                       |
+| Store status    | reported `Pending Review`, owner-reported         | not submitted                                                       |
+| Google OAuth    | not applicable — the feature did not exist        | **no client id compiled in**; the option reports itself unavailable |
+
+**Two builds can now share this version, this digest-less table and this
+permission set and still behave differently**, because a Google OAuth client id
+is compiled in or it is not. So `npm run release` prints which, read from the
+built bundle rather than from the environment:
+`google oauth: no client id — the panel reports the Google option unavailable,
+with a reason`. That is the line to check before uploading anything.
 
 **The submitted digest is genuinely unknown to this repository, and that is a
 decision rather than an oversight.** `docs/release/README.md` records why: the
@@ -158,13 +166,15 @@ All run on the tree this candidate was built from, on Node 22.23.3.
 | Check                         | Result                                                                                              |
 | ----------------------------- | --------------------------------------------------------------------------------------------------- |
 | `npm run verify`              | pass — format, lint, typecheck, tests, build, package, parity, acceptance, notices                  |
-| Unit / integration / security | 4,446 passed, 34 skipped, 182 files                                                                 |
+| Unit / integration / security | 4,477 passed, 34 skipped, 183 files                                                                 |
 | Real-Chromium E2E             | 512 passed, in 8.2 minutes, against this tree                                                       |
 | `npm audit --omit=dev`        | 0 vulnerabilities                                                                                   |
 | Reproducibility               | deterministic over repeated packing, digest verified with `sha256sum -c`                            |
 | Parity                        | 36 PASS / 3 PARTIAL / 1 NOT-STARTED across 40 capabilities                                          |
 | Acceptance                    | 12 documents, 342 citations, all resolving                                                          |
 | Artifact scan                 | no `eval`, no `new Function`, no `Runtime.evaluate`, no remote script source, no key-shaped strings |
+| Build configuration           | checked by the build itself; a value set and unusable fails it rather than being ignored            |
+| Secret scan                   | clean over 257 tracked files                                                                        |
 
 ---
 

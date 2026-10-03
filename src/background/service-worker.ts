@@ -3545,6 +3545,22 @@ function connectionCredential(connectionId: string): Promise<string | undefined>
     tokensFor: (id) => credentialStore.getOAuthTokens(id),
     storeTokens: (id, tokens) => credentialStore.setOAuthTokens(id, tokens),
     needsRenewal: (tokens) => needsRefresh(tokens, Date.now()),
+    /**
+     * Records that an authorization can no longer produce a credential.
+     *
+     * Without this the panel keeps showing the account as `connected` while
+     * every request refuses — the worker knew and the panel did not, which is
+     * the state inconsistency worth preventing. The reason names the fix, and
+     * it is the *account* status rather than a transient error because nothing
+     * about it will improve on a retry.
+     */
+    onUnusable: async (id, why) => {
+      const account = await accountStore.get(id);
+      if (account === undefined || account.authKind !== 'oauth2') return;
+      if (account.status === 'disconnected') return;
+      await accountStore.put({ ...account, status: 'disconnected', statusReason: why });
+      await broadcastAccounts();
+    },
     renew: async (refreshToken) => {
       const renewed = await googleProviderAuth().refresh(refreshToken);
       if (!renewed.ok) return { ok: false };
@@ -4241,6 +4257,12 @@ router.on('accounts.connectGoogle', async (request) => {
     // identifies this account is that it was authorized with Google.
     accountLabel: 'authorized with Google',
     authKind: 'oauth2',
+    // The project Google meters this account's calls against, from the build's
+    // configuration and never from a message. Per connection, so a second
+    // authorized account on another project cannot be billed against this one.
+    ...(googleProviderAuthConfig.quotaProject === undefined
+      ? {}
+      : { quotaProject: googleProviderAuthConfig.quotaProject }),
     // No model yet. Discovery runs against the new credential and the user
     // chooses from what Google actually offers this account — a default here
     // would be this build asserting something about somebody else's catalogue.
@@ -4248,6 +4270,17 @@ router.on('accounts.connectGoogle', async (request) => {
     capabilities: null,
     capabilityScope: null,
     status: 'connected',
+    // Said at connect time rather than discovered at the first failure an hour
+    // later. Google issues no refresh token when the user has consented to this
+    // client before and the screen was skipped, and a connection that cannot
+    // renew will stop working without explanation.
+    ...(authorized.token.refreshToken === undefined
+      ? {
+          statusReason:
+            'Google did not return a renewal token for this authorization, so it will need ' +
+            'authorizing again when it expires.',
+        }
+      : {}),
     lastValidated: Date.now(),
     createdAt: Date.now(),
   };

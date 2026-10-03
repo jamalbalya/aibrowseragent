@@ -113,6 +113,12 @@ Three things it is not:
   Gemini Advanced plan is sold for Google's own apps. API usage is billed to a
   Google Cloud project either way, and the panel says so before you start.
 
+When a Google-authorized account is in use, each request to Google carries the
+access token and the name of the Cloud project the usage is metered against.
+Google requires that project to be named for a call made with your
+authorization rather than with a key; it is configured when the extension is
+built, is not read from your Google account, and is not anything about you.
+
 Only Google works this way. OpenAI's equivalent needs a redirect address a
 browser extension cannot provide, Anthropic's terms prohibit a third party
 using a Claude subscription on your behalf, and the rest issue keys only. Those
