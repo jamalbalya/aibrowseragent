@@ -89,15 +89,33 @@ a build with no Google OAuth client id compiled in cannot reach them at all.
 Stated as absences of capability, not promises of restraint — each is the
 consequence of a permission not requested or a code path that does not exist:
 
-| Not collected                       | Why it cannot be                                                     |
-| ----------------------------------- | -------------------------------------------------------------------- |
-| Cookies and session tokens          | no `cookies` permission; asserted in the manifest invariant          |
-| Browsing history                    | no `history` permission                                              |
-| Password field values               | the page model excludes `password`, `hidden` and `file` values       |
-| Bookmarks                           | no `bookmarks` permission                                            |
-| Local files                         | no filesystem API anywhere; Chrome itself refuses `file://`          |
-| The user's identity                 | no `identity` permission; `chrome.identity` is genuinely unavailable |
-| Anything from a cross-origin iframe | `all_frames` is `false`                                              |
+| Not collected                        | Why it cannot be                                                                                                   |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| Cookies and session tokens           | no `cookies` permission; asserted in the manifest invariant                                                        |
+| Browsing history                     | no `history` permission                                                                                            |
+| Password field values                | the page model excludes `password`, `hidden` and `file` values                                                     |
+| Bookmarks                            | no `bookmarks` permission                                                                                          |
+| Local files                          | no filesystem API anywhere; Chrome itself refuses `file://`                                                        |
+| The browser profile's Google account | `getAuthToken` reads its client id from the manifest's `oauth2` key, and there is none — measured in real Chromium |
+| Anything from a cross-origin iframe  | `all_frames` is `false`                                                                                            |
+
+**That row used to claim the user's identity could not be reached because no
+identity permission was requested and chrome.identity was genuinely
+unavailable** — quoted here without its backticks so the consistency guard does
+not read a record of a false sentence as an assertion of one. **It stopped
+being true.**
+`identity` is now declared as an **optional** permission, because
+`chrome.identity.launchWebAuthFlow` is the only thing that can receive Google's
+redirect for a Chrome Extension OAuth client — which is what lets a user
+authorize a Google account for the Gemini API.
+
+The replacement is narrower and is the claim that actually matters. The worry
+about that permission was always `getAuthToken`, which can mint a token for the
+**browser profile's own** signed-in Google account; it reads its client id from
+the manifest's `oauth2` key, this manifest declares none, and a real-Chromium
+case calls it and asserts no token comes out. The permission is also not
+granted at install: Chrome asks at the moment the user presses _Connect with
+Google_, they can decline, and they can withdraw it afterwards.
 
 ## The asymmetry worth knowing
 

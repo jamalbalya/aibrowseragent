@@ -166,8 +166,8 @@ All run on the tree this candidate was built from, on Node 22.23.3.
 | Check                         | Result                                                                                              |
 | ----------------------------- | --------------------------------------------------------------------------------------------------- |
 | `npm run verify`              | pass — format, lint, typecheck, tests, build, package, parity, acceptance, notices                  |
-| Unit / integration / security | 4,482 passed, 34 skipped, 183 files                                                                 |
-| Real-Chromium E2E             | 514 passed, in 8.1 minutes, against this tree                                                       |
+| Unit / integration / security | 4,496 passed, 34 skipped, 184 files                                                                 |
+| Real-Chromium E2E             | 514 passed, in 8.4 minutes, against this tree                                                       |
 | `npm audit --omit=dev`        | 0 vulnerabilities                                                                                   |
 | Reproducibility               | deterministic over repeated packing, digest verified with `sha256sum -c`                            |
 | Parity                        | 36 PASS / 3 PARTIAL / 1 NOT-STARTED across 40 capabilities                                          |
@@ -305,12 +305,24 @@ Ten minutes, in this order.
    `release/ai-browser-agent-0.1.0.zip`. Verify the digest with
    `cd release && sha256sum -c ai-browser-agent-0.1.0.zip.sha256` before
    uploading, and compare it against §1.
-6. **Before uploading anything, republish the privacy policy.**
-   `docs/PRIVACY.md` has changed since the copy at the public URL was
-   published: it now discloses the optional `identity` permission and the Cloud
-   project name a Google-authorized request carries. The published copy is what
-   a reviewer reads, and nothing in the repository can update it. Owner
-   checklist item 5.
+6. **Before uploading anything, republish the privacy policy** and **decide one
+   form answer.**
+
+   The hosted policy at <https://about.jamal-balya.workers.dev/en/privacy> was
+   read on 2026-10-03 and does not mention the optional `identity` permission,
+   the Google authorization, or the Cloud project a Google-authorized request
+   names. It is produced by a different repository and nothing here can change
+   it; the exact procedure, including how to verify the deploy landed, is in
+   [`privacy-policy-outline.md`](privacy-policy-outline.md).
+
+   And in the dashboard's data-use form, **"Collects authentication
+   information" is currently answered "No"** and has never been reasoned about.
+   The extension stores an API key, or a Google access and refresh token, and
+   sends each only to the service it belongs to. `store-listing.md` sets out
+   Chrome's definition and the two defensible readings; the answer is the
+   owner's, and the policy and the form must agree because a mismatch between
+   them is a common rejection.
+
 7. **Either way, record the digest you uploaded** somewhere you can check it —
    not in this repository, which cannot verify it, which is the whole reason §1
    has a gap in it.

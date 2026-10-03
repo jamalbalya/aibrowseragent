@@ -66,16 +66,31 @@ namespaced away from ordinary settings and neither is ever logged.
 
 ## 4. What leaves the browser, and to whom
 
-Exactly five destination families, and the policy should list them:
+**This section said "exactly five destination families" and named GitHub as the
+only connector. Both were true when it was written and neither is now** — the
+count is the kind of number that ages silently, which is why
+[`data-flows.md`](data-flows.md) is the authority and this is a summary of it.
 
-1. The AI provider the user configured — OpenAI-compatible, Anthropic or
-   Google Gemini. Receives the task, page content as enveloped data, and tool
-   schemas.
-2. A connector the user connected — currently GitHub only. Receives connector
-   requests and the OAuth exchange.
-3. The page the user is working on. Receives typed values, clicks, uploads.
-4. Nothing else.
-5. **In particular: no developer endpoint, no analytics, no crash reporting.**
+The current set, which the policy should describe:
+
+1. **The AI provider the user configured** — an OpenAI-compatible endpoint,
+   Anthropic, or Google Gemini. Receives the task, page content as enveloped
+   data, and tool schemas.
+2. **A connector the user connected** — GitHub, Figma, Jira or Confluence.
+   Receives connector requests carrying a token **the user created in their own
+   account**. Not an OAuth exchange: this section used to say otherwise, and no
+   connector uses one.
+3. **The user's own Atlassian site**, for Jira and Confluence — the only
+   destination that is not fixed in the build, because the user types it.
+4. **Google's authorization endpoints** — `accounts.google.com` and
+   `oauth2.googleapis.com` — and only if the user chooses to connect a Google
+   account for the Gemini API. These carry an authorization code, a PKCE
+   verifier or a refresh token, and **no page content and no task data in any
+   shape**. A user who connects every provider with a pasted key reaches
+   neither.
+5. **The page the user is working on.** Receives typed values, clicks, uploads.
+6. Nothing else.
+7. **In particular: no developer endpoint, no analytics, no crash reporting.**
 
 State that data sent to a provider is then governed by **that provider's**
 terms, not this policy. The extension decides whether data may leave and to
@@ -92,8 +107,30 @@ makes them verifiable:
 - Password field values — excluded from the page model by type
 - Bookmarks — the `bookmarks` permission is not requested
 - Local files — no filesystem API exists; Chrome itself refuses `file://`
-- The user's identity — `chrome.identity` is genuinely unavailable
 - Anything inside a cross-origin iframe — `all_frames` is false
+
+**One item was removed from this list because it stopped being true, and
+publishing it would now be a false statement in a legal document.** It read
+_"The user's identity — chrome.identity is genuinely unavailable"_ (written here
+without the backticks it had, so that the consistency guard does not read a
+quotation of a false sentence as an assertion of one). The
+`identity` permission is now declared, as an **optional** permission, for one
+purpose: `chrome.identity.launchWebAuthFlow` is the only thing that can receive
+Google's redirect for a Chrome Extension OAuth client, so it is what lets a
+user authorize a Google account for the Gemini API.
+
+What the policy must say instead is narrower and still strong:
+
+- The permission is **not granted at install.** Chrome asks for it at the
+  moment the user presses _Connect with Google_, they can decline, and they can
+  withdraw it afterwards. A user who connects every provider with a pasted key
+  never grants it.
+- It does **not** give access to the browser profile's own signed-in Google
+  account. The API that would — `getAuthToken` — reads its client id from the
+  manifest's `oauth2` key, and this extension declares none, so it has nothing
+  to work with. A real-Chromium test calls it and asserts no token comes out.
+- Authorizing a Google account is **not a sign-in to this extension**, creates
+  no account with the developer, and is not required to use anything.
 
 ## 6. Credential handling
 
@@ -105,6 +142,17 @@ makes them verifiable:
 - **State the limit:** redaction is pattern-based. A credential in an
   unrecognised format under a non-sensitive key name can pass through. Saying
   so is better than a guarantee that cannot be kept.
+- A Google-authorized Gemini connection holds an **access token and a refresh
+  token** rather than a key. Both are credentials, both are stored the same way
+  and encrypted by the same optional local protection, and neither is ever
+  displayed, logged or put in a URL. Revoking the extension's access at
+  <https://myaccount.google.com/permissions> ends it from Google's side;
+  disconnecting the account ends it from this side and removes both tokens.
+- A Google-authorized request also carries the **name of the Google Cloud
+  project** the usage is metered against, because Google requires a
+  user-credential call to name one. It is configured when the extension is
+  built, is not read from the user's Google account, and says nothing about the
+  user.
 
 ## 7. Retention and deletion
 
@@ -125,16 +173,67 @@ them. State whatever is true for your jurisdiction.
 - How changes to the policy will be communicated.
 - A contact address that works. Review will check it.
 
-## Hosting
+## Where it is published, and how to update it
 
-The store requires a URL, not a file. Any of these satisfies it:
+**The policy is already published, and this section used to say "any page you
+control" — which was the right advice before one was chosen and is no help
+now.** The hosted page the Chrome Web Store listing points at is:
 
-- GitHub Pages over this repository's `docs/`
-- The raw GitHub URL of the published policy file
-- Any page you control
+<https://about.jamal-balya.workers.dev/en/privacy>
 
-The URL must be reachable without a login and must stay up for as long as the
-listing does.
+It is produced by a **different repository**, `jamalbalya/about-jamal`, and
+nothing in this repository can change it. What follows was read from that
+repository rather than assumed, and the owner is the only one who can run it.
+
+|                 |                                                                                                                                                                                                                                                                                 |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Repository      | `jamalbalya/about-jamal`                                                                                                                                                                                                                                                        |
+| The policy text | `src/lib/content/privacy.ts` — a content module, **English only** and deliberately so: _"a translated policy is a second policy, and if the two ever disagree about what the extension does with a user's data, the disagreement is the developer's problem, not the reader's"_ |
+| The date        | `EFFECTIVE_DATE` in that same file, which **must move with any change to the substance** — the policy's own section 12 promises a revised date on every update                                                                                                                  |
+| The record      | a `CHANGELOG.md` entry, which that file's header requires for the same reason                                                                                                                                                                                                   |
+| Its own tests   | `tests/unit/privacy.test.ts` — section count and order, unique fragment ids, no empty section, the product name, a fully-specified date, reachability in every locale, and that the published build needs no account                                                            |
+
+### The procedure
+
+1. In `jamalbalya/about-jamal`, edit `src/lib/content/privacy.ts`. The two
+   additions this extension now requires are in §5 and §6 above: the
+   **optional `identity` permission** and what it is not, and that a
+   Google-authorized request carries the **Cloud project name**.
+2. Move `EFFECTIVE_DATE` to the day of the change.
+3. Add a `CHANGELOG.md` entry saying what changed.
+4. Run that repository's own checks and preview it locally:
+
+   ```sh
+   npm test
+   npm run cf:preview
+   ```
+
+   `npm test` includes the policy's own test file, which is what catches a
+   malformed section or a date that did not move.
+
+5. Deploy:
+
+   ```sh
+   npm run cf:deploy
+   ```
+
+6. **Verify the live page, rather than assuming the deploy landed.** Fetch it
+   and look for both the new text and the new date:
+
+   ```sh
+   curl -s https://about.jamal-balya.workers.dev/en/privacy | grep -i 'identity\|effective'
+   ```
+
+   A page without the new effective date is a cached or failed deploy, not a
+   published policy.
+
+7. Only then paste the URL into the Chrome Web Store dashboard. The published
+   page is what a reviewer reads; `docs/PRIVACY.md` in this repository is the
+   code-level account of the same behaviour and is not what the listing points
+   at.
+
+**Do not** treat a repository change as publication. Until step 6 shows the new
+text at that URL, the policy a reviewer would read is the old one.
 
 ## The matching disclosure form
 

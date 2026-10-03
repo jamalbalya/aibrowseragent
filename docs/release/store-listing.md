@@ -169,20 +169,21 @@ Everything it stores stays in your browser.
 One per permission, as the dashboard asks. Each is what the code does, not a
 rationale written to sound acceptable.
 
-| Permission                                       | Justification to submit                                                                                                                                                                                                         |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sidePanel`                                      | The extension's entire interface is a side panel.                                                                                                                                                                               |
-| `storage`                                        | Tasks, settings and the audit trail persist locally. MV3 evicts the service worker constantly, so in-memory state would lose a task mid-step.                                                                                   |
-| `unlimitedStorage`                               | The audit trail and stored screenshots exceed the 10 MB default over normal use. Nothing is uploaded; the storage is local.                                                                                                     |
-| `tabs`                                           | The agent acts on tabs the user names, and reports which tabs exist so the user can choose.                                                                                                                                     |
-| `tabGroups`                                      | Results from a multi-tab task are grouped, using Chrome's own grouping.                                                                                                                                                         |
-| `scripting`                                      | Injects the content script that builds the page model. It injects a fixed file, never a function or a string.                                                                                                                   |
-| `debugger`                                       | Reads console output and network activity so the agent can diagnose a failing page. The CDP surface is a fixed allowlist containing no code-evaluation method, and no tool accepts a method name as an argument.                |
-| `notifications`                                  | Tells the user a task needs a decision when the side panel is closed.                                                                                                                                                           |
-| `activeTab`                                      | The access path that still works when a user restricts site access to "on click". Not redundant with host permissions for that reason.                                                                                          |
-| `alarms`                                         | Wakes the service worker when a scheduled task is due. One alarm for all schedules; MV3 gives no other way to run something at a chosen time. A scheduled run has no extra authority and stops if it needs the user's approval. |
-| `host_permissions` (`http://*/*`, `https://*/*`) | A browsing agent acts on whatever page the user points it at. Deliberately **not** `<all_urls>`, which would add `file://` and other extensions' pages, and `all_frames` is `false`, so cross-origin frames are never entered.  |
-| `downloads` (optional)                           | Requested only when a task downloads a file, granted by the user from Settings. Not granted at install.                                                                                                                         |
+| Permission                                       | Justification to submit                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sidePanel`                                      | The extension's entire interface is a side panel.                                                                                                                                                                                                                                                                                                                                                                                      |
+| `storage`                                        | Tasks, settings and the audit trail persist locally. MV3 evicts the service worker constantly, so in-memory state would lose a task mid-step.                                                                                                                                                                                                                                                                                          |
+| `unlimitedStorage`                               | The audit trail and stored screenshots exceed the 10 MB default over normal use. Nothing is uploaded; the storage is local.                                                                                                                                                                                                                                                                                                            |
+| `tabs`                                           | The agent acts on tabs the user names, and reports which tabs exist so the user can choose.                                                                                                                                                                                                                                                                                                                                            |
+| `tabGroups`                                      | Results from a multi-tab task are grouped, using Chrome's own grouping.                                                                                                                                                                                                                                                                                                                                                                |
+| `scripting`                                      | Injects the content script that builds the page model. It injects a fixed file, never a function or a string.                                                                                                                                                                                                                                                                                                                          |
+| `debugger`                                       | Reads console output and network activity so the agent can diagnose a failing page. The CDP surface is a fixed allowlist containing no code-evaluation method, and no tool accepts a method name as an argument.                                                                                                                                                                                                                       |
+| `notifications`                                  | Tells the user a task needs a decision when the side panel is closed.                                                                                                                                                                                                                                                                                                                                                                  |
+| `activeTab`                                      | The access path that still works when a user restricts site access to "on click". Not redundant with host permissions for that reason.                                                                                                                                                                                                                                                                                                 |
+| `alarms`                                         | Wakes the service worker when a scheduled task is due. One alarm for all schedules; MV3 gives no other way to run something at a chosen time. A scheduled run has no extra authority and stops if it needs the user's approval.                                                                                                                                                                                                        |
+| `host_permissions` (`http://*/*`, `https://*/*`) | A browsing agent acts on whatever page the user points it at. Deliberately **not** `<all_urls>`, which would add `file://` and other extensions' pages, and `all_frames` is `false`, so cross-origin frames are never entered.                                                                                                                                                                                                         |
+| `downloads` (optional)                           | Requested only when a task downloads a file, granted by the user from Settings. Not granted at install.                                                                                                                                                                                                                                                                                                                                |
+| `identity` (optional)                            | Requested only when the user chooses to connect a Google account for the Gemini API, and declinable. Needed because `chrome.identity.launchWebAuthFlow` is the only way to receive Google's redirect for a Chrome Extension OAuth client. The manifest declares **no `oauth2` key**, so `getAuthToken` — the API that could reach the browser profile's own Google account — has no client id and cannot work. Not granted at install. |
 
 ### If review asks about `debugger`
 
@@ -216,6 +217,43 @@ execute arbitrary code in a page. Here it cannot, and the answer is specific:
 The last row is the one that must be ticked. Page content is website content,
 it is transmitted, and saying otherwise because it is transient would be
 false. The detailed description and the privacy policy both say so plainly.
+
+### One answer is a judgement the owner has to make: authentication information
+
+**This answer says "No" and has never been reasoned about in writing.** It is
+recorded here rather than changed, because the form is submitted by the owner
+and the question is about Google's definition rather than about this code.
+
+What the extension actually does with credentials:
+
+- it stores an **API key** the user pastes, locally, and sends it to the
+  endpoint that key belongs to as a request header;
+- for a Google-authorized Gemini account it stores an **access token and a
+  refresh token**, locally, and sends the access token to Google;
+- none of it reaches the developer, a log, an audit record, evidence, a task
+  record, a model prompt, or a URL — and `tests/security/credential-boundary.test.ts`
+  is what holds that.
+
+Chrome's published definition is _"Authentication information includes items
+such as logins, passwords, and authentication cookies"_, and its guidance notes
+that _"common ways products handle user data include having login
+functionality, even if using a third-party system like Google
+authentication"_.
+
+Two defensible readings follow, and the owner picks one before submitting:
+
+- **"No"** — the examples are logins, passwords and authentication cookies.
+  The user's own API key is none of those, nothing is collected _from_ the
+  user's accounts, and there is no login to this extension at all.
+- **"Yes"** — an OAuth access token functions as an authentication credential,
+  and the extension now runs a Google authorization flow, which that guidance
+  names explicitly even when the third party is Google.
+
+**Whichever is chosen, the policy and the form must agree**, because a mismatch
+between them is a common rejection. If the answer becomes "Yes", the hosted
+policy needs a sentence saying credentials are stored locally and sent only to
+the service they belong to — which `docs/PRIVACY.md` already says and the
+hosted page should mirror.
 
 Supporting detail is in [`data-flows.md`](data-flows.md), category by
 category.
