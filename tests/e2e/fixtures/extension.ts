@@ -23,7 +23,7 @@ import {
   type Page,
   type Worker,
 } from '@playwright/test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type {
@@ -56,6 +56,46 @@ const CHROMIUM = process.env.E2E_CHROMIUM_PATH ?? '/opt/pw-browsers/chromium';
  */
 export const BROWSER: { executablePath?: string; channel?: string } =
   CHROMIUM.length > 0 ? { executablePath: CHROMIUM } : { channel: 'chromium' };
+
+/**
+ * Whether the bundle under test had a Google OAuth client id compiled into it.
+ *
+ * Two configurations of this extension are both correct and behave
+ * differently, and until an owner registered a client only one of them could
+ * be exercised. A build with no client id reports the Google method
+ * unavailable and refuses `accounts.connectGoogle` with `NOT_CONFIGURED`
+ * before it asks for anything; a build with one offers the method and goes on
+ * to the `identity` permission. Three cases in `google-provider-auth.spec.ts`
+ * asserted the first contract as though it were the only one, and failed the
+ * moment a client id existed — on behaviour that was correct.
+ *
+ * Read from the built artifact rather than from `.env` or `import.meta.env`,
+ * because the question is what *this bundle* carries. Vite inlines the value,
+ * so the bundle is the record of what the build decided, and a `.env` edited
+ * after the build cannot make this answer disagree with the extension Chrome
+ * loaded.
+ *
+ * **The suffix alone is not the test**, and the first version of this matched
+ * it and reported every build as configured — caught by building with no
+ * `.env` and finding three cases still failing, which is the whole point of
+ * having the branch. `inspectClientId` carries the literal
+ * `.apps.googleusercontent.com` in the check that validates what it is given,
+ * so that string is in every bundle ever built: a detector finding the
+ * detector.
+ *
+ * `scripts/validate-release.mjs` had already hit this and written it down, in
+ * the comment above its own `CLIENT_ID_PATTERN`. That pattern is the canonical
+ * copy and this one is deliberately identical to it — a whole client id, a
+ * project number and a random part before the suffix, which the validating
+ * literal has nothing in front of.
+ *
+ * The id is matched, never captured or returned, so nothing here holds the
+ * value.
+ */
+export function buildHasGoogleClient(): boolean {
+  const bundle = readFileSync(resolve(EXTENSION_PATH, 'service-worker.js'), 'utf8');
+  return /[0-9]{6,}-[a-z0-9]{6,}\.apps\.googleusercontent\.com/.test(bundle);
+}
 
 /** What the message router returns across the boundary. */
 interface MessageEnvelope {

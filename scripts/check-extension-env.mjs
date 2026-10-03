@@ -76,6 +76,9 @@ function environment() {
  * predicates and `inspectClientId` / `parseQuotaProject` agree on a shared
  * table of inputs, and fails if either side changes alone.
  */
+/** The one name Vite inlines, named once so the two readers cannot disagree. */
+export const CANONICAL_CLIENT_ID = 'VITE_ABA_GOOGLE_PROVIDER_CLIENT_ID';
+
 export function clientIdProblem(raw) {
   if (typeof raw !== 'string' || raw.trim().length === 0) return 'absent';
   return raw.trim().endsWith('.apps.googleusercontent.com') ? null : 'not_a_google_client_id';
@@ -99,6 +102,45 @@ export function backendOriginProblem(raw) {
   }
 }
 
+/**
+ * A Google client id sitting in the environment under a name the build cannot
+ * read.
+ *
+ * ## The failure this exists to prevent
+ *
+ * The docstring above describes an owner whose value had a typo. This is the
+ * neighbouring case, and it happened: the owner registered the client, put the
+ * id in `.env` under their own name for it, rebuilt — and this script reported
+ * *"Google provider authorization: NOT configured"*. Which was true, and read
+ * as though the client had never been registered.
+ *
+ * Nothing was wrong with the value. Vite inlines only `VITE_`-prefixed
+ * variables, so a correct client id under any other name is invisible to the
+ * extension, and the one check positioned to notice was looking at a single
+ * name. A shape this specific — a value ending `.apps.googleusercontent.com` —
+ * is not something that lands in a `.env` by accident, so its presence under
+ * the wrong name is worth saying out loud.
+ *
+ * `ABA_GOOGLE_CLIENT_ID` is excluded because it is not misplaced: it is the
+ * documented variable for the optional backend's own confidential client
+ * (`server/config.ts`), a different client for a different purpose, and an
+ * owner running the backend would otherwise be warned about correct
+ * configuration on every build.
+ *
+ * A note rather than a refusal. An absent client id is the state every
+ * published build has shipped with, and a stray client id in someone's
+ * environment is not a reason to refuse a build that never wanted one.
+ */
+export function misplacedClientId(env) {
+  return Object.keys(env)
+    .filter((key) => key !== CANONICAL_CLIENT_ID && key !== 'ABA_GOOGLE_CLIENT_ID')
+    .filter((key) => {
+      const value = env[key];
+      return typeof value === 'string' && value.trim().endsWith('.apps.googleusercontent.com');
+    })
+    .sort();
+}
+
 const problems = [];
 const notes = [];
 
@@ -106,7 +148,7 @@ export function inspect(env) {
   const found = [];
   const failed = [];
 
-  const clientId = env.VITE_ABA_GOOGLE_PROVIDER_CLIENT_ID;
+  const clientId = env[CANONICAL_CLIENT_ID];
   const clientProblem = clientIdProblem(clientId);
   if (clientProblem === 'absent') {
     found.push(
@@ -114,6 +156,15 @@ export function inspect(env) {
         'option unavailable and offer the Gemini API key path. This is the configuration ' +
         'every published build has shipped with.',
     );
+    const misplaced = misplacedClientId(env);
+    if (misplaced.length > 0) {
+      found.push(
+        `  but ${misplaced.join(', ')} holds what looks like a Google OAuth client id. ` +
+          `Only ${CANONICAL_CLIENT_ID} reaches the extension — Vite inlines nothing else — ` +
+          'so if that is the client for this build, rename the variable. The value is not ' +
+          'the problem.',
+      );
+    }
   } else if (clientProblem === null) {
     found.push(`Google provider authorization: configured with client id ${clientId.trim()}`);
     const quotaProblem = quotaProjectProblem(env.VITE_ABA_GOOGLE_QUOTA_PROJECT);

@@ -38,6 +38,8 @@ import {
   quotaProjectProblem,
   backendOriginProblem,
   inspect,
+  misplacedClientId,
+  CANONICAL_CLIENT_ID,
   // @ts-expect-error — a build script, plain JS, imported here so the rules it
   // enforces are exercised rather than re-implemented. The same arrangement
   // `release-claims.test.ts` and `clause-gate.test.ts` use.
@@ -265,5 +267,64 @@ describe('05 — the redirect is built from the live extension id', () => {
     // that reads as a user problem. Built from `chrome.runtime.id` instead.
     const worker = readFileSync(resolve(ROOT, 'src/background/service-worker.ts'), 'utf8');
     expect(worker).toContain('googleRedirectUri(chrome.runtime.id)');
+  });
+});
+
+describe('06 — a client id under a name the build cannot read is said out loud', () => {
+  // The owner of this project registered the client, put the id in `.env` as
+  // `google_oauth_client`, and the build reported "NOT configured". Nothing was
+  // wrong with the value; Vite inlines only `VITE_`-prefixed variables, and the
+  // check that could have noticed was looking at one name.
+  it('names the variable that holds a client id the build will ignore', () => {
+    const { found } = inspect({ google_oauth_client: GOOD_CLIENT });
+    const text = found.join(' ');
+    expect(text).toMatch(/NOT configured/);
+    expect(text).toMatch(/google_oauth_client holds what looks like a Google OAuth client id/);
+    expect(text).toMatch(/rename the variable/);
+    // The value is not the problem, and saying so stops the owner re-checking
+    // the id against the console.
+    expect(text).toMatch(/The value is not the problem/);
+  });
+
+  it('stays silent when there is nothing misplaced — the positive control', () => {
+    // Without this, the assertion above would pass on a function that always
+    // complained, which would warn every owner who has no Google client at all.
+    expect(misplacedClientId({})).toEqual([]);
+    expect(misplacedClientId({ SOMETHING_ELSE: 'not-a-client-id' })).toEqual([]);
+    expect(inspect({}).found.join(' ')).not.toMatch(/looks like a Google OAuth client id/);
+    expect(inspect({ [CANONICAL_CLIENT_ID]: GOOD_CLIENT }).found.join(' ')).not.toMatch(
+      /looks like a Google OAuth client id/,
+    );
+  });
+
+  it('does not warn about the canonical name or the backend’s own client', () => {
+    // `ABA_GOOGLE_CLIENT_ID` is the documented variable for the optional
+    // backend's confidential client — a different client for a different
+    // purpose. Warning about it would flag correct configuration on every
+    // build, which is how a check gets ignored.
+    expect(misplacedClientId({ [CANONICAL_CLIENT_ID]: GOOD_CLIENT })).toEqual([]);
+    expect(misplacedClientId({ ABA_GOOGLE_CLIENT_ID: GOOD_CLIENT })).toEqual([]);
+  });
+
+  it('reports every misplaced name, in a stable order', () => {
+    expect(misplacedClientId({ zzz_client: GOOD_CLIENT, aaa_client: GOOD_CLIENT })).toEqual([
+      'aaa_client',
+      'zzz_client',
+    ]);
+  });
+
+  it('is not fooled by a value that merely mentions the suffix', () => {
+    expect(misplacedClientId({ note: 'see .apps.googleusercontent.com docs for help' })).toEqual(
+      [],
+    );
+    expect(misplacedClientId({ padded: `  ${GOOD_CLIENT}  ` })).toEqual(['padded']);
+    expect(misplacedClientId({ n: 42, u: undefined, nil: null })).toEqual([]);
+  });
+
+  it('never refuses the build for it', () => {
+    // An absent client id is the state every published build has shipped with,
+    // and a stray id in somebody's environment is not a reason to refuse a
+    // build that never wanted one.
+    expect(inspect({ google_oauth_client: GOOD_CLIENT }).failed).toEqual([]);
   });
 });

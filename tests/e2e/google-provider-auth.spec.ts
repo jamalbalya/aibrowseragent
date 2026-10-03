@@ -45,7 +45,7 @@
  * driven in `tests/security/google-provider-auth.test.ts` and
  * `tests/integration/google-account-journey.test.ts`.
  */
-import { expect, test, waitForTask } from './fixtures/extension';
+import { buildHasGoogleClient, expect, test, waitForTask } from './fixtures/extension';
 
 const KEY = 'test-key-journey-aaaaaaaaaa';
 const KEY_SECOND = 'test-key-journey-bbbbbbbbbb';
@@ -134,11 +134,20 @@ test('the build says truthfully which providers it can authorize with Google', a
   const google = methods.providers.filter((provider) => provider.googleAuthorizable);
   expect(google.map((provider) => provider.providerId)).toEqual(['gemini']);
 
-  // And in this build the Google method is unavailable, because no client id
-  // is compiled in — reported as such, with a reason, rather than offered.
+  // Both configurations of this build are correct and they differ here, so the
+  // branch is taken from what the loaded bundle actually carries rather than
+  // assumed. An unconfigured build must not offer a button that cannot work;
+  // a configured one must not hide the method it can actually perform.
   const method = google[0]!.methods.find((entry) => entry.kind === 'google_oauth')!;
-  expect(method.configured).toBe(false);
-  expect(method.unavailableReason).toMatch(/no Google OAuth client id/i);
+  if (buildHasGoogleClient()) {
+    expect(method.configured).toBe(true);
+    // Nothing left over from the unconfigured path: a reason beside an
+    // available method is the stale sentence a user would act on.
+    expect(method.unavailableReason).toBeUndefined();
+  } else {
+    expect(method.configured).toBe(false);
+    expect(method.unavailableReason).toMatch(/no Google OAuth client id/i);
+  }
 
   // The claim a user is most likely to expect, stated rather than implied.
   expect(methods.accountDiscoveryFromGoogleIdentity).toBe(false);
@@ -161,8 +170,18 @@ test('connecting a Google account is refused honestly in this build', async ({ s
   // id would show the user Google's own error page.
   const result = await send('accounts.connectGoogle', {});
   expect(result.account).toBeNull();
-  expect(result.failure).toBe('NOT_CONFIGURED');
-  expect(result.error?.userMessage).toMatch(/Gemini API key/i);
+  if (buildHasGoogleClient()) {
+    // The configured build gets past the configuration gate and stops at the
+    // next one: `identity` is an optional permission, nothing granted it, and
+    // no dialog can be answered here. Which is the designed order — config,
+    // then permission, then Google — and this is the only place it is
+    // measured in a real browser rather than argued from the source.
+    expect(result.failure).toBe('PERMISSION_DENIED');
+    expect(result.error?.userMessage ?? '').not.toMatch(/\.apps\.googleusercontent\.com/);
+  } else {
+    expect(result.failure).toBe('NOT_CONFIGURED');
+    expect(result.error?.userMessage).toMatch(/Gemini API key/i);
+  }
 
   // And nothing was created or selected by the attempt.
   const { accounts, brain } = await send('accounts.list', {});
@@ -323,19 +342,30 @@ test('re-authorizing is refused for an account that was not connected with Googl
   const refused = await send('accounts.connectGoogle', { reconnect: connectionId });
   expect(refused.account).toBeNull();
 
-  // **`NOT_CONFIGURED`, not `NOT_RECONNECTABLE`, and that is the right answer
-  // for this build.** The route reports the configuration blocker first,
-  // because a build with no Google OAuth client id cannot complete any
-  // authorization and saying "that account was not connected with Google"
-  // would send the user to fix the wrong thing. The reconnect guard's own
-  // ordering — before the trip to Google, in a build that has a client id — is
-  // pinned in `google-provider-auth.test.ts` group 06d, on the route's source,
-  // because it cannot be reached from here.
+  // Which refusal is correct depends on what the build carries, and both
+  // orderings matter for a different reason.
   //
-  // The first draft of this case expected `NOT_RECONNECTABLE` and was wrong
-  // about which refusal matters more.
-  expect(refused.failure).toBe('NOT_CONFIGURED');
-  expect(refused.error?.userMessage).toMatch(/Gemini API key/i);
+  // With **no client id**, `NOT_CONFIGURED` is right and `NOT_RECONNECTABLE`
+  // would be wrong: a build that cannot complete any authorization should not
+  // tell the user their account was connected the wrong way, which sends them
+  // to fix the wrong thing. The first draft of this case expected
+  // `NOT_RECONNECTABLE` and was wrong about which refusal matters more.
+  //
+  // With a client id, `NOT_RECONNECTABLE` is right — and this is the half that
+  // used to be unreachable. The comment here previously recorded that the
+  // reconnect guard's ordering *in a configured build* could only be pinned in
+  // `google-provider-auth.test.ts` group 06d, against the route's source,
+  // "because it cannot be reached from here". A registered client made it
+  // reachable: the guard answering before `PERMISSION_DENIED` is the live
+  // browser proving the account check happens **before** the user is sent to
+  // Google, rather than source text being read as though it were behaviour.
+  if (buildHasGoogleClient()) {
+    expect(refused.failure).toBe('NOT_RECONNECTABLE');
+    expect(refused.failure).not.toBe('PERMISSION_DENIED');
+  } else {
+    expect(refused.failure).toBe('NOT_CONFIGURED');
+    expect(refused.error?.userMessage).toMatch(/Gemini API key/i);
+  }
 
   // The security-relevant half holds either way, and is what this case is
   // really for: the named account is untouched. Same auth kind, same model,

@@ -456,4 +456,87 @@ console.log(
       : 'no client id — the panel reports the Google option unavailable, with a reason'
   }`,
 );
+/**
+ * Whether this artifact names a Google Cloud project to meter OAuth calls on.
+ *
+ * Reported for a reason the client id does not share. A client id in a public
+ * build is ordinary — a published extension that offers Google authorization
+ * must carry one. **A quota project in a public build is not.** It is sent as
+ * `x-goog-user-project` on every OAuth-authorized Gemini call, and Google
+ * requires the caller to hold `serviceusage.services.use` on the project named
+ * (the `roles/serviceusage.serviceUsageConsumer` role), per
+ * <https://docs.cloud.google.com/docs/quotas/set-quota-project>: *"The
+ * serviceusage.services.use permission is required to set a project as the
+ * quota project, or use that quota project in a request."*
+ *
+ * A stranger who installs this extension holds no role on the owner's project,
+ * so a shipped quota project means their OAuth connections are refused for a
+ * reason that reads as their problem — and any call that did succeed would
+ * meter against the owner. It is the right value for a build the owner runs
+ * themselves and the wrong one for a build other people install, and those two
+ * builds are otherwise identical.
+ *
+ * **Not scanned for by its header name.** `x-goog-user-project` is a literal in
+ * the adapter and therefore in every bundle, configured or not — the third time
+ * in this repository that a detector found the detector, after the bare client
+ * id suffix above and the redactor's own private-key pattern. The configured
+ * value is inlined at the `parseQuotaProject` call site, but only as a bare
+ * string argument whose surroundings are minified names, so there is no stable
+ * marker to match.
+ *
+ * So the environment is asked which value to look for and the **bundle**
+ * decides whether it is there. That answers definitely when the release was
+ * built from this shell, which is the case that matters, and says so plainly
+ * rather than guessing when it was not.
+ *
+ * Not a refusal: whether this artifact is for the owner or for strangers is the
+ * owner's to know, and a release that could not be built for your own use would
+ * be the worse failure.
+ */
+if (googleClient) {
+  const quotaFromEnv = (() => {
+    if (typeof process.env.VITE_ABA_GOOGLE_QUOTA_PROJECT === 'string') {
+      return process.env.VITE_ABA_GOOGLE_QUOTA_PROJECT.trim();
+    }
+    if (!existsSync(envFile)) return '';
+    for (const line of readFileSync(envFile, 'utf8').split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('#')) continue;
+      const split = trimmed.indexOf('=');
+      if (split <= 0) continue;
+      if (trimmed.slice(0, split).trim() !== 'VITE_ABA_GOOGLE_QUOTA_PROJECT') continue;
+      return trimmed
+        .slice(split + 1)
+        .trim()
+        .replace(/^["']|["']$/g, '');
+    }
+    return '';
+  })();
+
+  const bundles = relPaths
+    .filter((name) => name.endsWith('.js'))
+    .map((name) => readFileSync(resolve(dist, name), 'utf8'));
+
+  if (quotaFromEnv.length === 0) {
+    console.log(
+      '  quota project: none set in this shell. Cannot be read back out of the artifact, so ' +
+        'if this build came from another shell, check it there.',
+    );
+  } else if (bundles.some((content) => content.includes(quotaFromEnv))) {
+    // The variable is named, never its value — the same rule the env scan above
+    // follows, because this output goes into reports and terminals.
+    console.log(
+      '  quota project: VITE_ABA_GOOGLE_QUOTA_PROJECT IS compiled into this artifact. Every ' +
+        'OAuth-authorized Gemini call sends it as x-goog-user-project, and Google requires ' +
+        'serviceusage.services.use on it. Correct for a build you run yourself; wrong for one ' +
+        'other people install, who hold no role on your project.',
+    );
+  } else {
+    console.log(
+      '  quota project: VITE_ABA_GOOGLE_QUOTA_PROJECT is set in this shell but its value is ' +
+        'NOT in the artifact — this build predates it. Rebuild before releasing if it was meant ' +
+        'to be included.',
+    );
+  }
+}
 console.log('  note: Chrome Web Store policy is NOT checked here and must be verified separately.');

@@ -11,9 +11,11 @@
  * requests from clients registered as Android, iOS, or Chrome applications" —
  * so the authorization is a public client with PKCE, and there is nothing
  * confidential to embed. A build with no client id simply cannot offer the
- * Google route; `isGoogleProviderAuthConfigured` is what the panel reads, so
- * the absence surfaces as a disabled button with a reason rather than as a
- * request to nowhere.
+ * Google route, and the absence surfaces as a disabled button with a reason
+ * rather than as a request to nowhere: the worker turns this module's `null`
+ * into `googleClientConfigured` for `providerAuthorization`, which is what
+ * fills in the Google method's `configured` flag and the sentence beside it,
+ * and the panel reads that flag off `accounts.authMethods`.
  */
 
 /**
@@ -124,8 +126,4 @@ export function inspectClientId(
     return { ok: false, problem: 'not_a_google_client_id' };
   }
   return { ok: true, clientId: trimmed };
-}
-
-export function isGoogleProviderAuthConfigured(): boolean {
-  return loadGoogleProviderAuthConfig() !== null;
 }
