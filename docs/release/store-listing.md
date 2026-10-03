@@ -250,10 +250,23 @@ Two defensible readings follow, and the owner picks one before submitting:
   names explicitly even when the third party is Google.
 
 **Whichever is chosen, the policy and the form must agree**, because a mismatch
-between them is a common rejection. If the answer becomes "Yes", the hosted
-policy needs a sentence saying credentials are stored locally and sent only to
-the service they belong to — which `docs/PRIVACY.md` already says and the
-hosted page should mirror.
+between them is a common rejection. That constraint used to carry a cost: a
+"Yes" would have needed a sentence in the hosted policy that was not there yet.
+It no longer does. The published policy, read on 3 October 2026, already says
+
+> "A credential the user supplies is stored locally and is sent only to the
+> service it belongs to."
+
+and names the Google case explicitly — _"Google access and refresh tokens, for
+a Google-authorized Gemini connection, are stored the same way"_ — alongside
+_"No credential is written to the audit trail, to evidence, to a task record,
+to a log, to anything sent to an AI provider."_
+
+So **both answers are consistent with what is published**, and neither requires
+a policy change before submitting. The decision stays the owner's, because it
+is about Google's definition rather than about this code; what has changed is
+that it can no longer produce a form/policy mismatch, and nothing downstream is
+waiting on it.
 
 Supporting detail is in [`data-flows.md`](data-flows.md), category by
 category.

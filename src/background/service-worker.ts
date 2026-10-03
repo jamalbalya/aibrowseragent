@@ -2431,7 +2431,12 @@ async function resolveFromAccount(
       account,
       {
         adapterFor: (providerId) => providerRegistry.get(providerId),
-        keyFor: (connectionId) => connectionCredential(credentialKeyFor(connectionId)),
+        // The whole task budget, not the moment: the adapter keeps this
+        // credential for the length of the run, and a token that expires
+        // partway through fails every turn after it with a 401 the task layer
+        // treats as terminal. See `needsRefresh`.
+        keyFor: (connectionId) =>
+          connectionCredential(credentialKeyFor(connectionId), DEFAULT_BUDGET.maxDurationMs),
         staleMessage: (modelId) =>
           selectionRefusal({ kind: 'stale', modelId }) ??
           'The selected model is no longer available.',
@@ -3533,50 +3538,63 @@ function googleProviderAuth(): GoogleProviderAuth {
  * The credential for one connection, whatever shape it is in.
  *
  * The decision itself is `credentialForConnection`, which lives in
- * `@/providers/accounts/connection-credential` so that the three rules inside
- * it — renew before use, never retry a refused renewal, fail to `undefined`
- * rather than throw — can be driven by a test rather than only reached by
- * running a browser. What stays here is the wiring that is genuinely the
- * worker's: the credential store and the Google driver.
+ * `@/providers/accounts/connection-credential` so that the rules inside it —
+ * renew before use, never retry a refused renewal, let the caller's horizon
+ * cause a renewal but never a refusal, fail to `undefined` rather than throw
+ * — can be driven by a test rather than only reached by running a browser.
+ * What stays here is the wiring that is genuinely the worker's: the credential
+ * store and the Google driver.
+ *
+ * `mustOutlastMs` is how long the caller needs the credential to keep working.
+ * Most callers make one request and leave it at zero. The brain resolution
+ * does not: it hands the credential to an adapter that keeps it for the whole
+ * run, so it asks for the task budget.
  */
-function connectionCredential(connectionId: string): Promise<string | undefined> {
-  return credentialForConnection(connectionId, {
-    keyFor: (id) => credentialStore.getConnectionKey(id),
-    tokensFor: (id) => credentialStore.getOAuthTokens(id),
-    storeTokens: (id, tokens) => credentialStore.setOAuthTokens(id, tokens),
-    needsRenewal: (tokens) => needsRefresh(tokens, Date.now()),
-    /**
-     * Records that an authorization can no longer produce a credential.
-     *
-     * Without this the panel keeps showing the account as `connected` while
-     * every request refuses — the worker knew and the panel did not, which is
-     * the state inconsistency worth preventing. The reason names the fix, and
-     * it is the *account* status rather than a transient error because nothing
-     * about it will improve on a retry.
-     */
-    onUnusable: async (id, why) => {
-      const account = await accountStore.get(id);
-      if (account === undefined || account.authKind !== 'oauth2') return;
-      if (account.status === 'disconnected') return;
-      await accountStore.put({ ...account, status: 'disconnected', statusReason: why });
-      await broadcastAccounts();
+function connectionCredential(
+  connectionId: string,
+  mustOutlastMs = 0,
+): Promise<string | undefined> {
+  return credentialForConnection(
+    connectionId,
+    {
+      keyFor: (id) => credentialStore.getConnectionKey(id),
+      tokensFor: (id) => credentialStore.getOAuthTokens(id),
+      storeTokens: (id, tokens) => credentialStore.setOAuthTokens(id, tokens),
+      needsRenewal: (tokens, horizon) => needsRefresh(tokens, Date.now(), horizon),
+      /**
+       * Records that an authorization can no longer produce a credential.
+       *
+       * Without this the panel keeps showing the account as `connected` while
+       * every request refuses — the worker knew and the panel did not, which is
+       * the state inconsistency worth preventing. The reason names the fix, and
+       * it is the *account* status rather than a transient error because nothing
+       * about it will improve on a retry.
+       */
+      onUnusable: async (id, why) => {
+        const account = await accountStore.get(id);
+        if (account === undefined || account.authKind !== 'oauth2') return;
+        if (account.status === 'disconnected') return;
+        await accountStore.put({ ...account, status: 'disconnected', statusReason: why });
+        await broadcastAccounts();
+      },
+      renew: async (refreshToken) => {
+        const renewed = await googleProviderAuth().refresh(refreshToken);
+        if (!renewed.ok) return { ok: false };
+        return {
+          ok: true,
+          tokens: {
+            accessToken: renewed.token.accessToken,
+            expiresAt: renewed.token.expiresAt,
+            ...(renewed.token.refreshToken === undefined
+              ? {}
+              : { refreshToken: renewed.token.refreshToken }),
+            scope: renewed.token.scope,
+          },
+        };
+      },
     },
-    renew: async (refreshToken) => {
-      const renewed = await googleProviderAuth().refresh(refreshToken);
-      if (!renewed.ok) return { ok: false };
-      return {
-        ok: true,
-        tokens: {
-          accessToken: renewed.token.accessToken,
-          expiresAt: renewed.token.expiresAt,
-          ...(renewed.token.refreshToken === undefined
-            ? {}
-            : { refreshToken: renewed.token.refreshToken }),
-          scope: renewed.token.scope,
-        },
-      };
-    },
-  });
+    { mustOutlastMs },
+  );
 }
 
 async function storeProviderToken(connectionId: string, token: GoogleProviderToken): Promise<void> {

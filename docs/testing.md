@@ -44,6 +44,16 @@ while the product is broken. Two examples from this repository:
 - `FakeProvider` records every request it receives, which is how the security
   tests assert that no secret and no raw page instruction reached the provider.
 
+## What has been exercised against the real world
+
+A passing suite is not a live integration, and the two are easy to confuse in
+one direction only. [integration-readiness.md](testing/integration-readiness.md)
+is the matrix: every external surface classified as unit-tested,
+mocked-integration, live-verified, blocked or missing, with the evidence for
+each and the one command that moves a provider row to live-verified. No
+provider row is live-verified today, and that document says so first rather
+than leaving it to be inferred.
+
 ## What each suite proves
 
 ### `tests/security/`

@@ -200,6 +200,36 @@ own documentation.
 | 87-11 | rate limiting          | `PASS`                              | `BLOCKED — CREDENTIAL` | `provider-integration.spec.ts`, `budget-retry.test.ts`                |
 | 87-12 | unsupported capability | `PASS`                              | `BLOCKED — CREDENTIAL` | `provider-integration.spec.ts`, `provider-switching.spec.ts`          |
 
+### Nine of the twelve no longer need a person
+
+The statuses above stay `BLOCKED — CREDENTIAL`, because a status records what
+happened and nothing here has been run against a vendor. What changed is the
+_effort_: `tests/integration/provider-live.test.ts` is an opt-in harness that
+speaks all four protocols, and one command with one key now exercises most of
+this table automatically.
+
+| Item                         | Covered by the harness | Where                                                        |
+| ---------------------------- | ---------------------- | ------------------------------------------------------------ |
+| 87-01 connect                | yes                    | case A2                                                      |
+| 87-02 validate               | yes                    | case A2, `validateConnection`                                |
+| 87-03 list models            | yes                    | the module-scope probe, asserted in A1                       |
+| 87-04 text generation        | yes                    | case C1                                                      |
+| 87-05 streaming              | yes                    | case C2                                                      |
+| 87-06 tool calling           | yes                    | case B1 (the doctor) and case D1                             |
+| 87-07 multiple tool calls    | **no**                 | D1 takes one call over two turns, not many                   |
+| 87-08 vision                 | yes, as a doctor check | case B1 reports the vision probe's verdict                   |
+| 87-09 invalid credentials    | yes                    | case E2, with the credential absent from the error           |
+| 87-10 expired auth           | **no**                 | needs a credential that actually expires                     |
+| 87-11 rate limiting          | **no**                 | needs the account to actually be rate limited                |
+| 87-12 unsupported capability | partly                 | B1 reports each check's own verdict, including `unsupported` |
+
+So three of the twelve genuinely need a person or an unusual condition. The
+other nine need a key and one command, and the harness also covers something no
+procedure in this table asks for: a real **tool result** sent back for another
+turn, which is the first thing a task does that no probe here has ever done
+against a real endpoint. See
+[integration-readiness.md](../integration-readiness.md).
+
 ### Minimum credentials required
 
 | Purpose                              | Minimum                                                       | Why                                                                                                                           |

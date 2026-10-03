@@ -376,8 +376,29 @@ export function readTokenResponse(
 /** Access tokens are refreshed this long before they expire. */
 export const REFRESH_SKEW_MS = 2 * 60 * 1000;
 
-export function needsRefresh(token: Pick<GoogleProviderToken, 'expiresAt'>, now: number): boolean {
-  return now >= token.expiresAt - REFRESH_SKEW_MS;
+/**
+ * Does this token need renewing before it is handed to a caller?
+ *
+ * `mustOutlastMs` is how long the caller still needs the credential to work
+ * for, and it exists because the two kinds of caller are not alike. A
+ * discovery request or a capability probe is one round trip, and a token with
+ * a minute left is fine for it. A task is given a budget to run inside — ten
+ * minutes by default — and its credential is resolved **once, at the start**.
+ * Judged on the moment alone, a token with five minutes left passes every
+ * check, connects, and then fails partway through the run with a 401 that the
+ * task layer treats as terminal.
+ *
+ * So the question a caller asks is not "is this token valid now" but "will it
+ * still be valid when I am finished with it", and only the caller knows how
+ * long that is. Zero is the honest default: it asks exactly what this
+ * function asked before the parameter existed.
+ */
+export function needsRefresh(
+  token: Pick<GoogleProviderToken, 'expiresAt'>,
+  now: number,
+  mustOutlastMs = 0,
+): boolean {
+  return now + Math.max(0, mustOutlastMs) >= token.expiresAt - REFRESH_SKEW_MS;
 }
 
 /** One POST to Google's token endpoint, performed by the caller's transport. */

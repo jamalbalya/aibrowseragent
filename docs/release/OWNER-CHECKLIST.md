@@ -141,6 +141,23 @@ capability arrived is the honest direction for it to move.
 Any one of OpenAI-compatible, Anthropic or Gemini. Do these first: they are the
 bulk of the list and they share one browsing session.
 
+**Before working through row 6 by hand, run one command.** Nine of those twelve
+provider items are now automated against a real vendor endpoint:
+
+```bash
+ABA_LIVE_PROTOCOL=anthropic ABA_LIVE_API_KEY=…   npx vitest run tests/integration/provider-live.test.ts
+```
+
+It makes a handful of small paid requests and covers connect, validate, list
+models, text generation, streaming, tool calling, vision, an invalid credential
+and part of the unsupported-capability item — plus a real tool-result round
+trip that no written procedure asks for. What it cannot do is 87-07 (many tool
+calls in one task), 87-10 (a credential that actually expires) and 87-11 (being
+genuinely rate limited), so those three stay yours. The breakdown is in
+[MATRIX.md](../testing/acceptance/MATRIX.md) and the honest status of every
+external surface is in
+[integration-readiness.md](../testing/integration-readiness.md).
+
 | Order | Procedure         | What it establishes                                                                                                                                                                                                                                                                                                                                       |
 | ----- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1     | `84-P-001`        | The panel opens beside the page and never obscures or reflows it — the one claim about Chrome's own side-panel chrome                                                                                                                                                                                                                                     |

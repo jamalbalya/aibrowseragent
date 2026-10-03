@@ -61,6 +61,7 @@ import { GEMINI_PROVIDER_ID, GeminiAdapter } from '@/providers/adapters/gemini';
 import type { ConnectedAccount } from '@/providers/accounts/account-model';
 import type { AuthFlowOutcome, AuthFlowPort } from '@/connectors/oauth/auth-flow-port';
 import type { ProviderTransport } from '@/security/egress/provider-transport';
+import { DEFAULT_BUDGET } from '@/agent/budget/budget';
 
 const CLIENT = '1234567890-abcdef.apps.googleusercontent.com';
 const REDIRECT = 'https://abcdefghijklmnop.chromiumapp.org/';
@@ -151,25 +152,35 @@ function googleAuth(
 /** What the account store was told to record, so state can be asserted. */
 let markedUnusable: { connectionId: string; reason: string }[] = [];
 
-/** The worker's wiring, assembled from the same parts it assembles. */
-function credentialFor(connectionId: string): Promise<string | undefined> {
-  return credentialForConnection(connectionId, {
-    keyFor: (id) => credentials.getConnectionKey(id),
-    tokensFor: (id) => credentials.getOAuthTokens(id),
-    storeTokens: (id, tokens) => credentials.setOAuthTokens(id, tokens),
-    needsRenewal: (tokens) => needsRefresh(tokens, now()),
-    onUnusable: async (id, reason) => {
-      markedUnusable.push({ connectionId: id, reason });
-      const account = await accounts.get(id);
-      if (account === undefined) return;
-      await accounts.put({ ...account, status: 'disconnected', statusReason: reason });
+/**
+ * The worker's wiring, assembled from the same parts it assembles.
+ *
+ * `mustOutlastMs` is the caller's horizon, defaulted to zero here as it is for
+ * every one-request caller in the worker. The brain path passes the task
+ * budget, and `credentialForTask` below is that caller.
+ */
+function credentialFor(connectionId: string, mustOutlastMs = 0): Promise<string | undefined> {
+  return credentialForConnection(
+    connectionId,
+    {
+      keyFor: (id) => credentials.getConnectionKey(id),
+      tokensFor: (id) => credentials.getOAuthTokens(id),
+      storeTokens: (id, tokens) => credentials.setOAuthTokens(id, tokens),
+      needsRenewal: (tokens, horizon) => needsRefresh(tokens, now(), horizon),
+      onUnusable: async (id, reason) => {
+        markedUnusable.push({ connectionId: id, reason });
+        const account = await accounts.get(id);
+        if (account === undefined) return;
+        await accounts.put({ ...account, status: 'disconnected', statusReason: reason });
+      },
+      renew: async (refreshToken): Promise<RenewOutcome> => {
+        const renewed = await googleAuth().refresh(refreshToken);
+        if (!renewed.ok) return { ok: false };
+        return { ok: true, tokens: toStored(renewed.token) };
+      },
     },
-    renew: async (refreshToken): Promise<RenewOutcome> => {
-      const renewed = await googleAuth().refresh(refreshToken);
-      if (!renewed.ok) return { ok: false };
-      return { ok: true, tokens: toStored(renewed.token) };
-    },
-  });
+    { mustOutlastMs },
+  );
 }
 
 function toStored(token: GoogleProviderToken): StoredOAuthTokens {
@@ -214,10 +225,13 @@ async function connectGoogleAccount(displayName = 'Google Gemini'): Promise<Conn
   return account;
 }
 
-async function resolve(account: ConnectedAccount): Promise<{ modelId: string }> {
+async function resolve(account: ConnectedAccount) {
   return resolveBrainAccount(account, {
     adapterFor: () => new GeminiAdapter(recording()),
-    keyFor: (connectionId) => credentialFor(connectionId),
+    // The task budget, exactly as the worker passes it: the adapter keeps this
+    // credential for the whole run, so the question is whether the token will
+    // still be valid at the end of it.
+    keyFor: (connectionId) => credentialFor(connectionId, DEFAULT_BUDGET.maxDurationMs),
     staleMessage: (modelId) => `${modelId} is no longer offered.`,
   });
 }
@@ -758,6 +772,84 @@ describe('04 — switching and disconnecting', () => {
     const chosenSecond = (await accounts.getBrainAccount('unassigned'))!;
     expect(await credentialFor(chosenSecond.connectionId)).toBe('google-access-second');
     expect((await resolve(chosenSecond)).modelId).toBe('gemini-2.5-pro');
+  });
+
+  it('renews a token that outlives a request but not the task it is starting', async () => {
+    // The defect this pins, and the reason it is in the journey test rather
+    // than only in the unit tests: the credential is resolved **once**, at
+    // task start, and the adapter keeps it for the whole run. A token with
+    // five minutes left is outside the two-minute skew, so every check it
+    // meets passes — the account is connected, the model is selected, the
+    // credential is present and the adapter authenticates. Then the task is
+    // allowed to run for ten minutes, and every turn after minute five fails
+    // with a 401 that the task layer treats as terminal, on an account whose
+    // next run would have worked because resolution refreshes it.
+    const account = await connectGoogleAccount();
+    const selected = accountAfterSelection(account, 'gemini-2.5-flash');
+
+    clock = NOW + HOUR - 5 * 60 * 1000;
+    // Still good for one request, which is what a one-shot caller asks.
+    expect(await credentialFor(account.connectionId)).toBe(ACCESS);
+    expect(tokenPosts).toHaveLength(1);
+
+    tokenReply = {
+      status: 200,
+      body: { access_token: RENEWED, expires_in: 3600, scope: GOOGLE_AUTH.scope },
+    };
+
+    // Starting a task asks the longer question and gets a fresh token.
+    expect(await resolve(selected)).toMatchObject({ modelId: 'gemini-2.5-flash' });
+    expect(tokenPosts).toHaveLength(2);
+    expect(new URLSearchParams(tokenPosts[1]).get('grant_type')).toBe('refresh_token');
+    // And the run carries the renewed credential, not the one it arrived
+    // with — asserted on a real request through the resolved adapter, because
+    // connecting alone proves nothing about what gets sent.
+    const resolved = await resolve(selected);
+    await resolved.adapter.listModels();
+    expect(seen.at(-1)?.headers['authorization']).toBe(`Bearer ${RENEWED}`);
+    expect(seen.at(-1)?.headers['x-goog-api-key']).toBeUndefined();
+  });
+
+  it('still hands over a token that cannot cover the task but works today', async () => {
+    // The horizon may cause a renewal; it must never cause a refusal. Here
+    // nothing can extend the token — Google issued no refresh token — and it
+    // has five minutes of life. Refusing would disconnect an account that
+    // answers requests perfectly well, over work that has not happened yet.
+    tokenReply = {
+      status: 200,
+      body: { access_token: ACCESS, expires_in: 3600, scope: GOOGLE_AUTH.scope },
+    };
+    const account = await connectGoogleAccount();
+    expect((await credentials.getOAuthTokens(account.connectionId))?.refreshToken).toBeUndefined();
+
+    clock = NOW + HOUR - 5 * 60 * 1000;
+    expect(await credentialFor(account.connectionId, DEFAULT_BUDGET.maxDurationMs)).toBe(ACCESS);
+    expect(markedUnusable).toEqual([]);
+    expect((await accounts.get(account.connectionId))?.status).not.toBe('disconnected');
+
+    // Spent is still a refusal, horizon or no horizon.
+    clock = NOW + HOUR;
+    expect(await credentialFor(account.connectionId, DEFAULT_BUDGET.maxDurationMs)).toBeUndefined();
+    expect(markedUnusable).toHaveLength(1);
+  });
+
+  it('keeps a usable token when a renewal is refused for the horizon', async () => {
+    // A refused renewal cannot tell a revoked grant from a lost network, and
+    // the long horizon makes renewals happen earlier — so a refusal here must
+    // not reach a token that is still good. Five minutes left, renewal
+    // refused, and the account keeps working.
+    const account = await connectGoogleAccount();
+    clock = NOW + HOUR - 5 * 60 * 1000;
+    tokenReply = { status: 400, body: { error: 'invalid_grant' } };
+
+    expect(await credentialFor(account.connectionId, DEFAULT_BUDGET.maxDurationMs)).toBe(ACCESS);
+    expect(markedUnusable).toEqual([]);
+    expect((await accounts.get(account.connectionId))?.status).not.toBe('disconnected');
+
+    // Once the token is actually spent, the same refusal is the truth.
+    clock = NOW + HOUR;
+    expect(await credentialFor(account.connectionId, DEFAULT_BUDGET.maxDurationMs)).toBeUndefined();
+    expect(markedUnusable).toHaveLength(1);
   });
 
   it('disconnecting clears the OAuth record, not just the key slot', async () => {

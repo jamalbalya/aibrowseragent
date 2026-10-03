@@ -365,6 +365,35 @@ describe('04 — a narrowed grant is a failure', () => {
     expect(needsRefresh(token, NOW + 9 * 60 * 1000)).toBe(true);
   });
 
+  it('asks whether the token lasts as long as the caller needs, not just now', () => {
+    // The defect this pins: a task resolves its credential once and is then
+    // allowed to run for its whole budget. Judged on the moment alone, a
+    // token with five minutes left passes, connects, and fails partway
+    // through a ten-minute run with a 401 the task layer treats as terminal.
+    const fiveMinutes = { expiresAt: NOW + 5 * 60 * 1000 };
+    const tenMinutes = 10 * 60 * 1000;
+
+    // Good for a request now...
+    expect(needsRefresh(fiveMinutes, NOW)).toBe(false);
+    // ...and not good enough for work that may still be running in ten.
+    expect(needsRefresh(fiveMinutes, NOW, tenMinutes)).toBe(true);
+
+    // A token that comfortably covers the horizon is not renewed for it.
+    expect(needsRefresh({ expiresAt: NOW + 60 * 60 * 1000 }, NOW, tenMinutes)).toBe(false);
+
+    // The boundary, with the skew included: the horizon lands exactly on it.
+    const horizon = 10 * 60 * 1000;
+    const exactly = { expiresAt: NOW + horizon + 2 * 60 * 1000 };
+    expect(needsRefresh(exactly, NOW, horizon)).toBe(true);
+    expect(needsRefresh({ expiresAt: exactly.expiresAt + 1 }, NOW, horizon)).toBe(false);
+  });
+
+  it('treats a negative horizon as no horizon rather than as credit', () => {
+    // A negative value must not be able to make a spent token look valid.
+    const spent = { expiresAt: NOW - 1 };
+    expect(needsRefresh(spent, NOW, -60 * 60 * 1000)).toBe(true);
+  });
+
   it('refuses a reply with no token and one that is not an object', () => {
     for (const body of [null, 'nope', {}, { access_token: '' }]) {
       const result = readTokenResponse(body, NOW);
