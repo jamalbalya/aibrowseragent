@@ -116,6 +116,42 @@ establishes cross-machine reproducibility, and it is not claimed. What is
 established is that this repository's own packaging contributes no variance,
 so a digest mismatch points at the toolchain rather than at the packer.
 
+### Reproducible from the commit, not only from the same `dist/`
+
+The two builds above delete `dist/` and rebuild in the same working tree, which
+proves the **packer** adds no variance. It does not prove the **commit**
+reproduces, because a working tree holds things a clone does not: a resolved
+`node_modules`, build caches, and — on a development machine — an untracked
+`.env`. `check-extension-env.mjs` reads that file, so "does the build depend on
+it?" was an open question answered only by reasoning.
+
+Measured on 4 October 2026, at commit `efff272`, on Node 22.23.3 / npm 10.9.9:
+
+```sh
+git clone --no-local . /tmp/repro && cd /tmp/repro
+git checkout efff272
+npm ci            # a fresh dependency tree, from package-lock.json
+npm run release
+```
+
+```text
+working tree : b09109896dc65a33fb8d7a5c065df7281b4de786e6014b115190f69f4195541a
+clean clone  : b09109896dc65a33fb8d7a5c065df7281b4de786e6014b115190f69f4195541a
+```
+
+Byte-identical, 291,869 bytes, 13 entries. Two things follow, and the second is
+the one worth having:
+
+- The archive is a function of the **commit** on this toolchain, not of the
+  working tree it was built in.
+- **The build does not depend on the developer's `.env`.** The clone has none —
+  only the two tracked `.example` files — and produced the same bytes. That
+  closes from the second direction what `validate-release.mjs` closes from the
+  first: it checks that no `.env` value appears _in_ the artifact, and this
+  checks that the artifact does not change when the file is absent.
+
+Run it before a submission if the digest matters to you. It costs an `npm ci`.
+
 ## The artifact you are shipping
 
 Produced from `dist/` after `npm run build:release`:

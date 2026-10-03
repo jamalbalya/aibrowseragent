@@ -515,6 +515,34 @@ work."`
 - Evidence: `tests/e2e/live-provider-in-browser.spec.ts`, phase 4b.
 - Verdict: EXECUTED — MET
 
+### Release — the artifact reproduces from the commit — 2026-10-04 — EXECUTED — MET
+
+- Commit: `efff272`; Node 22.23.3, npm 10.9.9, macOS arm64
+- **What was already established, and what was not.** `package-release.mjs`
+  reports _"deterministic over repeated packing"_, and `docs/release/README.md`
+  records two clean builds in the same working tree producing identical
+  archives. Both prove the **packer** adds no variance. Neither proves the
+  **commit** reproduces, because a working tree holds what a clone does not: a
+  resolved `node_modules`, build caches, and an untracked `.env` that
+  `check-extension-env.mjs` reads.
+- Procedure: `git clone --no-local`, checkout `efff272`, `npm ci` for a fresh
+  dependency tree, `npm run release`.
+- Observed: **byte-identical.**
+  `b09109896dc65a33fb8d7a5c065df7281b4de786e6014b115190f69f4195541a`, 291,869
+  bytes, 13 entries, matching the working-tree artifact exactly.
+- Two conclusions, the second being the one worth having:
+  1. The archive is a function of the commit on this toolchain.
+  2. **The build does not depend on the developer's `.env`.** The clone has
+     none — only the two tracked `.example` files — and produced the same
+     bytes. That closes from the second direction what
+     `validate-release.mjs` closes from the first: it checks no `.env` value
+     appears _in_ the artifact; this checks the artifact does not change when
+     the file is absent.
+- Not claimed: cross-machine or cross-toolchain reproducibility. A different
+  Node version or OS may differ, because `vite` and its minifier make no such
+  promise.
+- Verdict: EXECUTED — MET
+
 ### §87 — the anthropic protocol path of the live harness — 2026-10-03 — EXECUTED — BLOCKED (no key)
 
 - Commit: `efafc48`

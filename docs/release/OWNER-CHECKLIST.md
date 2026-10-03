@@ -687,8 +687,12 @@ Google account whose Gemini access you want to use.
 
 #### 3. Configure the build, and check that the value took
 
-Copy `.env.extension.example` to `.env` and fill the two values, or pass them
-on the command line:
+**Add** the two values to `.env`, or pass them on the command line. Add rather
+than copy: `.env` is where a development machine also keeps provider API keys,
+and copying the example file over it destroys them. Vite only inlines
+`VITE_`-prefixed variables, so the two kinds of value coexist in one file
+safely — and `validate-release.mjs` checks that no other `.env` value reaches
+the artifact.
 
 ```sh
 VITE_ABA_GOOGLE_PROVIDER_CLIENT_ID=<your-id>.apps.googleusercontent.com \
