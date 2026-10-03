@@ -46,17 +46,17 @@ the Atlassian row because they share a site, with a separate credential each;
 the two Google authorization rows are reached only by a user who presses
 _Connect with Google_, and carry no task data at all:
 
-| Destination                                                             | Carries                                                                | When                                      |
-| ----------------------------------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------- |
-| `api.openai.com`, or any OpenAI-compatible endpoint the user configures | the task prompt, page content as enveloped data, tool schemas          | the user chose this provider              |
-| `api.anthropic.com`                                                     | the same                                                               | the user chose this provider              |
-| `generativelanguage.googleapis.com`                                     | the same                                                               | the user chose this provider              |
-| `api.github.com`                                                        | connector requests, with a token the user created                      | the user connected the GitHub connector   |
-| `api.figma.com`                                                         | connector requests, with a token the user created                      | the user connected the Figma connector    |
-| the user's own `*.atlassian.net` site, and **only that one**            | connector requests, with a token the user created                      | the user connected Jira or Confluence     |
-| `accounts.google.com`                                                   | an authorization request, performed by the user in Chrome's own window | the user pressed _Connect with Google_    |
-| `oauth2.googleapis.com`                                                 | an authorization code and a PKCE verifier, or a refresh token          | completing or renewing that authorization |
-| the page the user is working on                                         | typed values, clicks, file uploads                                     | the task is acting on that page           |
+| Destination                                                             | Carries                                                                              | When                                                                                           |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `api.openai.com`, or any OpenAI-compatible endpoint the user configures | the task prompt, page content as enveloped data, tool schemas                        | the user chose this provider                                                                   |
+| `api.anthropic.com`                                                     | the same                                                                             | the user chose this provider                                                                   |
+| `generativelanguage.googleapis.com`                                     | the same                                                                             | the user chose this provider                                                                   |
+| `api.github.com`                                                        | connector requests, with a token the user created                                    | the user connected the GitHub connector                                                        |
+| `api.figma.com`                                                         | connector requests, with a token the user created                                    | the user connected the Figma connector                                                         |
+| the user's own `*.atlassian.net` site, and **only that one**            | connector requests, with a token the user created                                    | the user connected Jira or Confluence                                                          |
+| `accounts.google.com`                                                   | an authorization request, performed by the user in Chrome's own window               | the user pressed _Connect with Google_                                                         |
+| `oauth2.googleapis.com`                                                 | an authorization code and a PKCE verifier, a refresh token, or a token being revoked | completing or renewing that authorization, and withdrawing it when the account is disconnected |
+| the page the user is working on                                         | typed values, clicks, file uploads                                                   | the task is acting on that page                                                                |
 
 The Atlassian row is the only destination that is not fixed in the build, and
 Jira and Confluence each bind their own credential to it independently. The user

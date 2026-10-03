@@ -571,6 +571,21 @@ to catch it. That is recorded in
 
 It spends a few cents of a real key. Nothing else in the repository needs one.
 
+**Two things to look at first, when you run it.** They are written down so
+they are not re-derived under time pressure:
+
+1. **If it reports a billing problem, record the exact body.** OpenAI answers
+   an unfunded account with 429 `insufficient_quota`, which this build now
+   treats as terminal. Anthropic's documented shape is a **400** naming the
+   credit balance — a different status, so that fix does not cover it and you
+   would get a generic _"the provider rejected the request"_. No matcher has
+   been added on a guess, because guessing at an error shape is how a
+   near-miss slips in. The body is the evidence needed to add one.
+2. **Do not name a model.** The harness asks the key what it can reach and
+   picks one that answers. Naming a model is guessing at a catalogue you have
+   not seen, which is the mistake Google's own list punishes — its first three
+   entries are retired.
+
 **What is already covered without it**, so a failure will be the provider or
 this build rather than the test: 42 unit cases over connection (including
 connecting before a model is chosen), the model-list envelope, request
@@ -579,6 +594,10 @@ redaction — and the harness's `anthropic` path driven against a loopback
 stand-in speaking the Messages protocol, reaching `AGENT_READY` with the full
 two-turn round trip, with a mutation that ignored the tool result caught by the
 case meant to catch it.
+
+The adapter has also been audited against the five defect classes the other
+providers' live runs produced. Four were sound; one was present and is fixed.
+`docs/testing/integration-readiness.md` has the table.
 
 ---
 

@@ -35,8 +35,8 @@ because no key for it exists in this repository or on the development machine;
 its path through the harness has been verified against a protocol stand-in so
 that the owner's first run with a key tests the provider rather than the test.
 
-Going live cost seven defects' worth of embarrassment and was worth every
-penny. Each of the seven had passed every mocked test in this repository,
+Going live cost eight defects' worth of embarrassment and was worth every
+penny. Each of the eight had passed every mocked test in this repository,
 because a fixture accepts whatever you send it — and two of them, taken
 together, meant the agent could not run on Gemini at all:
 
@@ -118,6 +118,27 @@ together, meant the agent could not run on Gemini at all:
    destroys the token it needs, and a disconnect still always disconnects —
    every failure is reported and none of them blocks. The third instance in
    three sessions of a value parsed or declared and never read.
+
+8. **A reply nobody could read looked like a reply with nothing in it.** Both
+   native adapters parse the content blocks they know and drop the rest, which
+   is correct — the live Gemini endpoint returns `thought` parts beside the
+   text it means you to see, and a reply carrying
+   `['text', 'thought', 'functionCall', 'thoughtSignature']` is an ordinary
+   reply.
+
+   What was wrong was the case where _nothing_ survived the filter. An
+   Anthropic `thinking` block, or any block type added after this build
+   shipped, produced `text: ''`, no tool calls and `finishReason: 'stop'` — an
+   empty answer claiming a normal finish, with the output tokens billed. The
+   agent takes that as the model's final word, so a task completes with
+   nothing in it and the person cannot tell whether the model said nothing or
+   the extension could not read what it said. Those have different fixes, so
+   they now read differently: `malformed_response`, not retryable, naming the
+   block types it could not use.
+
+   Found by auditing the Anthropic adapter for the Gemini `thoughtSignature`
+   defect's analogue rather than by running anything — and then confirmed to
+   be present in the Gemini adapter too.
 
 ## AI providers
 
@@ -266,6 +287,44 @@ authorization cannot be executed before the first submission. The build refuses
 a client id that is set and unusable rather than shipping one that will fail
 (`scripts/check-extension-env.mjs`), and `CLIENT_MISMATCH` is the error for a
 client registered to the wrong id.
+
+### Anthropic, audited rather than run
+
+No Anthropic key exists, so nothing below is a live result. What it is instead:
+the adapter audited against the **five defect classes the other providers' live
+runs produced**, on the reasoning that a defect found on one wire format is a
+question worth asking of the others. One of the five was present.
+
+| Class, as found elsewhere                                            | Anthropic                                                                                                                                                                                                                                                                                           |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A tool-schema field the vendor rejects by name (Gemini)              | **Sound.** `input_schema` is JSON Schema and `additionalProperties` is part of it. The conformance suite pins that this adapter passes the schema through untouched.                                                                                                                                |
+| An opaque token the vendor requires back (Gemini `thoughtSignature`) | **Not reachable today, and worth knowing.** Anthropic's equivalent is a `thinking` block with a `signature`, returned only when extended thinking is _requested_ — and this build never sends the `thinking` parameter, so none arrives. If anyone enables it, this is the first thing that breaks. |
+| A capability denied on an absent list entry (Gemini streaming)       | **Sound.** Capabilities come from the model family, not from a methods list.                                                                                                                                                                                                                        |
+| Retry guidance the build never reads (`Retry-After`, `RetryInfo`)    | **Sound.** Anthropic documents the `retry-after` **header**, which `retryAfterMs(response)` reads. No body-only variant to miss.                                                                                                                                                                    |
+| An unreadable reply returned as an empty one                         | **Present.** Defect 8 above. Found here first and then in the Gemini adapter.                                                                                                                                                                                                                       |
+
+Two further things the live run should check first, written down so it is not
+re-derived:
+
+- **An exhausted balance is a 400 here, not a 429.** OpenAI answers an unfunded
+  account with 429 `insufficient_quota`, which this build now reports as
+  terminal. Anthropic's documented shape is a **400** `invalid_request_error`
+  whose message names the credit balance — a different status, so the
+  openai-compatible fix does not cover it, and a generic `INVALID_ARGUMENT`
+  would be the result. No speculative matcher has been added, because guessing
+  at an error shape is how the over-match in the OpenAI fix would have slipped
+  through. **Check this first and record the exact body.**
+- **Which model the key can actually reach.** The harness discovers rather than
+  naming one, deliberately: naming a model is guessing at a catalogue you have
+  not seen, which is exactly what Google's list punishes.
+
+What is already covered without a key: 45 unit cases over connection
+(including connecting before a model is chosen), the model-list envelope,
+request formatting, response parsing, authentication, the error taxonomy,
+credential redaction and now unreadable content — plus the harness's
+`anthropic` path driven against a loopback stand-in speaking the Messages
+protocol, reaching `AGENT_READY` with the full two-turn round trip, and a
+mutation that ignored the tool result caught by the case meant to catch it.
 
 ### OAuth, mechanism by mechanism
 

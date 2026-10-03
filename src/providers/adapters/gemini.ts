@@ -40,6 +40,7 @@ import {
   retryAfterMs,
   toNetworkError,
   toThrowable,
+  unreadableContent,
 } from '@/providers/core/provider-http';
 import { checkCapabilities } from '@/providers/core/capability-guard';
 import {
@@ -890,6 +891,21 @@ function parseGenerateResponse(body: WireGenerateResponse): CanonicalResponse {
   const toolCalls = parts
     .filter((part) => part.functionCall !== undefined)
     .map((part, index) => toCanonicalToolCall(part.functionCall!, index, part.thoughtSignature));
+
+  // Parts arrived and none of them survived the filter. See
+  // `unreadableContent`. This endpoint really does send parts beside the ones
+  // meant to be read — a live reply carried `['text', 'thought',
+  // 'functionCall', 'thoughtSignature']` — and dropping those is correct. What
+  // is not correct is returning an empty answer when *every* part was one of
+  // them.
+  if (parts.length > 0 && text.length === 0 && toolCalls.length === 0) {
+    throw toThrowable(
+      unreadableContent(
+        GEMINI_PROVIDER_ID,
+        parts.map((part) => Object.keys(part)[0] ?? 'unnamed'),
+      ),
+    );
+  }
 
   return {
     text,

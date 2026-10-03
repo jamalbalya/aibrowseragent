@@ -445,6 +445,44 @@ ABA_LIVE_MODEL=gpt-4.1-nano npx vitest run tests/integration/provider-live.test.
   unexercised rather than as working.
 - Verdict after fix: EXECUTED — NOT MET live; implemented and unit-verified
 
+### §87 — an unreadable reply, both native adapters — 2026-10-03 — **EXECUTED — NOT MET**, defect fixed, re-executed MET
+
+- Commit: `52211d7` (fix in the commit that follows)
+- How it was found: **by audit rather than by running anything.** The Gemini
+  live run had produced a defect where an opaque token the vendor requires back
+  was dropped (`thoughtSignature`). The same question was asked of Anthropic —
+  what is its equivalent, and what happens to a block type we do not know? —
+  and the answer was worse than the original.
+- Observed, before the fix, on **both** native adapters: a reply made only of
+  blocks they do not recognise returned `text: ''`, no tool calls,
+  `finishReason: 'stop'` and nine output tokens billed. An empty answer
+  claiming a normal finish. The agent takes that as the model's final word, so
+  the task completes with nothing in it, the user is charged, and there is no
+  way to tell whether the model said nothing or the extension could not read
+  what it said.
+- Why it matters beyond today: Anthropic returns `thinking` blocks when
+  extended thinking is requested, and both vendors add block types over time.
+  The live Gemini endpoint already returns `thought` parts — a real reply
+  carried `['text', 'thought', 'functionCall', 'thoughtSignature']` — so the
+  filter is doing its job most of the time, which is exactly why the one case
+  where nothing survived went unnoticed.
+- Fix: a shared `unreadableContent` failure, reported as `malformed_response`
+  and deliberately **not retryable**, naming the block types it could not use.
+  It fires only when blocks arrived and none was usable: text beside unknown
+  blocks is a normal reply, a tool call with no text is a normal tool turn, and
+  an empty content array is the provider saying nothing.
+- Evidence: 3 cases in `tests/unit/anthropic.test.ts` and 4 in
+  `tests/unit/gemini.test.ts`, each with its controls. Mutation-controlled
+  three ways — removing either adapter's detection fails the intended case,
+  and widening the Gemini condition to "any empty text" failed **four
+  pre-existing tests**, including _"reports a blocked prompt as a content
+  filter rather than an empty answer"_.
+- Re-executed live afterwards: `gemini-flash-lite-latest` reached
+  **AGENT_READY** on all twelve checks with the full tool round trip and the
+  image question, against the endpoint that actually sends `thought` parts. The
+  narrow condition does not misfire on real traffic.
+- Verdict after fix: EXECUTED — MET
+
 ### §87 — the anthropic protocol path of the live harness — 2026-10-03 — EXECUTED — BLOCKED (no key)
 
 - Commit: `efafc48`

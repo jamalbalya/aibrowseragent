@@ -42,6 +42,7 @@ import {
   retryAfterMs,
   toNetworkError,
   toThrowable,
+  unreadableContent,
 } from '@/providers/core/provider-http';
 import { checkCapabilities } from '@/providers/core/capability-guard';
 import {
@@ -629,6 +630,19 @@ function parseMessage(message: WireMessageResponse): CanonicalResponse {
   const toolCalls = blocks
     .filter((b): b is WireToolUseBlock => b.type === 'tool_use')
     .map((block, index) => toCanonicalToolCall(block, index));
+
+  // Blocks arrived and none of them survived the filter. See
+  // `unreadableContent`: an empty answer claiming a normal stop is the one
+  // outcome a person cannot act on, and it is also what a `thinking` block
+  // used to produce here.
+  if (blocks.length > 0 && text.length === 0 && toolCalls.length === 0) {
+    throw toThrowable(
+      unreadableContent(
+        ANTHROPIC_PROVIDER_ID,
+        blocks.map((block) => (typeof block.type === 'string' ? block.type : 'unnamed')),
+      ),
+    );
+  }
 
   return {
     text,

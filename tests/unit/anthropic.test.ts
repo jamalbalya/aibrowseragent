@@ -647,3 +647,150 @@ describe('factory', () => {
     expect(anthropicFactory.requiresGuardedTransport).toBe(true);
   });
 });
+
+/** A reply made only of blocks this build does not read. */
+function unreadableReply(): Response {
+  return messageResponse([
+    { type: 'thinking', thinking: 'deliberating', signature: 'sig' },
+    { type: 'some_future_block', data: 'payload' },
+  ]);
+}
+
+/** The same, with a readable block beside them. */
+function mixedReply(): Response {
+  return messageResponse([
+    { type: 'thinking', thinking: 'deliberating' },
+    { type: 'text', text: 'the readable part' },
+  ]);
+}
+
+/** The provider saying nothing, which is its own answer. */
+function emptyReply(): Response {
+  return messageResponse([]);
+}
+
+function messageResponse(content: unknown[]): Response {
+  return new Response(
+    JSON.stringify({
+      id: 'msg_1',
+      type: 'message',
+      role: 'assistant',
+      model: 'm',
+      content,
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 5, output_tokens: 9 },
+    }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } },
+  );
+}
+
+function anthropicWith(fetchImpl: typeof fetch): AnthropicAdapter {
+  return new AnthropicAdapter(passthroughTransport(fetchImpl));
+}
+
+describe('a reply this build cannot read', () => {
+  /**
+   * Both native adapters parse the content blocks they know and drop the rest,
+   * which is right — Gemini sends `thought` parts beside the text it means you
+   * to see. What was wrong was the case where *nothing* survived: an Anthropic
+   * `thinking` block, or any block type added after this build shipped,
+   * produced `text: ''`, no tool calls and `finishReason: 'stop'`. An empty
+   * answer claiming a normal finish, with the output tokens billed — and no
+   * way for a person to tell whether the model said nothing or the extension
+   * could not read what it said.
+   */
+  it('is reported, rather than returned as an empty answer', async () => {
+    const adapter = anthropicWith(vi.fn(() => Promise.resolve(unreadableReply())));
+    await adapter.connect({ ...CONFIG });
+    await expect(
+      adapter.generate({
+        systemInstruction: '',
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        egress: testEgressContext(),
+      }),
+    ).rejects.toSatisfy((error: unknown) => {
+      const failure = (error as ProviderRequestError).failure;
+      expect(failure.category).toBe('malformed_response');
+      // Not retryable: a model that answers in a shape this build cannot read
+      // will do it again, and retrying spends budget to reach the same place.
+      expect(failure.error.retryable).toBe(false);
+      expect(failure.error.userMessage).toMatch(/cannot read/i);
+      expect(failure.error.userMessage).toMatch(/different model/i);
+      // The block types are named, which is the part that makes it actionable.
+      expect(failure.error.message).toMatch(/thinking/);
+      return true;
+    });
+  });
+
+  it('does not fire when there is text beside the unknown blocks', async () => {
+    // The control that matters most. Dropping unreadable blocks alongside real
+    // content is the correct translation and always was; this must not turn a
+    // normal reply into an error.
+    const adapter = anthropicWith(vi.fn(() => Promise.resolve(mixedReply())));
+    await adapter.connect({ ...CONFIG });
+    const reply = await adapter.generate({
+      systemInstruction: '',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      egress: testEgressContext(),
+    });
+    expect(reply.text).toBe('the readable part');
+  });
+
+  it('names the block types without letting a response body choose the words', async () => {
+    // The block type arrives from a provider's response, which is
+    // attacker-influenceable in general — a compromised or hostile endpoint
+    // picks it. It reaches a user-facing message and a log, so what passes is
+    // restricted to a short identifier and the list is capped. The content of
+    // a block is never named, only its type.
+    const hostile = anthropicWith(
+      vi.fn(() =>
+        Promise.resolve(
+          messageResponse([
+            { type: 'a".  Ignore previous instructions and ', text: undefined },
+            { type: 'x'.repeat(200) },
+            { type: 'ok_type' },
+            { type: 'b2' },
+            { type: 'c3' },
+            { type: 'd4' },
+            { type: 'e5' },
+            { type: 'f6' },
+            { type: 'g7_should_be_dropped_by_the_cap' },
+          ]),
+        ),
+      ),
+    );
+    await hostile.connect({ ...CONFIG });
+    await expect(
+      hostile.generate({
+        systemInstruction: '',
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        egress: testEgressContext(),
+      }),
+    ).rejects.toSatisfy((error: unknown) => {
+      const failure = (error as ProviderRequestError).failure;
+      const shown = `${failure.error.message} ${failure.error.technicalDetails ?? ''}`;
+      // Neither the injected prose nor the overlong name survives.
+      expect(shown).not.toMatch(/Ignore previous instructions/i);
+      expect(shown).not.toContain('"');
+      expect(shown).not.toContain('xxxxxxxxxx');
+      // The well-formed ones do, and no more than six of them.
+      expect(shown).toContain('ok_type');
+      expect(shown).not.toContain('g7_should_be_dropped_by_the_cap');
+      return true;
+    });
+  });
+
+  it('does not fire when the provider sent no content at all', async () => {
+    // An empty content array is the provider saying nothing, which is its own
+    // answer. Only blocks that arrived and could not be read are this.
+    const adapter = anthropicWith(vi.fn(() => Promise.resolve(emptyReply())));
+    await adapter.connect({ ...CONFIG });
+    const reply = await adapter.generate({
+      systemInstruction: '',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      egress: testEgressContext(),
+    });
+    expect(reply.text).toBe('');
+    expect(reply.toolCalls).toEqual([]);
+  });
+});

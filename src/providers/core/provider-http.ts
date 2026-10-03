@@ -42,6 +42,59 @@ export function requireEgress(request: CanonicalRequest): EgressContext {
   return request.egress;
 }
 
+/**
+ * A reply whose content this build cannot read at all.
+ *
+ * ## The silence this replaces
+ *
+ * Every adapter here parses the content blocks it knows and drops the rest,
+ * which is right: Gemini returns `thought` parts beside the text it means you
+ * to see, and discarding them is the correct translation. What was wrong was
+ * the case where *nothing* survived the filter.
+ *
+ * Measured on both native adapters: a reply made only of blocks they do not
+ * recognise — an Anthropic `thinking` block, a block type added after this
+ * build shipped — produced `text: ''`, no tool calls, and
+ * `finishReason: 'stop'`. An empty answer that claims to have finished
+ * normally, with the output tokens billed. The agent treats that as the
+ * model's final word, so a task completes with nothing in it and the person
+ * has no way to tell whether the model said nothing or the extension could not
+ * read what it said.
+ *
+ * Those are different problems with different fixes, so they now read
+ * differently. `malformed_response` is deliberately **not** retryable: a model
+ * that answers in a shape this build cannot parse will do it again.
+ *
+ * ## When it must not fire
+ *
+ * Only when blocks arrived and none of them was usable. A reply with text
+ * *and* unknown blocks is a normal reply — the unknown ones are dropped
+ * silently and always were. A reply with tool calls and no text is a normal
+ * tool turn. And a genuinely empty `content` array is the provider saying
+ * nothing, which is its own answer and not this.
+ */
+export function unreadableContent(providerId: string, kinds: readonly string[]): ProviderFailure {
+  // The block *types* are named, which is the one thing that makes this
+  // actionable — and they are provider vocabulary rather than content, so
+  // naming them leaks nothing. Capped and de-duplicated because the list
+  // arrives from a response body.
+  const named = [...new Set(kinds)]
+    .filter((kind) => /^[A-Za-z0-9_.-]{1,40}$/.test(kind))
+    .slice(0, 6);
+  const detail = named.length > 0 ? ` (${named.join(', ')})` : '';
+  return providerFailure(
+    providerId,
+    'malformed_response',
+    `The reply contained no content this build can read${detail}.`,
+    {
+      userMessage:
+        'The model replied in a form this extension cannot read. Try a different model — and ' +
+        'if it keeps happening, this build needs updating for that model.',
+      ...(named.length === 0 ? {} : { technicalDetails: named.join(', ') }),
+    },
+  );
+}
+
 export function toThrowable(failure: ProviderFailure): ProviderRequestError {
   return new ProviderRequestError(failure);
 }

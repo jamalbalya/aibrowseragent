@@ -44,6 +44,34 @@ while the product is broken. Two examples from this repository:
 - `FakeProvider` records every request it receives, which is how the security
   tests assert that no secret and no raw page instruction reached the provider.
 
+## A flake, measured rather than shrugged at
+
+On 3 October 2026 a full `npm run test:e2e` reported **two failures** —
+`notifications.spec.ts :: the user turning notifications off is honoured by the
+worker` and `persisted-state.spec.ts :: a corrupt task index does not read back
+as an empty, healthy profile`. Both are recorded here because the suite runs
+with `retries: 0` locally, so a flake is indistinguishable from a defect until
+somebody looks.
+
+Three independent lines of evidence say it was contention and not a defect:
+
+1. Both pass in isolation, together, in 22 seconds.
+2. Neither spec mentions the adapters that had just changed — `notifications`
+   uses the OpenAI-compatible mock and `persisted-state` uses no provider at
+   all — so the change in the tree could not reach them.
+3. A clean full re-run returned 525 passed, 2 skipped, exit 0.
+
+**Rate: two cases in one of roughly seven full runs that day.** Not zero, and
+worth knowing before anyone reads a red local run as a regression. It is also
+worth knowing that `retries: ${'process.env.CI ? 1 : 0'}` means CI absorbs a
+single flake and a local run does not — so a local failure deserves a re-run
+before it deserves a bisect.
+
+One measurement error of mine is recorded with it: the first run was invoked as
+`npm run test:e2e | tail -8`, which reports **`tail`'s** exit code rather than
+Playwright's. It printed `exited with code 0` over two failures. Pipe the log
+to a file and check `$?`, or read the summary lines rather than the exit code.
+
 ## What has been exercised against the real world
 
 A passing suite is not a live integration, and the two are easy to confuse in

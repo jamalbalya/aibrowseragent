@@ -1135,3 +1135,98 @@ describe('the retry guidance Google does not put in a header', () => {
     });
   });
 });
+
+describe('a Gemini reply this build cannot read', () => {
+  /**
+   * The same rule as the Anthropic adapter's, and this endpoint is the one
+   * that demonstrably sends parts beside the ones meant to be read: a live
+   * reply carried `['text', 'thought', 'functionCall', 'thoughtSignature']`.
+   * Dropping those is the correct translation. Returning an empty answer when
+   * *every* part was one of them is not.
+   */
+  function reply(parts: unknown[]): Response {
+    return jsonResponse({
+      candidates: [{ content: { role: 'model', parts }, finishReason: 'STOP' }],
+      usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 9 },
+    });
+  }
+
+  it('is reported, rather than returned as an empty answer', async () => {
+    const adapter = new GeminiAdapter(
+      passthroughTransport(
+        vi.fn(() => Promise.resolve(reply([{ thought: true }, { someFutureThing: 1 }]))),
+      ),
+    );
+    await adapter.connect(CONFIG);
+    await expect(
+      adapter.generate({
+        systemInstruction: '',
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        egress: egress(),
+      }),
+    ).rejects.toSatisfy((error: unknown) => {
+      const failure = (error as ProviderRequestError).failure;
+      expect(failure.category).toBe('malformed_response');
+      expect(failure.error.retryable).toBe(false);
+      expect(failure.error.userMessage).toMatch(/cannot read/i);
+      expect(failure.error.message).toMatch(/thought/);
+      return true;
+    });
+  });
+
+  it('does not fire when a thought part arrives beside real text', async () => {
+    // The live shape, and the control: this is an ordinary reply and must stay
+    // one.
+    const adapter = new GeminiAdapter(
+      passthroughTransport(
+        vi.fn(() => Promise.resolve(reply([{ thought: true }, { text: 'the readable part' }]))),
+      ),
+    );
+    await adapter.connect(CONFIG);
+    const answer = await adapter.generate({
+      systemInstruction: '',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      egress: egress(),
+    });
+    expect(answer.text).toBe('the readable part');
+  });
+
+  it('does not fire when a thought part arrives beside a tool call', async () => {
+    // The shape the live endpoint actually returned for a tool turn. A tool
+    // call with no text is a normal tool turn, not an unreadable reply.
+    const adapter = new GeminiAdapter(
+      passthroughTransport(
+        vi.fn(() =>
+          Promise.resolve(
+            reply([
+              { thought: true },
+              { functionCall: { name: 'f', args: {} }, thoughtSignature: 'sig' },
+            ]),
+          ),
+        ),
+      ),
+    );
+    await adapter.connect(CONFIG);
+    const answer = await adapter.generate({
+      systemInstruction: '',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      egress: egress(),
+    });
+    expect(answer.toolCalls).toHaveLength(1);
+    expect(answer.toolCalls[0]?.providerSignature).toBe('sig');
+  });
+
+  it('does not fire when the candidate carried no parts at all', async () => {
+    const adapter = new GeminiAdapter(
+      passthroughTransport(vi.fn(() => Promise.resolve(reply([])))),
+    );
+    await adapter.connect(CONFIG);
+    const answer = await adapter.generate({
+      systemInstruction: '',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      egress: egress(),
+    });
+    expect(answer.text).toBe('');
+    expect(answer.toolCalls).toEqual([]);
+  });
+});
