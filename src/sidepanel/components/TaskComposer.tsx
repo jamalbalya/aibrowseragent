@@ -105,6 +105,12 @@ export function TaskComposer({
       >
         <textarea
           className="composer__input"
+          // **A placeholder is not an accessible name.** It disappears the
+          // moment somebody types, and several screen readers do not read it
+          // as a label at all — so the one control this whole product exists
+          // for was announced as an unlabelled text area. The label is
+          // explicit and the placeholder stays as the hint it actually is.
+          aria-label="What should the agent do?"
           value={value}
           placeholder={
             disabled

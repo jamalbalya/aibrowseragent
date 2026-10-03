@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import type { PermissionRequest, PermissionResponse } from '@/policy/permission-engine';
 import type { RiskLevel } from '@/policy/risk-classifier';
 import { RISK_DESCRIPTIONS } from '@/policy/risk-classifier';
@@ -24,16 +25,56 @@ interface PermissionPromptProps {
  * this site" is offered only for ordinary actions — an elevated request
  * (private data leaving its source) is one-off by design, because a standing
  * grant is exactly what an injected page would try to obtain.
+ *
+ * ## Announced and focused, because the confirmation model depends on it
+ *
+ * This prompt appearing is the whole of the product's consent mechanism: the
+ * agent is blocked until the person answers. Before this it was a `<section>`
+ * that simply appeared in the DOM — visible to somebody watching, and
+ * **silent** to somebody using a screen reader, with focus left wherever it
+ * was. The task stalled on an approval they were never told was being asked
+ * for.
+ *
+ * So it is an `alertdialog`: announced the moment it mounts, and focus moved
+ * into it. Taking focus is intrusive by design and correct here — the
+ * interface is blocked on this answer, which is exactly the case ARIA defines
+ * the role for. The heading carries the accessible name, so a screen reader
+ * says what is being asked before reading the detail.
+ *
+ * It is **not** a focus trap. A trap would need a complete key handler and an
+ * escape route, and getting that half-right is worse than not doing it: the
+ * panel behind this prompt is still legitimately readable, and a person may
+ * want to look at the task before answering.
  */
 export function PermissionPrompt({
   request,
   planned,
   onRespond,
 }: PermissionPromptProps): React.JSX.Element {
+  const prompt = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    // Keyed on the request id by the caller, so a second request re-mounts and
+    // this runs again rather than leaving focus on the answered one.
+    prompt.current?.focus();
+  }, [request.id]);
+
   return (
-    <section className={`prompt ${request.elevated ? 'prompt--elevated' : ''}`}>
+    <section
+      ref={prompt}
+      className={`prompt ${request.elevated ? 'prompt--elevated' : ''}`}
+      // `alertdialog` rather than `dialog`: this is not something the person
+      // opened, it interrupts them, and the agent is waiting on the answer.
+      role="alertdialog"
+      aria-modal="false"
+      aria-labelledby={`prompt-title-${request.id}`}
+      aria-describedby={`prompt-detail-${request.id}`}
+      // Focusable so the effect above can move focus to it, and `-1` so it
+      // never becomes a tab stop of its own once answered.
+      tabIndex={-1}
+    >
       <header className="prompt__header">
-        <h2 className="prompt__title">
+        <h2 className="prompt__title" id={`prompt-title-${request.id}`}>
           {request.elevated ? 'Sensitive action needs approval' : 'Approval needed'}
         </h2>
         <span className={`risk risk--${request.risk}`} title={RISK_DESCRIPTIONS[request.risk]}>
@@ -41,7 +82,12 @@ export function PermissionPrompt({
         </span>
       </header>
 
-      <p className="prompt__reason">{request.reason}</p>
+      {/* The id `aria-describedby` points at, so a screen reader reads *why*
+          approval is needed straight after the title rather than leaving the
+          person to hunt for it. */}
+      <p className="prompt__reason" id={`prompt-detail-${request.id}`}>
+        {request.reason}
+      </p>
 
       <dl className="prompt__details">
         <div>

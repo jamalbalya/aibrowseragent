@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { MessagingError, sendToBackground } from '@/messaging/bus';
 import type { EvidenceReference } from '@/evidence/evidence-model';
+import { Message } from './Message';
 
 type PayloadState =
   | { readonly kind: 'idle' }
@@ -83,7 +84,7 @@ export function EvidenceList({ taskId }: EvidenceListProps): React.JSX.Element |
   return (
     <section className="evidence">
       <h3 className="evidence__title">Evidence ({items.length})</h3>
-      {error ? <p className="message message--error">{error}</p> : null}
+      <Message tone="error" text={error ?? undefined} />
 
       <ul className="evidence__list">
         {items.map((item) => (

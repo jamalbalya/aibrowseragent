@@ -184,6 +184,32 @@ manually verified would be worse still. Five of the fifteen manual acceptance
 procedures need only a person and a browser; running those produces both the
 verification and the screenshots in one sitting.
 
+### 3b. The listing fields nobody has answered yet
+
+**These are not written anywhere else, and the dashboard will not accept a
+submission without them.** They were missing from this checklist, which meant
+discovering them at upload time with the artifact already built.
+
+Four of them are judgements about audience, contact and support that only the
+publisher can make. None is a question about the code, and none can be
+pre-filled here without inventing a commitment somebody then has to keep.
+
+| Dashboard field               | What it needs                                                                                        | Already decided?                                                                                                                                                                                       |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Category**                  | `Workflow & Planning` or `Developer Tools`                                                           | **No** — [store-listing.md](store-listing.md) deliberately leaves it: it affects discovery, which is a judgement about audience rather than about the code                                             |
+| **Language**                  | The listing's primary language                                                                       | **No**. The listing copy is English                                                                                                                                                                    |
+| **Support email**             | An address that reaches you, and that Chrome will verify                                             | **No**. The privacy policy's section 9 already promises _"a contact address that works. Review will check it"_, so this and the policy must name the same one                                          |
+| **Support / homepage URL**    | A page about the extension. Optional in the dashboard, and a listing with neither reads as abandoned | **No**                                                                                                                                                                                                 |
+| **Privacy policy URL**        | <https://about.jamal-balya.workers.dev/en/privacy>                                                   | **Yes** — and it needs republishing first; see owner checklist item 5                                                                                                                                  |
+| **Single purpose**            | One sentence                                                                                         | **Yes** — in [store-listing.md](store-listing.md), written to be pasted                                                                                                                                |
+| **Permission justifications** | One per permission                                                                                   | **Yes** — twelve in [store-listing.md](store-listing.md), including the optional `identity`                                                                                                            |
+| **Data-use form**             | Twelve answers                                                                                       | **Eleven yes, one open** — "Collects authentication information" is a judgement with two defensible readings, set out in [store-listing.md](store-listing.md). It must agree with the published policy |
+
+**The support email and the privacy policy's contact address have to match.**
+A reviewer who finds two different addresses has found an inconsistency in a
+legal document, and that is a question rather than a rejection — but it is a
+question that costs a review cycle.
+
 ### 4. The upload itself
 
 - Upload `release/ai-browser-agent-0.1.0.zip`.

@@ -17,8 +17,8 @@ Web Store account was accessed.
 |                 | Previously submitted                              | Current candidate                                                   |
 | --------------- | ------------------------------------------------- | ------------------------------------------------------------------- |
 | Version         | `0.1.0`                                           | `0.1.0`                                                             |
-| SHA-256         | **not recorded — see below**                      | `df5a0aa2109dd582fc29b1fe76c7586b4056c48876fe2edcc4d0d25c4510e45d`  |
-| Bytes           | not recorded                                      | 290,022                                                             |
+| SHA-256         | **not recorded — see below**                      | `6ff19db1f83f132139c9d542ea8a21a0c5e4c74a0a1a507752001c7f8c3c59bf`  |
+| Bytes           | not recorded                                      | 290,175                                                             |
 | Entries         | not recorded                                      | 13                                                                  |
 | Source commit   | not recorded                                      | the commit this file was committed in                               |
 | Submission date | not recorded; reported as on or before 2026-10-01 | not submitted                                                       |
@@ -167,7 +167,7 @@ All run on the tree this candidate was built from, on Node 22.23.3.
 | ----------------------------- | --------------------------------------------------------------------------------------------------- |
 | `npm run verify`              | pass — format, lint, typecheck, tests, build, package, parity, acceptance, notices                  |
 | Unit / integration / security | 4,519 passed, 34 skipped, 185 files                                                                 |
-| Real-Chromium E2E             | 518 passed, in 9.0 minutes, against this tree                                                       |
+| Real-Chromium E2E             | 524 passed, in 8.3 minutes, against this tree                                                       |
 | `npm audit --omit=dev`        | 0 vulnerabilities                                                                                   |
 | Reproducibility               | deterministic over repeated packing, digest verified with `sha256sum -c`                            |
 | Parity                        | 36 PASS / 3 PARTIAL / 1 NOT-STARTED across 40 capabilities                                          |
@@ -328,6 +328,35 @@ Ten minutes, in this order.
    has a gap in it.
 8. **Do not** treat this document as the dashboard. It is one commit old the
    moment it is written.
+
+---
+
+## 7b. The ordered path to a public release
+
+Everything above is about one decision. This is the whole remaining sequence,
+because "what is left" had been spread across four documents and the honest
+answer to _"why isn't it live?"_ is a short list rather than a status.
+
+**Nothing in this repository can perform any of steps 1 to 4.** Each needs an
+account, a payment, a legal agreement or a credential that only the publisher
+holds.
+
+| #   | Owner action                                        | Why it is required                                                                                                                                                                    | Where                                          | Evidence it is done                                   | Unblocks                                               |
+| --- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------ |
+| 1   | **Republish the privacy policy**                    | The hosted text predates the optional `identity` permission and the Cloud project a Google-authorized request names. The published page is what a reviewer reads                      | `jamalbalya/about-jamal`, then deploy          | The live URL shows the new effective date             | Step 4 — a reviewer comparing policy to manifest       |
+| 2   | **Answer "Collects authentication information"**    | The form and the policy must agree; a mismatch is a common rejection. Both readings are set out in `store-listing.md` and the answer is a judgement, not a fact about the code        | Decide, then record it                         | The answer written down beside the other eleven       | Step 4                                                 |
+| 3   | **Supply the four unanswered listing fields**       | The dashboard will not accept a submission without them: category, language, support email, support URL. The support email must match the policy's contact address                    | `chrome-web-store-submission-checklist.md` §3b | The four filled in                                    | Step 4                                                 |
+| 4   | **Register, pay, agree, upload**                    | A developer account, the one-time fee, and a person who can accept the Developer Agreement. Then the artifact                                                                         | Chrome Web Store dashboard                     | The dashboard reports the digest in §1                | Review                                                 |
+| 5   | **Run the five browser-only acceptance procedures** | They need only a person, a browser and one API key, and they produce the listing screenshots in the same sitting                                                                      | `docs/testing/acceptance/RESULTS.md`           | Results recorded, screenshots captured                | A listing with real screenshots                        |
+| 6   | **Rotate the temporary 9Router key**                | It was used during development and must be treated as exposed. The file is gitignored, absent from the artifact and present on disk — deleting it is necessary and **not** sufficient | The 9Router provider                           | A new key issued and the old one revoked              | Nothing in the release; it is a standing security item |
+| 7   | **G-6, then its step 4.4**                          | The last unverified Gemini OAuth behaviour: whether a validly issued token with a quota project is accepted for `generateContent`                                                     | Google Cloud console, then the extension       | One task completing, per G-6 step 4.4's evidence list | Moving that row from unverified to confirmed           |
+
+Steps 1 to 3 are the ones that make step 4 possible, and none of them takes
+long. Steps 5 to 7 improve the submission and the record; they do not block it.
+
+**The project is not finished and will not be until step 4 has happened, review
+has concluded and the listing is live.** No step above has been performed, and
+nothing in this repository has touched the Chrome Web Store.
 
 ---
 

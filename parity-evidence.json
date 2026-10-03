@@ -17,7 +17,7 @@
   ],
   "capabilities": {
     "P-001": {
-      "e2e": ["tests/e2e/extension-load.spec.ts"],
+      "e2e": ["tests/e2e/accessibility.spec.ts", "tests/e2e/extension-load.spec.ts"],
       "clauses": [
         {
           "id": "P-001-C1",

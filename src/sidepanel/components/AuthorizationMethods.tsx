@@ -29,6 +29,7 @@
 import { useCallback, useState } from 'react';
 import { sendToBackground } from '@/messaging/bus';
 import type { PanelResponse } from '@/messaging/protocol';
+import { Message } from './Message';
 
 type AuthMethods = PanelResponse<'accounts.authMethods'>;
 
@@ -161,11 +162,9 @@ export function AuthorizationMethods({
         </p>
       ) : null}
 
-      {/* The same classes the rest of Settings uses, so a refusal here looks
-          like every other refusal rather than inventing its own style. */}
-      {notice ? (
-        <p className={`message message--${notice.tone === 'ok' ? 'ok' : 'error'}`}>{notice.text}</p>
-      ) : null}
+      {/* The same component the rest of Settings uses, so a refusal here is
+          announced the same way rather than inventing its own. */}
+      <Message tone={notice?.tone ?? 'ok'} text={notice?.text} />
     </section>
   );
 }

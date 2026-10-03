@@ -147,6 +147,12 @@ export function DataPanel(): React.JSX.Element {
         type="file"
         accept="application/json,.json"
         className="visually-hidden"
+        // Visually hidden and still in the accessibility tree, so it needs a
+        // name: without one a screen reader reaches a file control it can only
+        // call "file upload". The visible button beside it is what a sighted
+        // person presses, and this is what somebody arriving by keyboard
+        // finds.
+        aria-label="Choose an export file to import"
         onChange={(event) => {
           const file = event.target.files?.[0];
           // Cleared so choosing the same file twice still fires a change.

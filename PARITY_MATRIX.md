@@ -1212,6 +1212,16 @@ things and only one moved: the cross-origin subframe half needs
 recorded as divergence 12 in `CLAUDE_BENCHMARK.md`. Half a clause met is not a
 clause met.
 
+That divergence was left _"recorded, not closed"_ with no decision written
+anywhere, which is itself a gap — an owner reading the parity status could not
+tell whether the half-clause was permanent or pending. It is now **owner
+decision C-6** in `docs/release/BLOCKER-CERTIFICATION.md`, with both options
+stated and neither recommended: leaving it costs reach into iframe-hosted
+forms, and widening it runs the content script inside every third-party embed
+on every granted page, which multiplies the untrusted surface the page model
+reads from and is the permission change a reviewer is most likely to question.
+It blocks no release either way.
+
 Date, time, datetime-local, month, week, colour, range and number now have a
 dedicated tool, `browser.set_value`, and a multi-select has
 `browser.select_many`. They are separate from `browser.type` because these

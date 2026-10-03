@@ -16,6 +16,7 @@ import type { PanelResponse } from '@/messaging/protocol';
 import { missingConnectors } from '@/sidepanel/connector-readiness';
 import { endpointsFor, knownEndpoint } from '@/providers/registry/known-endpoints';
 import { AuthorizationMethods } from './AuthorizationMethods';
+import { Message } from './Message';
 
 interface SettingsViewProps {
   readonly connection: ProviderConnection | null;
@@ -645,7 +646,7 @@ export function SettingsView({
               is the only place that can honestly claim to. */}
         </div>
 
-        {message ? <p className={`message message--${message.tone}`}>{message.text}</p> : null}
+        <Message tone={message?.tone ?? 'ok'} text={message?.text} />
         {report ? <DoctorReport report={report} /> : null}
       </section>
 

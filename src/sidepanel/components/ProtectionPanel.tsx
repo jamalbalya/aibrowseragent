@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { sendToBackground } from '@/messaging/bus';
 import type { PanelResponse } from '@/messaging/protocol';
+import { Message } from './Message';
 
 type Status = PanelResponse<'k1.status'>;
 
@@ -328,7 +329,7 @@ export function ProtectionPanel(): React.JSX.Element {
         </p>
       ) : null}
 
-      {message ? <p className={`message message--${message.tone}`}>{message.text}</p> : null}
+      <Message tone={message?.tone ?? 'ok'} text={message?.text} />
     </section>
   );
 }
