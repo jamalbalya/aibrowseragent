@@ -22,6 +22,8 @@ strength of the first half being done.
 > **Nothing about `0.2.1` has been uploaded, submitted or published.** It is
 > built and validated and waiting on the owner's decision.
 >
+> The published artifact is not the artifact this repository builds today.
+>
 > The checklist below is kept as a pre-submission checklist. The repository
 > half is checkable here; the account-owner half still requires the Chrome Web
 > Store account.
