@@ -56,7 +56,7 @@ const MARKDOWN = ['README.md', 'PARITY_MATRIX.md', 'CHANGELOG.md', ...documents(
 /** The version this tree builds, which is not the version that is published. */
 const PREPARED = JSON.parse(read('package.json')).version as string;
 /** The version on the Chrome Web Store, verified by reading the listing. */
-const PUBLISHED = '0.1.0';
+const PUBLISHED = '0.2.0';
 /** The item id the listing is served at, supplied by the account owner. */
 const ITEM_ID = 'hlhcfmlgoojeoapmijopmicdmmhealhl';
 
