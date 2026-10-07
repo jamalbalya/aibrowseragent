@@ -11,34 +11,20 @@ Split into two halves that must not be confused:
 Nothing in the second half is fabricated, approximated, or marked done on the
 strength of the first half being done.
 
-> **`0.1.0` is published. The next version, `0.2.0`, is prepared and has not
+> **`0.2.0` is published. The next version, `0.2.1`, is prepared and has not
 > been uploaded.**
 >
 > The submission completed review and the listing is live at
 > <https://chromewebstore.google.com/detail/hlhcfmlgoojeoapmijopmicdmmhealhl>,
-> showing `0.1.0`, last updated 3 October 2026, 266 KiB, and declaring
-> _"Website content"_ as the data it handles. The item id came from the account
-> owner; the listing was then read directly, so unlike every earlier status in
-> this document **this one is verified rather than reported**.
+> showing `0.2.0`. The item id came from the account owner and the listing was
+> read directly, so the published version is verified rather than reported.
 >
-> **The published artifact is not the artifact this repository builds today**,
-> and that is now a measurement rather than an inference. The published package
-> was downloaded from the store and unpacked: its `service-worker.js` contains
-> none of the 3 October 2026 fixes — no `thoughtSignature`, no `retryDelay`, no
-> `insufficient_quota`, no `x-goog-user-project` — two of which together mean
-> the published build cannot complete a tool call on Gemini. See
-> [README.md](README.md#two-artifacts-and-which-one-is-which).
->
-> **Nothing about `0.2.0` has been uploaded, submitted or published.** It is
+> **Nothing about `0.2.1` has been uploaded, submitted or published.** It is
 > built and validated and waiting on the owner's decision.
 >
-> The checklist below is kept as it was written: a **pre-submission** checklist,
-> describing what had to be true before anything could be uploaded. It is
-> history, not a live status board, and the first submission is evidence that
-> its "REPOSITORY COMPLETE" half was in fact complete. The
-> "ACCOUNT OWNER ACTION REQUIRED" half below is left in its original wording
-> for the same reason — it records what the repository could never do, which is
-> still true of the next submission.
+> The checklist below is kept as a pre-submission checklist. The repository
+> half is checkable here; the account-owner half still requires the Chrome Web
+> Store account.
 
 ---
 
