@@ -37,7 +37,10 @@ jobs:
         run: npm ci
 
       - name: Check formatting
-        run: npm run format:check
+        run: |
+          npx prettier tests/e2e/accessibility.spec.ts > /tmp/accessibility.formatted.ts
+          diff -u tests/e2e/accessibility.spec.ts /tmp/accessibility.formatted.ts || true
+          exit 1
 
       - name: Lint
         run: npm run lint
