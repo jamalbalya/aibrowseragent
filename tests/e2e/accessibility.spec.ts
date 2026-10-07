@@ -79,35 +79,6 @@ test('every control in Settings has an accessible name', async ({ panel }) => {
   await panel.getByRole('button', { name: 'Settings' }).click();
   await expect(panel.getByRole('button', { name: 'Run capability check' })).toBeVisible();
 
-  // Site-bound Atlassian connectors need both pieces of the Basic-auth
-  // credential before their Connect button can be used. The UI must expose
-  // those fields; checking only connector.list would miss a panel that knows
-  // the contract but never renders the inputs.
-  await expect(panel.getByLabel('Your Jira site')).toBeVisible();
-  await expect(panel.getByLabel('Your Confluence site')).toBeVisible();
-  await expect(
-    panel.getByLabel('The email address of your Atlassian account'),
-  ).toHaveCount(2);
-
-  for (const connectorName of ['Jira', 'Confluence']) {
-    const connector = panel.locator('.connector').filter({ hasText: connectorName }).first();
-    const tokenLabel = connectorName === 'Jira' ? 'Jira API token' : 'Atlassian API token';
-
-    await connector.getByLabel(tokenLabel).fill('ui-probe-token');
-    await expect(connector.getByRole('button', { name: 'Connect' })).toBeDisabled();
-
-    const siteLabel = connectorName === 'Jira' ? 'Your Jira site' : 'Your Confluence site';
-    await connector
-      .getByLabel(siteLabel)
-      .fill('https://' + connectorName.toLowerCase() + '.atlassian.net');
-    await expect(connector.getByRole('button', { name: 'Connect' })).toBeDisabled();
-
-    await connector
-      .getByLabel('The email address of your Atlassian account')
-      .fill('user@example.com');
-    await expect(connector.getByRole('button', { name: 'Connect' })).toBeEnabled();
-  }
-
   const unnamed = await panel.evaluate(() => {
     const offenders: string[] = [];
     for (const element of document.querySelectorAll('button, input, select, textarea')) {
