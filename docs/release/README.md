@@ -303,25 +303,14 @@ and must not be confused with what is currently published.
 ### The `0.2.1` manifest differs from the published one in exactly one field
 
 Measured by unpacking the published package and comparing its `manifest.json`
-with what the release build produces:
-
-| Field                      | Published `0.2.0` | Release `0.2.1` |
-| -------------------------- | ------------------ | ---------------- |
-| `version`                  | `0.2.0`            | **`0.2.1`**      |
-| `permissions` (10)         | identical           | identical        |
-| `host_permissions`         | identical           | identical        |
-| `optional_permissions`     | `["downloads"]`     | `["downloads"]`  |
-| `web_accessible_resources` | `https://github.com/*` | `https://github.com/*` |
-
-The release build keeps the same permission surface while changing only the
-version and the source changes represented by the new artifact.
+with what the release build produces. The version changes from `0.2.0` to
+`0.2.1`; the permission and web-accessible-resource sets remain the same.
 
 ### Two artifacts, and which one is which
 
-|                                  |                                                                 |
-| -------------------------------- | --------------------------------------------------------------- |
-| **Published artifact**           | `0.2.0`, live on the store.                                      |
-| **Current engineering artifact** | `0.2.1`, what `npm run release` builds from `HEAD`; **not uploaded**. |
+- **Published artifact:** `0.2.0`, live on the store.
+- **Current engineering artifact:** `0.2.1`, produced by `npm run release` from
+  `HEAD`; **not uploaded**.
 
 They are not the same bytes: the current engineering artifact contains the
 Jira/Confluence connector UI fix and has a different version.
