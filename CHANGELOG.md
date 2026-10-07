@@ -26,9 +26,10 @@ The prepared `0.2.1` artifact has not been uploaded, submitted or published.
 The Chrome Web Store currently has `0.2.0` published.
 
 ---
+
 ## 0.2.0 — published
 
-**This version is published on the Chrome Web Store.** `0.2.1` is the current prepared version and has not been uploaded, submitted or published.
+**This version is published on the Chrome Web Store.** `0.2.1` is the
 
 ### Why this update exists
 
