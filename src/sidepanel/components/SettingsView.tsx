@@ -707,6 +707,46 @@ export function SettingsView({
                     Create a token
                   </a>
                 </p>
+                {connector.siteBinding ? (
+                  <label className="field">
+                    <span className="field__label">{connector.siteBinding.label}</span>
+                    <input
+                      className="field__input"
+                      type="url"
+                      autoComplete="url"
+                      spellCheck={false}
+                      value={siteDrafts[connector.id] ?? ''}
+                      placeholder={connector.siteBinding.example}
+                      onChange={(event) =>
+                        setSiteDrafts((drafts) => ({
+                          ...drafts,
+                          [connector.id]: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                ) : null}
+
+                {connector.tokenHint.accountLabel !== undefined ? (
+                  <label className="field">
+                    <span className="field__label">{connector.tokenHint.accountLabel}</span>
+                    <input
+                      className="field__input"
+                      type="email"
+                      autoComplete="email"
+                      spellCheck={false}
+                      value={accountDrafts[connector.id] ?? ''}
+                      placeholder="you@example.com"
+                      onChange={(event) =>
+                        setAccountDrafts((drafts) => ({
+                          ...drafts,
+                          [connector.id]: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                ) : null}
+
                 <label className="field">
                   <span className="field__label">{connector.tokenHint.label}</span>
                   <input
