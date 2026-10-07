@@ -285,133 +285,48 @@ verifiable from here. A script claiming to check it would be inventing a fact.
 
 ## What has and has not happened
 
-A submission **has** been made. That is new, and it changes what this document
-can claim — but less than it might appear, because it introduces a second
-artifact and the two must not be confused.
+A submission **has** been made and the published listing has since moved to
+version `0.2.0`. The current tree builds `0.2.1`, which is a separate artifact
+and must not be confused with what is currently published.
 
 - An artifact was uploaded and submitted for Chrome Web Store review by the
-  account owner, **completed review, and is published**.
+  account owner, **completed review, and `0.2.0` is published**.
 - The listing is live at
   <https://chromewebstore.google.com/detail/hlhcfmlgoojeoapmijopmicdmmhealhl>,
-  showing version `0.1.0`, last updated 3 October 2026, 266 KiB, and declaring
-  _"Website content"_ as the data it handles. The item id was supplied by the
-  account owner and the listing was then read, so this is **verified** — every
-  earlier status in this document was a report the repository could not check.
+  showing version `0.2.0`. The item id was supplied by the account owner and the
+  listing was read directly, so the published version is verified.
 - The artifact a fresh `npm run release` produces today is a **different, later
-  artifact**, and it has **not been uploaded**. That is no longer an inference
-  from the commit history: the published package was downloaded and unpacked,
-  and it contains none of the 3 October 2026 fixes. See the section below.
-- **`0.2.0` is prepared and has not been uploaded, submitted or published.**
+  artifact**: `0.2.1`. It has **not been uploaded, submitted or published**.
+- **`0.2.0` is the published version. `0.2.1` is prepared and has not been
+  uploaded, submitted or published.**
 
-### The `0.2.0` manifest differs from the published one in exactly one field
+### The `0.2.1` manifest differs from the published one in exactly one field
 
-Measured by unpacking the published CRX and comparing its `manifest.json` with
-what the release build produces, rather than by reading the diff and reasoning
-about it:
+Measured by unpacking the published package and comparing its `manifest.json`
+with what the release build produces:
 
-| Field                      | Published `0.1.0`      | Release `0.2.0`        |
-| -------------------------- | ---------------------- | ---------------------- |
-| `version`                  | `0.1.0`                | **`0.2.0`**            |
-| `permissions` (10)         | identical              | identical              |
-| `host_permissions`         | identical              | identical              |
-| `optional_permissions`     | `["downloads"]`        | `["downloads"]`        |
+| Field                      | Published `0.2.0` | Release `0.2.1` |
+| -------------------------- | ------------------ | ---------------- |
+| `version`                  | `0.2.0`            | **`0.2.1`**      |
+| `permissions` (10)         | identical           | identical        |
+| `host_permissions`         | identical           | identical        |
+| `optional_permissions`     | `["downloads"]`     | `["downloads"]`  |
 | `web_accessible_resources` | `https://github.com/*` | `https://github.com/*` |
 
-`optional_permissions` matching is the one worth explaining, because the source
-manifest lists `["downloads", "identity"]`. A release build drops `identity`
-when no Google OAuth client id is compiled in, since nothing could request it —
-so the shipped set comes out equal to what is already published and **the update
-adds no permission**. That is the claim the store release notes make, and this
-is what makes it true rather than hopeful.
-
-`update_url` appears in the published manifest and in no build here. Chrome adds
-it when it packages an item; it is not ours and its absence from the source is
-correct.
+The release build keeps the same permission surface while changing only the
+version and the source changes represented by the new artifact.
 
 ### Two artifacts, and which one is which
 
-|                                  |                                                                                                                                                              |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Published artifact**           | `0.1.0`, live on the store, 266 KiB. Downloaded and read: it carries none of the 3 October 2026 provider fixes, so it cannot complete a tool call on Gemini. |
-| **Current engineering artifact** | `0.2.0`, what `npm run release` builds from `HEAD` now. Reproducible, validated, and **not uploaded**.                                                       |
+|                                  |                                                                 |
+| -------------------------------- | --------------------------------------------------------------- |
+| **Published artifact**           | `0.2.0`, live on the store.                                      |
+| **Current engineering artifact** | `0.2.1`, what `npm run release` builds from `HEAD`; **not uploaded**. |
 
-They are not the same bytes and will not be: the digest is a function of the
-source tree, so every commit touching `src/` or `public/` produces a different
-archive. Engineering has continued since the submission, so the current artifact
-is ahead of the submitted one by definition.
+They are not the same bytes: the current engineering artifact contains the
+Jira/Confluence connector UI fix and has a different version.
 
 Three facts about the submitted artifact live with the owner's Chrome Web Store
-account and are deliberately **not** written here: the item id, the submission
-date, and which digest was uploaded. This repository cannot verify any of them,
-and recording an unverifiable value in prose is how the digest in this very
-document went stale three times (see below). If a later submission needs them
-pinned, pin them where they can be checked — not here.
-
-What has not changed is the shape of the boundary: there is still no state
-between "packaged locally" and "live on the store" that this repository can
-reach, observe or advance on its own.
-
-### Is the current artifact ready for a new submission?
-
-> The facts for that one decision are collected in
-> [SUBMISSION-CANDIDATE.md](SUBMISSION-CANDIDATE.md), including what is **not**
-> known about the submitted artifact and a ten-minute checklist for the
-> dashboard. This section is the summary; that file is the detail.
-
-**Technically yes, and the decision is not this repository's to make.** The
-current artifact is reproducible, deterministic over repeated packing,
-validated, and built from a tree where every gate passes. Its permission set
-and host access are byte-identical to the submitted one — no permission has
-been added since, which is the thing a reviewer looks at hardest.
-
-What has changed since the submission is capability and correctness, not
-posture: four connectors a user can actually connect, controls inside web
-components now visible and clickable, a defect fixed that stopped every task
-once somebody signed in with Google, and the account-selection routing proved
-rather than assumed.
-
-Two things to weigh before replacing a submission that is in review, and both
-are judgement rather than fact:
-
-- **Replacing an item under review restarts the review.** If the pending one is
-  close to a verdict, waiting costs nothing and resubmitting costs the queue
-  position.
-- **Capability.** The current artifact can do things the pending one cannot:
-  four connectors a user can connect, controls inside web components, and the
-  account-selection routing proved rather than assumed.
-
-Nothing here submits, replaces or withdraws anything, and the call is the
-owner's because only the owner can see the queue.
-
-### A correction: the pending artifact does **not** have the sign-in defect
-
-An earlier revision of this section said it did, and told the owner that _"a
-reviewer who signs in with Google and then runs a task will find it refused"_.
-That was wrong, and it was the stronger of the two arguments for replacing the
-submission — so the correction matters more than the original claim did.
-
-The defect needed a **completed** sign-in. The conflict was between a local
-installation id and a **profile** id, and the profile is written only by
-`recordSignIn`, which `signInWithGoogle` and `verifyEmailSignIn` both refuse to
-reach when no backend origin is compiled in. The shipped build has none: the
-origin is inlined by Vite at build time, there is no default, and nothing can
-set one at run time. So no profile is ever written, the two ids never disagree,
-and the conflict never fires.
-
-**Measured rather than reasoned.** `auth-google.spec.ts :: the sign-in
-ownership conflict is unreachable in the shipped build` drives the shipped
-`dist` in real Chromium: both sign-in paths answer `NOT_CONFIGURED`, no profile
-key exists in storage, the health record does not say `RECOVERY_REQUIRED`, and
-`task.create` is not `POLICY_BLOCKED`. That same case was then run against a
-build with the **old, defective** resolution restored and a shipped
-configuration — and it still passed, which is what establishes unreachability
-rather than merely "fixed".
-
-It was reachable in exactly one build: `dist-auth`, the fixture with an origin
-inlined for `auth-google-protocol.spec.ts`. That is a test artifact and has
-never been uploaded anywhere.
-
-What this changes for the decision: replacing the pending submission is now a
-question about **capability and queue position only**. There is no defect in it
-that a reviewer can reach, so there is no correctness argument for restarting a
-review that may be close to a verdict.
+account and are deliberately **not** written here: the submission date, the
+uploaded archive digest, and other account-side review metadata. This repository
+cannot verify those account-side details.
