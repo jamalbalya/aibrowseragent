@@ -97,7 +97,9 @@ test('every control in Settings has an accessible name', async ({ panel }) => {
     await expect(connector.getByRole('button', { name: 'Connect' })).toBeDisabled();
 
     const siteLabel = connectorName === 'Jira' ? 'Your Jira site' : 'Your Confluence site';
-    await connector.getByLabel(siteLabel).fill('https://' + connectorName.toLowerCase() + '.atlassian.net');
+    await connector
+      .getByLabel(siteLabel)
+      .fill('https://' + connectorName.toLowerCase() + '.atlassian.net');
     await expect(connector.getByRole('button', { name: 'Connect' })).toBeDisabled();
 
     await connector
